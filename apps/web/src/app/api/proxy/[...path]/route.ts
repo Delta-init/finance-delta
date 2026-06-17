@@ -12,9 +12,18 @@ const API_URL =
   "http://localhost:4000/api/v1";
 
 async function forward(req: NextRequest, path: string[]) {
+  // next-auth v5 uses the cookie name as the JWT encryption salt.
+  // In production (HTTPS) the cookie is "__Secure-authjs.session-token";
+  // in dev (HTTP) it is "authjs.session-token".
+  // Passing secureCookie lets getToken() pick the right name AND salt.
+  const secureCookie =
+    req.nextUrl.protocol === "https:" ||
+    process.env.NODE_ENV === "production";
+
   const token = await getToken({
     req,
     secret: process.env.AUTH_SECRET,
+    secureCookie,
   });
 
   if (!token?.accessToken || token.error === "RefreshTokenError") {

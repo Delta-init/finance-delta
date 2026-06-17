@@ -2,13 +2,13 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
 import { useTopLoader } from "nextjs-toploader";
-import { loginSchema, type LoginInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,40 +19,55 @@ import {
   MicrosoftIcon,
 } from "@/components/brand-icons";
 
+const loginSchema = z.object({
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
+  rememberMe: z.boolean().default(false),
+});
+type LoginValues = z.infer<typeof loginSchema>;
+
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const topLoader = useTopLoader();
-  const [formError, setFormError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
-  } = useForm<LoginInput>({
+  } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: "", password: "", rememberMe: false },
   });
 
-  async function onSubmit(values: LoginInput) {
-    setFormError(null);
+  async function onSubmit(values: LoginValues) {
     topLoader.start();
-    const res = await signIn("credentials", { ...values, redirect: false });
+    const res = await signIn("credentials", {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+    });
+
     if (res?.error) {
       topLoader.done();
-      setFormError("Invalid email or password");
+      setError("root", { message: "Invalid email or password" });
       toast.error("Invalid email or password");
       return;
     }
-    // Prompt the browser to save credentials (won't trigger for AJAX logins otherwise)
-    const w = window as unknown as { PasswordCredential?: new (o: { id: string; password: string }) => Credential };
+
+    // Prompt browser to save credentials (AJAX logins skip the native prompt)
+    const w = window as unknown as {
+      PasswordCredential?: new (o: { id: string; password: string }) => Credential;
+    };
     if (typeof window !== "undefined" && w.PasswordCredential) {
       try {
         const cred = new w.PasswordCredential({ id: values.email, password: values.password });
         await navigator.credentials.store(cred);
       } catch (_) {}
     }
+
     toast.success("Welcome back!");
     router.push(params.get("callbackUrl") ?? "/dashboard");
     router.refresh();
@@ -98,7 +113,8 @@ export function LoginForm() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+        {/* Email */}
         <div className="space-y-1.5">
           <Label htmlFor="email">Email</Label>
           <div className="relative">
@@ -107,16 +123,18 @@ export function LoginForm() {
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="eg. pixelcot@gmail.com"
+              placeholder="eg. you@company.com"
               className="h-11 rounded-lg pl-10"
+              aria-invalid={!!errors.email}
               {...register("email")}
             />
           </div>
           {errors.email && (
-            <p className="text-xs text-danger">{errors.email.message}</p>
+            <p className="text-xs text-danger" role="alert">{errors.email.message}</p>
           )}
         </div>
 
+        {/* Password */}
         <div className="space-y-1.5">
           <Label htmlFor="password">Password</Label>
           <div className="relative">
@@ -127,6 +145,7 @@ export function LoginForm() {
               autoComplete="current-password"
               placeholder="••••••••••••"
               className="h-11 rounded-lg pl-10 pr-10"
+              aria-invalid={!!errors.password}
               {...register("password")}
             />
             <button
@@ -134,38 +153,38 @@ export function LoginForm() {
               onClick={() => setShowPassword((v) => !v)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-subtle transition-colors hover:text-foreground"
               aria-label={showPassword ? "Hide password" : "Show password"}
+              tabIndex={-1}
             >
-              {showPassword ? (
-                <Eye className="h-4 w-4" />
-              ) : (
-                <EyeOff className="h-4 w-4" />
-              )}
+              {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
             </button>
           </div>
           {errors.password && (
-            <p className="text-xs text-danger">{errors.password.message}</p>
+            <p className="text-xs text-danger" role="alert">{errors.password.message}</p>
           )}
         </div>
 
+        {/* Remember me + Forgot password */}
         <div className="flex items-center justify-between pt-1">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground-muted">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground-muted select-none">
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-border accent-[var(--primary)]"
+              {...register("rememberMe")}
             />
             Remember me
           </label>
           <button
             type="button"
-            className="text-sm font-medium text-primary hover:text-primary-700"
+            className="text-sm font-medium text-primary hover:text-primary/80"
           >
-            Forgot Password ?
+            Forgot Password?
           </button>
         </div>
 
-        {formError && (
-          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
-            {formError}
+        {/* Server / root error */}
+        {errors.root && (
+          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {errors.root.message}
           </div>
         )}
 

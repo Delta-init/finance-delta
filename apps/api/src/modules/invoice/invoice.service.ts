@@ -333,7 +333,19 @@ export async function sendInvoice(orgId: string, id: string): Promise<InvoiceDTO
   doc.sentAt = new Date();
   await doc.save();
   void _dispatchInvoiceEmail(orgId, doc, undefined);
+  void _deductInventory(orgId, doc);
   return toDTO(doc);
+}
+
+async function _deductInventory(orgId: string, doc: InvoiceDoc) {
+  try {
+    const { deductStockForInvoice } = await import("../inventory/inventory.service");
+    const lines = (doc.lineItems as unknown as { itemId?: string; warehouseId?: string; quantity: number; description: string }[]) ?? [];
+    await deductStockForInvoice(orgId, String(doc._id), doc.invoiceNumber, lines, doc.customerName ?? "");
+  } catch (err) {
+    const { logger } = await import("../../lib/logger");
+    logger.error({ err }, "Inventory deduction failed for invoice");
+  }
 }
 
 export async function resendInvoice(orgId: string, id: string, message?: string): Promise<void> {
@@ -392,9 +404,22 @@ export async function voidInvoice(orgId: string, id: string): Promise<InvoiceDTO
   if ((doc.status as string) === "void") {
     throw new AppError("CONFLICT", "Invoice is already voided");
   }
+  const wasSent = ["sent", "viewed", "partial"].includes(doc.status as string);
   doc.status = "void";
   await doc.save();
+  if (wasSent) void _restoreInventory(orgId, doc);
   return toDTO(doc);
+}
+
+async function _restoreInventory(orgId: string, doc: InvoiceDoc) {
+  try {
+    const { restoreStockForInvoice } = await import("../inventory/inventory.service");
+    const lines = (doc.lineItems as unknown as { itemId?: string; warehouseId?: string; quantity: number; description: string }[]) ?? [];
+    await restoreStockForInvoice(orgId, String(doc._id), doc.invoiceNumber, lines, "system");
+  } catch (err) {
+    const { logger } = await import("../../lib/logger");
+    logger.error({ err }, "Inventory restore failed for voided invoice");
+  }
 }
 
 export async function recordPayment(

@@ -120,3 +120,13 @@
     animation: none;
   }
 }
+
+
+/* hide all scrolling bars and wheels also  */
+::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+

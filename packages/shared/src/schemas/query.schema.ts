@@ -129,3 +129,30 @@ export const bankTransactionQuerySchema = listQuerySchema.extend({
   source: z.enum(["manual", "import"]).optional(),
 });
 export type BankTransactionQuery = z.infer<typeof bankTransactionQuerySchema>;
+
+import { itemTypeSchema, movementTypeSchema } from "./inventory.schema";
+
+export const itemQuerySchema = listQuerySchema.extend({
+  type: itemTypeSchema.optional(),
+  trackStock: z.coerce.boolean().optional(),
+  isActive: z.coerce.boolean().optional(),
+  lowStock: z.coerce.boolean().optional(),
+  warehouseId: z.string().optional(),
+});
+export type ItemQuery = z.infer<typeof itemQuerySchema>;
+
+export const warehouseQuerySchema = listQuerySchema.extend({
+  isActive: z.coerce.boolean().optional(),
+});
+export type WarehouseQuery = z.infer<typeof warehouseQuerySchema>;
+
+export const priceListQuerySchema = listQuerySchema;
+export type PriceListQuery = z.infer<typeof priceListQuerySchema>;
+
+export const stockMovementQuerySchema = listQuerySchema.extend({
+  movementType: movementTypeSchema.optional(),
+  warehouseId: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+export type StockMovementQuery = z.infer<typeof stockMovementQuerySchema>;

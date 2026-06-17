@@ -17,6 +17,8 @@ const lineItemSchema = new Schema(
     taxableMinor: { type: Number, required: true },
     taxTotalMinor: { type: Number, required: true },
     lineTotalMinor: { type: Number, required: true },
+    itemId: { type: String },
+    warehouseId: { type: String },
   },
   { _id: false },
 );

@@ -72,6 +72,12 @@ export const PERMISSIONS = [
   "banking:write",
   "banking:reconcile",
 
+  // Inventory
+  "inventory:read",
+  "inventory:write",
+  "inventory:adjust",
+  "inventory:delete",
+
   // Finance
   "report:read",
   "ledger:read",

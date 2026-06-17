@@ -42,6 +42,8 @@ export const invoiceLineInputSchema = z.object({
   unitPriceMinor: z.coerce.number().int().min(0),
   discountPct: z.coerce.number().min(0).max(100).optional().default(0),
   taxes: z.array(taxInputSchema).optional().default([]),
+  itemId: z.string().optional(),
+  warehouseId: z.string().optional(),
 });
 export type InvoiceLineInput = z.infer<typeof invoiceLineInputSchema>;
 

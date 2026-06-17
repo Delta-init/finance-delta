@@ -97,8 +97,8 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
     closingBookBalanceMinor: doc.closingBookBalanceMinor,
     differenceMinor: doc.differenceMinor,
     status: doc.status as ReconciliationSessionDTO["status"],
-    reconciledTransactionIds: (doc.reconciledTransactionIds as Types.ObjectId[]).map((id) =>
-      id.toString(),
+    reconciledTransactionIds: (doc.reconciledTransactionIds as unknown as Types.ObjectId[]).map(
+      (id) => id.toString(),
     ),
     completedAt: doc.completedAt
       ? (doc.completedAt as unknown as Date).toISOString()
@@ -494,7 +494,7 @@ export async function completeReconciliation(
   });
   if (!session) throw new AppError("NOT_FOUND", "Reconciliation session not found or already completed");
 
-  const reconciledIds = (session.reconciledTransactionIds as Types.ObjectId[]);
+  const reconciledIds = (session.reconciledTransactionIds as unknown as Types.ObjectId[]);
 
   await BankTransaction.updateMany(
     {

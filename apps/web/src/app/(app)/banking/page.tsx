@@ -19,7 +19,7 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { useBankAccounts } from "@/features/banking/api";
 
 const TYPE_TONE: Record<BankAccountType, NonNullable<BadgeProps["tone"]>> = {
-  checking: "info",
+  checking: "primary",
   savings: "success",
   petty_cash: "warning",
   internal: "neutral",

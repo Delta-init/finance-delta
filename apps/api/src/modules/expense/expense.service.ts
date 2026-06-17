@@ -48,7 +48,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     isRecurring: (doc.isRecurring as boolean) ?? false,
     recurrence: rec
       ? {
-          frequency: rec.frequency as ExpenseDTO["recurrence"]["frequency"],
+          frequency: rec.frequency as NonNullable<ExpenseDTO["recurrence"]>["frequency"],
           nextDate: dateOnly(rec.nextDate),
           endDate: rec.endDate ? dateOnly(rec.endDate) : undefined,
         }

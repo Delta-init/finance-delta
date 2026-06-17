@@ -1,4 +1,4 @@
-import { Types } from "mongoose";
+import { Types, type PipelineStage } from "mongoose";
 import { Invoice } from "./invoice.model";
 
 export interface PaymentDTO {
@@ -70,7 +70,7 @@ export async function listPayments(
   const pageSize = Math.min(100, Math.max(1, params.limit ?? 25));
   const skip = (page - 1) * pageSize;
 
-  const pipeline = [
+  const pipeline: PipelineStage[] = [
     { $match: invoiceMatch },
     { $unwind: "$payments" },
     ...(hasPaymentFilter ? [{ $match: paymentMatch }] : []),

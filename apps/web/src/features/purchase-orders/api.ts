@@ -25,6 +25,7 @@ export function usePurchaseOrder(id: string | undefined) {
 export function useCreatePO() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreatePOInput) => api.post<PurchaseOrder>("purchase-orders", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -33,6 +34,7 @@ export function useCreatePO() {
 export function useUpdatePO(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdatePOInput) => api.patch<PurchaseOrder>(`purchase-orders/${id}`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -44,6 +46,7 @@ export function useUpdatePO(id: string) {
 function usePOAction(action: string, id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () => api.post<PurchaseOrder>(`purchase-orders/${id}/${action}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -59,6 +62,7 @@ export const useCancelPO = (id: string) => usePOAction("cancel", id);
 export function useConvertPOToBill(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () => api.post<{ billId: string; billNumber: string }>(`purchase-orders/${id}/convert-to-bill`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });

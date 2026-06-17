@@ -21,6 +21,7 @@ export function useUsers(params: QueryParams) {
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateUserInput) => api.post<User>("users", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

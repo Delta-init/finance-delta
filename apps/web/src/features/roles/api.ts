@@ -21,6 +21,7 @@ export function useRoles(params: QueryParams) {
 export function useCreateRole() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateRoleInput) => api.post<Role>("roles", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -29,6 +30,7 @@ export function useCreateRole() {
 export function useDeleteRole() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`roles/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

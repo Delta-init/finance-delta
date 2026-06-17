@@ -31,6 +31,7 @@ export function useQuotation(id: string | undefined) {
 export function useCreateQuotation() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateQuotationInput) => api.post<Quotation>("quotations", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -39,6 +40,7 @@ export function useCreateQuotation() {
 export function useUpdateQuotation(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateQuotationInput) =>
       api.patch<Quotation>(`quotations/${id}`, input),
     onSuccess: () => {
@@ -51,6 +53,7 @@ export function useUpdateQuotation(id: string) {
 export function useDeleteQuotation() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`quotations/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -60,6 +63,7 @@ export function useDeleteQuotation() {
 function useAction<T>(path: (id: string) => string, body?: unknown) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.post<T>(path(id), body),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -75,6 +79,7 @@ export const useDeclineQuotation = () => useAction<Quotation>((id) => `quotation
 export function useConvertQuotation() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, input }: { id: string; input: ConvertQuotationInput }) =>
       api.post<{ quotation: Quotation; salesOrder: SalesOrder }>(
         `quotations/${id}/convert`,
@@ -91,6 +96,7 @@ export function useConvertQuotation() {
 export function useConvertToInvoice() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) =>
       api.post<{ quotation: Quotation; invoice: { id: string; invoiceNumber: string } }>(
         `quotations/${id}/convert-invoice`,

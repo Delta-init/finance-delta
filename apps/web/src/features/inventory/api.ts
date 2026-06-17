@@ -44,6 +44,7 @@ export function useLowStockItems() {
 export function useCreateItem() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateItemInput) => api.post<Item>("inventory/items", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: itemsKey }),
   });
@@ -52,6 +53,7 @@ export function useCreateItem() {
 export function useUpdateItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateItemInput) => api.patch<Item>(`inventory/items/${id}`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: itemsKey });
@@ -63,6 +65,7 @@ export function useUpdateItem(id: string) {
 export function useDeleteItem() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<{ deleted: boolean }>(`inventory/items/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: itemsKey }),
   });
@@ -90,6 +93,7 @@ export function useStockMovements(itemId: string | undefined, params: QueryParam
 export function useAdjustStock(itemId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: AdjustStockInput) =>
       api.post<StockLevel>(`inventory/items/${itemId}/adjust`, input),
     onSuccess: () => {
@@ -120,6 +124,7 @@ export function useWarehouse(id: string | undefined) {
 export function useCreateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateWarehouseInput) =>
       api.post<Warehouse>("inventory/warehouses", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: warehousesKey }),
@@ -129,6 +134,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateWarehouseInput) =>
       api.patch<Warehouse>(`inventory/warehouses/${id}`, input),
     onSuccess: () => {
@@ -158,6 +164,7 @@ export function usePriceList(id: string | undefined) {
 export function useCreatePriceList() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreatePriceListInput) =>
       api.post<PriceList>("inventory/price-lists", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: priceListsKey }),
@@ -167,6 +174,7 @@ export function useCreatePriceList() {
 export function useUpdatePriceList(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdatePriceListInput) =>
       api.patch<PriceList>(`inventory/price-lists/${id}`, input),
     onSuccess: () => {
@@ -179,6 +187,7 @@ export function useUpdatePriceList(id: string) {
 export function useDeletePriceList() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<{ deleted: boolean }>(`inventory/price-lists/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: priceListsKey }),
   });

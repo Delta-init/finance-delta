@@ -16,6 +16,7 @@ export function useOrganization() {
 export function useUpdateOrganization() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateOrganizationInput) =>
       api.patch<OrganizationSettings>("organizations/settings", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),

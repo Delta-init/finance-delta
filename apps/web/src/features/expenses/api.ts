@@ -30,6 +30,7 @@ export function useExpense(id: string | undefined) {
 export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateExpenseInput) => api.post<Expense>("expenses", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -38,6 +39,7 @@ export function useCreateExpense() {
 export function useUpdateExpense(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateExpenseInput) => api.patch<Expense>(`expenses/${id}`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -49,6 +51,7 @@ export function useUpdateExpense(id: string) {
 function useExpenseAction(action: string, id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (body?: unknown) =>
       body !== undefined
         ? api.post<Expense>(`expenses/${id}/${action}`, body as Record<string, unknown>)
@@ -67,6 +70,7 @@ export const useVoidExpense = (id: string) => useExpenseAction("void", id);
 export function useRejectExpense(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: RejectExpenseInput) =>
       api.post<Expense>(`expenses/${id}/reject`, input),
     onSuccess: () => {

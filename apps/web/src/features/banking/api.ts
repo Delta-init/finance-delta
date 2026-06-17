@@ -40,6 +40,7 @@ export function useBankAccount(id: string | undefined) {
 export function useCreateBankAccount() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateBankAccountInput) =>
       api.post<BankAccount>("bank-accounts", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ACCOUNTS_KEY }),
@@ -49,6 +50,7 @@ export function useCreateBankAccount() {
 export function useUpdateBankAccount(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateBankAccountInput) =>
       api.patch<BankAccount>(`bank-accounts/${id}`, input),
     onSuccess: () => {
@@ -61,6 +63,7 @@ export function useUpdateBankAccount(id: string) {
 export function useDeactivateBankAccount(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () => api.post<BankAccount>(`bank-accounts/${id}/deactivate`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
@@ -83,6 +86,7 @@ export function useBankTransactions(accountId: string, params: QueryParams = {})
 export function useCreateBankTransaction(accountId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateBankTransactionInput) =>
       api.post<BankTransaction>(`bank-accounts/${accountId}/transactions`, input),
     onSuccess: () => {
@@ -95,6 +99,7 @@ export function useCreateBankTransaction(accountId: string) {
 export function useBulkImportTransactions(accountId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: BulkImportTransactionsInput) =>
       api.post<{ count: number; transactions: BankTransaction[] }>(
         `bank-accounts/${accountId}/transactions/bulk`,
@@ -110,6 +115,7 @@ export function useBulkImportTransactions(accountId: string) {
 function useTxAction(action: string, accountId: string, txId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (body?: unknown) =>
       body !== undefined
         ? api.post<BankTransaction>(
@@ -126,6 +132,7 @@ function useTxAction(action: string, accountId: string, txId: string) {
 export const useMatchTransaction = (accountId: string, txId: string) => {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: MatchTransactionInput) =>
       api.post<BankTransaction>(
         `bank-accounts/${accountId}/transactions/${txId}/match`,
@@ -169,6 +176,7 @@ export function useReconciliation(accountId: string, sessionId: string | undefin
 export function useStartReconciliation(accountId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: StartReconciliationInput) =>
       api.post<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations`,
@@ -181,6 +189,7 @@ export function useStartReconciliation(accountId: string) {
 export function useUpdateReconciliation(accountId: string, sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateReconciliationInput) =>
       api.patch<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations/${sessionId}`,
@@ -196,6 +205,7 @@ export function useUpdateReconciliation(accountId: string, sessionId: string) {
 export function useCompleteReconciliation(accountId: string, sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () =>
       api.post<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations/${sessionId}/complete`,

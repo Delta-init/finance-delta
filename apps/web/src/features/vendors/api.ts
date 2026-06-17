@@ -25,6 +25,7 @@ export function useVendor(id: string | undefined) {
 export function useCreateVendor() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateVendorInput) => api.post<Vendor>("vendors", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -33,6 +34,7 @@ export function useCreateVendor() {
 export function useUpdateVendor() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, input }: { id: string; input: UpdateVendorInput }) =>
       api.patch<Vendor>(`vendors/${id}`, input),
     onSuccess: (_d, { id }) => {
@@ -45,6 +47,7 @@ export function useUpdateVendor() {
 export function useDeleteVendor() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`vendors/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

@@ -25,6 +25,7 @@ export function useSalesOrder(id: string | undefined) {
 export function useCancelSalesOrder() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.post<SalesOrder>(`sales-orders/${id}/cancel`),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: KEY });

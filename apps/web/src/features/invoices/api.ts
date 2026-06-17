@@ -25,6 +25,7 @@ export function useInvoice(id: string | undefined) {
 export function useCreateInvoice() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateInvoiceInput) => api.post<Invoice>("invoices", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -33,6 +34,7 @@ export function useCreateInvoice() {
 export function useUpdateInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateInvoiceInput) => api.patch<Invoice>(`invoices/${id}`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -44,6 +46,7 @@ export function useUpdateInvoice(id: string) {
 export function useDeleteInvoice() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`invoices/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -52,6 +55,7 @@ export function useDeleteInvoice() {
 function useAction(path: (id: string) => string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.post<Invoice>(path(id)),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -65,6 +69,7 @@ export const useVoidInvoice = () => useAction((id) => `invoices/${id}/void`);
 
 export function useResendInvoice() {
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, message }: { id: string; message?: string }) =>
       api.post<{ queued: boolean }>(`invoices/${id}/resend`, { message }),
   });
@@ -73,6 +78,7 @@ export function useResendInvoice() {
 export function useRecordPayment(invoiceId: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: RecordPaymentInput) =>
       api.post<Invoice>(`invoices/${invoiceId}/payments`, input),
     onSuccess: () => {

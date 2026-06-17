@@ -3,8 +3,9 @@
  * the access token server-side. Unwraps the `{ data }` envelope and throws a
  * typed ApiError on failure.
  *
- * Any 401 response immediately signs the user out and redirects to /login —
- * the session has expired and there is no valid token to recover.
+ * A 401 with code "UNAUTHENTICATED" (emitted by the BFF when the session token
+ * is missing or expired) triggers signOut. Any other 401 from the backend
+ * (e.g. a permission check) is surfaced as a regular ApiError — no logout.
  */
 import { signOut } from "next-auth/react";
 
@@ -22,7 +23,13 @@ export class ApiError extends Error {
 
 async function handleUnauthorized(): Promise<never> {
   await signOut({ callbackUrl: "/login" });
-  throw new ApiError(401, "UNAUTHENTICATED", "Session expired");
+  throw new ApiError(401, "UNAUTHENTICATED", "Session expired. Please log in again.");
+}
+
+async function parseError(res: Response) {
+  const json = await res.json().catch(() => ({}));
+  const err = json.error ?? {};
+  return { code: (err.code ?? "INTERNAL") as string, message: (err.message ?? "Request failed") as string, details: err.details };
 }
 
 async function request<T>(
@@ -34,18 +41,18 @@ async function request<T>(
     headers: { "content-type": "application/json", ...init?.headers },
   });
 
-  if (res.status === 401) return handleUnauthorized() as Promise<T>;
   if (res.status === 204) return undefined as T;
+
+  if (res.status === 401) {
+    const { code, message, details } = await parseError(res);
+    if (code === "UNAUTHENTICATED") return handleUnauthorized() as Promise<T>;
+    throw new ApiError(401, code, message, details);
+  }
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = json.error ?? {};
-    throw new ApiError(
-      res.status,
-      err.code ?? "INTERNAL",
-      err.message ?? "Request failed",
-      err.details,
-    );
+    throw new ApiError(res.status, err.code ?? "INTERNAL", err.message ?? "Request failed", err.details);
   }
   return json.data as T;
 }
@@ -76,7 +83,13 @@ async function requestList<T>(path: string): Promise<{ data: T[]; meta: PageMeta
   const res = await fetch(`/api/proxy/${path}`, {
     headers: { "content-type": "application/json" },
   });
-  if (res.status === 401) return handleUnauthorized() as Promise<{ data: T[]; meta: PageMeta }>;
+
+  if (res.status === 401) {
+    const { code, message, details } = await parseError(res);
+    if (code === "UNAUTHENTICATED") return handleUnauthorized() as Promise<{ data: T[]; meta: PageMeta }>;
+    throw new ApiError(401, code, message, details);
+  }
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = json.error ?? {};

@@ -21,6 +21,7 @@ export function useCreditNote(id: string) {
 export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateCreditNoteInput) => api.post<CreditNote>("credit-notes", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -29,6 +30,7 @@ export function useCreateCreditNote() {
 function useAction(path: (id: string) => string, body?: object) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.post<CreditNote>(path(id), body),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -44,6 +46,7 @@ export const useVoidCreditNote = () => useAction((id) => `credit-notes/${id}/voi
 export function useApplyCreditNote() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, input }: { id: string; input: ApplyCreditNoteInput }) =>
       api.post<CreditNote>(`credit-notes/${id}/apply`, input),
     onSuccess: (_d, { id }) => {

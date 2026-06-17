@@ -29,6 +29,7 @@ function invalidate(qc: ReturnType<typeof useQueryClient>) {
 export function useCreateTag() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateTagInput) => api.post<Tag>("tags", input),
     onSuccess: () => invalidate(qc),
   });
@@ -37,6 +38,7 @@ export function useCreateTag() {
 export function useUpdateTag() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, input }: { id: string; input: UpdateTagInput }) =>
       api.patch<Tag>(`tags/${id}`, input),
     onSuccess: () => invalidate(qc),
@@ -46,6 +48,7 @@ export function useUpdateTag() {
 export function useDeleteTag() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`tags/${id}`),
     onSuccess: () => invalidate(qc),
   });

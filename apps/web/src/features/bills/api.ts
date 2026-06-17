@@ -25,6 +25,7 @@ export function useBill(id: string | undefined) {
 export function useCreateBill() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateBillInput) => api.post<Bill>("bills", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -33,6 +34,7 @@ export function useCreateBill() {
 export function useUpdateBill(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: UpdateBillInput) => api.patch<Bill>(`bills/${id}`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -44,6 +46,7 @@ export function useUpdateBill(id: string) {
 function useBillAction(action: string, id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (body?: unknown) =>
       body !== undefined
         ? api.post<Bill>(`bills/${id}/${action}`, body as Record<string, unknown>)
@@ -62,6 +65,7 @@ export const useVoidBill = (id: string) => useBillAction("void", id);
 export function useRecordBillPayment(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: RecordBillPaymentInput) => api.post<Bill>(`bills/${id}/payments`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });

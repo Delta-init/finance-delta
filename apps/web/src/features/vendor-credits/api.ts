@@ -25,6 +25,7 @@ export function useVendorCredit(id: string | undefined) {
 export function useCreateVendorCredit() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateVendorCreditInput) => api.post<VendorCredit>("vendor-credits", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -33,6 +34,7 @@ export function useCreateVendorCredit() {
 export function useIssueVendorCredit(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () => api.post<VendorCredit>(`vendor-credits/${id}/issue`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -44,6 +46,7 @@ export function useIssueVendorCredit(id: string) {
 export function useApplyVendorCredit(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: ApplyVendorCreditInput) => api.post<VendorCredit>(`vendor-credits/${id}/apply`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -56,6 +59,7 @@ export function useApplyVendorCredit(id: string) {
 export function useVoidVendorCredit(id: string) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: () => api.post<VendorCredit>(`vendor-credits/${id}/void`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });

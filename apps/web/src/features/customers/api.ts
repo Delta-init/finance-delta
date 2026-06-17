@@ -61,6 +61,7 @@ export function useCustomerStatement(id: string | undefined) {
 export function useCreateCustomer() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (input: CreateCustomerInput) => api.post<Customer>("customers", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -69,6 +70,7 @@ export function useCreateCustomer() {
 export function useUpdateCustomer() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: ({ id, input }: { id: string; input: UpdateCustomerInput }) =>
       api.patch<Customer>(`customers/${id}`, input),
     onSuccess: (_d, { id }) => {
@@ -82,6 +84,7 @@ export function useUpdateCustomer() {
 export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`customers/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

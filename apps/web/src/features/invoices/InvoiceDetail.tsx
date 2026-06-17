@@ -1,0 +1,489 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
+  CreditCard, Printer, Plus, RotateCcw, FileX, ExternalLink,
+} from "lucide-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  formatMoney, recordPaymentSchema, PAYMENT_METHODS,
+  type Invoice, type RecordPaymentInput,
+} from "@delta/shared";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { MoneyDisplay } from "@/components/ui/money";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { TagList } from "@/features/tags/TagBadge";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useResendInvoice } from "./api";
+import { INVOICE_STATUS_TONE } from "./status";
+
+export function InvoiceDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const { data: invoice, isLoading } = useInvoice(id);
+  const send = useSendInvoice();
+  const voidInv = useVoidInvoice();
+  const resend = useResendInvoice();
+  const [payOpen, setPayOpen] = useState(false);
+  const [resendOpen, setResendOpen] = useState(false);
+  const [resendMsg, setResendMsg] = useState("");
+
+  if (isLoading) return <div className="p-6 text-foreground-muted text-sm">Loading…</div>;
+  if (!invoice) return <div className="p-6 text-foreground-muted text-sm">Invoice not found.</div>;
+
+  const isDraft = invoice.status === "draft";
+  const canVoid = invoice.status !== "paid" && invoice.status !== "void";
+  const canPay = invoice.status !== "paid" && invoice.status !== "void" && invoice.balanceMinor > 0;
+
+  return (
+    <div className="space-y-6 p-6">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.back()}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-surface-muted hover:text-foreground"
+            aria-label="Back"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
+              <ReceiptText className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">{invoice.invoiceNumber}</h1>
+              <p className="text-xs text-foreground-muted">{invoice.customerName}</p>
+            </div>
+          </div>
+          <Badge tone={INVOICE_STATUS_TONE[invoice.status]} className="capitalize ml-1">
+            {invoice.status}
+          </Badge>
+          {invoice.recurring && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-0.5 text-xs text-foreground-muted">
+              <RefreshCw className="h-3 w-3" /> {invoice.recurring.frequency}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => window.open(`/invoices/${id}/print`, "_blank")}
+            title="Download / Print PDF"
+          >
+            <Printer className="h-3.5 w-3.5" /> PDF
+          </Button>
+          {isDraft && (
+            <Link href={`/invoices/${id}/edit`}>
+              <Button variant="outline" size="sm"><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+            </Link>
+          )}
+          {isDraft && (
+            <Button
+              size="sm"
+              loading={send.isPending}
+              onClick={() => send.mutate(id, {
+                onSuccess: () => toast.success("Invoice sent"),
+                onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed to send invoice"),
+              })}
+            >
+              <Send className="h-3.5 w-3.5" /> Send
+            </Button>
+          )}
+          {!isDraft && invoice.status !== "void" && (
+            <Button variant="outline" size="sm" onClick={() => setResendOpen(true)}>
+              <RotateCcw className="h-3.5 w-3.5" /> Resend
+            </Button>
+          )}
+          {(invoice.status === "sent" || invoice.status === "paid" || invoice.status === "partial") && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push(`/credit-notes/new?invoiceId=${id}`)}
+            >
+              <FileX className="h-3.5 w-3.5" /> Credit Note
+            </Button>
+          )}
+          {canPay && (
+            <Button size="sm" onClick={() => setPayOpen(true)}>
+              <CreditCard className="h-3.5 w-3.5" /> Record Payment
+            </Button>
+          )}
+          {canVoid && !isDraft && (
+            <Button
+              variant="outline"
+              size="sm"
+              loading={voidInv.isPending}
+              onClick={() => voidInv.mutate(id, {
+                onSuccess: () => toast.success("Invoice voided"),
+                onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed to void invoice"),
+              })}
+              className="text-danger hover:border-danger/50"
+            >
+              <Ban className="h-3.5 w-3.5" /> Void
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <PaymentDialog
+        open={payOpen}
+        onClose={() => setPayOpen(false)}
+        invoiceId={id}
+        balanceMinor={invoice.balanceMinor}
+        currency={invoice.currency}
+      />
+
+      {/* Resend dialog */}
+      <Dialog open={resendOpen} onOpenChange={(o) => !o && setResendOpen(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Resend Invoice</DialogTitle></DialogHeader>
+          <div className="space-y-3 pt-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Custom message <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <textarea
+                value={resendMsg}
+                onChange={(e) => setResendMsg(e.target.value)}
+                rows={3}
+                placeholder="Add a personal note to the email…"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <DialogClose asChild>
+                <Button type="button" variant="ghost" size="sm">Cancel</Button>
+              </DialogClose>
+              <Button
+                size="sm"
+                loading={resend.isPending}
+                onClick={() => resend.mutate({ id, message: resendMsg || undefined }, {
+                  onSuccess: () => { toast.success("Invoice resent"); setResendOpen(false); setResendMsg(""); },
+                  onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed to resend"),
+                })}
+              >
+                <Send className="h-3.5 w-3.5" /> Send
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Meta grid */}
+      <div className="grid gap-4 rounded-lg border border-border bg-surface p-5 sm:grid-cols-2 lg:grid-cols-4">
+        <Meta label="Customer" value={invoice.customerName} />
+        <Meta label="Salesperson" value={invoice.salespersonName} />
+        {invoice.reference && <Meta label="Reference" value={invoice.reference} />}
+        <Meta label="Issue date" value={invoice.issueDate} />
+        <Meta label="Due date" value={invoice.dueDate} />
+        <Meta label="Currency" value={invoice.currency} />
+        {invoice.tags.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs font-medium text-foreground-muted">Tags</p>
+            <TagList tags={invoice.tags} />
+          </div>
+        )}
+      </div>
+
+      {/* Progress info */}
+      {invoice.progress && (
+        <div className="rounded-lg border border-border bg-surface p-5 space-y-2">
+          <h3 className="text-sm font-semibold">Progress Invoice</h3>
+          <div className="grid gap-3 sm:grid-cols-3 text-sm">
+            <Meta label="Contract" value={invoice.progress.contractDescription} />
+            <Meta label="Contract value" value={formatMoney(invoice.progress.contractValueMinor, invoice.currency)} />
+            <Meta label="Stage" value={`${invoice.progress.stageName} (#${invoice.progress.stageNumber})`} />
+            <Meta label="% of contract" value={`${invoice.progress.pctOfContract}%`} />
+          </div>
+        </div>
+      )}
+
+      {/* Line items */}
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-primary text-primary-foreground">
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Description</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Qty</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Unit price</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Disc %</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Taxes</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.lineItems.map((line, i) => (
+              <tr key={i} className="border-t border-border">
+                <td className="px-4 py-3">{line.description}</td>
+                <td className="px-4 py-3 text-right text-foreground-muted">{line.quantity}</td>
+                <td className="px-4 py-3 text-right font-numeric text-foreground-muted">
+                  {formatMoney(line.unitPriceMinor, invoice.currency)}
+                </td>
+                <td className="px-4 py-3 text-right text-foreground-muted">
+                  {line.discountPct > 0 ? `${line.discountPct}%` : "—"}
+                </td>
+                <td className="px-4 py-3 text-right text-foreground-muted">
+                  {line.taxes.length > 0
+                    ? line.taxes.map((t) => `${t.code} ${t.rate}%`).join(", ")
+                    : "—"}
+                </td>
+                <td className="px-4 py-3 text-right font-numeric font-medium">
+                  {formatMoney(line.lineTotalMinor, invoice.currency)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Totals + notes */}
+      <div className="flex flex-col gap-6 lg:flex-row lg:justify-between">
+        <div className="flex-1 space-y-4">
+          {invoice.notes && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-foreground-muted">Notes</p>
+              <p className="text-sm whitespace-pre-wrap">{invoice.notes}</p>
+            </div>
+          )}
+          {invoice.terms && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-foreground-muted">Terms</p>
+              <p className="text-sm whitespace-pre-wrap">{invoice.terms}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="w-full max-w-xs space-y-2 rounded-lg border border-border bg-surface p-4 lg:self-start">
+          <TotalRow label="Subtotal" value={invoice.subtotalMinor} currency={invoice.currency} />
+          {invoice.discountTotalMinor > 0 && (
+            <TotalRow label="Discount" value={invoice.discountTotalMinor} currency={invoice.currency} />
+          )}
+          {invoice.taxBreakdown.map((t) => (
+            <TotalRow key={t.code} label={`Tax (${t.code})`} value={t.amountMinor} currency={invoice.currency} />
+          ))}
+          <TotalRow label="Total" value={invoice.totalMinor} currency={invoice.currency} strong />
+          {invoice.amountPaidMinor > 0 && (
+            <TotalRow label="Paid" value={invoice.amountPaidMinor} currency={invoice.currency} />
+          )}
+          <TotalRow label="Balance due" value={invoice.balanceMinor} currency={invoice.currency} strong={invoice.balanceMinor > 0} />
+        </div>
+      </div>
+
+      {/* Payment history */}
+      {invoice.payments.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold">Payment History</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-foreground-muted">
+                <th className="px-4 py-2 font-medium">Date</th>
+                <th className="px-4 py-2 font-medium">Method</th>
+                <th className="px-4 py-2 font-medium">Account</th>
+                <th className="px-4 py-2 font-medium">Reference</th>
+                <th className="px-4 py-2 text-right font-medium">Amount</th>
+                <th className="px-4 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoice.payments.map((p) => (
+                <tr key={p.id} className="border-t border-border">
+                  <td className="px-4 py-2.5 text-foreground-muted">{p.paidOn}</td>
+                  <td className="px-4 py-2.5 capitalize">{p.method.replace("_", " ")}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted">{p.accountName || "—"}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted">{p.reference || "—"}</td>
+                  <td className="px-4 py-2.5 text-right font-numeric font-medium text-success">
+                    {formatMoney(p.amountMinor, invoice.currency)}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <button
+                      onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
+                      className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
+                      title="View receipt"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaymentDialog({
+  open,
+  onClose,
+  invoiceId,
+  balanceMinor,
+  currency,
+}: {
+  open: boolean;
+  onClose: () => void;
+  invoiceId: string;
+  balanceMinor: number;
+  currency: string;
+}) {
+  const record = useRecordPayment(invoiceId);
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<RecordPaymentInput>({
+    resolver: zodResolver(recordPaymentSchema),
+    defaultValues: {
+      method: "bank_transfer",
+      amountMinor: balanceMinor,
+      paidOn: new Date().toISOString().slice(0, 10),
+      reference: "",
+      notes: "",
+    },
+  });
+
+  const method = watch("method");
+
+  async function onSubmit(data: RecordPaymentInput) {
+    try {
+      await record.mutateAsync(data);
+      toast.success("Payment recorded");
+      reset();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to record payment");
+    }
+  }
+
+  const METHOD_LABELS: Record<string, string> = {
+    cash: "Cash",
+    bank_transfer: "Bank Transfer",
+    cheque: "Cheque",
+    card: "Card",
+    other: "Other",
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Record Payment</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">Method</label>
+              <Select value={method} onValueChange={(v) => setValue("method", v as RecordPaymentInput["method"])}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m} value={m}>{METHOD_LABELS[m]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Amount ({currency})
+              </label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0.01"
+                {...register("amountMinor", { setValueAs: (v) => Math.round(Number(v) * 100) })}
+                defaultValue={(balanceMinor / 100).toFixed(2)}
+              />
+              {errors.amountMinor && (
+                <p className="mt-1 text-xs text-danger">{errors.amountMinor.message}</p>
+              )}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">Date</label>
+              <Input type="date" {...register("paidOn")} />
+              {errors.paidOn && (
+                <p className="mt-1 text-xs text-danger">{errors.paidOn.message}</p>
+              )}
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Account <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <Input {...register("accountName")} placeholder="Bank account name…" />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Reference <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <Input {...register("reference")} placeholder="Cheque #, txn ID…" />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Notes <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <Input {...register("notes")} placeholder="Any additional notes…" />
+            </div>
+          </div>
+          <p className="text-xs text-foreground-muted">
+            Balance due: <span className="font-numeric font-medium">{formatMoney(balanceMinor, currency)}</span>
+          </p>
+          <div className="flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="ghost" size="sm">Cancel</Button>
+            </DialogClose>
+            <Button type="submit" size="sm" loading={isSubmitting || record.isPending}>
+              <Plus className="h-3.5 w-3.5" /> Save Payment
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="mb-0.5 text-xs font-medium text-foreground-muted">{label}</p>
+      <p className="text-sm">{value}</p>
+    </div>
+  );
+}
+
+function TotalRow({
+  label,
+  value,
+  currency,
+  strong,
+}: {
+  label: string;
+  value: number;
+  currency: string;
+  strong?: boolean;
+}) {
+  return (
+    <div className={`flex justify-between gap-8 ${strong ? "border-t border-border pt-2 font-semibold" : "text-sm text-foreground-muted"}`}>
+      <span>{label}</span>
+      <MoneyDisplay minor={value} currency={currency} className="font-numeric" />
+    </div>
+  );
+}

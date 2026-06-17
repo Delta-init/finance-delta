@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/
+
+# Bun
+bun.lockb
+.bun/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Tests / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Docker / data
+mongo-data/
+*.local

@@ -1,0 +1,49 @@
+{
+  "name": "@delta/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@delta/shared": "workspace:*",
+    "@hookform/resolvers": "^3.9.1",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-popover": "^1.1.4",
+    "@radix-ui/react-select": "^2.1.4",
+    "@tanstack/react-query": "^5.59.20",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.0.4",
+    "framer-motion": "^11.11.17",
+    "goey-toast": "^0.5.0",
+    "lucide-react": "^0.460.0",
+    "next": "^15.0.3",
+    "next-auth": "5.0.0-beta.25",
+    "nextjs-toploader": "^3.9.17",
+    "react": "^19.0.0",
+    "react-day-picker": "^9.4.3",
+    "react-dom": "^19.0.0",
+    "react-hook-form": "^7.53.2",
+    "recharts": "^2.13.3",
+    "tailwind-merge": "^2.5.4",
+    "vaul": "^1.1.2",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.6.3"
+  }
+}

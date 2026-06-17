@@ -1,0 +1,209 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type {
+  CreateBankAccountInput,
+  UpdateBankAccountInput,
+  BankAccount,
+  BankTransaction,
+  ReconciliationSession,
+  CreateBankTransactionInput,
+  BulkImportTransactionsInput,
+  MatchTransactionInput,
+  StartReconciliationInput,
+  UpdateReconciliationInput,
+} from "@delta/shared";
+import { api, type QueryParams } from "@/lib/api";
+
+const ACCOUNTS_KEY = ["bank-accounts"] as const;
+const txKey = (accountId: string) => [...ACCOUNTS_KEY, accountId, "transactions"] as const;
+const reconcileKey = (accountId: string) => [...ACCOUNTS_KEY, accountId, "reconciliations"] as const;
+
+// ── Accounts ──────────────────────────────────────────────────────────────────
+
+export function useBankAccounts(params: QueryParams = {}) {
+  return useQuery({
+    queryKey: [...ACCOUNTS_KEY, params],
+    queryFn: () => api.getList<BankAccount>("bank-accounts", params),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useBankAccount(id: string | undefined) {
+  return useQuery({
+    queryKey: [...ACCOUNTS_KEY, id],
+    queryFn: () => api.get<BankAccount>(`bank-accounts/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useCreateBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateBankAccountInput) =>
+      api.post<BankAccount>("bank-accounts", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ACCOUNTS_KEY }),
+  });
+}
+
+export function useUpdateBankAccount(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateBankAccountInput) =>
+      api.patch<BankAccount>(`bank-accounts/${id}`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, id] });
+    },
+  });
+}
+
+export function useDeactivateBankAccount(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<BankAccount>(`bank-accounts/${id}/deactivate`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, id] });
+    },
+  });
+}
+
+// ── Transactions ──────────────────────────────────────────────────────────────
+
+export function useBankTransactions(accountId: string, params: QueryParams = {}) {
+  return useQuery({
+    queryKey: [...txKey(accountId), params],
+    queryFn: () => api.getList<BankTransaction>(`bank-accounts/${accountId}/transactions`, params),
+    placeholderData: (prev) => prev,
+    enabled: !!accountId,
+  });
+}
+
+export function useCreateBankTransaction(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateBankTransactionInput) =>
+      api.post<BankTransaction>(`bank-accounts/${accountId}/transactions`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}
+
+export function useBulkImportTransactions(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkImportTransactionsInput) =>
+      api.post<{ count: number; transactions: BankTransaction[] }>(
+        `bank-accounts/${accountId}/transactions/bulk`,
+        input,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}
+
+function useTxAction(action: string, accountId: string, txId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: unknown) =>
+      body !== undefined
+        ? api.post<BankTransaction>(
+            `bank-accounts/${accountId}/transactions/${txId}/${action}`,
+            body as Record<string, unknown>,
+          )
+        : api.post<BankTransaction>(
+            `bank-accounts/${accountId}/transactions/${txId}/${action}`,
+          ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: txKey(accountId) }),
+  });
+}
+
+export const useMatchTransaction = (accountId: string, txId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MatchTransactionInput) =>
+      api.post<BankTransaction>(
+        `bank-accounts/${accountId}/transactions/${txId}/match`,
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: txKey(accountId) }),
+  });
+};
+export const useUnmatchTransaction = (accountId: string, txId: string) =>
+  useTxAction("unmatch", accountId, txId);
+export const useExcludeTransaction = (accountId: string, txId: string) =>
+  useTxAction("exclude", accountId, txId);
+export const useMarkDuplicate = (accountId: string, txId: string) =>
+  useTxAction("duplicate", accountId, txId);
+
+// ── Reconciliation ────────────────────────────────────────────────────────────
+
+export function useReconciliations(accountId: string, params: QueryParams = {}) {
+  return useQuery({
+    queryKey: [...reconcileKey(accountId), params],
+    queryFn: () =>
+      api.getList<ReconciliationSession>(
+        `bank-accounts/${accountId}/reconciliations`,
+        params,
+      ),
+    enabled: !!accountId,
+  });
+}
+
+export function useReconciliation(accountId: string, sessionId: string | undefined) {
+  return useQuery({
+    queryKey: [...reconcileKey(accountId), sessionId],
+    queryFn: () =>
+      api.get<ReconciliationSession>(
+        `bank-accounts/${accountId}/reconciliations/${sessionId}`,
+      ),
+    enabled: !!accountId && !!sessionId,
+  });
+}
+
+export function useStartReconciliation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: StartReconciliationInput) =>
+      api.post<ReconciliationSession>(
+        `bank-accounts/${accountId}/reconciliations`,
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: reconcileKey(accountId) }),
+  });
+}
+
+export function useUpdateReconciliation(accountId: string, sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateReconciliationInput) =>
+      api.patch<ReconciliationSession>(
+        `bank-accounts/${accountId}/reconciliations/${sessionId}`,
+        input,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...reconcileKey(accountId), sessionId] });
+    },
+  });
+}
+
+export function useCompleteReconciliation(accountId: string, sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<ReconciliationSession>(
+        `bank-accounts/${accountId}/reconciliations/${sessionId}/complete`,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...reconcileKey(accountId), sessionId] });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}

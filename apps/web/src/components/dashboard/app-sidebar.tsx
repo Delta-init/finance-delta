@@ -81,7 +81,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: "expense:read" },
       { href: "/banking", label: "Banking", icon: Landmark, enabled: true },
-      { href: "/inventory", label: "Inventory", icon: Package, enabled: true },
+      { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
       { href: "/reports", label: "Reports", icon: BarChart3, enabled: true },
     ],
   },

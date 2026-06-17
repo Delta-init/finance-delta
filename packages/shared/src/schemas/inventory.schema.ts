@@ -91,7 +91,7 @@ export const createWarehouseSchema = z.object({
 });
 export type CreateWarehouseInput = z.infer<typeof createWarehouseSchema>;
 
-export const updateWarehouseSchema = createWarehouseSchema.partial();
+export const updateWarehouseSchema = createWarehouseSchema.extend({ isActive: z.boolean().optional() }).partial();
 export type UpdateWarehouseInput = z.infer<typeof updateWarehouseSchema>;
 
 export const warehouseSchema = z.object({

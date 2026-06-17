@@ -7,10 +7,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
+import { useTopLoader } from "nextjs-toploader";
 import { loginSchema, type LoginInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/lib/toast";
 import {
   GoogleIcon,
   AppleIcon,
@@ -20,6 +22,7 @@ import {
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const topLoader = useTopLoader();
   const [formError, setFormError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -34,11 +37,23 @@ export function LoginForm() {
 
   async function onSubmit(values: LoginInput) {
     setFormError(null);
+    topLoader.start();
     const res = await signIn("credentials", { ...values, redirect: false });
     if (res?.error) {
+      topLoader.done();
       setFormError("Invalid email or password");
+      toast.error("Invalid email or password");
       return;
     }
+    // Prompt the browser to save credentials (won't trigger for AJAX logins otherwise)
+    const w = window as unknown as { PasswordCredential?: new (o: { id: string; password: string }) => Credential };
+    if (typeof window !== "undefined" && w.PasswordCredential) {
+      try {
+        const cred = new w.PasswordCredential({ id: values.email, password: values.password });
+        await navigator.credentials.store(cred);
+      } catch (_) {}
+    }
+    toast.success("Welcome back!");
     router.push(params.get("callbackUrl") ?? "/dashboard");
     router.refresh();
   }

@@ -45,7 +45,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       {loading ? (
         <>
           <FinanceSpinner size={size === "lg" ? 16 : 13} />
-          <span className="opacity-60">{children}</span>
+          {/* <span className="opacity-60">{children}</span> */}
         </>
       ) : (
         children

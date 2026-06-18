@@ -11,6 +11,7 @@ import { useState, type ReactNode } from "react";
 import { GoeyToaster } from "@/components/ui/goey-toaster";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { CurrencyProvider } from "@/lib/currency-context";
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -58,8 +59,10 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <SessionProvider>
       <QueryClientProvider client={queryClient}>
-        {children}
-        <GoeyToaster />
+        <CurrencyProvider>
+          {children}
+          <GoeyToaster />
+        </CurrencyProvider>
       </QueryClientProvider>
     </SessionProvider>
   );

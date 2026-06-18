@@ -26,6 +26,8 @@ import vendorCreditRoutes from "./modules/vendor-credit/vendor-credit.routes";
 import expenseRoutes from "./modules/expense/expense.routes";
 import bankingRoutes from "./modules/banking/banking.routes";
 import inventoryRoutes from "./modules/inventory/inventory.routes";
+import reportRoutes from "./modules/reports/reports.routes";
+import commissionRoutes from "./modules/commission/commission.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
@@ -67,6 +69,8 @@ async function bootstrap() {
   api.use("/expenses", expenseRoutes);
   api.use("/bank-accounts", bankingRoutes);
   api.use("/inventory", inventoryRoutes);
+  api.use("/reports", reportRoutes);
+  api.use("/commissions", commissionRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);

@@ -3,6 +3,7 @@ import { invoiceQuerySchema } from "@delta/shared";
 import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as invoiceService from "./invoice.service";
+import { autoCalculate } from "../commission/commission.service";
 
 const orgId = (req: Request) => req.auth!.organizationId;
 
@@ -17,7 +18,9 @@ export const get = asyncHandler(async (req, res) => {
 });
 
 export const create = asyncHandler(async (req, res) => {
-  created(res, await invoiceService.createInvoice(orgId(req), req.body));
+  const invoice = await invoiceService.createInvoice(orgId(req), req.body);
+  void autoCalculate(orgId(req), invoice.id, "invoice_raised").catch(() => undefined);
+  created(res, invoice);
 });
 
 export const update = asyncHandler(async (req, res) => {
@@ -38,7 +41,9 @@ export const voidInvoice = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
-  created(res, await invoiceService.recordPayment(orgId(req), req.params.id!, req.body));
+  const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body);
+  void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
+  created(res, payment);
 });
 
 export const resend = asyncHandler(async (req, res) => {

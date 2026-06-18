@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { ZodError } from "zod";
 import { AppError } from "../lib/http";
 import { logger } from "../lib/logger";
 
@@ -18,6 +19,16 @@ export function errorHandler(
   if (err instanceof AppError) {
     return res.status(err.status).json({
       error: { code: err.code, message: err.message, details: err.details },
+    });
+  }
+
+  if (err instanceof ZodError) {
+    return res.status(422).json({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed",
+        details: err.flatten().fieldErrors,
+      },
     });
   }
 

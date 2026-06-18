@@ -82,6 +82,11 @@ export const PERMISSIONS = [
   "report:read",
   "ledger:read",
   "ledger:write",
+
+  // Commissions
+  "commission:read",
+  "commission:write",
+  "commission:approve",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

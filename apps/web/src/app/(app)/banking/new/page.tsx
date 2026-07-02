@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateBankAccount } from "@/features/banking/api";
 import { BANK_ACCOUNT_TYPE_LABELS, type BankAccountType } from "@delta/shared";
+import { useCurrency } from "@/lib/currency-context";
 
 const ACCOUNT_TYPES = Object.keys(BANK_ACCOUNT_TYPE_LABELS) as BankAccountType[];
 
@@ -39,6 +40,7 @@ function toMinor(val: string): number {
 export default function NewBankAccountPage() {
   const router = useRouter();
   const createAccount = useCreateBankAccount();
+  const { currency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
 
   const {
@@ -51,7 +53,7 @@ export default function NewBankAccountPage() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       accountType: "checking",
-      currency: "AED",
+      currency: orgCurrency,
       openingBalanceDisplay: "0",
       openingDate: today,
     },

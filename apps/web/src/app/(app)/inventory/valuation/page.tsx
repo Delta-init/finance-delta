@@ -7,9 +7,11 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useValuationReport } from "@/features/inventory/api";
+import { useCurrency } from "@/lib/currency-context";
 
 export default function ValuationPage() {
-  const { data: report, isLoading } = useValuationReport("AED");
+  const { currency: orgCurrency } = useCurrency();
+  const { data: report, isLoading } = useValuationReport(orgCurrency);
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
 
   const columns: Column<ValuationRow>[] = [
@@ -50,14 +52,14 @@ export default function ValuationPage() {
       header: "Avg Cost",
       align: "right",
       sortable: true,
-      cell: (row) => <MoneyDisplay minor={row.avgCostMinor} currency="AED" className="text-foreground-muted" />,
+      cell: (row) => <MoneyDisplay minor={row.avgCostMinor} currency={orgCurrency} className="text-foreground-muted" />,
     },
     {
       key: "valuationMinor",
       header: "Valuation",
       align: "right",
       sortable: true,
-      cell: (row) => <MoneyDisplay minor={row.valuationMinor} currency="AED" className="font-semibold" />,
+      cell: (row) => <MoneyDisplay minor={row.valuationMinor} currency={orgCurrency} className="font-semibold" />,
     },
   ];
 
@@ -91,7 +93,7 @@ export default function ValuationPage() {
             <p className="text-sm font-medium text-foreground-muted uppercase tracking-wide">Total Inventory Value</p>
             <MoneyDisplay
               minor={report.totalValueMinor}
-              currency="AED"
+              currency={orgCurrency}
               className="mt-1 text-2xl font-bold text-foreground"
             />
           </div>

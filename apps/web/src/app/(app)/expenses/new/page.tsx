@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense } from "@/features/expenses/api";
 import type { CreateExpenseInput, ExpenseCategory } from "@delta/shared";
+import { useCurrency } from "@/lib/currency-context";
 
 const CATEGORIES: { value: ExpenseCategory; label: string }[] = [
   { value: "salaries_wages", label: "Salaries & Wages" },
@@ -73,6 +74,7 @@ function toMinor(val: string): number {
 export default function NewExpensePage() {
   const router = useRouter();
   const createExpense = useCreateExpense();
+  const { currency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
 
   const { register, handleSubmit, watch, setValue, control, formState: { errors, isSubmitting } } =
@@ -81,7 +83,7 @@ export default function NewExpensePage() {
       defaultValues: {
         category: "other",
         expenseDate: today,
-        currency: "AED",
+        currency: orgCurrency,
         taxPct: 0,
         requiresApproval: false,
         isRecurring: false,

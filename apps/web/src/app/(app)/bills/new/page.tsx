@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreateBill } from "@/features/bills/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
@@ -51,6 +52,7 @@ export default function NewBillPage() {
   const createBill = useCreateBill();
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
+  const { currency: orgCurrency } = useCurrency();
 
   const today = new Date().toISOString().slice(0, 10);
   const due30 = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
@@ -63,7 +65,7 @@ export default function NewBillPage() {
         sourcePOId: sourcePOId || undefined,
         billDate: today,
         dueDate: due30,
-        currency: "AED",
+        currency: orgCurrency,
         paymentTerms: "",
         notes: "",
         requiresApproval: false,

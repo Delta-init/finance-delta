@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreateVendorCredit } from "@/features/vendor-credits/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -48,6 +49,7 @@ export default function NewVendorCreditPage() {
   const createCredit = useCreateVendorCredit();
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
+  const { currency: orgCurrency } = useCurrency();
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<FormValues>({
@@ -57,7 +59,7 @@ export default function NewVendorCreditPage() {
         sourceBillId: sourceBillId || undefined,
         reason: "",
         issueDate: new Date().toISOString().slice(0, 10),
-        currency: "AED",
+        currency: orgCurrency,
         notes: "",
         lineItems: [emptyLine()],
       },

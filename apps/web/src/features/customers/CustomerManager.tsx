@@ -41,6 +41,7 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCreateCustomer, useCustomers, useDeleteCustomer, useUpdateCustomer } from "./api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -63,13 +64,13 @@ function toFormValues(c: Customer): CreateCustomerInput {
   };
 }
 
-function defaultValues(): CreateCustomerInput {
+function defaultValues(currency: string): CreateCustomerInput {
   return {
     name: "",
     email: "",
     phone: "",
     companyName: "",
-    currency: "AED",
+    currency,
     vatNumber: "",
     discountPct: 0,
     billingAddress: emptyAddress(),
@@ -100,6 +101,7 @@ function AddressFields({
 
 export function CustomerManager() {
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState<string>("all");
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -125,11 +127,11 @@ export function CustomerManager() {
   const { register, handleSubmit, reset, setValue, watch, formState: { errors, isSubmitting } } =
     useForm<CreateCustomerInput>({
       resolver: zodResolver(createCustomerSchema),
-      defaultValues: defaultValues(),
+      defaultValues: defaultValues(orgCurrency),
     });
 
   function openCreate() {
-    reset(defaultValues());
+    reset(defaultValues(orgCurrency));
     setModal("create");
   }
 

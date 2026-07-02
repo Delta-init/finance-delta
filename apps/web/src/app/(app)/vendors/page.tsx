@@ -21,11 +21,12 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useVendors, useCreateVendor, useUpdateVendor, useDeleteVendor } from "@/features/vendors/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
-function defaultValues(): CreateVendorInput {
-  return { name: "", email: "", phone: "", companyName: "", currency: "AED", vatNumber: "", billingAddress: { street: "", city: "", state: "", zip: "", country: "" }, tagIds: [] };
+function defaultValues(currency: string): CreateVendorInput {
+  return { name: "", email: "", phone: "", companyName: "", currency, vatNumber: "", billingAddress: { street: "", city: "", state: "", zip: "", country: "" }, tagIds: [] };
 }
 
 function toFormValues(v: Vendor): CreateVendorInput {
@@ -34,6 +35,7 @@ function toFormValues(v: Vendor): CreateVendorInput {
 
 export default function VendorsPage() {
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState("all");
   useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -48,7 +50,7 @@ export default function VendorsPage() {
   const isEditing = modal !== null && modal !== "create";
 
   const { register, handleSubmit, reset, setValue, watch, formState: { errors, isSubmitting } } =
-    useForm<CreateVendorInput>({ resolver: zodResolver(createVendorSchema), defaultValues: defaultValues() });
+    useForm<CreateVendorInput>({ resolver: zodResolver(createVendorSchema), defaultValues: defaultValues(orgCurrency) });
 
   async function onSubmit(values: CreateVendorInput) {
     try {
@@ -86,7 +88,7 @@ export default function VendorsPage() {
   return (
     <div className="space-y-4 p-6">
       <PageHeader icon={Truck} title="Vendors" description="Manage your supplier relationships and purchase history."
-        action={<Button onClick={() => { reset(defaultValues()); setModal("create"); }}><Plus className="h-4 w-4" /> New vendor</Button>}
+        action={<Button onClick={() => { reset(defaultValues(orgCurrency)); setModal("create"); }}><Plus className="h-4 w-4" /> New vendor</Button>}
       />
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">

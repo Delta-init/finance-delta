@@ -44,6 +44,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
 import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
+import { useCurrency } from "@/lib/currency-context";
 
 // ── Form schema ──────────────────────────────────────────────────────────────
 
@@ -175,6 +176,7 @@ export function InvoiceForm({
   onSubmit: (input: CreateInvoiceInput) => Promise<void>;
 }) {
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
@@ -212,7 +214,7 @@ export function InvoiceForm({
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
-  const currency = initial?.currency ?? "AED";
+  const currency = initial?.currency ?? orgCurrency;
   const hasProgress = watch("hasProgress");
   const hasRecurring = watch("hasRecurring");
   const locale = watch("locale");

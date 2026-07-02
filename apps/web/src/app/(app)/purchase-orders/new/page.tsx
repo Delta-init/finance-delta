@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreatePO } from "@/features/purchase-orders/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -53,6 +54,7 @@ export default function NewPurchaseOrderPage() {
   const createPO = useCreatePO();
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
+  const { currency: orgCurrency } = useCurrency();
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<FormValues>({
@@ -61,7 +63,7 @@ export default function NewPurchaseOrderPage() {
         vendorId: "",
         issueDate: new Date().toISOString().slice(0, 10),
         expectedDate: "",
-        currency: "AED",
+        currency: orgCurrency,
         notes: "",
         lineItems: [emptyLine()],
       },

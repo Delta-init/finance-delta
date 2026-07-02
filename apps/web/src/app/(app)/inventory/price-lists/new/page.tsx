@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { type PriceListEntry, ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
 import { useItems, useCreatePriceList } from "@/features/inventory/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR"];
 
@@ -25,11 +26,12 @@ export default function NewPriceListPage() {
   const createPriceList = useCreatePriceList();
   const { data: itemsData } = useItems({ pageSize: 500, isActive: "true", type: "product" });
   const items = itemsData?.data ?? [];
+  const { currency: orgCurrency } = useCurrency();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isDefault, setIsDefault] = useState(false);
-  const [currency, setCurrency] = useState("AED");
+  const [currency, setCurrency] = useState<string>(orgCurrency);
   const [validFrom, setValidFrom] = useState("");
   const [validTo, setValidTo] = useState("");
   const [entries, setEntries] = useState<EntryRow[]>([]);

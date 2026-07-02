@@ -21,6 +21,7 @@ import { ApiError } from "@/lib/api";
 import {
   useItem, useStockLevels, useStockMovements, useUpdateItem, useDeleteItem,
 } from "@/features/inventory/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const MOVEMENT_TONE: Record<MovementType, "success" | "danger" | "neutral"> = {
   purchase_in: "success",
@@ -35,6 +36,7 @@ const MOVEMENT_TONE: Record<MovementType, "success" | "danger" | "neutral"> = {
 export default function ItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const { data: item, isLoading } = useItem(id);
   const { data: stockLevels } = useStockLevels(id);
   const t = useTableQuery({ initialSort: { key: "movementDate", dir: "desc" } });
@@ -93,13 +95,13 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
       key: "avgCostMinor",
       header: "Avg Cost",
       align: "right",
-      cell: (sl) => <MoneyDisplay minor={sl.avgCostMinor} currency="AED" className="text-foreground-muted" />,
+      cell: (sl) => <MoneyDisplay minor={sl.avgCostMinor} currency={orgCurrency} className="text-foreground-muted" />,
     },
     {
       key: "valuationMinor",
       header: "Valuation",
       align: "right",
-      cell: (sl) => <MoneyDisplay minor={sl.valuationMinor} currency="AED" className="font-medium" />,
+      cell: (sl) => <MoneyDisplay minor={sl.valuationMinor} currency={orgCurrency} className="font-medium" />,
     },
   ];
 
@@ -223,11 +225,11 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-border bg-surface p-4">
           <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Unit Price</p>
-          <MoneyDisplay minor={item.unitPriceMinor} currency="AED" className="mt-1 text-xl font-semibold" />
+          <MoneyDisplay minor={item.unitPriceMinor} currency={orgCurrency} className="mt-1 text-xl font-semibold" />
         </div>
         <div className="rounded-lg border border-border bg-surface p-4">
           <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Cost Price</p>
-          <MoneyDisplay minor={item.costPriceMinor} currency="AED" className="mt-1 text-xl font-semibold" />
+          <MoneyDisplay minor={item.costPriceMinor} currency={orgCurrency} className="mt-1 text-xl font-semibold" />
         </div>
         <div className="rounded-lg border border-border bg-surface p-4">
           <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Total Stock</p>

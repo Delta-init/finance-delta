@@ -37,6 +37,7 @@ import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
 import { useTaxConfig } from "@/features/organization/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const lineSchema = z.object({
   description: z.string().min(1, "Required"),
@@ -111,6 +112,7 @@ export function QuotationForm({
   onSubmit: (input: CreateQuotationInput) => Promise<void>;
 }) {
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +142,7 @@ export function QuotationForm({
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
-  const currency = initial?.currency ?? "AED";
+  const currency = initial?.currency ?? orgCurrency;
   const taxInclusive = watch("taxInclusive");
 
   const handleReorder = (newOrder: typeof fields) => {

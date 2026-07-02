@@ -131,8 +131,6 @@ export default function RecordsPage() {
     },
   ];
 
-  const earnedCount = data?.data.filter((r) => r.status === "earned").length ?? 0;
-
   return (
     <div className="space-y-6 p-6">
       <PageHeader

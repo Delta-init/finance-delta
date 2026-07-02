@@ -4,6 +4,7 @@ import { use, useEffect } from "react";
 import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useQuotation } from "@/features/quotations/api";
 import { QUOTE_STATUS_TONE } from "@/features/quotations/status";
+import { useOrganization } from "@/features/organization/api";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -20,6 +21,7 @@ export default function PrintQuotationPage({
 }) {
   const { id } = use(params);
   const { data: q, isLoading } = useQuotation(id);
+  const { data: org } = useOrganization();
 
   useEffect(() => {
     if (q) {
@@ -45,7 +47,7 @@ export default function PrintQuotationPage({
   }
 
   const statusColor = TONE_COLORS[QUOTE_STATUS_TONE[q.status]] ?? "#64748b";
-  const L = getPrintLabels("en");
+  const L = getPrintLabels("en", org?.taxLabel);
 
   return (
     <>

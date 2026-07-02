@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   "role:delete",
   "organization:read",
   "organization:update",
+  "organization:create",
 
   // Customers
   "customer:read",
@@ -87,6 +88,10 @@ export const PERMISSIONS = [
   "commission:read",
   "commission:write",
   "commission:approve",
+
+  // Loans & Credit
+  "loan:read",
+  "loan:write",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

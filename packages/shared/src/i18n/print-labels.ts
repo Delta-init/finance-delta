@@ -44,6 +44,10 @@ const fr: PrintLabels = {
 
 const LABELS: Record<string, PrintLabels> = { en, ar, fr };
 
-export function getPrintLabels(locale?: string | null): PrintLabels {
-  return LABELS[locale ?? "en"] ?? en;
+export function getPrintLabels(locale?: string | null, taxLabel?: string | null): PrintLabels {
+  const base = LABELS[locale ?? "en"] ?? en;
+  if (taxLabel && taxLabel !== base.tax) {
+    return { ...base, tax: taxLabel };
+  }
+  return base;
 }

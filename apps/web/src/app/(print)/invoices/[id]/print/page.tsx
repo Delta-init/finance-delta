@@ -4,6 +4,7 @@ import { use, useEffect } from "react";
 import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
+import { useOrganization } from "@/features/organization/api";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -20,6 +21,7 @@ export default function PrintInvoicePage({
 }) {
   const { id } = use(params);
   const { data: invoice, isLoading } = useInvoice(id);
+  const { data: org } = useOrganization();
 
   useEffect(() => {
     if (invoice) {
@@ -45,7 +47,7 @@ export default function PrintInvoicePage({
   }
 
   const statusColor = TONE_COLORS[INVOICE_STATUS_TONE[invoice.status]] ?? "#64748b";
-  const L = getPrintLabels(invoice.locale);
+  const L = getPrintLabels(invoice.locale, org?.taxLabel);
   const isRtl = invoice.locale === "ar";
 
   return (

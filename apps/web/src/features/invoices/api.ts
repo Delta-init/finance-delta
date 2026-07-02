@@ -79,8 +79,15 @@ export function useRecordPayment(invoiceId: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (input: RecordPaymentInput) =>
-      api.post<Invoice>(`invoices/${invoiceId}/payments`, input),
+    mutationFn: ({ input, file }: { input: RecordPaymentInput; file?: File }) => {
+      if (file) {
+        const form = new FormData();
+        form.append("data", JSON.stringify(input));
+        form.append("file", file);
+        return api.postForm<Invoice>(`invoices/${invoiceId}/payments`, form);
+      }
+      return api.post<Invoice>(`invoices/${invoiceId}/payments`, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });

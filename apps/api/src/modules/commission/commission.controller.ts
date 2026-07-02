@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { asyncHandler, ok, created } from "../../lib/http";
+import { asyncHandler, ok, created, AppError } from "../../lib/http";
 import { validateBody, parseQuery } from "../../middleware/validate";
 import {
   createCommissionStructureSchema,
@@ -66,9 +66,14 @@ export const cancelRecord = asyncHandler(async (req, res) => {
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export const commissionReport = asyncHandler(async (req, res) => {
   const now = new Date();
   const from = (req.query.from as string) ?? `${now.getFullYear()}-01-01`;
   const to = (req.query.to as string) ?? now.toISOString().slice(0, 10);
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+    throw new AppError("VALIDATION_ERROR", "from and to must be in YYYY-MM-DD format");
+  }
   ok(res, await svc.getCommissionReport(org(req), from, to));
 });

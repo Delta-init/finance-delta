@@ -1,30 +1,30 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
 
+const membershipSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true },
+    roleId:         { type: Schema.Types.ObjectId, ref: "Role", required: true },
+    status:         { type: String, enum: ["active", "invited", "suspended"], default: "active" },
+  },
+  { _id: false },
+);
+
 const userSchema = new Schema(
   {
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: "Organization",
-      required: true,
-      index: true,
-    },
-    name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
+    name:         { type: String, required: true, trim: true },
+    email:        { type: String, required: true, lowercase: true, trim: true, unique: true },
     passwordHash: { type: String, required: true },
-    roleId: { type: Schema.Types.ObjectId, ref: "Role", required: true },
-    status: {
-      type: String,
-      enum: ["active", "suspended"],
-      default: "active",
-    },
-    lastLoginAt: { type: Date },
-    tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],
+    isSuperAdmin: { type: Boolean, default: false },
+    status:       { type: String, enum: ["active", "suspended"], default: "active" },
+    lastLoginAt:  { type: Date },
+    memberships:  { type: [membershipSchema], default: [] },
   },
   { timestamps: true },
 );
 
-// Email is unique per organization.
-userSchema.index({ organizationId: 1, email: 1 }, { unique: true });
+// Fast lookup: all orgs a user belongs to, and all users in an org.
+userSchema.index({ "memberships.organizationId": 1 });
 
+export type MembershipDoc = InferSchemaType<typeof membershipSchema>;
 export type UserDoc = InferSchemaType<typeof userSchema> & { _id: Types.ObjectId };
 export const User = model("User", userSchema);

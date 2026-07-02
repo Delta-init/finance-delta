@@ -42,7 +42,7 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCreateCustomer, useCustomers, useDeleteCustomer, useUpdateCustomer } from "./api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
 function emptyAddress() {
   return { street: "", city: "", state: "", zip: "", country: "" };

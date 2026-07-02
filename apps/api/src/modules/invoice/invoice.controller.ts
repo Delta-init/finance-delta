@@ -41,7 +41,7 @@ export const voidInvoice = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
-  const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body);
+  const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body, req.file);
   void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
   created(res, payment);
 });

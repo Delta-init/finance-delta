@@ -57,6 +57,8 @@ const paymentSubSchema = new Schema(
     reference: { type: String, default: "" },
     notes: { type: String, default: "" },
     accountName: { type: String, default: "" },
+    proofUrl: { type: String, default: "" },
+    proofKey: { type: String, default: "" },
   },
   { timestamps: true },
 );

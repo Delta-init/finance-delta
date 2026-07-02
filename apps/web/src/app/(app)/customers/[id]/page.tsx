@@ -25,7 +25,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCustomer, useCustomerStatement, useUpdateCustomer } from "@/features/customers/api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral" | "primary"> = {
   draft: "neutral",

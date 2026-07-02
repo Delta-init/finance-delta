@@ -1,3 +1,6 @@
+"use client";
+
+import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -6,36 +9,48 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useDashboardStats } from "@/features/dashboard/api";
 
-type Status = "paid" | "overdue" | "sent" | "draft";
+type Tone = "success" | "danger" | "primary" | "neutral" | "warning";
 
-const STATUS_TONE: Record<Status, "success" | "danger" | "primary" | "neutral"> = {
-  paid: "success",
-  overdue: "danger",
-  sent: "primary",
-  draft: "neutral",
-};
+function statusTone(status: string): Tone {
+  switch (status.toLowerCase()) {
+    case "paid": return "success";
+    case "overdue": return "danger";
+    case "sent":
+    case "viewed": return "primary";
+    case "partial": return "warning";
+    default: return "neutral";
+  }
+}
 
-const ROWS: {
-  number: string;
-  customer: string;
-  status: Status;
-  due: string;
-  amount: string;
-}[] = [
-  { number: "INV-1042", customer: "Acme Trading LLC", status: "paid", due: "Jun 02", amount: "AED 24,500" },
-  { number: "INV-1041", customer: "Pixel Cot FZ", status: "overdue", due: "May 28", amount: "AED 9,800" },
-  { number: "INV-1040", customer: "Gulf Logistics", status: "sent", due: "Jun 18", amount: "AED 42,000" },
-  { number: "INV-1039", customer: "Nova Interiors", status: "paid", due: "Jun 01", amount: "AED 12,300" },
-  { number: "INV-1038", customer: "Orbit Media", status: "draft", due: "—", amount: "AED 7,650" },
-];
+function fmtDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
+}
 
 export function RecentInvoices() {
+  const { data, isLoading } = useDashboardStats();
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent Invoices</CardTitle>
-        <CardDescription>Latest activity across your workspace</CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Recent Invoices</CardTitle>
+            <CardDescription>Latest activity across your workspace</CardDescription>
+          </div>
+          <Link
+            href="/invoices"
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            View all
+          </Link>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <table className="w-full text-sm">
@@ -49,21 +64,35 @@ export function RecentInvoices() {
             </tr>
           </thead>
           <tbody>
-            {ROWS.map((r) => (
-              <tr key={r.number} className="border-b border-border last:border-0">
-                <td className="px-5 py-3 font-medium">{r.number}</td>
-                <td className="px-5 py-3 text-foreground-muted">{r.customer}</td>
-                <td className="px-5 py-3">
-                  <Badge tone={STATUS_TONE[r.status]} className="capitalize">
-                    {r.status}
-                  </Badge>
-                </td>
-                <td className="px-5 py-3 text-foreground-muted">{r.due}</td>
-                <td className="px-5 py-3 text-right font-numeric font-medium">
-                  {r.amount}
-                </td>
-              </tr>
-            ))}
+            {isLoading
+              ? Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border last:border-0">
+                    <td className="px-5 py-3"><Skeleton className="h-4 w-20" /></td>
+                    <td className="px-5 py-3"><Skeleton className="h-4 w-32" /></td>
+                    <td className="px-5 py-3"><Skeleton className="h-5 w-14 rounded-full" /></td>
+                    <td className="px-5 py-3"><Skeleton className="h-4 w-14" /></td>
+                    <td className="px-5 py-3 flex justify-end"><Skeleton className="h-4 w-20" /></td>
+                  </tr>
+                ))
+              : data?.recentInvoices.map((inv) => (
+                  <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors">
+                    <td className="px-5 py-3 font-medium">
+                      <Link href={`/invoices/${inv.id}`} className="hover:text-primary hover:underline">
+                        {inv.number}
+                      </Link>
+                    </td>
+                    <td className="px-5 py-3 text-foreground-muted">{inv.customerName}</td>
+                    <td className="px-5 py-3">
+                      <Badge tone={statusTone(inv.status)} className="capitalize">
+                        {inv.status}
+                      </Badge>
+                    </td>
+                    <td className="px-5 py-3 text-foreground-muted">{fmtDate(inv.dueDate)}</td>
+                    <td className="px-5 py-3 text-right font-numeric font-medium">
+                      {(inv.totalMinor / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
           </tbody>
         </table>
       </CardContent>

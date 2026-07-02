@@ -71,6 +71,9 @@ export const recordPaymentSchema = z.object({
   reference: z.string().max(200).optional().default(""),
   notes: z.string().max(1000).optional().default(""),
   accountName: z.string().max(100).optional().default(""),
+  /** Populated by the server after uploading to R2 — not accepted from client directly. */
+  proofUrl: z.string().url().optional(),
+  proofKey: z.string().optional(),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 
@@ -115,6 +118,7 @@ export const paymentSchema = z.object({
   reference: z.string(),
   notes: z.string(),
   accountName: z.string(),
+  proofUrl: z.string().optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;

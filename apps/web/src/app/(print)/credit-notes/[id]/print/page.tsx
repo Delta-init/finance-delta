@@ -1,8 +1,9 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney } from "@delta/shared";
+import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useCreditNote } from "@/features/credit-notes/api";
+import { useOrganization } from "@/features/organization/api";
 
 const STATUS_COLOR: Record<string, string> = {
   draft: "#64748b",
@@ -18,6 +19,7 @@ export default function PrintCreditNotePage({
 }) {
   const { id } = use(params);
   const { data: cn, isLoading } = useCreditNote(id);
+  const { data: org } = useOrganization();
 
   useEffect(() => {
     if (cn) {
@@ -44,6 +46,7 @@ export default function PrintCreditNotePage({
 
   const statusColor = STATUS_COLOR[cn.status] ?? "#64748b";
   const remaining = cn.totalMinor - cn.amountAppliedMinor;
+  const L = getPrintLabels("en", org?.taxLabel);
 
   return (
     <>
@@ -103,7 +106,7 @@ export default function PrintCreditNotePage({
         <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24, fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#1e3a8a", color: "#fff" }}>
-              {["Description", "Qty", "Unit Price", "Disc %", "Tax %", "Amount"].map((h, i) => (
+              {["Description", "Qty", "Unit Price", "Disc %", `${L.tax} %`, "Amount"].map((h, i) => (
                 <th key={h} style={{ padding: "8px 10px", textAlign: i === 0 ? "left" : "right", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
               ))}
             </tr>
@@ -127,7 +130,7 @@ export default function PrintCreditNotePage({
           <div style={{ width: 260, fontSize: 13 }}>
             <TRow label="Subtotal" value={formatMoney(cn.subtotalMinor, cn.currency)} />
             {cn.taxTotalMinor > 0 && (
-              <TRow label="Tax" value={formatMoney(cn.taxTotalMinor, cn.currency)} />
+              <TRow label={L.tax} value={formatMoney(cn.taxTotalMinor, cn.currency)} />
             )}
             <TRow label="Credit Total" value={formatMoney(cn.totalMinor, cn.currency)} strong />
             {cn.amountAppliedMinor > 0 && (

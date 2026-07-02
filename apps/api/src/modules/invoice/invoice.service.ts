@@ -82,6 +82,9 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         paidOn: Date;
         reference: string;
         notes: string;
+        accountName?: string;
+        proofUrl?: string;
+        proofKey?: string;
         createdAt: Date;
       };
       return {
@@ -91,7 +94,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         paidOn: dateOnly(pm.paidOn),
         reference: pm.reference ?? "",
         notes: pm.notes ?? "",
-        accountName: (pm as unknown as { accountName?: string }).accountName ?? "",
+        accountName: pm.accountName ?? "",
+        proofUrl: pm.proofUrl || undefined,
         createdAt: pm.createdAt.toISOString(),
       };
     }),
@@ -426,6 +430,7 @@ export async function recordPayment(
   orgId: string,
   id: string,
   input: RecordPaymentInput,
+  file?: { buffer: Buffer; mimeType: string; originalName: string },
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   const eff = effectiveStatus(doc);
@@ -437,6 +442,17 @@ export async function recordPayment(
     throw new AppError("CONFLICT", `Payment of ${input.amountMinor} exceeds balance of ${currentBalance}`);
   }
 
+  let proofUrl = "";
+  let proofKey = "";
+  if (file) {
+    const { uploadFile, storageConfigured } = await import("../../lib/storage");
+    if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+    const key = `invoices/${orgId}/${id}/proof-${Date.now()}-${file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const uploaded = await uploadFile({ key, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+    proofUrl = uploaded.url;
+    proofKey = uploaded.key;
+  }
+
   const payment = {
     method: input.method,
     amountMinor: input.amountMinor,
@@ -444,6 +460,8 @@ export async function recordPayment(
     reference: input.reference ?? "",
     notes: input.notes ?? "",
     accountName: input.accountName ?? "",
+    proofUrl,
+    proofKey,
   };
 
   (doc.payments as unknown[]).push(payment);

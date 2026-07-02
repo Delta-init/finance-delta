@@ -16,7 +16,7 @@ import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreatePO } from "@/features/purchase-orders/api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
 const lineSchema = z.object({
   description: z.string().min(1, "Required"),

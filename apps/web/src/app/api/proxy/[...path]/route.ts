@@ -27,7 +27,13 @@ async function forward(req: NextRequest, path: string[]) {
     secureCookie,
   });
 
-  if (!token?.accessToken || token.error === "RefreshTokenError") {
+  // When a user has multiple orgs and is in the picker step, the session holds
+  // a short-lived pendingToken instead of a real accessToken.
+  const effectiveToken =
+    (token?.accessToken as string | undefined) ||
+    (token?.needsOrgChoice ? (token.pendingToken as string | undefined) : undefined);
+
+  if (!effectiveToken || token?.error === "RefreshTokenError") {
     return NextResponse.json(
       { error: { code: "UNAUTHENTICATED", message: "Session expired" } },
       { status: 401 },
@@ -35,15 +41,29 @@ async function forward(req: NextRequest, path: string[]) {
   }
 
   const url = `${API_URL}/${path.join("/")}${req.nextUrl.search}`;
+  const contentType = req.headers.get("content-type") ?? "";
+  const isMultipart = contentType.includes("multipart/form-data");
+
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${effectiveToken}`,
+  };
+  if (!isMultipart) {
+    headers["content-type"] = "application/json";
+  } else {
+    // Forward the original content-type header (includes the boundary param)
+    headers["content-type"] = contentType;
+  }
+
   const init: RequestInit = {
     method: req.method,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token.accessToken}`,
-    },
+    headers,
   };
   if (!["GET", "HEAD"].includes(req.method)) {
-    init.body = await req.text();
+    if (isMultipart) {
+      init.body = await req.arrayBuffer();
+    } else {
+      init.body = await req.text();
+    }
   }
 
   const res = await fetch(url, init);

@@ -21,12 +21,12 @@ import {
   FileX2,
   CreditCard,
   TrendingUp,
+  Building2,
   type LucideIcon,
 } from "lucide-react";
 import { hasPermission, type Permission } from "@delta/shared";
 import {
   Sidebar,
-  SidebarHeader,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
@@ -36,6 +36,7 @@ import {
   SidebarMenuButton,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { OrgSwitcher } from "@/components/org-switcher/OrgSwitcher";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -44,6 +45,7 @@ interface NavItem {
   icon: LucideIcon;
   enabled?: boolean;
   permission?: Permission;
+  superAdminOnly?: boolean;
 }
 
 interface NavGroup {
@@ -85,6 +87,7 @@ const NAV: NavGroup[] = [
       { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
       { href: "/reports", label: "Reports", icon: BarChart3, enabled: true },
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
+      { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
     ],
   },
   {
@@ -96,45 +99,58 @@ const NAV: NavGroup[] = [
       { href: "/settings", label: "Settings", icon: Settings, enabled: true },
     ],
   },
+  {
+    label: "Platform",
+    items: [
+      { href: "/platform", label: "All Organizations", icon: Building2, enabled: true, superAdminOnly: true },
+    ],
+  },
 ];
 
 export function AppSidebar({
   user,
 }: {
-  user: { name: string; roleName: string; permissions: string[] };
+  user: {
+    name: string;
+    orgName: string;
+    roleName: string;
+    permissions: string[];
+    isSuperAdmin: boolean;
+  };
 }) {
   const pathname = usePathname();
   const { collapsed, setOpenMobile, isMobile } = useSidebar();
-
   const closeOnMobile = () => isMobile && setOpenMobile(false);
 
   return (
     <Sidebar>
-      <SidebarHeader>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary font-display text-sm font-bold">
-          Δ
-        </span>
-        {!collapsed && (
-          <span className="font-display text-sm font-semibold tracking-tight">
-            Delta Finance
+      {/* ── Org switcher header ─────────────────────────────────── */}
+      <div className={cn("border-b border-white/10", collapsed ? "px-2 py-3" : "px-3 py-3")}>
+        {collapsed ? (
+          /* Collapsed: show just the org avatar */
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/20 text-xs font-bold text-primary-foreground">
+            {user.orgName.slice(0, 2).toUpperCase() || "Δ"}
           </span>
+        ) : (
+          <OrgSwitcher />
         )}
-      </SidebarHeader>
+      </div>
 
+      {/* ── Nav ─────────────────────────────────────────────────── */}
       <SidebarContent>
         {NAV.map((group, gi) => {
-          const items = group.items.filter(
-            (i) => !i.permission || hasPermission(user.permissions, i.permission),
-          );
+          const items = group.items.filter((item) => {
+            if (item.superAdminOnly && !user.isSuperAdmin) return false;
+            if (item.permission && !user.isSuperAdmin && !hasPermission(user.permissions, item.permission)) return false;
+            return true;
+          });
           if (items.length === 0) return null;
           return (
             <SidebarGroup key={group.label ?? gi}>
               {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
               <SidebarMenu>
                 {items.map((item) => {
-                  const active =
-                    pathname === item.href ||
-                    pathname.startsWith(item.href + "/");
+                  const active = pathname === item.href || pathname.startsWith(item.href + "/");
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton
@@ -154,42 +170,36 @@ export function AppSidebar({
         })}
       </SidebarContent>
 
+      {/* ── Footer: user info ───────────────────────────────────── */}
       <SidebarFooter>
-        <div
-          className={cn(
-            "flex items-center gap-2 rounded-md p-2",
-            collapsed && "justify-center",
-          )}
-        >
+        <div className={cn("flex items-center gap-2 rounded-md p-1.5", collapsed && "justify-center")}>
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-xs font-semibold text-primary-foreground">
             {user.name.slice(0, 2).toUpperCase()}
           </span>
           {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-primary-foreground">
-                {user.name}
-              </p>
-              <p className="truncate text-xs text-primary-foreground/60">
-                {user.roleName}
-              </p>
-            </div>
-          )}
-          {!collapsed && (
-            <button
-              onClick={() => signOut({ callbackUrl: "/login" })}
-              aria-label="Sign out"
-              className="rounded-md p-1.5 text-primary-foreground/70 transition-colors hover:bg-white/10 hover:text-primary-foreground"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-primary-foreground">{user.name}</p>
+                <p className="truncate text-xs text-primary-foreground/60">
+                  {user.isSuperAdmin ? "Super Admin" : user.roleName}
+                </p>
+              </div>
+              <button
+                onClick={() => signOut({ callbackUrl: "/login" })}
+                aria-label="Sign out"
+                className="rounded-md p-1.5 text-primary-foreground/60 transition-colors hover:bg-white/10 hover:text-primary-foreground"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </>
           )}
         </div>
         {!collapsed && (
-          <div className="mt-1 flex items-center gap-1 px-1 text-primary-foreground/60">
-            <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:text-primary-foreground">
+          <div className="mt-1 flex items-center gap-1 px-1 text-primary-foreground/50">
+            <a href="/settings" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:text-primary-foreground">
               <Settings className="h-3.5 w-3.5" /> Settings
-            </button>
-            <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:text-primary-foreground">
+            </a>
+            <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:text-primary-foreground">
               <LifeBuoy className="h-3.5 w-3.5" /> Help
             </button>
           </div>

@@ -28,6 +28,9 @@ import bankingRoutes from "./modules/banking/banking.routes";
 import inventoryRoutes from "./modules/inventory/inventory.routes";
 import reportRoutes from "./modules/reports/reports.routes";
 import commissionRoutes from "./modules/commission/commission.routes";
+import loanRoutes from "./modules/loan/loan.routes";
+import platformRoutes from "./modules/platform/platform.routes";
+import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
@@ -71,6 +74,9 @@ async function bootstrap() {
   api.use("/inventory", inventoryRoutes);
   api.use("/reports", reportRoutes);
   api.use("/commissions", commissionRoutes);
+  api.use("/loans", loanRoutes);
+  api.use("/platform", platformRoutes);
+  api.use("/dashboard", dashboardRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);

@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { loginSchema, type AuthResult } from "@delta/shared";
+import { loginSchema, type AuthSuccess, type OrgChoiceResult } from "@delta/shared";
 import { authConfig } from "@/auth.config";
 
 const API_URL =
@@ -8,7 +8,6 @@ const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000/api/v1";
 
-/** Decode a JWT's `exp` (seconds) without verifying — for refresh timing only. */
 function getJwtExpiryMs(token: string): number {
   try {
     const payload = JSON.parse(
@@ -20,18 +19,18 @@ function getJwtExpiryMs(token: string): number {
   }
 }
 
-async function refreshTokens(refreshToken: string): Promise<AuthResult | null> {
+async function refreshTokens(refreshToken: string): Promise<AuthSuccess | null> {
   const res = await fetch(`${API_URL}/auth/refresh`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ refreshToken }),
   });
   if (!res.ok) return null;
-  const json = (await res.json()) as { data: AuthResult };
+  const json = (await res.json()) as { data: AuthSuccess };
   return json.data;
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
   ...authConfig,
   providers: [
     Credentials({
@@ -47,62 +46,135 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         });
         if (!res.ok) return null;
 
-        const { data } = (await res.json()) as { data: AuthResult };
-        // The object returned here is passed to the `jwt` callback as `user`.
+        const json = (await res.json()) as { data: AuthSuccess | OrgChoiceResult };
+        const data = json.data;
+
+        // Multi-org: user must pick an org before receiving real tokens.
+        if ("status" in data && data.status === "choose_org") {
+          return {
+            id: "pending",
+            name: "",
+            email: parsed.data.email,
+            organizationId: "",
+            orgName: "",
+            roleKey: "",
+            roleName: "",
+            permissions: [],
+            isSuperAdmin: false,
+            accessToken: "",
+            refreshToken: "",
+            needsOrgChoice: true,
+            orgs: data.orgs,
+            pendingToken: data.pendingToken,
+          };
+        }
+
+        const success = data as AuthSuccess;
         return {
-          id: data.user.id,
-          name: data.user.name,
-          email: data.user.email,
-          organizationId: data.user.organizationId,
-          roleKey: data.user.roleKey,
-          roleName: data.user.roleName,
-          permissions: data.user.permissions,
-          accessToken: data.accessToken,
-          refreshToken: data.refreshToken,
+          id: success.user.id,
+          name: success.user.name,
+          email: success.user.email,
+          organizationId: success.user.organizationId,
+          orgName: success.user.orgName ?? "",
+          roleKey: success.user.roleKey,
+          roleName: success.user.roleName,
+          permissions: success.user.permissions,
+          isSuperAdmin: success.user.isSuperAdmin ?? false,
+          accessToken: success.accessToken,
+          refreshToken: success.refreshToken,
+          needsOrgChoice: false,
         };
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
-      // Initial sign-in: copy everything from the authorize() result.
-      if (user) {
-        const u = user as typeof token & { accessToken: string };
-        token.id = u.id;
-        token.organizationId = u.organizationId;
-        token.roleKey = u.roleKey;
-        token.roleName = u.roleName;
-        token.permissions = u.permissions;
-        token.accessToken = u.accessToken;
-        token.refreshToken = u.refreshToken;
-        token.accessTokenExpires = getJwtExpiryMs(u.accessToken);
-        return token;
+    async jwt({ token, user, trigger, session: updateData }) {
+      // Session update triggered by unstable_update() (e.g. after org switch).
+      if (trigger === "update" && updateData) {
+        const patch = updateData as Partial<typeof token>;
+        return { ...token, ...patch, needsOrgChoice: false };
       }
 
-      // Subsequent calls: refresh the access token shortly before it expires.
+      // Initial sign-in.
+      if (user) {
+        const u = user as typeof token & {
+          accessToken: string;
+          isSuperAdmin: boolean;
+          needsOrgChoice?: boolean;
+        };
+
+        if (u.needsOrgChoice) {
+          return {
+            ...token,
+            id: u.id ?? "",
+            needsOrgChoice: true,
+            orgs: u.orgs,
+            pendingToken: u.pendingToken,
+            organizationId: "",
+            orgName: "",
+            isSuperAdmin: false,
+            roleKey: "",
+            roleName: "",
+            permissions: [],
+            accessToken: "",
+            refreshToken: "",
+            accessTokenExpires: 0,
+          };
+        }
+
+        return {
+          ...token,
+          id: u.id,
+          organizationId: u.organizationId,
+          orgName: u.orgName ?? "",
+          roleKey: u.roleKey,
+          roleName: u.roleName,
+          permissions: u.permissions,
+          isSuperAdmin: u.isSuperAdmin,
+          accessToken: u.accessToken,
+          refreshToken: u.refreshToken,
+          accessTokenExpires: getJwtExpiryMs(u.accessToken),
+          needsOrgChoice: false,
+        };
+      }
+
+      // Pending org choice — don't refresh, just return as-is.
+      if (token.needsOrgChoice) return token;
+
+      // Proactively refresh before expiry.
       const expires = (token.accessTokenExpires as number) ?? 0;
       if (Date.now() < expires - 60_000) return token;
 
       const refreshed = await refreshTokens(token.refreshToken as string);
       if (!refreshed) {
-        token.error = "RefreshTokenError";
-        return token;
+        return { ...token, error: "RefreshTokenError" };
       }
-      token.accessToken = refreshed.accessToken;
-      token.refreshToken = refreshed.refreshToken;
-      token.permissions = refreshed.user.permissions;
-      token.roleKey = refreshed.user.roleKey;
-      token.roleName = refreshed.user.roleName;
-      token.accessTokenExpires = getJwtExpiryMs(refreshed.accessToken);
-      delete token.error;
-      return token;
+      return {
+        ...token,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        permissions: refreshed.user.permissions,
+        roleKey: refreshed.user.roleKey,
+        roleName: refreshed.user.roleName,
+        organizationId: refreshed.user.organizationId,
+        orgName: refreshed.user.orgName ?? "",
+        isSuperAdmin: refreshed.user.isSuperAdmin ?? false,
+        accessTokenExpires: getJwtExpiryMs(refreshed.accessToken),
+        error: undefined,
+      };
     },
+
     async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.organizationId = token.organizationId as string;
-      session.user.roleKey = token.roleKey as string;
-      session.user.roleName = token.roleName as string;
+      session.user.id = (token.id as string) ?? "";
+      session.user.organizationId = (token.organizationId as string) ?? "";
+      session.user.orgName = (token.orgName as string) ?? "";
+      session.user.roleKey = (token.roleKey as string) ?? "";
+      session.user.roleName = (token.roleName as string) ?? "";
       session.user.permissions = (token.permissions as string[]) ?? [];
+      session.user.isSuperAdmin = (token.isSuperAdmin as boolean) ?? false;
+      session.user.needsOrgChoice = (token.needsOrgChoice as boolean) ?? false;
+      session.user.orgs = token.orgs as typeof session.user.orgs;
+      session.user.pendingToken = token.pendingToken as string | undefined;
       session.error = token.error as string | undefined;
       return session;
     },

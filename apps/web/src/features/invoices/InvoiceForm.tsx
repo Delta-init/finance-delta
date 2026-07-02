@@ -43,6 +43,7 @@ import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
 import { useUsers } from "@/features/users/api";
+import { useTaxConfig } from "@/features/organization/api";
 
 // ── Form schema ──────────────────────────────────────────────────────────────
 
@@ -171,7 +172,12 @@ export function InvoiceForm({
   const router = useRouter();
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
+  const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
+
+  const defaultTaxes = taxConfig?.taxRates
+    .filter((r) => r.isDefault && (r.appliesTo === "sales" || r.appliesTo === "both"))
+    .map((r) => ({ code: r.code, rate: r.rate })) ?? [];
 
   const {
     register,
@@ -338,7 +344,7 @@ export function InvoiceForm({
                 <span>Qty</span>
                 <span>Unit price</span>
                 <span>Disc %</span>
-                <span>Tax</span>
+                <span>{taxConfig?.taxLabel ?? "Tax"}</span>
                 <span className="text-right">Amount</span>
                 <span />
               </div>
@@ -360,7 +366,7 @@ export function InvoiceForm({
             </div>
           </div>
           {errors.lineItems && <p className="text-xs text-danger">{errors.lineItems.message}</p>}
-          <Button type="button" variant="outline" size="sm" onClick={() => append({ ...emptyLine })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append({ ...emptyLine, taxes: defaultTaxes })}>
             <Plus className="h-4 w-4" /> Add line
           </Button>
         </FadeIn>

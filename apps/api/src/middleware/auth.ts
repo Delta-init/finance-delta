@@ -7,6 +7,7 @@ export interface AuthContext {
   organizationId: string;
   role: string;
   permissions: string[];
+  isSuperAdmin: boolean;
 }
 
 declare global {
@@ -27,14 +28,22 @@ export function authenticate(req: Request, _res: Response, next: NextFunction) {
   const token = header.slice("Bearer ".length);
   try {
     const claims = verifyAccessToken(token);
+
+    // Reject pending-org-select tokens on every route except /auth/switch-org.
+    if (claims.pendingOrgSelect && !req.path.endsWith("/switch-org")) {
+      throw new AppError("UNAUTHENTICATED", "Organization selection required");
+    }
+
     req.auth = {
       userId: claims.sub,
-      organizationId: claims.org,
-      role: claims.role,
+      organizationId: claims.org ?? "",
+      role: claims.role ?? "",
       permissions: claims.perms ?? [],
+      isSuperAdmin: claims.superAdmin ?? false,
     };
     next();
-  } catch {
+  } catch (err) {
+    if (err instanceof AppError) throw err;
     throw new AppError("UNAUTHENTICATED", "Invalid or expired access token");
   }
 }

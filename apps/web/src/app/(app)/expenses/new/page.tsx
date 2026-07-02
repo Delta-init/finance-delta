@@ -201,7 +201,7 @@ export default function NewExpensePage() {
               <Select value={watch("currency")} onValueChange={(v) => setValue("currency", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["AED", "USD", "EUR", "GBP", "SAR"].map((c) => (
+                  {["AED", "USD", "EUR", "GBP", "INR", "SAR"].map((c) => (
                     <SelectItem key={c} value={c}>{c}</SelectItem>
                   ))}
                 </SelectContent>

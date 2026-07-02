@@ -4,92 +4,104 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardDescription, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useDashboardStats } from "@/features/dashboard/api";
 
-const DATA = [
-  { month: "Jan", inflow: 92000, outflow: 61000 },
-  { month: "Feb", inflow: 105000, outflow: 68000 },
-  { month: "Mar", inflow: 98000, outflow: 72000 },
-  { month: "Apr", inflow: 121000, outflow: 70000 },
-  { month: "May", inflow: 134000, outflow: 81000 },
-  { month: "Jun", inflow: 142000, outflow: 78000 },
-  { month: "Jul", inflow: 156000, outflow: 86000 },
-  { month: "Aug", inflow: 149000, outflow: 90000 },
-];
-
-const fmt = (v: number) => `${(v / 1000).toFixed(0)}k`;
+const fmt = (v: number) => `${(v / 100000).toFixed(0)}k`;
 
 export function CashflowChart() {
+  const { data, isLoading } = useDashboardStats();
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Cash Flow</CardTitle>
-        <CardDescription>Inflow vs. outflow — last 8 months (AED)</CardDescription>
+        <CardDescription>Money in vs. money out by month</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={DATA} margin={{ left: -12, right: 8, top: 4 }}>
-              <defs>
-                <linearGradient id="inflow" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="outflow" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--success-600)" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="var(--success-600)" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--border)"
-                vertical={false}
-              />
-              <XAxis
-                dataKey="month"
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: "var(--foreground-subtle)", fontSize: 12 }}
-              />
-              <YAxis
-                tickFormatter={fmt}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: "var(--foreground-subtle)", fontSize: 12 }}
-                width={48}
-              />
-              <Tooltip
-                contentStyle={{
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "var(--surface)",
-                  fontSize: 12,
-                  boxShadow: "var(--shadow-md)",
-                }}
-                formatter={(v: number) => `AED ${v.toLocaleString()}`}
-              />
-              <Area
-                type="monotone"
-                dataKey="inflow"
-                stroke="var(--primary)"
-                strokeWidth={2}
-                fill="url(#inflow)"
-              />
-              <Area
-                type="monotone"
-                dataKey="outflow"
-                stroke="var(--success-600)"
-                strokeWidth={2}
-                fill="url(#outflow)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+        {isLoading ? (
+          <Skeleton className="h-[300px] w-full" />
+        ) : !data || data.cashflow.length === 0 ? (
+          <div className="flex h-[300px] items-center justify-center text-sm text-foreground-muted">
+            No cashflow data yet
+          </div>
+        ) : (
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={data.cashflow}
+                margin={{ left: -12, right: 8, top: 4 }}
+              >
+                <defs>
+                  <linearGradient id="cf-inflow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="cf-outflow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--danger)" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="var(--danger)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="var(--border)"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="month"
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: "var(--foreground-subtle)", fontSize: 12 }}
+                />
+                <YAxis
+                  tickFormatter={fmt}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: "var(--foreground-subtle)", fontSize: 12 }}
+                  width={48}
+                />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    fontSize: 12,
+                    boxShadow: "var(--shadow-md)",
+                  }}
+                  formatter={(v: number, name: string) => [
+                    `${data.currency} ${(v / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                    name === "inflowMinor" ? "Money In" : "Money Out",
+                  ]}
+                />
+                <Legend
+                  formatter={(value) => (value === "inflowMinor" ? "Money In" : "Money Out")}
+                  wrapperStyle={{ fontSize: 12 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="inflowMinor"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  fill="url(#cf-inflow)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="outflowMinor"
+                  stroke="var(--danger)"
+                  strokeWidth={2}
+                  fill="url(#cf-outflow)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

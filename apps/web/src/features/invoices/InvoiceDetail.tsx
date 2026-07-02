@@ -1,18 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Printer, Plus, RotateCcw, FileX, ExternalLink,
+  CreditCard, Printer, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import {
-  formatMoney, recordPaymentSchema, PAYMENT_METHODS,
+  formatMoney, PAYMENT_METHODS,
   type Invoice, type RecordPaymentInput,
 } from "@delta/shared";
+
+const paymentFormSchema = z.object({
+  method: z.enum(PAYMENT_METHODS),
+  amount: z.coerce.number().positive("Amount must be greater than zero"),
+  paidOn: z.string().min(1, "Payment date is required"),
+  reference: z.string().max(200).default(""),
+  notes: z.string().max(1000).default(""),
+  accountName: z.string().max(100).default(""),
+});
+type PaymentFormValues = z.infer<typeof paymentFormSchema>;
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
@@ -310,13 +321,26 @@ export function InvoiceDetail({ id }: { id: string }) {
                     {formatMoney(p.amountMinor, invoice.currency)}
                   </td>
                   <td className="px-4 py-2.5">
-                    <button
-                      onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
-                      className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
-                      title="View receipt"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {p.proofUrl && (
+                        <a
+                          href={p.proofUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          title="View proof of payment"
+                        >
+                          <Paperclip className="h-3.5 w-3.5" />
+                        </a>
+                      )}
+                      <button
+                        onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
+                        className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
+                        title="View receipt"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -342,6 +366,9 @@ function PaymentDialog({
   currency: string;
 }) {
   const record = useRecordPayment(invoiceId);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const {
     register,
     handleSubmit,
@@ -349,24 +376,40 @@ function PaymentDialog({
     watch,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<RecordPaymentInput>({
-    resolver: zodResolver(recordPaymentSchema),
+  } = useForm<PaymentFormValues>({
+    resolver: zodResolver(paymentFormSchema),
     defaultValues: {
       method: "bank_transfer",
-      amountMinor: balanceMinor,
+      amount: balanceMinor / 100,
       paidOn: new Date().toISOString().slice(0, 10),
       reference: "",
       notes: "",
+      accountName: "",
     },
   });
 
   const method = watch("method");
 
-  async function onSubmit(data: RecordPaymentInput) {
+  function handleClose() {
+    reset();
+    setProofFile(null);
+    onClose();
+  }
+
+  async function onSubmit(data: PaymentFormValues) {
+    const input: RecordPaymentInput = {
+      method: data.method,
+      amountMinor: Math.round(data.amount * 100),
+      paidOn: data.paidOn,
+      reference: data.reference,
+      notes: data.notes,
+      accountName: data.accountName,
+    };
     try {
-      await record.mutateAsync(data);
+      await record.mutateAsync({ input, file: proofFile ?? undefined });
       toast.success("Payment recorded");
       reset();
+      setProofFile(null);
       onClose();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to record payment");
@@ -382,7 +425,7 @@ function PaymentDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Record Payment</DialogTitle>
@@ -391,7 +434,7 @@ function PaymentDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="mb-1 block text-xs font-medium text-foreground-muted">Method</label>
-              <Select value={method} onValueChange={(v) => setValue("method", v as RecordPaymentInput["method"])}>
+              <Select value={method} onValueChange={(v) => setValue("method", v as PaymentFormValues["method"])}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -410,11 +453,10 @@ function PaymentDialog({
                 type="number"
                 step="0.01"
                 min="0.01"
-                {...register("amountMinor", { setValueAs: (v) => Math.round(Number(v) * 100) })}
-                defaultValue={(balanceMinor / 100).toFixed(2)}
+                {...register("amount", { valueAsNumber: true })}
               />
-              {errors.amountMinor && (
-                <p className="mt-1 text-xs text-danger">{errors.amountMinor.message}</p>
+              {errors.amount && (
+                <p className="mt-1 text-xs text-danger">{errors.amount.message}</p>
               )}
             </div>
             <div>
@@ -442,13 +484,50 @@ function PaymentDialog({
               </label>
               <Input {...register("notes")} placeholder="Any additional notes…" />
             </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Proof of Payment <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                className="hidden"
+                onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+              />
+              {proofFile ? (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+                  <span className="min-w-0 flex-1 truncate text-foreground">{proofFile.name}</span>
+                  <span className="shrink-0 text-xs text-foreground-muted">
+                    {(proofFile.size / 1024).toFixed(0)} KB
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setProofFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                    className="shrink-0 rounded p-0.5 text-foreground-muted hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-foreground-muted transition-colors hover:border-primary hover:text-foreground"
+                >
+                  <Paperclip className="h-4 w-4" />
+                  Attach receipt, screenshot, or PDF…
+                </button>
+              )}
+            </div>
           </div>
           <p className="text-xs text-foreground-muted">
             Balance due: <span className="font-numeric font-medium">{formatMoney(balanceMinor, currency)}</span>
           </p>
           <div className="flex justify-end gap-2">
             <DialogClose asChild>
-              <Button type="button" variant="ghost" size="sm">Cancel</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={handleClose}>Cancel</Button>
             </DialogClose>
             <Button type="submit" size="sm" loading={isSubmitting || record.isPending}>
               <Plus className="h-3.5 w-3.5" /> Save Payment

@@ -25,7 +25,7 @@ import { useVendor, useUpdateVendor } from "@/features/vendors/api";
 import { usePurchaseOrders } from "@/features/purchase-orders/api";
 import { useBills } from "@/features/bills/api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
 const PO_STATUS_TONE: Record<string, "neutral" | "primary" | "warning" | "success" | "danger"> = {
   draft: "neutral", sent: "primary", received: "warning", billed: "success", cancelled: "danger",

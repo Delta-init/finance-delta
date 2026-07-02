@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { taxConfigItemSchema, taxConfigSchema, upsertTaxConfigSchema, TAX_SYSTEMS } from "./tax-config.schema";
+export { taxConfigItemSchema, taxConfigSchema, upsertTaxConfigSchema, TAX_SYSTEMS };
 
 export const updateOrganizationSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -26,6 +28,9 @@ export const organizationSchema = z.object({
     footerText: z.string(),
   }),
   reminderIntervals: z.array(z.number()),
+  taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
+  taxLabel: z.string().default("VAT"),
+  taxRates: z.array(taxConfigItemSchema).default([]),
   updatedAt: z.string(),
 });
 export type OrganizationSettings = z.infer<typeof organizationSchema>;

@@ -16,7 +16,7 @@ import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreateBill } from "@/features/bills/api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
 
 const lineSchema = z.object({

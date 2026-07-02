@@ -1,19 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { updateOrganizationSchema, type UpdateOrganizationInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
-import { useOrganization, useUpdateOrganization } from "@/features/organization/api";
-import { Plus, X } from "lucide-react";
+import { useOrganization, useUpdateOrganization, useTaxConfig } from "@/features/organization/api";
+import { Plus, X, Receipt, ChevronRight } from "lucide-react";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
 export default function SettingsPage() {
   const { data: org, isLoading } = useOrganization();
+  const { data: taxConfig } = useTaxConfig();
   const update = useUpdateOrganization();
 
   const [intervalInput, setIntervalInput] = useState("");
@@ -205,6 +207,27 @@ export default function SettingsPage() {
           </Button>
         </div>
       </form>
+
+      {/* Tax Settings link card */}
+      <Link
+        href="/settings/taxes"
+        className="group flex items-center justify-between rounded-xl border border-border bg-surface p-5 transition-colors hover:border-primary"
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Receipt className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">Tax Settings</p>
+            <p className="text-xs text-foreground-muted">
+              {taxConfig
+                ? `${taxConfig.taxLabel} · ${taxConfig.taxRates.length} rate${taxConfig.taxRates.length !== 1 ? "s" : ""} configured`
+                : "Configure tax system and rates"}
+            </p>
+          </div>
+        </div>
+        <ChevronRight className="h-4 w-4 text-foreground-muted transition-transform group-hover:translate-x-0.5" />
+      </Link>
     </div>
   );
 }

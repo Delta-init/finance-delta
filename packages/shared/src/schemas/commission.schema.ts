@@ -95,11 +95,13 @@ export interface CommissionReport {
 
 // ── Query schemas ─────────────────────────────────────────────────────────────
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export const commissionRecordQuerySchema = z.object({
   salespersonId: z.string().optional(),
   status: z.enum(["earned", "paid", "cancelled"]).optional(),
-  from: z.string().optional(),
-  to: z.string().optional(),
+  from: z.string().regex(DATE_RE, "Must be YYYY-MM-DD").optional(),
+  to: z.string().regex(DATE_RE, "Must be YYYY-MM-DD").optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });

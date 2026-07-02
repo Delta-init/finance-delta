@@ -102,11 +102,31 @@ async function requestList<T>(path: string): Promise<{ data: T[]; meta: PageMeta
   };
 }
 
+/** Sends a multipart/form-data POST (e.g. file upload). Does NOT set content-type — the browser adds the boundary automatically. */
+async function requestMultipart<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`/api/proxy/${path}`, { method: "POST", body });
+
+  if (res.status === 204) return undefined as T;
+  if (res.status === 401) {
+    const { code, message, details } = await parseError(res);
+    if (code === "UNAUTHENTICATED") return handleUnauthorized() as Promise<T>;
+    throw new ApiError(401, code, message, details);
+  }
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = json.error ?? {};
+    throw new ApiError(res.status, err.code ?? "INTERNAL", err.message ?? "Request failed", err.details);
+  }
+  return json.data as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   getList: <T>(path: string, params?: QueryParams) => requestList<T>(`${path}${qs(params)}`),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) }),
+  postForm: <T>(path: string, body: FormData) => requestMultipart<T>(path, body),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),

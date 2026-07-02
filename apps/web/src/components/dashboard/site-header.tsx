@@ -133,6 +133,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   structures: "Structures",
   records: "Records",
   report: "Report",
+  loans: "Loans & Credit",
   settings: "Settings",
   admin: "Administration",
   users: "Users",

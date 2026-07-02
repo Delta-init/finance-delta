@@ -14,7 +14,7 @@ import { toast } from "@/lib/toast";
 import { type PriceListEntry, ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
 import { useItems, useCreatePriceList } from "@/features/inventory/api";
 
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "SAR"];
+const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR"];
 
 interface EntryRow extends PriceListEntry {
   _rowId: string;

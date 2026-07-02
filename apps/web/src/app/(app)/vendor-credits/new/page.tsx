@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -69,6 +70,10 @@ export default function NewVendorCreditPage() {
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
 
+  useEffect(() => {
+    setValue("currency", orgCurrency, { shouldDirty: false });
+  }, [orgCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const totals = (watchedLines ?? []).reduce(
     (acc, l) => {
       const gross = (l.quantity ?? 0) * (l.unitPrice ?? 0);
@@ -132,7 +137,7 @@ export default function NewVendorCreditPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Currency</Label>
-              <Select value={watch("currency")} onValueChange={(v) => setValue("currency", v)}>
+              <Select key={currency} value={currency} onValueChange={(v) => setValue("currency", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
               </Select>

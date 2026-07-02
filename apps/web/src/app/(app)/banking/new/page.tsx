@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -58,6 +59,10 @@ export default function NewBankAccountPage() {
       openingDate: today,
     },
   });
+
+  useEffect(() => {
+    setValue("currency", orgCurrency, { shouldDirty: false });
+  }, [orgCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function onSubmit(values: FormValues) {
     try {
@@ -138,7 +143,7 @@ export default function NewBankAccountPage() {
             </div>
             <div className="space-y-1">
               <Label>Currency *</Label>
-              <Select value={currency} onValueChange={(v) => setValue("currency", v)}>
+              <Select key={currency} value={currency} onValueChange={(v) => setValue("currency", v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

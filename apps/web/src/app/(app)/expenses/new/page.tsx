@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -95,6 +96,11 @@ export default function NewExpensePage() {
   const { fields: attachmentFields, append: addAttachment, remove: removeAttachment } =
     useFieldArray({ control, name: "attachments" });
 
+  useEffect(() => {
+    setValue("currency", orgCurrency, { shouldDirty: false });
+  }, [orgCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currency = watch("currency");
   const [catWatch, isRecurring, hasMileage] = [
     watch("category"),
     watch("isRecurring"),
@@ -200,7 +206,7 @@ export default function NewExpensePage() {
             </div>
             <div className="space-y-1.5">
               <Label>Currency</Label>
-              <Select value={watch("currency")} onValueChange={(v) => setValue("currency", v)}>
+              <Select key={currency} value={currency} onValueChange={(v) => setValue("currency", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {["AED", "USD", "EUR", "GBP", "INR", "SAR"].map((c) => (

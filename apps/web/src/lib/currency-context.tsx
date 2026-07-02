@@ -25,8 +25,8 @@ export const CURRENCIES = [
 
 export type CurrencyCode = (typeof CURRENCIES)[number]["code"];
 
-const NON_BASE = CURRENCIES.filter((c) => c.code !== "AED")
-  .map((c) => c.code)
+const NON_BASE_LOWER = CURRENCIES.filter((c) => c.code !== "AED")
+  .map((c) => c.code.toLowerCase())
   .join(",");
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -80,17 +80,24 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   };
 
   const { data, isLoading } = useQuery<{
-    base: string;
     date: string;
-    rates: Record<string, number>;
+    rates: Partial<Record<CurrencyCode, number>>;
   }>({
     queryKey: ["fx-rates"],
     queryFn: () =>
       fetch(
-        `https://api.frankfurter.app/latest?base=AED&symbols=${NON_BASE}`,
+        // fawaz CDN: free, no key, supports AED + all GCC/INR/PKR currencies
+        `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/aed.min.json`,
       ).then((r) => {
         if (!r.ok) throw new Error("FX fetch failed");
-        return r.json();
+        return r.json().then((j: { date: string; aed: Record<string, number> }) => ({
+          date: j.date,
+          rates: Object.fromEntries(
+            Object.entries(j.aed)
+              .filter(([k]) => NON_BASE_LOWER.split(",").includes(k))
+              .map(([k, v]) => [k.toUpperCase(), v])
+          ) as Partial<Record<CurrencyCode, number>>,
+        }));
       }),
     staleTime: 60 * 60 * 1000,   // 1 hour — rates update daily
     gcTime: 4 * 60 * 60 * 1000,
@@ -100,7 +107,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
 
   const rates: Partial<Record<CurrencyCode, number>> = {
     AED: 1,
-    ...(data?.rates as Partial<Record<CurrencyCode, number>>),
+    ...(data?.rates ?? {}),
   };
 
   const rateFor = (code: CurrencyCode) => rates[code] ?? 1;

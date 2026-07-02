@@ -4,10 +4,10 @@
  * typed ApiError on failure.
  *
  * A 401 with code "UNAUTHENTICATED" (emitted by the BFF when the session token
- * is missing or expired) triggers signOut. Any other 401 from the backend
- * (e.g. a permission check) is surfaced as a regular ApiError — no logout.
+ * is missing or expired) throws ApiError with code "UNAUTHENTICATED". The
+ * Providers component listens for this in QueryCache.onError and signs the user
+ * out from inside the React tree (where next-auth/react context is available).
  */
-import { signOut } from "next-auth/react";
 
 export class ApiError extends Error {
   code: string;
@@ -21,8 +21,7 @@ export class ApiError extends Error {
   }
 }
 
-async function handleUnauthorized() {
-  await signOut({ callbackUrl: "/login" });
+function handleUnauthorized(): never {
   throw new ApiError(401, "UNAUTHENTICATED", "Session expired. Please log in again.");
 }
 

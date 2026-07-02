@@ -1,6 +1,6 @@
 "use client";
 
-import { SessionProvider } from "next-auth/react";
+import { SessionProvider, signOut } from "next-auth/react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -19,10 +19,15 @@ function errorMessage(error: unknown): string {
   return "Something went wrong";
 }
 
-function shouldToast(error: unknown): boolean {
-  // UNAUTHENTICATED triggers redirect to /login — no toast needed on top of that
-  if (error instanceof ApiError && error.code === "UNAUTHENTICATED") return false;
-  return true;
+function handleError(error: unknown) {
+  if (error instanceof ApiError && error.code === "UNAUTHENTICATED") {
+    // Sign out from inside the React/SessionProvider tree so next-auth/react
+    // has the context it needs. Calling signOut() from inside a queryFn
+    // (outside React) caused the production crash.
+    signOut({ callbackUrl: "/login" });
+    return;
+  }
+  toast.error(errorMessage(error));
 }
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -30,20 +35,12 @@ export function Providers({ children }: { children: ReactNode }) {
     () =>
       new QueryClient({
         queryCache: new QueryCache({
-          // Every failed query (initial load, background refetch) shows a toast.
-          onError: (error) => {
-            if (!shouldToast(error)) return;
-            toast.error(errorMessage(error));
-          },
+          onError: handleError,
         }),
         mutationCache: new MutationCache({
-          // Global fallback for mutations. Form mutations that already call
-          // toast.error in their own catch block should set meta: { skipToast: true }
-          // on the useMutation call to avoid showing two toasts.
           onError: (error, _vars, _ctx, mutation) => {
             if ((mutation.meta as Record<string, unknown> | undefined)?.skipToast) return;
-            if (!shouldToast(error)) return;
-            toast.error(errorMessage(error));
+            handleError(error);
           },
         }),
         defaultOptions: {

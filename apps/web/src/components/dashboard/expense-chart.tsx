@@ -12,18 +12,20 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
+import { useCurrency } from "@/lib/currency-context";
 
 export function ExpenseChart() {
   const { data, isLoading } = useDashboardStats();
+  const { currency, convert } = useCurrency();
 
   const breakdown = data?.expenseBreakdown ?? [];
   const chartData = breakdown.map((e) => ({
     category: e.category,
-    amount: e.totalMinor / 100,
+    amount: e.totalMinor,
   }));
 
   const fmtAmount = (v: number) =>
-    `${(v / 1000).toFixed(0)}k`;
+    `${(convert(v) / 100000).toFixed(0)}k`;
 
   return (
     <Card>
@@ -75,7 +77,7 @@ export function ExpenseChart() {
                     boxShadow: "var(--shadow-md)",
                   }}
                   formatter={(v: number) => [
-                    `${data?.currency} ${v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                    `${currency} ${(convert(v) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
                     "Total",
                   ]}
                 />

@@ -13,11 +13,12 @@ import {
 import { Card, CardContent, CardHeader, CardDescription, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
-
-const fmt = (v: number) => `${(v / 100000).toFixed(0)}k`;
+import { useCurrency } from "@/lib/currency-context";
 
 export function CashflowChart() {
   const { data, isLoading } = useDashboardStats();
+  const { currency, convert } = useCurrency();
+  const fmt = (v: number) => `${(convert(v) / 100000).toFixed(0)}k`;
 
   return (
     <Card>
@@ -76,7 +77,7 @@ export function CashflowChart() {
                     boxShadow: "var(--shadow-md)",
                   }}
                   formatter={(v: number, name: string) => [
-                    `${data.currency} ${(v / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                    `${currency} ${(convert(v) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
                     name === "inflowMinor" ? "Money In" : "Money Out",
                   ]}
                 />

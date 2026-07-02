@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useDashboardStats } from "@/features/dashboard/api";
+import { useCurrency } from "@/lib/currency-context";
 
 function fmt(currency: string, minor: number) {
   return `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -12,6 +13,7 @@ function fmt(currency: string, minor: number) {
 
 export function SectionCards() {
   const { data, isLoading } = useDashboardStats();
+  const { currency, convert } = useCurrency();
 
   if (isLoading) {
     return (
@@ -29,7 +31,7 @@ export function SectionCards() {
 
   if (!data) return null;
 
-  const { currency, kpi } = data;
+  const { kpi } = data;
 
   const revenueTrend = kpi.revenueTrend;
   const profitTrend = kpi.netProfitLastMonth > 0
@@ -39,7 +41,7 @@ export function SectionCards() {
   const cards = [
     {
       label: "Revenue MTD",
-      value: fmt(currency, kpi.revenueMtd),
+      value: fmt(currency, convert(kpi.revenueMtd)),
       trend: revenueTrend >= 0 ? "up" as const : "down" as const,
       pct: Math.abs(revenueTrend),
       hint: "vs last month",
@@ -47,7 +49,7 @@ export function SectionCards() {
     },
     {
       label: "Outstanding Receivables",
-      value: fmt(currency, kpi.receivables),
+      value: fmt(currency, convert(kpi.receivables)),
       trend: null,
       pct: null,
       hint: `${kpi.overdueCount} overdue`,
@@ -55,7 +57,7 @@ export function SectionCards() {
     },
     {
       label: "Outstanding Payables",
-      value: fmt(currency, kpi.payables),
+      value: fmt(currency, convert(kpi.payables)),
       trend: null,
       pct: null,
       hint: "total owed",
@@ -63,7 +65,7 @@ export function SectionCards() {
     },
     {
       label: "Net Profit MTD",
-      value: fmt(currency, kpi.netProfitMtd),
+      value: fmt(currency, convert(kpi.netProfitMtd)),
       trend: profitTrend >= 0 ? "up" as const : "down" as const,
       pct: Math.abs(profitTrend),
       hint: "vs last month",

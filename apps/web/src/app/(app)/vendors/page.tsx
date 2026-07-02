@@ -122,7 +122,7 @@ export default function VendorsPage() {
               <div className="space-y-1.5"><Label>VAT / TRN Number</Label><Input {...register("vatNumber")} /></div>
               <div className="space-y-1.5">
                 <Label>Currency</Label>
-                <Select value={watch("currency") ?? "AED"} onValueChange={(v) => setValue("currency", v)}>
+                <Select value={watch("currency") ?? orgCurrency} onValueChange={(v) => setValue("currency", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>

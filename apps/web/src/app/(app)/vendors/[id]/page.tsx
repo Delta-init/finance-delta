@@ -24,6 +24,7 @@ import { toast } from "@/lib/toast";
 import { useVendor, useUpdateVendor } from "@/features/vendors/api";
 import { usePurchaseOrders } from "@/features/purchase-orders/api";
 import { useBills } from "@/features/bills/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -57,6 +58,7 @@ function toFormValues(v: Vendor): CreateVendorInput {
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { currency: orgCurrency } = useCurrency();
   const { data: vendor, isLoading } = useVendor(id);
   const updateVendor = useUpdateVendor();
   const { data: poData } = usePurchaseOrders({ vendorId: id, limit: "50", sort: "createdAt", dir: "desc" });
@@ -248,7 +250,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <div className="space-y-1.5"><Label>VAT / TRN</Label><Input {...register("vatNumber")} /></div>
               <div className="space-y-1.5">
                 <Label>Currency</Label>
-                <Select value={watch("currency") ?? "AED"} onValueChange={(v) => setValue("currency", v)}>
+                <Select value={watch("currency") ?? orgCurrency} onValueChange={(v) => setValue("currency", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>

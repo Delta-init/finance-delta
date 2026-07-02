@@ -24,6 +24,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCustomer, useCustomerStatement, useUpdateCustomer } from "@/features/customers/api";
+import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -75,6 +76,7 @@ function formatAddress(addr?: { street?: string; city?: string; state?: string; 
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { currency: orgCurrency } = useCurrency();
   const { data: customer, isLoading } = useCustomer(id);
   const { data: statement, isLoading: statLoading } = useCustomerStatement(id);
   const updateMutation = useUpdateCustomer();
@@ -321,7 +323,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             </div>
             <div className="space-y-1.5">
               <Label>Currency</Label>
-              <Select value={watch("currency") ?? "AED"} onValueChange={(v) => setValue("currency", v)}>
+              <Select value={watch("currency") ?? orgCurrency} onValueChange={(v) => setValue("currency", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}

@@ -3,9 +3,11 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
+import { useCurrency } from "@/lib/currency-context";
 
 export function TopCustomers() {
   const { data, isLoading } = useDashboardStats();
+  const { currency, convert } = useCurrency();
 
   const customers = data?.topCustomers ?? [];
   const maxRevenue = customers.length > 0 ? Math.max(...customers.map((c) => c.revenueMinor)) : 1;
@@ -33,7 +35,7 @@ export function TopCustomers() {
           )
           : customers.map((customer) => {
               const pct = maxRevenue > 0 ? (customer.revenueMinor / maxRevenue) * 100 : 0;
-              const amount = (customer.revenueMinor / 100).toLocaleString("en-US", {
+              const amount = (convert(customer.revenueMinor) / 100).toLocaleString("en-US", {
                 minimumFractionDigits: 0,
                 maximumFractionDigits: 0,
               });
@@ -42,7 +44,7 @@ export function TopCustomers() {
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium truncate max-w-[60%]">{customer.name}</span>
                     <span className="font-numeric text-foreground-muted text-xs">
-                      {data?.currency} {amount}
+                      {currency} {amount}
                     </span>
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-surface-muted overflow-hidden">

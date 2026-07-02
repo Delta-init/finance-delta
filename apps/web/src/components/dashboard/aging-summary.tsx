@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
+import { useCurrency } from "@/lib/currency-context";
 
 interface Band {
   label: string;
@@ -29,12 +30,12 @@ const BANDS: Band[] = [
 export function AgingSummary() {
   const { data, isLoading } = useDashboardStats();
 
+  const { currency, convert } = useCurrency();
   const aging = data?.aging;
-  const currency = data?.currency ?? "";
   const total = aging?.total ?? 0;
 
   function fmtAmount(minor: number) {
-    return `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    return `${currency} ${(convert(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   }
 
   return (

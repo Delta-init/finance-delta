@@ -86,6 +86,7 @@ export interface InvoiceLineCalcInput {
   unitPriceMinor: number;
   discountPct?: number;
   taxes?: TaxRateInput[];
+  taxInclusive?: boolean;
 }
 
 export interface InvoiceLineBreakdown {
@@ -108,8 +109,31 @@ export interface InvoiceTotals {
 export function computeInvoiceLine(input: InvoiceLineCalcInput): InvoiceLineBreakdown {
   const discountPct = input.discountPct ?? 0;
   const taxes = input.taxes ?? [];
+  const taxInclusive = input.taxInclusive ?? false;
+
   const lineSubtotalMinor = Math.round(input.quantity * input.unitPriceMinor);
   const discountMinor = Math.round((lineSubtotalMinor * discountPct) / 100);
+
+  if (taxInclusive && taxes.length > 0) {
+    const inclusiveTotalMinor = lineSubtotalMinor - discountMinor;
+    const totalRate = taxes.reduce((s, t) => s + t.rate, 0);
+    const taxableMinor = Math.round(inclusiveTotalMinor / (1 + totalRate / 100));
+    const taxResults: TaxRateResult[] = taxes.map((t) => ({
+      code: t.code,
+      rate: t.rate,
+      amountMinor: Math.round((taxableMinor * t.rate) / 100),
+    }));
+    const taxTotalMinor = taxResults.reduce((s, t) => s + t.amountMinor, 0);
+    return {
+      lineSubtotalMinor,
+      discountMinor,
+      taxableMinor,
+      taxes: taxResults,
+      taxTotalMinor,
+      lineTotalMinor: inclusiveTotalMinor,
+    };
+  }
+
   const taxableMinor = lineSubtotalMinor - discountMinor;
   const taxResults: TaxRateResult[] = taxes.map((t) => ({
     code: t.code,

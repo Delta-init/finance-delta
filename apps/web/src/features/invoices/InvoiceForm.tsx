@@ -90,6 +90,7 @@ const formSchema = z.object({
   progress: progressSchema.optional(),
   hasRecurring: z.boolean().default(false),
   recurring: recurringSchema.optional(),
+  taxInclusive: z.boolean().default(false),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -99,7 +100,9 @@ type FormValues = z.infer<typeof formSchema>;
 const GRID = "28px minmax(160px,1fr) 70px 120px 64px 80px 100px 36px";
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-const emptyLine = { description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxes: [] };
+const emptyLine = (taxes: { code: string; rate: number }[] = []) => ({
+  description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxes,
+});
 
 function fromInvoice(inv: Invoice): FormValues {
   return {
@@ -122,6 +125,7 @@ function fromInvoice(inv: Invoice): FormValues {
     hasProgress: !!inv.progress,
     progress: inv.progress ?? undefined,
     hasRecurring: !!inv.recurring,
+    taxInclusive: inv.taxInclusive ?? false,
     recurring: inv.recurring
       ? {
           frequency: inv.recurring.frequency,
@@ -153,6 +157,7 @@ function toApiInput(v: FormValues): CreateInvoiceInput {
     })),
     progress: v.hasProgress && v.progress ? v.progress : null,
     recurring: v.hasRecurring && v.recurring ? v.recurring : null,
+    taxInclusive: v.taxInclusive ?? false,
   };
 }
 
@@ -175,9 +180,8 @@ export function InvoiceForm({
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
 
-  const defaultTaxes = taxConfig?.taxRates
-    .filter((r) => r.isDefault && (r.appliesTo === "sales" || r.appliesTo === "both"))
-    .map((r) => ({ code: r.code, rate: r.rate })) ?? [];
+  const firstRate = taxConfig?.taxRates[0];
+  const defaultTaxes = firstRate ? [{ code: firstRate.code, rate: firstRate.rate }] : [];
 
   const {
     register,
@@ -200,9 +204,10 @@ export function InvoiceForm({
           terms: "",
           locale: "en",
           tagIds: [],
-          lineItems: [{ ...emptyLine }],
+          lineItems: [emptyLine()],
           hasProgress: false,
           hasRecurring: false,
+          taxInclusive: false,
         },
   });
 
@@ -211,6 +216,7 @@ export function InvoiceForm({
   const hasProgress = watch("hasProgress");
   const hasRecurring = watch("hasRecurring");
   const locale = watch("locale");
+  const taxInclusive = watch("taxInclusive");
 
   const handleReorder = (newOrder: typeof fields) => {
     const oldIds = fields.map((f) => f.id);
@@ -333,6 +339,16 @@ export function InvoiceForm({
         {/* Line items */}
         <FadeIn delay={0.05} className="space-y-2">
           <Label>Line items</Label>
+          <div className="flex items-center gap-2 mb-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-foreground-muted">
+              <input
+                type="checkbox"
+                {...register("taxInclusive")}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              Prices include tax
+            </label>
+          </div>
           <div className="overflow-x-auto rounded-lg border border-border">
             <div className="min-w-[720px]">
               <div
@@ -358,6 +374,7 @@ export function InvoiceForm({
                     control={control}
                     setValue={setValue}
                     currency={currency}
+                    taxInclusive={taxInclusive}
                     canRemove={fields.length > 1}
                     onRemove={() => remove(i)}
                   />
@@ -366,7 +383,7 @@ export function InvoiceForm({
             </div>
           </div>
           {errors.lineItems && <p className="text-xs text-danger">{errors.lineItems.message}</p>}
-          <Button type="button" variant="outline" size="sm" onClick={() => append({ ...emptyLine, taxes: defaultTaxes })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxes))}>
             <Plus className="h-4 w-4" /> Add line
           </Button>
         </FadeIn>
@@ -406,7 +423,7 @@ export function InvoiceForm({
               </Select>
             </div>
           </div>
-          <Totals control={control} currency={currency} />
+          <Totals control={control} currency={currency} taxInclusive={taxInclusive} />
         </FadeIn>
 
         {/* Progress invoicing */}
@@ -516,6 +533,7 @@ function LineRow({
   control,
   setValue,
   currency,
+  taxInclusive,
   canRemove,
   onRemove,
 }: {
@@ -525,6 +543,7 @@ function LineRow({
   control: Control<FormValues>;
   setValue: UseFormSetValue<FormValues>;
   currency: string;
+  taxInclusive: boolean;
   canRemove: boolean;
   onRemove: () => void;
 }) {
@@ -553,7 +572,7 @@ function LineRow({
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
       <TaxCell control={control} index={index} setValue={setValue} />
       <div className="text-right">
-        <LineAmount control={control} index={index} currency={currency} />
+        <LineAmount control={control} index={index} currency={currency} taxInclusive={taxInclusive} />
       </div>
       <div className="text-right">
         {canRemove && (
@@ -660,10 +679,12 @@ function LineAmount({
   control,
   index,
   currency,
+  taxInclusive,
 }: {
   control: Control<FormValues>;
   index: number;
   currency: string;
+  taxInclusive: boolean;
 }) {
   const line = useWatch({ control, name: `lineItems.${index}` });
   const b = computeInvoiceLine({
@@ -671,11 +692,12 @@ function LineAmount({
     unitPriceMinor: toMinor(line?.unitPrice ?? 0),
     discountPct: Number(line?.discountPct) || 0,
     taxes: (line?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
+    taxInclusive,
   });
   return <span className="font-numeric text-sm">{formatMoney(b.lineTotalMinor, currency)}</span>;
 }
 
-function Totals({ control, currency }: { control: Control<FormValues>; currency: string }) {
+function Totals({ control, currency, taxInclusive }: { control: Control<FormValues>; currency: string; taxInclusive: boolean }) {
   const lines = useWatch({ control, name: "lineItems" }) ?? [];
   const totals = sumInvoiceTotals(
     lines.map((l) => ({
@@ -683,6 +705,7 @@ function Totals({ control, currency }: { control: Control<FormValues>; currency:
       unitPriceMinor: toMinor(l?.unitPrice ?? 0),
       discountPct: Number(l?.discountPct) || 0,
       taxes: (l?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
+      taxInclusive,
     })),
   );
 

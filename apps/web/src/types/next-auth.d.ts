@@ -14,6 +14,7 @@ declare module "next-auth" {
       needsOrgChoice: boolean;
       orgs?: OrgChoiceItem[];
       pendingToken?: string;
+      baseCurrency: string;
     } & DefaultSession["user"];
     error?: string;
   }
@@ -30,6 +31,7 @@ declare module "next-auth" {
     needsOrgChoice?: boolean;
     orgs?: OrgChoiceItem[];
     pendingToken?: string;
+    baseCurrency: string;
   }
 }
 
@@ -48,6 +50,7 @@ declare module "next-auth/jwt" {
     needsOrgChoice?: boolean;
     orgs?: OrgChoiceItem[];
     pendingToken?: string;
+    baseCurrency: string;
     error?: string;
   }
 }

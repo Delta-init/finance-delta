@@ -66,6 +66,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
             needsOrgChoice: true,
             orgs: data.orgs,
             pendingToken: data.pendingToken,
+            baseCurrency: "AED",
           };
         }
 
@@ -83,6 +84,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
           accessToken: success.accessToken,
           refreshToken: success.refreshToken,
           needsOrgChoice: false,
+          baseCurrency: success.user.baseCurrency ?? "AED",
         };
       },
     }),
@@ -135,6 +137,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
           refreshToken: u.refreshToken,
           accessTokenExpires: getJwtExpiryMs(u.accessToken),
           needsOrgChoice: false,
+          baseCurrency: (u as Record<string, unknown>).baseCurrency as string ?? "AED",
         };
       }
 
@@ -160,6 +163,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
         orgName: refreshed.user.orgName ?? "",
         isSuperAdmin: refreshed.user.isSuperAdmin ?? false,
         accessTokenExpires: getJwtExpiryMs(refreshed.accessToken),
+        baseCurrency: refreshed.user.baseCurrency ?? (token.baseCurrency as string) ?? "AED",
         error: undefined,
       };
     },
@@ -175,6 +179,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
       session.user.needsOrgChoice = (token.needsOrgChoice as boolean) ?? false;
       session.user.orgs = token.orgs as typeof session.user.orgs;
       session.user.pendingToken = token.pendingToken as string | undefined;
+      session.user.baseCurrency = (token.baseCurrency as string) ?? "AED";
       session.error = token.error as string | undefined;
       return session;
     },

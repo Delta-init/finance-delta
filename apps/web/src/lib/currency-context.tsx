@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSession } from "next-auth/react";
 
 // ── Supported currencies ──────────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ const LS_KEY = "delta-display-currency";
 
 export function CurrencyProvider({ children }: { children: ReactNode }) {
   const [currency, setCurrencyState] = useState<CurrencyCode>("AED");
+  const { data: session } = useSession();
+  const orgCurrency = (session?.user as Record<string, unknown> | undefined)?.baseCurrency as string | undefined;
 
   // Hydrate from localStorage after mount (avoid SSR mismatch)
   useEffect(() => {
@@ -61,6 +64,15 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
       setCurrencyState(saved);
     }
   }, []);
+
+  // Sync display currency when the org's base currency changes
+  useEffect(() => {
+    if (!orgCurrency) return;
+    if (CURRENCIES.some((c) => c.code === orgCurrency)) {
+      setCurrencyState(orgCurrency as CurrencyCode);
+      localStorage.setItem(LS_KEY, orgCurrency);
+    }
+  }, [orgCurrency]);
 
   const setCurrency = (c: CurrencyCode) => {
     setCurrencyState(c);

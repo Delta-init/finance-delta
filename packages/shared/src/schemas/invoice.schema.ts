@@ -95,6 +95,7 @@ export const createInvoiceSchema = z.object({
   recurring: recurringInputSchema.nullable().optional(),
   locale: z.enum(PRINT_LOCALES).optional().default("en"),
   exchangeRate: z.coerce.number().positive().optional(),
+  taxInclusive: z.boolean().optional().default(false),
 });
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
 
@@ -191,6 +192,7 @@ export const invoiceSchema = z.object({
   sourceQuoteId: z.string().optional(),
   locale: z.string().optional(),
   exchangeRate: z.number().optional(),
+  taxInclusive: z.boolean().default(false),
   createdAt: z.string(),
 });
 export type Invoice = z.infer<typeof invoiceSchema>;

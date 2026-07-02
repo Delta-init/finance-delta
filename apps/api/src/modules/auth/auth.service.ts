@@ -18,7 +18,7 @@ type AuthResponse = AuthSuccess | OrgChoiceResult;
 
 function buildAuthUser(
   user: { _id: Types.ObjectId; name: string; email: string; isSuperAdmin?: boolean },
-  org: { _id: Types.ObjectId; name: string },
+  org: { _id: Types.ObjectId; name: string; baseCurrency?: string },
   role: RoleDoc,
 ): AuthUser {
   return {
@@ -27,6 +27,7 @@ function buildAuthUser(
     email: user.email,
     organizationId: org._id.toString(),
     orgName: org.name,
+    baseCurrency: (org.baseCurrency as string | undefined) ?? "AED",
     roleKey: role.key,
     roleName: role.name,
     permissions: role.permissions ?? [],
@@ -95,6 +96,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
           email: user.email,
           organizationId: "",
           orgName: "",
+          baseCurrency: "AED",
           roleKey: "",
           roleName: "",
           permissions: [],
@@ -111,7 +113,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
     // Single org or super admin — skip the picker and log into first active org.
     const membership = activeMemberships[0]!;
     const [org, role] = await Promise.all([
-      Organization.findById(membership.organizationId),
+      Organization.findById(membership.organizationId).select("name baseCurrency"),
       Role.findById(membership.roleId),
     ]);
     if (!org || !role) throw new AppError("INTERNAL", "Organization or role not found");
@@ -144,7 +146,7 @@ export async function switchOrg(
     throw new AppError("UNAUTHENTICATED", "Account not found or suspended");
   }
 
-  const org = await Organization.findById(input.organizationId);
+  const org = await Organization.findById(input.organizationId).select("name baseCurrency");
   if (!org) throw new AppError("NOT_FOUND", "Organization not found");
 
   let roleId: Types.ObjectId;
@@ -215,6 +217,7 @@ export async function refresh(refreshToken: string): Promise<AuthSuccess> {
         email: user.email,
         organizationId: "",
         orgName: "",
+        baseCurrency: "AED",
         roleKey: "",
         roleName: "",
         permissions: [],
@@ -233,7 +236,7 @@ export async function refresh(refreshToken: string): Promise<AuthSuccess> {
   }
 
   const [org, role] = await Promise.all([
-    Organization.findById(existing.organizationId),
+    Organization.findById(existing.organizationId).select("name baseCurrency"),
     Role.findById(membership.roleId),
   ]);
   if (!org || !role) throw new AppError("INTERNAL", "Organization or role not found");
@@ -256,6 +259,7 @@ export async function getMe(userId: string, organizationId: string): Promise<Aut
       email: user.email,
       organizationId: "",
       orgName: "",
+      baseCurrency: "AED",
       roleKey: "",
       roleName: "",
       permissions: [],
@@ -267,7 +271,7 @@ export async function getMe(userId: string, organizationId: string): Promise<Aut
   if (!membership) throw new AppError("NOT_FOUND", "Membership not found");
 
   const [org, role] = await Promise.all([
-    Organization.findById(organizationId),
+    Organization.findById(organizationId).select("name baseCurrency"),
     Role.findById(membership.roleId),
   ]);
   if (!org || !role) throw new AppError("INTERNAL", "Organization or role not found");

@@ -173,6 +173,7 @@ export function OrgSwitcher() {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken,
         needsOrgChoice: false,
+        baseCurrency: data.user.baseCurrency ?? "AED",
       });
       window.location.href = "/dashboard";
     } catch (e) {

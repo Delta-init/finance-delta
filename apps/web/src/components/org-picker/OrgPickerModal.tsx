@@ -42,6 +42,7 @@ export function OrgPickerModal({ orgs }: Props) {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken,
         needsOrgChoice: false,
+        baseCurrency: data.user.baseCurrency ?? "AED",
       });
 
       window.location.href = "/dashboard";

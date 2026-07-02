@@ -89,6 +89,7 @@ const invoiceSchema = new Schema(
     issueDate: { type: Date, required: true },
     dueDate: { type: Date, required: true },
     currency: { type: String, default: "AED" },
+    taxInclusive: { type: Boolean, default: false },
     lineItems: { type: [lineItemSchema], default: [] },
     subtotalMinor: { type: Number, default: 0 },
     discountTotalMinor: { type: Number, default: 0 },

@@ -53,13 +53,14 @@ const formSchema = z.object({
   terms: z.string().optional(),
   tagIds: z.array(z.string()).optional().default([]),
   lineItems: z.array(lineSchema).min(1, "Add at least one line"),
+  taxInclusive: z.boolean().default(false),
 });
 type FormValues = z.infer<typeof formSchema>;
 
 const GRID = "28px minmax(160px,1fr) 72px 116px 72px 72px 104px 36px";
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-const emptyLine = { description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxPct: 0 };
+const emptyLine = (taxPct = 0) => ({ description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxPct });
 
 function fromQuotation(q: Quotation): FormValues {
   return {
@@ -76,6 +77,7 @@ function fromQuotation(q: Quotation): FormValues {
       discountPct: l.discountPct,
       taxPct: l.taxPct,
     })),
+    taxInclusive: false,
   };
 }
 function toApiInput(v: FormValues): CreateQuotationInput {
@@ -93,7 +95,8 @@ function toApiInput(v: FormValues): CreateQuotationInput {
       discountPct: l.discountPct,
       taxPct: l.taxPct,
     })),
-  };
+    taxInclusive: v.taxInclusive ?? false,
+  } as CreateQuotationInput;
 }
 
 export function QuotationForm({
@@ -112,14 +115,13 @@ export function QuotationForm({
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
 
-  const defaultTaxPct = taxConfig?.taxRates
-    .filter((r) => r.isDefault && (r.appliesTo === "sales" || r.appliesTo === "both"))
-    .reduce((sum, r) => sum + r.rate, 0) ?? 0;
+  const defaultTaxPct = taxConfig?.taxRates[0]?.rate ?? 0;
 
   const {
     register,
     control,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -132,12 +134,14 @@ export function QuotationForm({
           notes: "",
           terms: "",
           tagIds: [],
-          lineItems: [{ ...emptyLine }],
+          lineItems: [emptyLine()],
+          taxInclusive: false,
         },
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
   const currency = initial?.currency ?? "AED";
+  const taxInclusive = watch("taxInclusive");
 
   const handleReorder = (newOrder: typeof fields) => {
     const oldIds = fields.map((f) => f.id);
@@ -244,6 +248,16 @@ export function QuotationForm({
         {/* Line items with drag-to-reorder */}
         <FadeIn delay={0.05} className="space-y-2">
           <Label>Line items</Label>
+          <div className="flex items-center gap-2 mb-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-foreground-muted">
+              <input
+                type="checkbox"
+                {...register("taxInclusive")}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              Prices include tax
+            </label>
+          </div>
           <div className="overflow-x-auto rounded-lg border border-border">
             <div className="min-w-[680px]">
               <div
@@ -277,7 +291,7 @@ export function QuotationForm({
             </div>
           </div>
           {errors.lineItems && <p className="text-xs text-danger">{errors.lineItems.message}</p>}
-          <Button type="button" variant="outline" size="sm" onClick={() => append({ ...emptyLine, taxPct: defaultTaxPct })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxPct))}>
             <Plus className="h-4 w-4" /> Add line
           </Button>
         </FadeIn>

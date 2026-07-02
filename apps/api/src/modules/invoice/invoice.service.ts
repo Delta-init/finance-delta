@@ -102,13 +102,14 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
     sourceQuoteId: doc.sourceQuoteId?.toString(),
     locale: (doc as unknown as { locale?: string }).locale ?? "en",
     exchangeRate: (doc as unknown as { exchangeRate?: number }).exchangeRate ?? 1,
+    taxInclusive: (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false,
     createdAt: doc.createdAt.toISOString(),
   };
 }
 
-function buildLines(raw: CreateInvoiceInput["lineItems"]) {
+function buildLines(raw: CreateInvoiceInput["lineItems"], taxInclusive = false) {
   const lineItems = raw.map((l) => {
-    const b = computeInvoiceLine(l);
+    const b = computeInvoiceLine({ ...l, taxInclusive });
     return {
       description: l.description,
       quantity: l.quantity,
@@ -122,7 +123,7 @@ function buildLines(raw: CreateInvoiceInput["lineItems"]) {
       lineTotalMinor: b.lineTotalMinor,
     };
   });
-  const totals = sumInvoiceTotals(raw);
+  const totals = sumInvoiceTotals(raw.map((l) => ({ ...l, taxInclusive })));
   return { lineItems, totals };
 }
 
@@ -204,7 +205,7 @@ export async function createInvoice(
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
   if (!salesperson) throw new AppError("VALIDATION_ERROR", "Invalid salesperson selected");
 
-  const { lineItems, totals } = buildLines(input.lineItems);
+  const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false);
   const invoiceNumber = await nextNumber(orgId, "invoice", "IN-");
   const tagIds = await resolveTagIds(orgId, input.tagIds);
 
@@ -254,6 +255,7 @@ export async function createInvoice(
     recurring,
     locale: input.locale ?? "en",
     exchangeRate: input.exchangeRate ?? (await getExchangeRate(org?.baseCurrency ?? "AED", input.currency ?? customer.currency ?? "AED")),
+    taxInclusive: input.taxInclusive ?? false,
   });
   await doc.populate("tagIds", "name color");
   return toDTO(doc);
@@ -301,8 +303,10 @@ export async function updateInvoice(
       });
     }
   }
+  if (input.taxInclusive !== undefined) doc.set("taxInclusive", input.taxInclusive);
   if (input.lineItems) {
-    const { lineItems, totals } = buildLines(input.lineItems);
+    const effectiveTaxInclusive = input.taxInclusive ?? (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
+    const { lineItems, totals } = buildLines(input.lineItems, effectiveTaxInclusive);
     doc.set({
       lineItems,
       subtotalMinor: totals.subtotalMinor,

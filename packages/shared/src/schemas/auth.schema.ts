@@ -22,6 +22,7 @@ export const authUserSchema = z.object({
   roleName: z.string(),
   permissions: z.array(z.string()),
   isSuperAdmin: z.boolean().optional().default(false),
+  baseCurrency: z.string().optional().default("AED"),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 

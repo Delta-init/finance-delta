@@ -22,9 +22,8 @@ export class ApiError extends Error {
 }
 
 async function handleUnauthorized() {
-  // await signOut({ callbackUrl: "/login" });
-  return {}
-  // throw new ApiError(401, "UNAUTHENTICATED", "Session expired. Please log in again.");
+  await signOut({ callbackUrl: "/login" });
+  throw new ApiError(401, "UNAUTHENTICATED", "Session expired. Please log in again.");
 }
 
 async function parseError(res: Response) {

@@ -9,6 +9,8 @@
  * out from inside the React tree (where next-auth/react context is available).
  */
 
+import { signOut } from "next-auth/react";
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -21,7 +23,8 @@ export class ApiError extends Error {
   }
 }
 
-function handleUnauthorized(): never {
+ function handleUnauthorized() {
+  // await signOut({ callbackUrl: "/login" });
   throw new ApiError(401, "UNAUTHENTICATED", "Session expired. Please log in again.");
 }
 

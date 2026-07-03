@@ -68,11 +68,6 @@ export function useLockStructure() {
 
 // ── Records ───────────────────────────────────────────────────────────────────
 
-interface RecordsResult {
-  data: CommissionRecord[];
-  meta: { total: number; page: number; pageSize: number; pageCount: number };
-}
-
 export function useCommissionRecords(params: {
   salespersonId?: string;
   status?: string;
@@ -81,17 +76,9 @@ export function useCommissionRecords(params: {
   page?: number;
   pageSize?: number;
 }) {
-  const qs = new URLSearchParams();
-  if (params.salespersonId) qs.set("salespersonId", params.salespersonId);
-  if (params.status) qs.set("status", params.status);
-  if (params.from) qs.set("from", params.from);
-  if (params.to) qs.set("to", params.to);
-  if (params.page) qs.set("page", String(params.page));
-  if (params.pageSize) qs.set("pageSize", String(params.pageSize));
-
   return useQuery({
     queryKey: [...KEY, "records", params],
-    queryFn: () => api.get<RecordsResult>(`commissions/records?${qs.toString()}`),
+    queryFn: () => api.getList<CommissionRecord>("commissions/records", params),
   });
 }
 

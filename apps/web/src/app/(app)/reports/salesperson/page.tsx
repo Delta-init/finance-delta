@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { TrendingUp, DollarSign, CheckCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -142,7 +143,11 @@ export default function SalespersonReportPage() {
                         key={row.id}
                         className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors"
                       >
-                        <td className="px-4 py-3 font-medium">{row.label}</td>
+                        <td className="px-4 py-3 font-medium">
+                          <Link href={`/reports/salesperson/${row.id}`} className="hover:text-primary hover:underline">
+                            {row.label}
+                          </Link>
+                        </td>
                         <td className="px-4 py-3 text-right font-numeric text-foreground-muted">{row.count}</td>
                         <td className="px-4 py-3 text-right font-numeric">{fmt(currency, convert(row.totalMinor))}</td>
                         <td className="px-4 py-3 text-right font-numeric text-success">{fmt(currency, convert(row.paidMinor))}</td>

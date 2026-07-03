@@ -36,6 +36,8 @@ import {
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
+import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
+import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -48,6 +50,7 @@ const lineSchema = z.object({
 });
 const formSchema = z.object({
   customerId: z.string().min(1, "Select a customer"),
+  salespersonId: z.string().optional(),
   issueDate: z.string().min(1, "Required"),
   expiryDate: z.string().min(1, "Required"),
   notes: z.string().optional(),
@@ -66,6 +69,7 @@ const emptyLine = (taxPct = 0) => ({ description: "", quantity: 1, unitPrice: 0,
 function fromQuotation(q: Quotation): FormValues {
   return {
     customerId: q.customerId,
+    salespersonId: undefined,
     issueDate: q.issueDate,
     expiryDate: q.expiryDate,
     notes: q.notes,
@@ -84,6 +88,7 @@ function fromQuotation(q: Quotation): FormValues {
 function toApiInput(v: FormValues): CreateQuotationInput {
   return {
     customerId: v.customerId,
+    salespersonId: v.salespersonId || undefined,
     issueDate: v.issueDate,
     expiryDate: v.expiryDate,
     notes: v.notes ?? "",
@@ -114,8 +119,10 @@ export function QuotationForm({
   const router = useRouter();
   const { currency: orgCurrency } = useCurrency();
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
+  const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
   const defaultTaxPct = taxConfig?.taxRates[0]?.rate ?? 0;
 
@@ -124,6 +131,7 @@ export function QuotationForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -131,6 +139,7 @@ export function QuotationForm({
       ? fromQuotation(initial)
       : {
           customerId: "",
+          salespersonId: "",
           issueDate: today(),
           expiryDate: inDays(14),
           notes: "",
@@ -167,6 +176,15 @@ export function QuotationForm({
   }
 
   return (
+    <>
+      <QuickCreateCustomerModal
+        open={customerModalOpen}
+        onClose={() => setCustomerModalOpen(false)}
+        onCreated={(id) => {
+          setValue("customerId", id, { shouldValidate: true });
+          setCustomerModalOpen(false);
+        }}
+      />
     <form onSubmit={handleSubmit(submit)}>
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface/85 px-6 py-3 backdrop-blur-md">
@@ -192,9 +210,18 @@ export function QuotationForm({
       </div>
 
       <div className="space-y-6 p-6">
-        <FadeIn className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <FadeIn className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="space-y-1.5">
-            <Label>Customer</Label>
+            <div className="flex items-center justify-between">
+              <Label>Customer</Label>
+              <button
+                type="button"
+                onClick={() => setCustomerModalOpen(true)}
+                className="text-xs text-primary hover:underline flex items-center gap-0.5"
+              >
+                <Plus className="h-3 w-3" /> New
+              </button>
+            </div>
             <Controller
               control={control}
               name="customerId"
@@ -214,6 +241,27 @@ export function QuotationForm({
               )}
             />
             {errors.customerId && <p className="text-xs text-danger">{errors.customerId.message}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label>Salesperson</Label>
+            <Controller
+              control={control}
+              name="salespersonId"
+              render={({ field }) => (
+                <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a salesperson…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users?.data.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Issue date</Label>
@@ -325,6 +373,7 @@ export function QuotationForm({
         {error && <p className="text-sm text-danger">{error}</p>}
       </div>
     </form>
+    </>
   );
 }
 

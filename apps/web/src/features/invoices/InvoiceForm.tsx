@@ -42,6 +42,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
+import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
@@ -181,6 +182,7 @@ export function InvoiceForm({
   const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
   const firstRate = taxConfig?.taxRates[0];
   const defaultTaxes = firstRate ? [{ code: firstRate.code, rate: firstRate.rate }] : [];
@@ -242,6 +244,15 @@ export function InvoiceForm({
   }
 
   return (
+    <>
+      <QuickCreateCustomerModal
+        open={customerModalOpen}
+        onClose={() => setCustomerModalOpen(false)}
+        onCreated={(id) => {
+          setValue("customerId", id, { shouldValidate: true });
+          setCustomerModalOpen(false);
+        }}
+      />
     <form onSubmit={handleSubmit(submit)}>
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface/85 px-6 py-3 backdrop-blur-md">
@@ -266,7 +277,16 @@ export function InvoiceForm({
         {/* Header fields */}
         <FadeIn className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
-            <Label>Customer *</Label>
+            <div className="flex items-center justify-between">
+              <Label>Customer *</Label>
+              <button
+                type="button"
+                onClick={() => setCustomerModalOpen(true)}
+                className="text-xs text-primary hover:underline flex items-center gap-0.5"
+              >
+                <Plus className="h-3 w-3" /> New
+              </button>
+            </div>
             <Controller
               control={control}
               name="customerId"
@@ -523,6 +543,7 @@ export function InvoiceForm({
         {error && <p className="text-sm text-danger">{error}</p>}
       </div>
     </form>
+    </>
   );
 }
 

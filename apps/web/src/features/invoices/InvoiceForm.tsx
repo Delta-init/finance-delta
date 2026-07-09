@@ -26,6 +26,7 @@ import {
   type CreateInvoiceInput,
   type Invoice,
   type TaxCode,
+  type TaxConfigItem,
 } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,8 +185,10 @@ export function InvoiceForm({
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
-  const firstRate = taxConfig?.taxRates[0];
-  const defaultTaxes = firstRate ? [{ code: firstRate.code, rate: firstRate.rate }] : [];
+  // All default sales-side rates apply to new lines (e.g. CGST + SGST together for GST orgs).
+  const defaultTaxes = (taxConfig?.taxRates ?? [])
+    .filter((r) => r.isDefault && r.appliesTo !== "purchases")
+    .map((r) => ({ code: r.code, rate: r.rate }));
 
   const {
     register,
@@ -395,6 +398,7 @@ export function InvoiceForm({
                     register={register}
                     control={control}
                     setValue={setValue}
+                    configuredRates={taxConfig?.taxRates ?? []}
                     currency={currency}
                     taxInclusive={taxInclusive}
                     canRemove={fields.length > 1}
@@ -555,6 +559,7 @@ function LineRow({
   register,
   control,
   setValue,
+  configuredRates,
   currency,
   taxInclusive,
   canRemove,
@@ -565,6 +570,7 @@ function LineRow({
   register: UseFormRegister<FormValues>;
   control: Control<FormValues>;
   setValue: UseFormSetValue<FormValues>;
+  configuredRates: TaxConfigItem[];
   currency: string;
   taxInclusive: boolean;
   canRemove: boolean;
@@ -593,7 +599,7 @@ function LineRow({
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.quantity`)} />
       <Input className="h-8" type="number" step="0.01" {...register(`lineItems.${index}.unitPrice`)} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
-      <TaxCell control={control} index={index} setValue={setValue} />
+      <TaxCell control={control} index={index} setValue={setValue} configuredRates={configuredRates} />
       <div className="text-right">
         <LineAmount control={control} index={index} currency={currency} taxInclusive={taxInclusive} />
       </div>
@@ -614,16 +620,21 @@ function TaxCell({
   control,
   index,
   setValue,
+  configuredRates,
 }: {
   control: Control<FormValues>;
   index: number;
   setValue: UseFormSetValue<FormValues>;
+  configuredRates: TaxConfigItem[];
 }) {
   const taxes = useWatch({ control, name: `lineItems.${index}.taxes` }) ?? [];
   const [code, setCode] = useState<TaxCode>("VAT");
   const [rate, setRate] = useState("5");
 
   const totalPct = taxes.reduce((s, t) => s + (Number(t.rate) || 0), 0);
+  const quickRates = configuredRates.filter(
+    (r) => r.appliesTo !== "purchases" && !taxes.some((t) => t.code === r.code),
+  );
 
   const add = () => {
     const r = parseFloat(rate);
@@ -667,6 +678,20 @@ function TaxCell({
               </div>
             ))}
             <div className="border-t border-border pt-1" />
+          </div>
+        )}
+        {quickRates.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {quickRates.map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                onClick={() => setValue(`lineItems.${index}.taxes`, [...taxes, { code: r.code, rate: r.rate }], { shouldDirty: true })}
+                className="rounded-full border border-border px-2 py-0.5 text-xs text-foreground-muted hover:border-primary hover:text-primary"
+              >
+                + {r.code} {r.rate}%
+              </button>
+            ))}
           </div>
         )}
         <div className="flex items-center gap-1.5">

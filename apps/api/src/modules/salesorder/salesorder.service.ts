@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import {
   computeLine,
-  sumTotals,
+  computeInvoiceLine,
   type Paginated,
   type SalesOrder as SalesOrderDTO,
   type SalesOrderQuery,
@@ -19,22 +19,65 @@ interface RawLine {
   unitPriceMinor: number;
   discountPct?: number;
   taxPct?: number;
+  taxes?: { code: string; rate: number }[];
 }
 
+/** Builds computed line items + totals for quotations and sales orders.
+ *  Lines with a `taxes` array (multi-tax, e.g. CGST + SGST) are computed
+ *  per-code; `taxPct` is stored as the combined rate so legacy displays keep
+ *  working. Lines without `taxes` follow the legacy single-rate path. */
 export function buildLines(raw: RawLine[]) {
+  const breakdownMap = new Map<string, number>();
+  const totals = { subtotalMinor: 0, discountTotalMinor: 0, taxTotalMinor: 0, totalMinor: 0 };
+
   const lineItems = raw.map((l) => {
-    const b = computeLine(l);
-    return {
-      description: l.description,
-      quantity: l.quantity,
-      unitPriceMinor: l.unitPriceMinor,
-      discountPct: l.discountPct ?? 0,
-      taxPct: l.taxPct ?? 0,
-      ...b,
-    };
+    let line;
+    if (l.taxes?.length) {
+      const b = computeInvoiceLine({
+        quantity: l.quantity,
+        unitPriceMinor: l.unitPriceMinor,
+        discountPct: l.discountPct ?? 0,
+        taxes: l.taxes,
+      });
+      for (const t of b.taxes) {
+        breakdownMap.set(t.code, (breakdownMap.get(t.code) ?? 0) + t.amountMinor);
+      }
+      line = {
+        description: l.description,
+        quantity: l.quantity,
+        unitPriceMinor: l.unitPriceMinor,
+        discountPct: l.discountPct ?? 0,
+        taxPct: l.taxes.reduce((s, t) => s + t.rate, 0),
+        taxes: l.taxes,
+        lineSubtotalMinor: b.lineSubtotalMinor,
+        discountMinor: b.discountMinor,
+        taxMinor: b.taxTotalMinor,
+        lineTotalMinor: b.lineTotalMinor,
+      };
+    } else {
+      const b = computeLine(l);
+      line = {
+        description: l.description,
+        quantity: l.quantity,
+        unitPriceMinor: l.unitPriceMinor,
+        discountPct: l.discountPct ?? 0,
+        taxPct: l.taxPct ?? 0,
+        taxes: [] as { code: string; rate: number }[],
+        ...b,
+      };
+    }
+    totals.subtotalMinor += line.lineSubtotalMinor;
+    totals.discountTotalMinor += line.discountMinor;
+    totals.taxTotalMinor += line.taxMinor;
+    totals.totalMinor += line.lineTotalMinor;
+    return line;
   });
-  const totals = sumTotals(raw);
-  return { lineItems, totals };
+
+  const taxBreakdown = Array.from(breakdownMap.entries()).map(([code, amountMinor]) => ({
+    code,
+    amountMinor,
+  }));
+  return { lineItems, totals: { ...totals, taxBreakdown } };
 }
 
 export function toDTO(doc: SalesOrderDoc): SalesOrderDTO {
@@ -51,6 +94,7 @@ export function toDTO(doc: SalesOrderDoc): SalesOrderDTO {
     subtotalMinor: doc.subtotalMinor ?? 0,
     discountTotalMinor: doc.discountTotalMinor ?? 0,
     taxTotalMinor: doc.taxTotalMinor ?? 0,
+    taxBreakdown: (doc.taxBreakdown ?? []) as SalesOrderDTO["taxBreakdown"],
     totalMinor: doc.totalMinor ?? 0,
     tags: toTagRefs(doc.tagIds),
     createdAt: doc.createdAt.toISOString(),
@@ -113,6 +157,10 @@ export async function createFromQuote(
     unitPriceMinor: l.unitPriceMinor,
     discountPct: l.discountPct,
     taxPct: l.taxPct,
+    taxes: (l as unknown as { taxes?: { code: string; rate: number }[] }).taxes?.map((t) => ({
+      code: t.code,
+      rate: t.rate,
+    })),
   }));
 
   const { lineItems, totals } = buildLines(raw);

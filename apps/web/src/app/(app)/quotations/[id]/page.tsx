@@ -222,10 +222,19 @@ export default function QuotationDetailPage() {
               <span>Discount</span>
               <span className="font-numeric text-foreground">{formatMoney(q.discountTotalMinor, q.currency)}</span>
             </div>
-            <div className="flex justify-between text-foreground-muted">
-              <span>Tax</span>
-              <span className="font-numeric text-foreground">{formatMoney(q.taxTotalMinor, q.currency)}</span>
-            </div>
+            {q.taxBreakdown?.length ? (
+              q.taxBreakdown.map((t) => (
+                <div key={t.code} className="flex justify-between text-foreground-muted">
+                  <span>{t.code}</span>
+                  <span className="font-numeric text-foreground">{formatMoney(t.amountMinor, q.currency)}</span>
+                </div>
+              ))
+            ) : (
+              <div className="flex justify-between text-foreground-muted">
+                <span>Tax</span>
+                <span className="font-numeric text-foreground">{formatMoney(q.taxTotalMinor, q.currency)}</span>
+              </div>
+            )}
             <div className="flex justify-between border-t border-border pt-1.5 text-base font-semibold">
               <span>Total</span>
               <span className="font-numeric">{formatMoney(q.totalMinor, q.currency)}</span>

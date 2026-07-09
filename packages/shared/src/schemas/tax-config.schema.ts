@@ -22,7 +22,11 @@ export type TaxPresetItem = {
 
 export const TAX_SYSTEM_PRESETS: Record<TaxSystem, TaxPresetItem[]> = {
   vat:       [{ label: "VAT",              code: "VAT", rate: 5,  isDefault: true,  appliesTo: "both"      }],
-  gst:       [{ label: "GST",              code: "GST", rate: 18, isDefault: true,  appliesTo: "both"      }],
+  gst:       [
+    { label: "CGST", code: "CGST", rate: 9,  isDefault: true,  appliesTo: "both" },
+    { label: "SGST", code: "SGST", rate: 9,  isDefault: true,  appliesTo: "both" },
+    { label: "IGST", code: "IGST", rate: 18, isDefault: false, appliesTo: "both" },
+  ],
   sales_tax: [{ label: "Sales Tax",        code: "VAT", rate: 0,  isDefault: true,  appliesTo: "sales"     }],
   wht:       [{ label: "Withholding Tax",  code: "WHT", rate: 5,  isDefault: false, appliesTo: "purchases" }],
   none:      [],

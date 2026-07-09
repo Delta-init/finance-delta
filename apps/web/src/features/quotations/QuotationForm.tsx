@@ -9,18 +9,22 @@ import {
   Controller,
   type Control,
   type UseFormRegister,
+  type UseFormSetValue,
 } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Reorder, useDragControls, motion } from "framer-motion";
-import { Trash2, Plus, GripVertical, ArrowLeft } from "lucide-react";
+import { Trash2, Plus, GripVertical, ArrowLeft, X } from "lucide-react";
 import {
-  computeLine,
-  sumTotals,
+  TAX_CODES,
+  computeInvoiceLine,
+  sumInvoiceTotals,
   toMinor,
   formatMoney,
   type CreateQuotationInput,
   type Quotation,
+  type TaxCode,
+  type TaxConfigItem,
 } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
@@ -41,12 +46,16 @@ import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 
+const taxSchema = z.object({
+  code: z.string().min(1),
+  rate: z.coerce.number().min(0).max(100),
+});
 const lineSchema = z.object({
   description: z.string().min(1, "Required"),
   quantity: z.coerce.number().positive(),
   unitPrice: z.coerce.number().min(0),
   discountPct: z.coerce.number().min(0).max(100),
-  taxPct: z.coerce.number().min(0).max(100),
+  taxes: z.array(taxSchema).default([]),
 });
 const formSchema = z.object({
   customerId: z.string().min(1, "Select a customer"),
@@ -61,10 +70,12 @@ const formSchema = z.object({
 });
 type FormValues = z.infer<typeof formSchema>;
 
-const GRID = "28px minmax(160px,1fr) 72px 116px 72px 72px 104px 36px";
+const GRID = "28px minmax(160px,1fr) 72px 116px 72px 80px 104px 36px";
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-const emptyLine = (taxPct = 0) => ({ description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxPct });
+const emptyLine = (taxes: { code: string; rate: number }[] = []) => ({
+  description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxes,
+});
 
 function fromQuotation(q: Quotation): FormValues {
   return {
@@ -80,7 +91,11 @@ function fromQuotation(q: Quotation): FormValues {
       quantity: l.quantity,
       unitPrice: l.unitPriceMinor / 100,
       discountPct: l.discountPct,
-      taxPct: l.taxPct,
+      taxes: l.taxes?.length
+        ? l.taxes.map((t) => ({ code: t.code, rate: t.rate }))
+        : l.taxPct > 0
+          ? [{ code: "VAT", rate: l.taxPct }]
+          : [],
     })),
     taxInclusive: false,
   };
@@ -99,7 +114,8 @@ function toApiInput(v: FormValues): CreateQuotationInput {
       quantity: l.quantity,
       unitPriceMinor: toMinor(l.unitPrice),
       discountPct: l.discountPct,
-      taxPct: l.taxPct,
+      taxPct: 0,
+      taxes: l.taxes,
     })),
     taxInclusive: v.taxInclusive ?? false,
   } as CreateQuotationInput;
@@ -124,7 +140,10 @@ export function QuotationForm({
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
-  const defaultTaxPct = taxConfig?.taxRates[0]?.rate ?? 0;
+  // All default sales-side rates apply to new lines (e.g. CGST + SGST together for GST orgs).
+  const defaultTaxes = (taxConfig?.taxRates ?? [])
+    .filter((r: TaxConfigItem) => r.isDefault && r.appliesTo !== "purchases")
+    .map((r: TaxConfigItem) => ({ code: r.code, rate: r.rate }));
 
   const {
     register,
@@ -319,7 +338,7 @@ export function QuotationForm({
                 <span>Qty</span>
                 <span>Unit price</span>
                 <span>Disc %</span>
-                <span>{taxConfig?.taxLabel ?? "Tax"} %</span>
+                <span>{taxConfig?.taxLabel ?? "Tax"}</span>
                 <span className="text-right">Amount</span>
                 <span />
               </div>
@@ -332,6 +351,8 @@ export function QuotationForm({
                     index={i}
                     register={register}
                     control={control}
+                    setValue={setValue}
+                    configuredRates={taxConfig?.taxRates ?? []}
                     currency={currency}
                     canRemove={fields.length > 1}
                     onRemove={() => remove(i)}
@@ -341,7 +362,7 @@ export function QuotationForm({
             </div>
           </div>
           {errors.lineItems && <p className="text-xs text-danger">{errors.lineItems.message}</p>}
-          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxPct))}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxes))}>
             <Plus className="h-4 w-4" /> Add line
           </Button>
         </FadeIn>
@@ -382,6 +403,8 @@ function LineRow({
   index,
   register,
   control,
+  setValue,
+  configuredRates,
   currency,
   canRemove,
   onRemove,
@@ -390,6 +413,8 @@ function LineRow({
   index: number;
   register: UseFormRegister<FormValues>;
   control: Control<FormValues>;
+  setValue: UseFormSetValue<FormValues>;
+  configuredRates: TaxConfigItem[];
   currency: string;
   canRemove: boolean;
   onRemove: () => void;
@@ -417,7 +442,7 @@ function LineRow({
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.quantity`)} />
       <Input className="h-8" type="number" step="0.01" {...register(`lineItems.${index}.unitPrice`)} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
-      <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.taxPct`)} />
+      <TaxCell control={control} index={index} setValue={setValue} configuredRates={configuredRates} />
       <div className="text-right">
         <LineAmount control={control} index={index} currency={currency} />
       </div>
@@ -437,6 +462,116 @@ function LineRow({
   );
 }
 
+// ── Tax popover cell ──────────────────────────────────────────────────────────
+
+function TaxCell({
+  control,
+  index,
+  setValue,
+  configuredRates,
+}: {
+  control: Control<FormValues>;
+  index: number;
+  setValue: UseFormSetValue<FormValues>;
+  configuredRates: TaxConfigItem[];
+}) {
+  const taxes = useWatch({ control, name: `lineItems.${index}.taxes` }) ?? [];
+  const [code, setCode] = useState<TaxCode>("VAT");
+  const [rate, setRate] = useState("5");
+
+  const totalPct = taxes.reduce((s, t) => s + (Number(t.rate) || 0), 0);
+  const quickRates = configuredRates.filter(
+    (r) => r.appliesTo !== "purchases" && !taxes.some((t) => t.code === r.code),
+  );
+
+  const addTax = (c: string, r: number) => {
+    if (r > 0) {
+      setValue(`lineItems.${index}.taxes`, [...taxes, { code: c, rate: r }], { shouldDirty: true });
+    }
+  };
+
+  const removeTax = (i: number) => {
+    setValue(
+      `lineItems.${index}.taxes`,
+      taxes.filter((_, j) => j !== i),
+      { shouldDirty: true },
+    );
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="h-8 w-full rounded-md border border-border bg-surface px-2 text-left text-xs hover:border-primary"
+        >
+          {totalPct > 0 ? `${totalPct}%` : <span className="text-foreground-subtle">—</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-60 space-y-2 p-3">
+        {taxes.length > 0 && (
+          <div className="space-y-1">
+            {taxes.map((t, i) => (
+              <div key={i} className="flex items-center justify-between text-xs">
+                <span className="font-medium">{t.code} {t.rate}%</span>
+                <button
+                  type="button"
+                  onClick={() => removeTax(i)}
+                  className="rounded p-0.5 text-foreground-subtle hover:text-danger"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            <div className="border-t border-border pt-1" />
+          </div>
+        )}
+        {quickRates.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {quickRates.map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                onClick={() => addTax(r.code, r.rate)}
+                className="rounded-full border border-border px-2 py-0.5 text-xs text-foreground-muted hover:border-primary hover:text-primary"
+              >
+                + {r.code} {r.rate}%
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5">
+          <Select value={code} onValueChange={(v) => setCode(v as TaxCode)}>
+            <SelectTrigger className="h-7 w-20 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TAX_CODES.filter((c) => c !== "NONE").map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            className="h-7 w-16 text-xs"
+            type="number"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            placeholder="%"
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => addTax(code, parseFloat(rate))}
+          >
+            Add
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function LineAmount({
   control,
   index,
@@ -447,23 +582,23 @@ function LineAmount({
   currency: string;
 }) {
   const line = useWatch({ control, name: `lineItems.${index}` });
-  const b = computeLine({
+  const b = computeInvoiceLine({
     quantity: Number(line?.quantity) || 0,
     unitPriceMinor: toMinor(line?.unitPrice ?? 0),
     discountPct: Number(line?.discountPct) || 0,
-    taxPct: Number(line?.taxPct) || 0,
+    taxes: (line?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
   });
   return <span className="font-numeric text-sm">{formatMoney(b.lineTotalMinor, currency)}</span>;
 }
 
 function Totals({ control, currency }: { control: Control<FormValues>; currency: string }) {
   const lines = useWatch({ control, name: "lineItems" }) ?? [];
-  const totals = sumTotals(
+  const totals = sumInvoiceTotals(
     lines.map((l) => ({
       quantity: Number(l?.quantity) || 0,
       unitPriceMinor: toMinor(l?.unitPrice ?? 0),
       discountPct: Number(l?.discountPct) || 0,
-      taxPct: Number(l?.taxPct) || 0,
+      taxes: (l?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
     })),
   );
   const Row = ({ label, value, strong }: { label: string; value: number; strong?: boolean }) => (
@@ -487,8 +622,10 @@ function Totals({ control, currency }: { control: Control<FormValues>; currency:
   return (
     <div className="w-full max-w-xs space-y-2 rounded-lg border border-border bg-surface p-4 lg:self-start">
       <Row label="Subtotal" value={totals.subtotalMinor} />
-      <Row label="Discount" value={totals.discountTotalMinor} />
-      <Row label="Tax" value={totals.taxTotalMinor} />
+      {totals.discountTotalMinor > 0 && <Row label="Discount" value={totals.discountTotalMinor} />}
+      {totals.taxBreakdown.map((t) => (
+        <Row key={t.code} label={`${t.code}`} value={t.amountMinor} />
+      ))}
       <Row label="Total" value={totals.totalMinor} strong />
     </div>
   );

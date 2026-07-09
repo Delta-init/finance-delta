@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
+import { taxInputSchema } from "./invoice.schema";
 
 export const QUOTE_STATUSES = [
   "draft",
@@ -11,13 +12,16 @@ export const QUOTE_STATUSES = [
 export const quoteStatusSchema = z.enum(QUOTE_STATUSES);
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 
-/** Line item as submitted by the client (totals are computed server-side). */
+/** Line item as submitted by the client (totals are computed server-side).
+ *  `taxes` (multi-tax, e.g. CGST + SGST) takes precedence; `taxPct` is the
+ *  legacy single-rate field kept for backward compatibility. */
 export const lineItemInputSchema = z.object({
   description: z.string().min(1, "Description is required").max(300),
   quantity: z.coerce.number().positive("Qty must be > 0"),
   unitPriceMinor: z.coerce.number().int().min(0),
   discountPct: z.coerce.number().min(0).max(100).optional().default(0),
   taxPct: z.coerce.number().min(0).max(100).optional().default(0),
+  taxes: z.array(taxInputSchema).optional().default([]),
 });
 export type LineItemInput = z.infer<typeof lineItemInputSchema>;
 
@@ -49,12 +53,19 @@ export type ConvertQuotationInput = z.infer<typeof convertQuotationSchema>;
 export const lineItemSchema = lineItemInputSchema.extend({
   discountPct: z.number(),
   taxPct: z.number(),
+  taxes: z.array(taxInputSchema).default([]),
   lineSubtotalMinor: z.number(),
   discountMinor: z.number(),
   taxMinor: z.number(),
   lineTotalMinor: z.number(),
 });
 export type LineItem = z.infer<typeof lineItemSchema>;
+
+export const taxBreakdownItemSchema = z.object({
+  code: z.string(),
+  amountMinor: z.number(),
+});
+export type TaxBreakdownItem = z.infer<typeof taxBreakdownItemSchema>;
 
 export const quotationSchema = z.object({
   id: z.string(),
@@ -69,6 +80,7 @@ export const quotationSchema = z.object({
   subtotalMinor: z.number(),
   discountTotalMinor: z.number(),
   taxTotalMinor: z.number(),
+  taxBreakdown: z.array(taxBreakdownItemSchema).default([]),
   totalMinor: z.number(),
   notes: z.string(),
   terms: z.string(),

@@ -1,5 +1,13 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
 
+const lineTaxSchema = new Schema(
+  {
+    code: { type: String, required: true },
+    rate: { type: Number, required: true },
+  },
+  { _id: false },
+);
+
 const lineItemSchema = new Schema(
   {
     description: { type: String, required: true },
@@ -7,10 +15,19 @@ const lineItemSchema = new Schema(
     unitPriceMinor: { type: Number, required: true },
     discountPct: { type: Number, default: 0 },
     taxPct: { type: Number, default: 0 },
+    taxes: { type: [lineTaxSchema], default: [] },
     lineSubtotalMinor: { type: Number, required: true },
     discountMinor: { type: Number, required: true },
     taxMinor: { type: Number, required: true },
     lineTotalMinor: { type: Number, required: true },
+  },
+  { _id: false },
+);
+
+const taxBreakdownSchema = new Schema(
+  {
+    code: { type: String, required: true },
+    amountMinor: { type: Number, required: true },
   },
   { _id: false },
 );
@@ -38,6 +55,7 @@ const salesOrderSchema = new Schema(
     subtotalMinor: { type: Number, default: 0 },
     discountTotalMinor: { type: Number, default: 0 },
     taxTotalMinor: { type: Number, default: 0 },
+    taxBreakdown: { type: [taxBreakdownSchema], default: [] },
     totalMinor: { type: Number, default: 0 },
     tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],
   },

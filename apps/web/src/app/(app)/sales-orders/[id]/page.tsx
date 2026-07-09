@@ -135,12 +135,19 @@ export default function SalesOrderDetailPage({
                   <MoneyDisplay minor={order.discountTotalMinor} currency={order.currency} className="font-numeric text-warning" />
                 </div>
               )}
-              {order.taxTotalMinor > 0 && (
+              {order.taxBreakdown?.length ? (
+                order.taxBreakdown.map((t) => (
+                  <div key={t.code} className="flex justify-between">
+                    <span className="text-foreground-muted">{t.code}</span>
+                    <MoneyDisplay minor={t.amountMinor} currency={order.currency} className="font-numeric" />
+                  </div>
+                ))
+              ) : order.taxTotalMinor > 0 ? (
                 <div className="flex justify-between">
                   <span className="text-foreground-muted">Tax</span>
                   <MoneyDisplay minor={order.taxTotalMinor} currency={order.currency} className="font-numeric" />
                 </div>
-              )}
+              ) : null}
               <div className="flex justify-between border-t border-border pt-2 font-semibold">
                 <span>Total</span>
                 <MoneyDisplay minor={order.totalMinor} currency={order.currency} className="font-numeric text-base" />

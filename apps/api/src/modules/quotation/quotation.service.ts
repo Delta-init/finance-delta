@@ -55,6 +55,7 @@ function toDTO(doc: QuotationDoc): QuotationDTO {
     subtotalMinor: doc.subtotalMinor ?? 0,
     discountTotalMinor: doc.discountTotalMinor ?? 0,
     taxTotalMinor: doc.taxTotalMinor ?? 0,
+    taxBreakdown: (doc.taxBreakdown ?? []) as QuotationDTO["taxBreakdown"],
     totalMinor: doc.totalMinor ?? 0,
     notes: doc.notes ?? "",
     terms: doc.terms ?? "",
@@ -195,6 +196,7 @@ export async function updateQuotation(
       subtotalMinor: totals.subtotalMinor,
       discountTotalMinor: totals.discountTotalMinor,
       taxTotalMinor: totals.taxTotalMinor,
+      taxBreakdown: totals.taxBreakdown,
       totalMinor: totals.totalMinor,
     });
   }
@@ -285,13 +287,17 @@ export async function convertToInvoice(
   ]);
   if (!salesperson) throw new AppError("NOT_FOUND", "User not found");
 
-  const rawLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number }[]).map(
+  const rawLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number; taxes?: { code: string; rate: number }[] }[]).map(
     (l) => ({
       description: l.description,
       quantity: l.quantity,
       unitPriceMinor: l.unitPriceMinor,
       discountPct: l.discountPct ?? 0,
-      taxes: l.taxPct && l.taxPct > 0 ? [{ code: "VAT", rate: l.taxPct }] : [],
+      taxes: l.taxes?.length
+        ? l.taxes.map((t) => ({ code: t.code, rate: t.rate }))
+        : l.taxPct && l.taxPct > 0
+          ? [{ code: "VAT", rate: l.taxPct }]
+          : [],
     }),
   );
 

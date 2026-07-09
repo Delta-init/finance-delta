@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
 
-export const TAX_CODES = ["VAT", "GST", "TDS", "WHT", "NONE"] as const;
+export const TAX_CODES = ["VAT", "GST", "CGST", "SGST", "IGST", "TDS", "WHT", "NONE"] as const;
 export type TaxCode = (typeof TAX_CODES)[number];
 
 export const PAYMENT_METHODS = [

@@ -121,9 +121,13 @@ export default function PrintQuotationPage({
             {q.discountTotalMinor > 0 && (
               <PrintTotalRow label={L.discount} value={`− ${formatMoney(q.discountTotalMinor, q.currency)}`} />
             )}
-            {q.taxTotalMinor > 0 && (
+            {q.taxBreakdown?.length ? (
+              q.taxBreakdown.map((t) => (
+                <PrintTotalRow key={t.code} label={t.code} value={formatMoney(t.amountMinor, q.currency)} />
+              ))
+            ) : q.taxTotalMinor > 0 ? (
               <PrintTotalRow label={L.tax} value={formatMoney(q.taxTotalMinor, q.currency)} />
-            )}
+            ) : null}
             <PrintTotalRow label={L.total} value={formatMoney(q.totalMinor, q.currency)} strong />
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { lineItemSchema } from "./quotation.schema";
+import { lineItemSchema, taxBreakdownItemSchema } from "./quotation.schema";
 import { tagRefSchema } from "./tag.schema";
 
 export const SALES_ORDER_STATUSES = ["open", "fulfilled", "cancelled"] as const;
@@ -19,6 +19,7 @@ export const salesOrderSchema = z.object({
   subtotalMinor: z.number(),
   discountTotalMinor: z.number(),
   taxTotalMinor: z.number(),
+  taxBreakdown: z.array(taxBreakdownItemSchema).default([]),
   totalMinor: z.number(),
   tags: z.array(tagRefSchema).default([]),
   createdAt: z.string(),

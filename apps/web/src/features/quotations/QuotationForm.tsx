@@ -134,19 +134,22 @@ export function QuotationForm({
   onSubmit: (input: CreateQuotationInput) => Promise<void>;
 }) {
   const router = useRouter();
-  const { currency: orgCurrency } = useCurrency();
+  const { currency: orgCurrency, baseCurrency } = useCurrency();
+  const isINROrg = baseCurrency === "INR";
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
-  // Org-configured rates, falling back to the tax-system presets when the org
-  // hasn't applied them yet (e.g. GST org → CGST/SGST/IGST).
+  // Org-configured rates; INR orgs additionally fall back to the tax-system
+  // presets when none are applied yet (GST org → CGST/SGST/IGST).
   const effectiveRates: TaxConfigItem[] = taxConfig
     ? taxConfig.taxRates.length
       ? taxConfig.taxRates
-      : TAX_SYSTEM_PRESETS[taxConfig.taxSystem] ?? []
+      : isINROrg
+        ? TAX_SYSTEM_PRESETS[taxConfig.taxSystem] ?? []
+        : []
     : [];
   // All default sales-side rates apply to new lines (e.g. CGST + SGST together for GST orgs).
   const defaultTaxes = effectiveRates
@@ -183,16 +186,16 @@ export function QuotationForm({
   const taxInclusive = watch("taxInclusive");
 
   // The initial line is created before the tax config loads, so apply the
-  // default taxes (e.g. CGST + SGST) to untaxed lines once — new forms only.
+  // default taxes (CGST + SGST) to untaxed lines once — INR orgs, new forms only.
   const appliedDefaultTaxes = useRef(false);
   useEffect(() => {
-    if (initial || appliedDefaultTaxes.current || defaultTaxes.length === 0) return;
+    if (!isINROrg || initial || appliedDefaultTaxes.current || defaultTaxes.length === 0) return;
     appliedDefaultTaxes.current = true;
     getValues("lineItems").forEach((l, i) => {
       if (!l.taxes?.length) setValue(`lineItems.${i}.taxes`, defaultTaxes);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultTaxes.length]);
+  }, [defaultTaxes.length, isINROrg]);
 
   const handleReorder = (newOrder: typeof fields) => {
     const oldIds = fields.map((f) => f.id);

@@ -34,6 +34,8 @@ const NON_BASE_LOWER = CURRENCIES.filter((c) => c.code !== "AED")
 interface CurrencyContextValue {
   /** Currently selected display currency */
   currency: CurrencyCode;
+  /** The organization's base currency from the session (e.g. "INR", "AED") */
+  baseCurrency: string;
   setCurrency: (c: CurrencyCode) => void;
   /** Exchange rates relative to AED (AED = 1). {} while loading. */
   rates: Partial<Record<CurrencyCode, number>>;
@@ -121,6 +123,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     <CurrencyContext.Provider
       value={{
         currency,
+        baseCurrency: orgCurrency ?? "AED",
         setCurrency,
         rates,
         ratesDate: data?.date ?? "",

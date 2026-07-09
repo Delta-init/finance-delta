@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   useForm,
@@ -18,6 +18,7 @@ import { Reorder, useDragControls, motion } from "framer-motion";
 import { Trash2, Plus, GripVertical, ArrowLeft, X } from "lucide-react";
 import {
   TAX_CODES,
+  TAX_SYSTEM_PRESETS,
   RECURRING_FREQUENCIES,
   computeInvoiceLine,
   sumInvoiceTotals,
@@ -185,8 +186,15 @@ export function InvoiceForm({
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
+  // Org-configured rates, falling back to the tax-system presets when the org
+  // hasn't applied them yet (e.g. GST org → CGST/SGST/IGST).
+  const effectiveRates: TaxConfigItem[] = taxConfig
+    ? taxConfig.taxRates.length
+      ? taxConfig.taxRates
+      : TAX_SYSTEM_PRESETS[taxConfig.taxSystem] ?? []
+    : [];
   // All default sales-side rates apply to new lines (e.g. CGST + SGST together for GST orgs).
-  const defaultTaxes = (taxConfig?.taxRates ?? [])
+  const defaultTaxes = effectiveRates
     .filter((r) => r.isDefault && r.appliesTo !== "purchases")
     .map((r) => ({ code: r.code, rate: r.rate }));
 
@@ -196,6 +204,7 @@ export function InvoiceForm({
     handleSubmit,
     watch,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -219,6 +228,19 @@ export function InvoiceForm({
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
+
+  // The initial line is created before the tax config loads, so apply the
+  // default taxes (e.g. CGST + SGST) to untaxed lines once — new forms only.
+  const appliedDefaultTaxes = useRef(false);
+  useEffect(() => {
+    if (initial || appliedDefaultTaxes.current || defaultTaxes.length === 0) return;
+    appliedDefaultTaxes.current = true;
+    getValues("lineItems").forEach((l, i) => {
+      if (!l.taxes?.length) setValue(`lineItems.${i}.taxes`, defaultTaxes);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultTaxes.length]);
+
   const currency = initial?.currency ?? orgCurrency;
   const hasProgress = watch("hasProgress");
   const hasRecurring = watch("hasRecurring");
@@ -398,7 +420,7 @@ export function InvoiceForm({
                     register={register}
                     control={control}
                     setValue={setValue}
-                    configuredRates={taxConfig?.taxRates ?? []}
+                    configuredRates={effectiveRates}
                     currency={currency}
                     taxInclusive={taxInclusive}
                     canRemove={fields.length > 1}

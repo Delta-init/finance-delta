@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { departmentRefSchema } from "./department.schema";
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ export const createItemSchema = z.object({
   reorderPoint: z.number().min(0).default(0),
   reorderQty: z.number().min(0).default(0),
   photoUrl: z.string().url().optional().or(z.literal("")),
+  departmentId: z.string().optional(),
   isActive: z.boolean().default(true),
 });
 export type CreateItemInput = z.infer<typeof createItemSchema>;
@@ -75,6 +77,7 @@ export const itemSchema = z.object({
   reorderPoint: z.number(),
   reorderQty: z.number(),
   photoUrl: z.string().optional(),
+  department: departmentRefSchema.nullable().optional(),
   isActive: z.boolean(),
   totalStock: z.number(),
   isLowStock: z.boolean(),

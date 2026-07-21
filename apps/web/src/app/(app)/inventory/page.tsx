@@ -77,6 +77,15 @@ export default function InventoryPage() {
       ),
     },
     {
+      key: "department",
+      header: "Department",
+      cell: (item) => (
+        <span className="text-foreground-muted text-sm">
+          {item.department?.name ?? "—"}
+        </span>
+      ),
+    },
+    {
       key: "stock",
       header: "In Stock",
       align: "right",

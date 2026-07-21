@@ -19,6 +19,7 @@ const itemSchema = new Schema(
     reorderPoint: { type: Number, default: 0 },
     reorderQty: { type: Number, default: 0 },
     photoUrl: { type: String },
+    departmentId: { type: Types.ObjectId, ref: "Department" },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },

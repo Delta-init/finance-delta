@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateItem } from "@/features/inventory/api";
+import { useAllDepartments } from "@/features/departments/api";
 import { ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
 
 const UNITS = Object.keys(ITEM_UNIT_LABELS) as ItemUnit[];
@@ -29,6 +30,7 @@ const formSchema = z.object({
   reorderPoint: z.coerce.number().min(0).default(0),
   reorderQty: z.coerce.number().min(0).default(0),
   photoUrl: z.string().optional(),
+  departmentId: z.string().optional(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
@@ -37,6 +39,7 @@ function toMinor(v: string) { const n = parseFloat(v); return isNaN(n) ? 0 : Mat
 export default function NewItemPage() {
   const router = useRouter();
   const createItem = useCreateItem();
+  const { data: departments } = useAllDepartments();
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -60,6 +63,7 @@ export default function NewItemPage() {
         reorderPoint: values.reorderPoint,
         reorderQty: values.reorderQty,
         photoUrl: values.photoUrl || undefined,
+        departmentId: values.departmentId || undefined,
         isActive: true,
       });
       toast.success("Item created");
@@ -119,6 +123,22 @@ export default function NewItemPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {(departments?.length ?? 0) > 0 && (
+              <div className="space-y-1">
+                <Label>Department</Label>
+                <Select
+                  key={watch("departmentId") ?? "none"}
+                  value={watch("departmentId") ?? ""}
+                  onValueChange={(v) => setValue("departmentId", v)}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select a department…" /></SelectTrigger>
+                  <SelectContent>
+                    {departments?.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-1 col-span-2">
               <Label htmlFor="description">Description</Label>

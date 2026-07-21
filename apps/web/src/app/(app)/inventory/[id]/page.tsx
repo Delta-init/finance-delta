@@ -21,6 +21,10 @@ import { ApiError } from "@/lib/api";
 import {
   useItem, useStockLevels, useStockMovements, useUpdateItem, useDeleteItem,
 } from "@/features/inventory/api";
+import { useAllDepartments } from "@/features/departments/api";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useCurrency } from "@/lib/currency-context";
 
 const MOVEMENT_TONE: Record<MovementType, "success" | "danger" | "neutral"> = {
@@ -43,7 +47,17 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
   const { data: movements } = useStockMovements(id, t.baseParams);
   const updateItem = useUpdateItem(id);
   const deleteItem = useDeleteItem();
+  const { data: departments } = useAllDepartments();
   const [deleting, setDeleting] = useState(false);
+
+  async function handleDepartmentChange(departmentId: string) {
+    try {
+      await updateItem.mutateAsync({ departmentId });
+      toast.success("Department updated");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to update department");
+    }
+  }
 
   async function handleToggleActive() {
     if (!item) return;
@@ -265,6 +279,27 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
             <div>
               <span className="text-foreground-muted">Reorder Qty</span>
               <span className="ml-3 font-medium text-foreground">{item.reorderQty} {unit}</span>
+            </div>
+          )}
+          {(departments?.length ?? 0) > 0 && (
+            <div className="flex items-center">
+              <span className="text-foreground-muted shrink-0">Department</span>
+              <div className="ml-3 w-48">
+                <Select
+                  key={item.department?.id ?? "none"}
+                  value={item.department?.id ?? ""}
+                  onValueChange={handleDepartmentChange}
+                >
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments?.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
           {item.description && (

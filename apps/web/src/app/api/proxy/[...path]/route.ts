@@ -68,7 +68,9 @@ async function forward(req: NextRequest, path: string[]) {
 
   const res = await fetch(url, init);
   const text = await res.text();
-  return new NextResponse(text, {
+  // Null-body statuses (204/205/304) must not carry a body — even "" throws.
+  const body = [204, 205, 304].includes(res.status) ? null : text;
+  return new NextResponse(body, {
     status: res.status,
     headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
   });

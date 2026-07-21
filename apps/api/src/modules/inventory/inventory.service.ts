@@ -17,8 +17,23 @@ import { Warehouse, type WarehouseDoc } from "./warehouse.model";
 import { StockLevel, type StockLevelDoc } from "./stock-level.model";
 import { StockMovement, type StockMovementDoc } from "./stock-movement.model";
 import { PriceList, type PriceListDoc } from "./price-list.model";
+import { Department } from "../department/department.model";
 
 // ── DTO helpers ───────────────────────────────────────────────────────────────
+
+/** Maps a (possibly populated) departmentId to the DTO ref. */
+function toDepartmentRef(raw: unknown): { id: string; name: string } | null {
+  if (!raw) return null;
+  const d = raw as { _id?: Types.ObjectId; name?: string };
+  if (d._id && typeof d.name === "string") return { id: d._id.toString(), name: d.name };
+  return null;
+}
+
+async function requireOrgDepartment(orgId: string, departmentId: string) {
+  const dept = await Department.findOne({ _id: departmentId, organizationId: orgId });
+  if (!dept) throw new AppError("VALIDATION_ERROR", "Invalid department selected");
+  return dept;
+}
 
 function itemToDTO(doc: ItemDoc, totalStock = 0): ItemDTO {
   return {
@@ -35,6 +50,7 @@ function itemToDTO(doc: ItemDoc, totalStock = 0): ItemDTO {
     reorderPoint: (doc.reorderPoint as number) ?? 0,
     reorderQty: (doc.reorderQty as number) ?? 0,
     photoUrl: (doc.photoUrl as string | undefined) ?? undefined,
+    department: toDepartmentRef((doc as unknown as { departmentId?: unknown }).departmentId),
     isActive: (doc.isActive as boolean) ?? true,
     totalStock,
     isLowStock: (doc.trackStock as boolean) && totalStock <= (doc.reorderPoint as number),
@@ -220,12 +236,16 @@ export async function createItem(
   if (existing) throw new AppError("CONFLICT", `SKU "${input.sku}" already exists`);
 
   const itemNumber = await nextNumber(orgId, "item", "ITEM-");
+  const { departmentId, ...rest } = input;
+  const dept = departmentId ? await requireOrgDepartment(orgId, departmentId) : null;
   const doc = await Item.create({
     organizationId: new Types.ObjectId(orgId),
     itemNumber,
-    ...input,
+    ...rest,
     photoUrl: input.photoUrl || undefined,
+    departmentId: dept?._id,
   });
+  await doc.populate("departmentId", "name");
   return itemToDTO(doc, 0);
 }
 
@@ -242,11 +262,21 @@ export async function updateItem(
     });
     if (conflict) throw new AppError("CONFLICT", `SKU "${input.sku}" already exists`);
   }
+  const { departmentId, ...rest } = input;
+  const update: Record<string, unknown> = { $set: { ...rest, photoUrl: input.photoUrl || undefined } };
+  if (departmentId !== undefined) {
+    if (departmentId) {
+      const dept = await requireOrgDepartment(orgId, departmentId);
+      (update.$set as Record<string, unknown>).departmentId = dept._id;
+    } else {
+      update.$unset = { departmentId: 1 };
+    }
+  }
   const doc = await Item.findOneAndUpdate(
     { _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) },
-    { $set: { ...input, photoUrl: input.photoUrl || undefined } },
+    update,
     { new: true },
-  );
+  ).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Item not found");
   const stock = await getTotalStock(orgId, id);
   return itemToDTO(doc, stock);
@@ -266,7 +296,7 @@ export async function getItem(orgId: string, id: string): Promise<ItemDTO> {
   const doc = await Item.findOne({
     _id: new Types.ObjectId(id),
     organizationId: new Types.ObjectId(orgId),
-  });
+  }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Item not found");
   const stock = await getTotalStock(orgId, id);
   return itemToDTO(doc, stock);
@@ -292,6 +322,7 @@ export async function listItems(
       .sort(buildSort(ITEM_SORT, sort, dir, { createdAt: -1 }))
       .skip(skipFor(page, pageSize))
       .limit(pageSize)
+      .populate("departmentId", "name")
       .lean(),
     Item.countDocuments(filter),
   ]);

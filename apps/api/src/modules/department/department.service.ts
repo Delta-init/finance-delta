@@ -10,6 +10,7 @@ import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { User } from "../user/user.model";
 import { Customer } from "../customer/customer.model";
+import { Item } from "../inventory/item.model";
 import { Department, type DepartmentDoc } from "./department.model";
 
 function toDTO(doc: DepartmentDoc): DepartmentDTO {
@@ -88,6 +89,10 @@ export async function deleteDepartment(orgId: string, id: string): Promise<void>
       { arrayFilters: [{ "m.organizationId": orgObjId, "m.departmentId": doc._id }] },
     ),
     Customer.updateMany(
+      { organizationId: orgObjId, departmentId: doc._id },
+      { $unset: { departmentId: 1 } },
+    ),
+    Item.updateMany(
       { organizationId: orgObjId, departmentId: doc._id },
       { $unset: { departmentId: 1 } },
     ),

@@ -13,7 +13,22 @@ import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { Customer, type CustomerDoc } from "./customer.model";
 import { Organization } from "../organization/organization.model";
 import { Invoice } from "../invoice/invoice.model";
+import { Department } from "../department/department.model";
 import { nextNumber } from "../sequence/sequence.service";
+
+/** Maps a (possibly populated) departmentId to the DTO ref. */
+function toDepartmentRef(raw: unknown): { id: string; name: string } | null {
+  if (!raw) return null;
+  const d = raw as { _id?: Types.ObjectId; name?: string };
+  if (d._id && typeof d.name === "string") return { id: d._id.toString(), name: d.name };
+  return null;
+}
+
+async function requireOrgDepartment(orgId: string, departmentId: string) {
+  const dept = await Department.findOne({ _id: departmentId, organizationId: orgId });
+  if (!dept) throw new AppError("VALIDATION_ERROR", "Invalid department selected");
+  return dept;
+}
 
 function toAddress(raw: unknown): CustomerAddress {
   const a = (raw ?? {}) as Record<string, string>;
@@ -40,6 +55,7 @@ function toDTO(doc: CustomerDoc): CustomerDTO {
     billingAddress: toAddress((doc as unknown as { billingAddress?: unknown }).billingAddress),
     shippingAddress: toAddress((doc as unknown as { shippingAddress?: unknown }).shippingAddress),
     status: (doc.status as "active" | "archived") ?? "active",
+    department: toDepartmentRef((doc as unknown as { departmentId?: unknown }).departmentId),
     tags: toTagRefs(doc.tagIds),
     createdAt: doc.createdAt.toISOString(),
   };
@@ -68,6 +84,7 @@ export async function listCustomers(
   const [rows, total] = await Promise.all([
     Customer.find(filter)
       .populate("tagIds", "name color")
+      .populate("departmentId", "name")
       .sort(sort)
       .skip(skipFor(query.page, query.pageSize))
       .limit(query.pageSize),
@@ -80,10 +97,9 @@ export async function listCustomers(
 }
 
 export async function getCustomer(orgId: string, id: string): Promise<CustomerDTO> {
-  const doc = await Customer.findOne({ _id: id, organizationId: orgId }).populate(
-    "tagIds",
-    "name color",
-  );
+  const doc = await Customer.findOne({ _id: id, organizationId: orgId })
+    .populate("tagIds", "name color")
+    .populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Customer not found");
   return toDTO(doc as unknown as CustomerDoc);
 }
@@ -99,6 +115,9 @@ export async function createCustomer(
   const currency = input.currency ?? org?.baseCurrency ?? "AED";
   const customerCode = await nextNumber(orgId, "customer", "CUST-");
   const tagIds = await resolveTagIds(orgId, input.tagIds);
+  const departmentId = input.departmentId
+    ? (await requireOrgDepartment(orgId, input.departmentId))._id
+    : undefined;
 
   const doc = await Customer.create({
     organizationId: new Types.ObjectId(orgId),
@@ -110,11 +129,13 @@ export async function createCustomer(
     currency,
     vatNumber: input.vatNumber ?? "",
     discountPct: input.discountPct ?? 0,
+    departmentId,
     billingAddress: input.billingAddress ?? {},
     shippingAddress: input.shippingAddress ?? {},
     tagIds,
   });
   await doc.populate("tagIds", "name color");
+  await doc.populate("departmentId", "name");
   return toDTO(doc as unknown as CustomerDoc);
 }
 
@@ -133,6 +154,13 @@ export async function updateCustomer(
   if (input.currency !== undefined) doc.currency = input.currency;
   if (input.status !== undefined) doc.status = input.status;
   if (input.tagIds !== undefined) doc.set("tagIds", await resolveTagIds(orgId, input.tagIds));
+  if (input.departmentId !== undefined) {
+    if (input.departmentId) {
+      doc.set("departmentId", (await requireOrgDepartment(orgId, input.departmentId))._id);
+    } else {
+      doc.set("departmentId", undefined);
+    }
+  }
 
   const d = doc as unknown as Record<string, unknown>;
   if (input.vatNumber !== undefined) d.vatNumber = input.vatNumber;
@@ -142,6 +170,7 @@ export async function updateCustomer(
 
   await doc.save();
   await doc.populate("tagIds", "name color");
+  await doc.populate("departmentId", "name");
   return toDTO(doc as unknown as CustomerDoc);
 }
 

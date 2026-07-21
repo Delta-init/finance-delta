@@ -30,6 +30,7 @@ const customerSchema = new Schema(
     billingAddress: { type: addressSchema, default: () => ({}) },
     shippingAddress: { type: addressSchema, default: () => ({}) },
     status: { type: String, enum: ["active", "archived"], default: "active" },
+    departmentId: { type: Schema.Types.ObjectId, ref: "Department" },
     tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],
   },
   { timestamps: true },

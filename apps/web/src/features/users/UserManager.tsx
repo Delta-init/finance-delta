@@ -32,6 +32,7 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useRoles } from "@/features/roles/api";
+import { useAllDepartments } from "@/features/departments/api";
 import { useCreateUser, useUsers } from "./api";
 
 export function UserManager() {
@@ -46,6 +47,7 @@ export function UserManager() {
     tagIds: tagIds.length ? tagIds : undefined,
   });
   const { data: roles } = useRoles({ pageSize: 100 });
+  const { data: departments } = useAllDepartments();
   const createUser = useCreateUser();
 
   const [open, setOpen] = useState(false);
@@ -60,6 +62,7 @@ export function UserManager() {
     { key: "name", header: "Name", sortable: true, cell: (u) => <span className="font-medium">{u.name || "—"}</span> },
     { key: "email", header: "Email", sortable: true, cell: (u) => <span className="text-foreground-muted">{u.email}</span> },
     { key: "role", header: "Role", cell: (u) => u.role.name },
+    { key: "department", header: "Department", cell: (u) => u.department?.name ?? <span className="text-foreground-subtle">—</span> },
     { key: "tags", header: "Tags", cell: (u) => <TagList tags={u.tags} /> },
     {
       key: "status",
@@ -161,6 +164,27 @@ export function UserManager() {
                   )}
                 />
                 {errors.roleId && <p className="text-xs text-danger">{errors.roleId.message}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label>Department</Label>
+                <Controller
+                  control={control}
+                  name="departmentId"
+                  render={({ field }) => (
+                    <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a department…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {departments?.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
             </div>
             <div className="space-y-1.5">

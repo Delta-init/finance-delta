@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
+import { departmentRefSchema } from "./department.schema";
 
 const addressSchema = z.object({
   street: z.string().max(200).optional().default(""),
@@ -18,6 +19,7 @@ export const createCustomerSchema = z.object({
   currency: z.string().min(3).max(3).optional(),
   vatNumber: z.string().max(50).optional().default(""),
   discountPct: z.number().min(0).max(100).optional().default(0),
+  departmentId: z.string().optional(),
   billingAddress: addressSchema.optional().default({}),
   shippingAddress: addressSchema.optional().default({}),
   tagIds: z.array(z.string()).optional().default([]),
@@ -39,6 +41,7 @@ export const customerSchema = z.object({
   currency: z.string(),
   vatNumber: z.string(),
   discountPct: z.number(),
+  department: departmentRefSchema.nullable().optional(),
   billingAddress: addressSchema,
   shippingAddress: addressSchema,
   status: z.enum(["active", "archived"]),

@@ -47,6 +47,9 @@ export type RoleQuery = z.infer<typeof roleQuerySchema>;
 export const tagQuerySchema = listQuerySchema;
 export type TagQuery = z.infer<typeof tagQuerySchema>;
 
+export const departmentQuerySchema = listQuerySchema;
+export type DepartmentQuery = z.infer<typeof departmentQuerySchema>;
+
 export const quotationQuerySchema = listQuerySchema.extend({
   status: quoteStatusSchema.optional(),
   issueFrom: z.string().optional(),

@@ -96,6 +96,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/admin/users", label: "Users", icon: Users2, enabled: true, permission: "user:read" },
       { href: "/admin/roles", label: "Roles", icon: ShieldCheck, enabled: true, permission: "role:read" },
+      { href: "/admin/departments", label: "Departments", icon: Building2, enabled: true },
       { href: "/admin/tags", label: "Tags", icon: Tags, enabled: true, permission: "tag:read" },
       { href: "/settings", label: "Settings", icon: Settings, enabled: true },
     ],

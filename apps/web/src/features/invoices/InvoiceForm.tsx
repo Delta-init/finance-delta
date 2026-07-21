@@ -45,6 +45,7 @@ import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
+import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
 import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
@@ -186,6 +187,7 @@ export function InvoiceForm({
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [salespersonModalOpen, setSalespersonModalOpen] = useState(false);
 
   // Org-configured rates; INR orgs additionally fall back to the tax-system
   // presets when none are applied yet (GST org → CGST/SGST/IGST).
@@ -281,6 +283,14 @@ export function InvoiceForm({
           setCustomerModalOpen(false);
         }}
       />
+      <QuickCreateSalespersonModal
+        open={salespersonModalOpen}
+        onClose={() => setSalespersonModalOpen(false)}
+        onCreated={(id) => {
+          setValue("salespersonId", id, { shouldValidate: true });
+          setSalespersonModalOpen(false);
+        }}
+      />
     <form onSubmit={handleSubmit(submit)}>
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface/85 px-6 py-3 backdrop-blur-md">
@@ -319,7 +329,7 @@ export function InvoiceForm({
               control={control}
               name="customerId"
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select key={field.value} value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger><SelectValue placeholder="Select a customer…" /></SelectTrigger>
                   <SelectContent>
                     {customers?.data.map((c) => (
@@ -333,12 +343,21 @@ export function InvoiceForm({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Salesperson *</Label>
+            <div className="flex items-center justify-between">
+              <Label>Salesperson *</Label>
+              <button
+                type="button"
+                onClick={() => setSalespersonModalOpen(true)}
+                className="text-xs text-primary hover:underline flex items-center gap-0.5"
+              >
+                <Plus className="h-3 w-3" /> New
+              </button>
+            </div>
             <Controller
               control={control}
               name="salespersonId"
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select key={field.value} value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger><SelectValue placeholder="Select a salesperson…" /></SelectTrigger>
                   <SelectContent>
                     {users?.data.map((u) => (

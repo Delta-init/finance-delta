@@ -41,6 +41,7 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCreateCustomer, useCustomers, useDeleteCustomer, useUpdateCustomer } from "./api";
+import { useAllDepartments } from "@/features/departments/api";
 import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
@@ -58,6 +59,7 @@ function toFormValues(c: Customer): CreateCustomerInput {
     currency: c.currency,
     vatNumber: c.vatNumber,
     discountPct: c.discountPct,
+    departmentId: c.department?.id,
     billingAddress: c.billingAddress ?? emptyAddress(),
     shippingAddress: c.shippingAddress ?? emptyAddress(),
     tagIds: c.tags.map((t) => t.id),
@@ -113,6 +115,7 @@ export function CustomerManager() {
     tagIds: tagIds.length ? tagIds : undefined,
   });
 
+  const { data: departments } = useAllDepartments();
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
   const deleteMutation = useDeleteCustomer();
@@ -194,6 +197,11 @@ export function CustomerManager() {
       key: "phone",
       header: "Phone",
       cell: (c) => <span className="text-foreground-muted">{c.phone}</span>,
+    },
+    {
+      key: "department",
+      header: "Department",
+      cell: (c) => c.department?.name ?? <span className="text-foreground-subtle">—</span>,
     },
     { key: "tags", header: "Tags", cell: (c) => <TagList tags={c.tags} /> },
     {
@@ -310,18 +318,37 @@ export function CustomerManager() {
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Currency</Label>
-              <Select value={watch("currency") ?? "AED"} onValueChange={(v) => setValue("currency", v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CURRENCIES.map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Currency</Label>
+                <Select value={watch("currency") ?? "AED"} onValueChange={(v) => setValue("currency", v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Department</Label>
+                <Select
+                  key={watch("departmentId") ?? "none"}
+                  value={watch("departmentId") ?? ""}
+                  onValueChange={(v) => setValue("departmentId", v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a department…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments?.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Billing address */}

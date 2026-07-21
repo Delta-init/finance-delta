@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { useCurrency } from "@/lib/currency-context";
 import { useInvoiceSummary } from "@/features/reports/api";
+import { useUsers } from "@/features/users/api";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const monthStart = () => {
@@ -29,6 +30,10 @@ export default function SalespersonReportPage() {
   const [to, setTo] = useState(today);
 
   const { data, isLoading } = useInvoiceSummary(from, to, "salesperson");
+  const { data: usersData } = useUsers({ pageSize: 200, sort: "name", dir: "asc" });
+  const departmentByUserId = new Map(
+    (usersData?.data ?? []).map((u) => [u.id, u.department?.name ?? null]),
+  );
 
   const items = data?.items ?? [];
   const grandTotal = items.reduce((s, i) => s + i.totalMinor, 0);
@@ -126,6 +131,7 @@ export default function SalespersonReportPage() {
                 <thead>
                   <tr className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
                     <th className="px-4 py-3 text-left">Salesperson</th>
+                    <th className="px-4 py-3 text-left">Department</th>
                     <th className="px-4 py-3 text-right">Invoices</th>
                     <th className="px-4 py-3 text-right">Invoiced</th>
                     <th className="px-4 py-3 text-right">Paid</th>
@@ -147,6 +153,9 @@ export default function SalespersonReportPage() {
                           <Link href={`/reports/salesperson/${row.id}`} className="hover:text-primary hover:underline">
                             {row.label}
                           </Link>
+                        </td>
+                        <td className="px-4 py-3 text-foreground-muted">
+                          {departmentByUserId.get(row.id) ?? "—"}
                         </td>
                         <td className="px-4 py-3 text-right font-numeric text-foreground-muted">{row.count}</td>
                         <td className="px-4 py-3 text-right font-numeric">{fmt(currency, convert(row.totalMinor))}</td>

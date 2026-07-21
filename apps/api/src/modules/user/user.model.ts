@@ -4,6 +4,7 @@ const membershipSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true },
     roleId:         { type: Schema.Types.ObjectId, ref: "Role", required: true },
+    departmentId:   { type: Schema.Types.ObjectId, ref: "Department" },
     status:         { type: String, enum: ["active", "invited", "suspended"], default: "active" },
   },
   { _id: false },

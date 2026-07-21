@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { UserPlus } from "lucide-react";
-import { createCustomerSchema, type CreateCustomerInput } from "@delta/shared";
+import { createUserSchema, type CreateUserInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,22 +22,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { useCurrency } from "@/lib/currency-context";
+import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
-import { useCreateCustomer } from "./api";
+import { useCreateUser } from "./api";
 
-const quickSchema = createCustomerSchema.pick({
-  name: true,
-  email: true,
-  phone: true,
-  currency: true,
-  departmentId: true,
-});
-type QuickValues = z.infer<typeof quickSchema>;
-
-const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD"];
-
-export function QuickCreateCustomerModal({
+export function QuickCreateSalespersonModal({
   open,
   onClose,
   onCreated,
@@ -47,9 +35,9 @@ export function QuickCreateCustomerModal({
   onClose: () => void;
   onCreated: (id: string, name: string) => void;
 }) {
-  const { currency: orgCurrency } = useCurrency();
+  const { data: roles } = useRoles({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: departments } = useAllDepartments();
-  const createCustomer = useCreateCustomer();
+  const createUser = useCreateUser();
   const [serverError, setServerError] = useState<string | null>(null);
 
   const {
@@ -58,25 +46,19 @@ export function QuickCreateCustomerModal({
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<QuickValues>({
-    resolver: zodResolver(quickSchema),
-    defaultValues: {
-      name: "",
-      email: "",
-      phone: "",
-      currency: orgCurrency,
-      departmentId: undefined,
-    },
+  } = useForm<CreateUserInput>({
+    resolver: zodResolver(createUserSchema),
+    defaultValues: { name: "", email: "", password: "", roleId: "", departmentId: undefined, tagIds: [] },
   });
 
-  async function submit(values: QuickValues) {
+  async function submit(values: CreateUserInput) {
     setServerError(null);
     try {
-      const customer = await createCustomer.mutateAsync(values as CreateCustomerInput);
+      const user = await createUser.mutateAsync(values);
       reset();
-      onCreated(customer.id, customer.name);
+      onCreated(user.id, user.name);
     } catch (e) {
-      setServerError(e instanceof Error ? e.message : "Failed to create customer");
+      setServerError(e instanceof Error ? e.message : "Failed to create salesperson");
     }
   }
 
@@ -92,43 +74,44 @@ export function QuickCreateCustomerModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="h-4 w-4" />
-            New Customer
+            New Salesperson
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit(submit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label>Name *</Label>
-            <Input {...register("name")} placeholder="e.g. Acme Corp" autoFocus />
+            <Input {...register("name")} placeholder="e.g. Priya Sharma" autoFocus />
             {errors.name && <p className="text-xs text-danger">{errors.name.message}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Email *</Label>
-            <Input {...register("email")} type="email" placeholder="billing@acme.com" />
+            <Input {...register("email")} type="email" placeholder="priya@company.com" />
             {errors.email && <p className="text-xs text-danger">{errors.email.message}</p>}
           </div>
           <div className="space-y-1.5">
-            <Label>Phone *</Label>
-            <Input {...register("phone")} placeholder="+971 50 000 0000" />
-            {errors.phone && <p className="text-xs text-danger">{errors.phone.message}</p>}
+            <Label>Password *</Label>
+            <Input {...register("password")} type="password" placeholder="Min. 8 characters" />
+            {errors.password && <p className="text-xs text-danger">{errors.password.message}</p>}
           </div>
           <div className="space-y-1.5">
-            <Label>Currency</Label>
+            <Label>Role *</Label>
             <Controller
               control={control}
-              name="currency"
+              name="roleId"
               render={({ field }) => (
-                <Select value={field.value ?? orgCurrency} onValueChange={field.onChange}>
+                <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Select a role…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {CURRENCIES.map((c) => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    {roles?.data.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               )}
             />
+            {errors.roleId && <p className="text-xs text-danger">{errors.roleId.message}</p>}
           </div>
           {(departments?.length ?? 0) > 0 && (
             <div className="space-y-1.5">
@@ -155,7 +138,7 @@ export function QuickCreateCustomerModal({
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={handleClose}>Cancel</Button>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Creating…" : "Create Customer"}
+              {isSubmitting ? "Creating…" : "Create Salesperson"}
             </Button>
           </DialogFooter>
         </form>

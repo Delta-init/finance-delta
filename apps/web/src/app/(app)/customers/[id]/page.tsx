@@ -199,6 +199,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <span className="text-foreground-muted">VAT: {customer.vatNumber}</span>
                 </div>
               )}
+              {customer.department && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Building2 className="h-4 w-4 shrink-0 text-foreground-muted" />
+                  <span className="text-foreground-muted">Dept: {customer.department.name}</span>
+                </div>
+              )}
               {customer.discountPct > 0 && (
                 <div className="flex items-center gap-2 text-sm">
                   <BadgePercent className="h-4 w-4 shrink-0 text-foreground-muted" />

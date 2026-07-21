@@ -63,7 +63,10 @@ export default function SalespersonDetailPage({ params }: { params: Promise<{ id
         </Link>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{salespersonName}</h1>
-          <p className="text-sm text-foreground-muted">Salesperson performance detail</p>
+          <p className="text-sm text-foreground-muted">
+            Salesperson performance detail
+            {salesperson?.department?.name ? ` · ${salesperson.department.name}` : ""}
+          </p>
         </div>
       </div>
 

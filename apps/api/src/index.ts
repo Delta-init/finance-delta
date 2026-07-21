@@ -14,6 +14,7 @@ import customerRoutes from "./modules/customer/customer.routes";
 import quotationRoutes from "./modules/quotation/quotation.routes";
 import salesOrderRoutes from "./modules/salesorder/salesorder.routes";
 import tagRoutes from "./modules/tag/tag.routes";
+import departmentRoutes from "./modules/department/department.routes";
 import invoiceRoutes from "./modules/invoice/invoice.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
 import searchRoutes from "./modules/search/search.routes";
@@ -60,6 +61,7 @@ async function bootstrap() {
   api.use("/quotations", quotationRoutes);
   api.use("/sales-orders", salesOrderRoutes);
   api.use("/tags", tagRoutes);
+  api.use("/departments", departmentRoutes);
   api.use("/invoices", invoiceRoutes);
   api.use("/organizations", organizationRoutes);
   api.use("/search", searchRoutes);

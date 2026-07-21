@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
+import { departmentRefSchema } from "./department.schema";
 
 export const createUserSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters").max(80),
@@ -9,6 +10,7 @@ export const createUserSchema = z.object({
     .min(8, "Password must be at least 8 characters")
     .max(128),
   roleId: z.string().min(1, "Select a role"),
+  departmentId: z.string().optional(),
   tagIds: z.array(z.string()).optional().default([]),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
@@ -16,6 +18,7 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 export const updateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
   roleId: z.string().min(1).optional(),
+  departmentId: z.string().nullable().optional(),
   status: z.enum(["active", "suspended"]).optional(),
   tagIds: z.array(z.string()).optional(),
 });
@@ -27,6 +30,7 @@ export const userSchema = z.object({
   email: z.string().email(),
   status: z.enum(["active", "suspended"]),
   role: z.object({ id: z.string(), key: z.string(), name: z.string() }),
+  department: departmentRefSchema.nullable().optional(),
   tags: z.array(tagRefSchema).default([]),
   createdAt: z.string(),
 });

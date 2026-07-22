@@ -21,6 +21,8 @@ import type {
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
+import { User } from "../user/user.model";
+import { Department } from "../department/department.model";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -167,7 +169,7 @@ export async function getInvoiceSummary(
   orgId: string,
   from: string,
   to: string,
-  groupBy: "salesperson" | "customer" | "tag",
+  groupBy: "salesperson" | "customer" | "tag" | "department",
   currency = "AED",
 ): Promise<InvoiceSummaryReport> {
   const invoices = await Invoice.find({
@@ -177,6 +179,24 @@ export async function getInvoiceSummary(
   })
     .select("salespersonId salespersonName customerId customerName tagIds totalMinor balanceMinor amountPaidMinor")
     .lean();
+
+  // department grouping: resolve each salesperson's department from their org membership
+  const deptBySalesperson = new Map<string, { id: string; name: string }>();
+  if (groupBy === "department") {
+    const orgObjId = oid(orgId);
+    const [users, departments] = await Promise.all([
+      User.find({ "memberships.organizationId": orgObjId }).select("memberships").lean(),
+      Department.find({ organizationId: orgObjId }).select("name").lean(),
+    ]);
+    const deptNames = new Map(departments.map((dep) => [dep._id.toString(), dep.name as string]));
+    for (const u of users as unknown as { _id: Types.ObjectId; memberships: { organizationId: Types.ObjectId; departmentId?: Types.ObjectId }[] }[]) {
+      const m = u.memberships.find((mm) => mm.organizationId.equals(orgObjId));
+      const deptId = m?.departmentId?.toString();
+      if (deptId && deptNames.has(deptId)) {
+        deptBySalesperson.set(u._id.toString(), { id: deptId, name: deptNames.get(deptId)! });
+      }
+    }
+  }
 
   const groupMap = new Map<string, { id: string; label: string; count: number; totalMinor: number; paidMinor: number; outstandingMinor: number }>();
 
@@ -188,6 +208,10 @@ export async function getInvoiceSummary(
     if (groupBy === "salesperson") {
       id = String(d.salespersonId);
       label = (d.salespersonName as string) ?? "Unknown";
+    } else if (groupBy === "department") {
+      const dept = deptBySalesperson.get(String(d.salespersonId));
+      id = dept?.id ?? "__none";
+      label = dept?.name ?? "No Department";
     } else if (groupBy === "customer") {
       id = String(d.customerId);
       label = (d.customerName as string) ?? "Unknown";

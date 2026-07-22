@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import {
   useForm,
   useFieldArray,
@@ -26,9 +27,11 @@ import {
   formatMoney,
   type CreateInvoiceInput,
   type Invoice,
+  type Item,
   type TaxCode,
   type TaxConfigItem,
 } from "@delta/shared";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,6 +66,7 @@ const lineSchema = z.object({
   unitPrice: z.coerce.number().min(0),
   discountPct: z.coerce.number().min(0).max(100),
   taxes: z.array(taxSchema).default([]),
+  itemId: z.string().optional(),
 });
 
 const progressSchema = z.object({
@@ -126,6 +130,7 @@ function fromInvoice(inv: Invoice): FormValues {
       unitPrice: l.unitPriceMinor / 100,
       discountPct: l.discountPct,
       taxes: l.taxes.map((t) => ({ code: t.code, rate: t.rate })),
+      itemId: l.itemId,
     })),
     hasProgress: !!inv.progress,
     progress: inv.progress ?? undefined,
@@ -159,6 +164,7 @@ function toApiInput(v: FormValues): CreateInvoiceInput {
       unitPriceMinor: toMinor(l.unitPrice),
       discountPct: l.discountPct,
       taxes: l.taxes,
+      itemId: l.itemId || undefined,
     })),
     progress: v.hasProgress && v.progress ? v.progress : null,
     recurring: v.hasRecurring && v.recurring ? v.recurring : null,
@@ -639,7 +645,7 @@ function LineRow({
       >
         <GripVertical className="h-4 w-4" />
       </button>
-      <Input className="h-8" {...register(`lineItems.${index}.description`)} />
+      <ProductCell index={index} register={register} control={control} setValue={setValue} currency={currency} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.quantity`)} />
       <Input className="h-8" type="number" step="0.01" {...register(`lineItems.${index}.unitPrice`)} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
@@ -655,6 +661,118 @@ function LineRow({
         )}
       </div>
     </Reorder.Item>
+  );
+}
+
+// ── Product autocomplete cell ─────────────────────────────────────────────────
+// Type freely for a custom product, or pick a catalog item to auto-fill the
+// price (and link the line to the item for stock deduction).
+
+function ProductCell({
+  index,
+  register,
+  control,
+  setValue,
+  currency,
+}: {
+  index: number;
+  register: UseFormRegister<FormValues>;
+  control: Control<FormValues>;
+  setValue: UseFormSetValue<FormValues>;
+  currency: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const description = useWatch({ control, name: `lineItems.${index}.description` }) ?? "";
+  const [debouncedQ, setDebouncedQ] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(description.trim()), 250);
+    return () => clearTimeout(t);
+  }, [description]);
+
+  // The line-items table clips overflow, so the dropdown is fixed-positioned
+  // against the viewport instead of the row.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const r = wrapRef.current?.getBoundingClientRect();
+      if (r) setRect({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 280) });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
+
+  const enabled = open && debouncedQ.length >= 2;
+  const { data: matches } = useQuery({
+    queryKey: ["inventory", "items", "line-search", debouncedQ],
+    queryFn: () => api.getList<Item>("inventory/items", { q: debouncedQ, pageSize: 8, isActive: "true" }),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+  const options = enabled ? matches?.data ?? [] : [];
+
+  function pick(item: Item) {
+    setValue(`lineItems.${index}.description`, item.name, { shouldDirty: true, shouldValidate: true });
+    setValue(`lineItems.${index}.unitPrice`, item.unitPriceMinor / 100, { shouldDirty: true });
+    setValue(`lineItems.${index}.itemId`, item.id, { shouldDirty: true });
+    setOpen(false);
+  }
+
+  const reg = register(`lineItems.${index}.description`);
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <Input
+        className="h-8"
+        autoComplete="off"
+        placeholder="Type or search product…"
+        {...reg}
+        onChange={(e) => {
+          reg.onChange(e);
+          // Manual edits make the line a custom product again.
+          setValue(`lineItems.${index}.itemId`, undefined);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={(e) => {
+          reg.onBlur(e);
+          setTimeout(() => setOpen(false), 150);
+        }}
+      />
+      {open && options.length > 0 && rect && (
+        <div
+          className="fixed z-50 overflow-hidden rounded-md border border-border bg-surface shadow-md"
+          style={{ top: rect.top, left: rect.left, width: rect.width }}
+        >
+          {options.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(item);
+              }}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-surface-muted"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{item.name}</span>
+                <span className="block truncate text-xs text-foreground-subtle">{item.sku}</span>
+              </span>
+              <span className="shrink-0 font-numeric text-xs text-foreground-muted">
+                {formatMoney(item.unitPriceMinor, currency)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

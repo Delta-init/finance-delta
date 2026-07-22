@@ -115,6 +115,8 @@ function buildLines(raw: CreateInvoiceInput["lineItems"], taxInclusive = false) 
       quantity: l.quantity,
       unitPriceMinor: l.unitPriceMinor,
       discountPct: l.discountPct ?? 0,
+      itemId: l.itemId,
+      warehouseId: l.warehouseId,
       taxes: b.taxes,
       lineSubtotalMinor: b.lineSubtotalMinor,
       discountMinor: b.discountMinor,

@@ -55,7 +55,7 @@ export type InvoiceSummaryReport = {
   from: string;
   to: string;
   currency: string;
-  groupBy: "salesperson" | "customer" | "tag";
+  groupBy: "salesperson" | "customer" | "tag" | "department";
   items: InvoiceSummaryGroup[];
 };
 

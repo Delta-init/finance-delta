@@ -33,7 +33,7 @@ export const agedReceivables = asyncHandler(async (req, res) => {
 export const invoiceSummary = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", monthStartStr());
   const to = dateParam(req, "to", todayStr());
-  const groupBy = ((req.query.groupBy as string) ?? "customer") as "salesperson" | "customer" | "tag";
+  const groupBy = ((req.query.groupBy as string) ?? "customer") as "salesperson" | "customer" | "tag" | "department";
   ok(res, await svc.getInvoiceSummary(org(req), from, to, groupBy));
 });
 

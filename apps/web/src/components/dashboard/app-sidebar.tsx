@@ -87,6 +87,7 @@ const NAV: NavGroup[] = [
       { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
       { href: "/reports", label: "Reports", icon: BarChart3, enabled: true },
       { href: "/reports/salesperson", label: "Salesperson", icon: TrendingUp, enabled: true },
+      { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true },
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
     ],

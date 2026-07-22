@@ -39,7 +39,7 @@ export function useAgedReceivables() {
 export function useInvoiceSummary(
   from: string,
   to: string,
-  groupBy: "salesperson" | "customer" | "tag",
+  groupBy: "salesperson" | "customer" | "tag" | "department",
 ) {
   return useQuery({
     queryKey: [...KEY, "receivables", "summary", from, to, groupBy],

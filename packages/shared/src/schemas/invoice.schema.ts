@@ -129,6 +129,8 @@ export const invoiceLineSchema = z.object({
   quantity: z.number(),
   unitPriceMinor: z.number(),
   discountPct: z.number(),
+  itemId: z.string().optional(),
+  warehouseId: z.string().optional(),
   taxes: z.array(taxBreakdownSchema),
   lineSubtotalMinor: z.number(),
   discountMinor: z.number(),

@@ -11,7 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"(lint) shared\""
+    "lint": "echo \"(lint) shared\"",
+    "test": "bun test"
   },
   "dependencies": {
     "zod": "^3.23.8"

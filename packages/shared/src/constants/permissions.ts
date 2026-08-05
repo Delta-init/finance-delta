@@ -42,6 +42,12 @@ export const PERMISSIONS = [
   "tag:update",
   "tag:delete",
 
+  // Departments
+  "department:read",
+  "department:create",
+  "department:update",
+  "department:delete",
+
   // Sales (placeholders for later phases)
   "invoice:read",
   "invoice:write",

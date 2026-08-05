@@ -37,6 +37,13 @@ export const invoiceSummary = asyncHandler(async (req, res) => {
   ok(res, await svc.getInvoiceSummary(org(req), from, to, groupBy));
 });
 
+export const dailyReport = asyncHandler(async (req, res) => {
+  const from = dateParam(req, "from", monthStartStr());
+  const to = dateParam(req, "to", todayStr());
+  const departmentId = (req.query.departmentId as string | undefined) || undefined;
+  ok(res, await svc.getDailyReport(org(req), from, to, departmentId));
+});
+
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
 
 export const madePayments = asyncHandler(async (req, res) => {

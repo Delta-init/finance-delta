@@ -16,6 +16,7 @@ const lineItemSchema = new Schema(
     discountPct: { type: Number, default: 0 },
     taxPct: { type: Number, default: 0 },
     taxes: { type: [lineTaxSchema], default: [] },
+    itemId: { type: String },
     lineSubtotalMinor: { type: Number, required: true },
     discountMinor: { type: Number, required: true },
     taxMinor: { type: Number, required: true },

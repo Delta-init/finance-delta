@@ -287,7 +287,7 @@ export async function convertToInvoice(
   ]);
   if (!salesperson) throw new AppError("NOT_FOUND", "User not found");
 
-  const rawLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number; taxes?: { code: string; rate: number }[] }[]).map(
+  const rawLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number; taxes?: { code: string; rate: number }[]; itemId?: string }[]).map(
     (l) => ({
       description: l.description,
       quantity: l.quantity,
@@ -298,6 +298,7 @@ export async function convertToInvoice(
         : l.taxPct && l.taxPct > 0
           ? [{ code: "VAT", rate: l.taxPct }]
           : [],
+      itemId: l.itemId,
     }),
   );
 

@@ -22,6 +22,7 @@ export const lineItemInputSchema = z.object({
   discountPct: z.coerce.number().min(0).max(100).optional().default(0),
   taxPct: z.coerce.number().min(0).max(100).optional().default(0),
   taxes: z.array(taxInputSchema).optional().default([]),
+  itemId: z.string().optional(),
 });
 export type LineItemInput = z.infer<typeof lineItemInputSchema>;
 

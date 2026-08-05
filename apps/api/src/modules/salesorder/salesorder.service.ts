@@ -20,6 +20,7 @@ interface RawLine {
   discountPct?: number;
   taxPct?: number;
   taxes?: { code: string; rate: number }[];
+  itemId?: string;
 }
 
 /** Builds computed line items + totals for quotations and sales orders.
@@ -49,6 +50,7 @@ export function buildLines(raw: RawLine[]) {
         discountPct: l.discountPct ?? 0,
         taxPct: l.taxes.reduce((s, t) => s + t.rate, 0),
         taxes: l.taxes,
+        itemId: l.itemId,
         lineSubtotalMinor: b.lineSubtotalMinor,
         discountMinor: b.discountMinor,
         taxMinor: b.taxTotalMinor,
@@ -63,6 +65,7 @@ export function buildLines(raw: RawLine[]) {
         discountPct: l.discountPct ?? 0,
         taxPct: l.taxPct ?? 0,
         taxes: [] as { code: string; rate: number }[],
+        itemId: l.itemId,
         ...b,
       };
     }
@@ -161,6 +164,7 @@ export async function createFromQuote(
       code: t.code,
       rate: t.rate,
     })),
+    itemId: (l as unknown as { itemId?: string }).itemId,
   }));
 
   const { lineItems, totals } = buildLines(raw);

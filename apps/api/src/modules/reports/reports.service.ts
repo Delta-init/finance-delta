@@ -5,6 +5,8 @@ import type {
   AgedItem,
   AgedTotals,
   InvoiceSummaryReport,
+  DailyReport,
+  DailyReportRow,
   MadePaymentsReport,
   AgedPayablesReport,
   PLReport,
@@ -250,6 +252,100 @@ export async function getInvoiceSummary(
     groupBy,
     items: [...groupMap.values()].sort((a, b) => b.totalMinor - a.totalMinor),
   };
+}
+
+// ── 8.1d Daily income / expense / revenue ─────────────────────────────────────
+
+export async function getDailyReport(
+  orgId: string,
+  from: string,
+  to: string,
+  departmentId?: string,
+  currency = "AED",
+): Promise<DailyReport> {
+  const fromDate = startOf(from);
+  const toDate = endOf(to);
+
+  // Optional department scope: invoices whose salesperson belongs to it.
+  let salespersonFilter: Set<string> | null = null;
+  if (departmentId) {
+    const users = await User.find({
+      memberships: { $elemMatch: { organizationId: oid(orgId), departmentId: oid(departmentId) } },
+    })
+      .select("_id")
+      .lean();
+    salespersonFilter = new Set(users.map((u) => u._id.toString()));
+  }
+
+  const rowMap = new Map<string, DailyReportRow>();
+  const row = (date: string): DailyReportRow => {
+    let r = rowMap.get(date);
+    if (!r) {
+      r = { date, incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 };
+      rowMap.set(date, r);
+    }
+    return r;
+  };
+
+  const invoices = await Invoice.find({
+    organizationId: oid(orgId),
+    status: { $nin: ["draft", "void"] },
+  })
+    .select("salespersonId issueDate totalMinor payments")
+    .lean();
+
+  for (const inv of invoices) {
+    const d = inv as unknown as {
+      salespersonId?: Types.ObjectId;
+      issueDate?: Date;
+      totalMinor?: number;
+      payments?: { amountMinor: number; paidOn: Date }[];
+    };
+    if (salespersonFilter && !salespersonFilter.has(String(d.salespersonId))) continue;
+
+    if (d.issueDate) {
+      const issued = new Date(d.issueDate);
+      if (issued >= fromDate && issued <= toDate) {
+        row(dateOnly(issued)).revenueMinor += d.totalMinor ?? 0;
+      }
+    }
+    for (const p of d.payments ?? []) {
+      const paidOn = new Date(p.paidOn);
+      if (paidOn >= fromDate && paidOn <= toDate) {
+        row(dateOnly(paidOn)).incomeMinor += p.amountMinor ?? 0;
+      }
+    }
+  }
+
+  // Expenses carry no department, so they are always org-wide.
+  const expenses = await Expense.find({
+    organizationId: oid(orgId),
+    expenseDate: { $gte: fromDate, $lte: toDate },
+    status: { $in: ["approved", "submitted"] },
+  })
+    .select("expenseDate totalMinor")
+    .lean();
+
+  for (const e of expenses as unknown as { expenseDate: Date; totalMinor?: number }[]) {
+    row(dateOnly(new Date(e.expenseDate))).expenseMinor += e.totalMinor ?? 0;
+  }
+
+  const rows = [...rowMap.values()]
+    .map((r) => ({ ...r, netMinor: r.incomeMinor - r.expenseMinor }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.incomeMinor += r.incomeMinor;
+      acc.expenseMinor += r.expenseMinor;
+      acc.revenueMinor += r.revenueMinor;
+      acc.netMinor += r.netMinor;
+      return acc;
+    },
+    { incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 },
+  );
+
+  return { from, to, currency, departmentId: departmentId ?? null, rows, totals };
 }
 
 // ── 8.2a Made Payments ────────────────────────────────────────────────────────

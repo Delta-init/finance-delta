@@ -5,6 +5,12 @@ import { salesOrderStatusSchema } from "./sales-order.schema";
 const toArray = (v: string | string[] | undefined): string[] | undefined =>
   v === undefined ? undefined : Array.isArray(v) ? v : [v];
 
+/** Query-string boolean — z.coerce.boolean() treats the string "false" as true. */
+const queryBool = z
+  .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+  .transform((v) => v === true || v === "true" || v === "1")
+  .optional();
+
 /** Base list query — query-string params (all strings) coerced to typed values. */
 export const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -90,7 +96,7 @@ export type POQuery = z.infer<typeof poQuerySchema>;
 export const billQuerySchema = listQuerySchema.extend({
   status: z.enum(["draft", "pending_approval", "approved", "partially_paid", "paid", "overdue", "voided"]).optional(),
   vendorId: z.string().optional(),
-  overdue: z.coerce.boolean().optional(),
+  overdue: queryBool,
   dueFrom: z.string().optional(),
   dueTo: z.string().optional(),
 });
@@ -119,7 +125,7 @@ import { bankAccountTypeSchema, bankTransactionStatusSchema } from "./banking.sc
 
 export const bankAccountQuerySchema = listQuerySchema.extend({
   accountType: bankAccountTypeSchema.optional(),
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBool,
   currency: z.string().optional(),
 });
 export type BankAccountQuery = z.infer<typeof bankAccountQuerySchema>;
@@ -128,7 +134,7 @@ export const bankTransactionQuerySchema = listQuerySchema.extend({
   status: bankTransactionStatusSchema.optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
-  isReconciled: z.coerce.boolean().optional(),
+  isReconciled: queryBool,
   source: z.enum(["manual", "import"]).optional(),
 });
 export type BankTransactionQuery = z.infer<typeof bankTransactionQuerySchema>;
@@ -137,15 +143,15 @@ import { itemTypeSchema, movementTypeSchema } from "./inventory.schema";
 
 export const itemQuerySchema = listQuerySchema.extend({
   type: itemTypeSchema.optional(),
-  trackStock: z.coerce.boolean().optional(),
-  isActive: z.coerce.boolean().optional(),
-  lowStock: z.coerce.boolean().optional(),
+  trackStock: queryBool,
+  isActive: queryBool,
+  lowStock: queryBool,
   warehouseId: z.string().optional(),
 });
 export type ItemQuery = z.infer<typeof itemQuerySchema>;
 
 export const warehouseQuerySchema = listQuerySchema.extend({
-  isActive: z.coerce.boolean().optional(),
+  isActive: queryBool,
 });
 export type WarehouseQuery = z.infer<typeof warehouseQuerySchema>;
 

@@ -59,6 +59,30 @@ export type InvoiceSummaryReport = {
   items: InvoiceSummaryGroup[];
 };
 
+// ── 8.1d Daily income / expense / revenue ─────────────────────────────────────
+
+export type DailyReportRow = {
+  date: string; // YYYY-MM-DD
+  incomeMinor: number; // payments received that day
+  expenseMinor: number; // approved/submitted expenses dated that day
+  revenueMinor: number; // invoiced (issue date) that day, excl. draft/void
+  netMinor: number; // income − expense
+};
+
+export type DailyReport = {
+  from: string;
+  to: string;
+  currency: string;
+  departmentId: string | null;
+  rows: DailyReportRow[];
+  totals: {
+    incomeMinor: number;
+    expenseMinor: number;
+    revenueMinor: number;
+    netMinor: number;
+  };
+};
+
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
 
 export type MadePaymentsReport = {

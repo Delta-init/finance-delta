@@ -41,6 +41,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
+import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
@@ -58,6 +59,7 @@ const lineSchema = z.object({
   unitPrice: z.coerce.number().min(0),
   discountPct: z.coerce.number().min(0).max(100),
   taxes: z.array(taxSchema).default([]),
+  itemId: z.string().optional(),
 });
 const formSchema = z.object({
   customerId: z.string().min(1, "Select a customer"),
@@ -98,6 +100,7 @@ function fromQuotation(q: Quotation): FormValues {
         : l.taxPct > 0
           ? [{ code: "VAT", rate: l.taxPct }]
           : [],
+      itemId: l.itemId,
     })),
     taxInclusive: false,
   };
@@ -118,6 +121,7 @@ function toApiInput(v: FormValues): CreateQuotationInput {
       discountPct: l.discountPct,
       taxPct: 0,
       taxes: l.taxes,
+      itemId: l.itemId || undefined,
     })),
     taxInclusive: v.taxInclusive ?? false,
   } as CreateQuotationInput;
@@ -481,7 +485,7 @@ function LineRow({
       >
         <GripVertical className="h-4 w-4" />
       </button>
-      <Input className="h-8" {...register(`lineItems.${index}.description`)} />
+      <QuotationProductCell index={index} register={register} control={control} setValue={setValue} currency={currency} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.quantity`)} />
       <Input className="h-8" type="number" step="0.01" {...register(`lineItems.${index}.unitPrice`)} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
@@ -502,6 +506,37 @@ function LineRow({
         )}
       </div>
     </Reorder.Item>
+  );
+}
+
+// ── Product autocomplete cell ─────────────────────────────────────────────────
+
+function QuotationProductCell({
+  index,
+  register,
+  control,
+  setValue,
+  currency,
+}: {
+  index: number;
+  register: UseFormRegister<FormValues>;
+  control: Control<FormValues>;
+  setValue: UseFormSetValue<FormValues>;
+  currency: string;
+}) {
+  const description = useWatch({ control, name: `lineItems.${index}.description` }) ?? "";
+  return (
+    <ProductSearchInput
+      query={description}
+      registerProps={register(`lineItems.${index}.description`)}
+      onType={() => setValue(`lineItems.${index}.itemId`, undefined)}
+      onPick={(item) => {
+        setValue(`lineItems.${index}.description`, item.name, { shouldDirty: true, shouldValidate: true });
+        setValue(`lineItems.${index}.unitPrice`, item.unitPriceMinor / 100, { shouldDirty: true });
+        setValue(`lineItems.${index}.itemId`, item.id, { shouldDirty: true });
+      }}
+      currency={currency}
+    />
   );
 }
 

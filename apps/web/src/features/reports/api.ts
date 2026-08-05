@@ -5,6 +5,7 @@ import type {
   ReceivedPaymentsReport,
   AgedReceivablesReport,
   InvoiceSummaryReport,
+  DailyReport,
   MadePaymentsReport,
   AgedPayablesReport,
   PLReport,
@@ -47,6 +48,16 @@ export function useInvoiceSummary(
       api.get<InvoiceSummaryReport>(
         `reports/receivables/summary?from=${from}&to=${to}&groupBy=${groupBy}`,
       ),
+    enabled: !!from && !!to,
+  });
+}
+
+export function useDailyReport(from: string, to: string, departmentId?: string) {
+  const qs = new URLSearchParams({ from, to });
+  if (departmentId) qs.set("departmentId", departmentId);
+  return useQuery({
+    queryKey: [...KEY, "daily", from, to, departmentId ?? ""],
+    queryFn: () => api.get<DailyReport>(`reports/daily?${qs.toString()}`),
     enabled: !!from && !!to,
   });
 }

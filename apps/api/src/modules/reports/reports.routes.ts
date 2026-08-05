@@ -11,6 +11,7 @@ router.use(requirePermission("report:read"));
 router.get("/receivables/payments", c.receivedPayments);
 router.get("/receivables/aged", c.agedReceivables);
 router.get("/receivables/summary", c.invoiceSummary);
+router.get("/daily", c.dailyReport);
 
 // 8.2 Payables
 router.get("/payables/payments", c.madePayments);

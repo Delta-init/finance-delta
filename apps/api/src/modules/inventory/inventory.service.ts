@@ -549,6 +549,70 @@ export async function listMovements(
 
 // ── Invoice integration ───────────────────────────────────────────────────────
 
+/** Resolves the tracked item + target warehouse for an invoice line, or null
+ *  when the line doesn't affect stock (not a tracked product, or no warehouse). */
+async function resolveStockTarget(
+  orgId: string,
+  line: { itemId?: string; warehouseId?: string },
+): Promise<{ item: ItemDoc; warehouseId: string; warehouseName: string } | null> {
+  if (!line.itemId) return null;
+  const item = await Item.findOne({
+    _id: new Types.ObjectId(line.itemId),
+    organizationId: new Types.ObjectId(orgId),
+    trackStock: true,
+    type: "product",
+  });
+  if (!item) return null;
+
+  if (line.warehouseId) {
+    const wh = await Warehouse.findOne({
+      _id: new Types.ObjectId(line.warehouseId),
+      organizationId: new Types.ObjectId(orgId),
+    });
+    return { item, warehouseId: line.warehouseId, warehouseName: (wh?.name as string) ?? "" };
+  }
+  const defaultWh = await Warehouse.findOne({
+    organizationId: new Types.ObjectId(orgId),
+    isDefault: true,
+    isActive: true,
+  });
+  if (!defaultWh) return null;
+  return { item, warehouseId: defaultWh._id.toString(), warehouseName: defaultWh.name as string };
+}
+
+/** Throws CONFLICT if any tracked line would drive stock below zero. Aggregates
+ *  demand per item+warehouse across all lines. Call this synchronously in the
+ *  request path (e.g. invoice send) so the caller gets a 409 and the action is
+ *  rejected before any state change. */
+export async function assertStockAvailableForInvoice(
+  orgId: string,
+  lines: { itemId?: string; warehouseId?: string; quantity: number; description: string }[],
+): Promise<void> {
+  const needByTarget = new Map<string, { need: number; name: string; itemId: string; warehouseId: string }>();
+  for (const line of lines) {
+    const t = await resolveStockTarget(orgId, line);
+    if (!t) continue;
+    const key = `${line.itemId}|${t.warehouseId}`;
+    const cur = needByTarget.get(key) ?? { need: 0, name: t.item.name as string, itemId: line.itemId!, warehouseId: t.warehouseId };
+    cur.need += line.quantity;
+    needByTarget.set(key, cur);
+  }
+
+  const shortfalls: string[] = [];
+  for (const { need, name, itemId, warehouseId } of needByTarget.values()) {
+    const level = await StockLevel.findOne({
+      organizationId: new Types.ObjectId(orgId),
+      itemId: new Types.ObjectId(itemId),
+      warehouseId: new Types.ObjectId(warehouseId),
+    });
+    const onHand = (level?.quantityOnHand as number) ?? 0;
+    if (onHand < need) shortfalls.push(`${name} (need ${need}, on hand ${onHand})`);
+  }
+  if (shortfalls.length > 0) {
+    throw new AppError("CONFLICT", `Insufficient stock to fulfil this invoice: ${shortfalls.join("; ")}`);
+  }
+}
+
 export async function deductStockForInvoice(
   orgId: string,
   invoiceId: string,
@@ -556,42 +620,19 @@ export async function deductStockForInvoice(
   lines: { itemId?: string; warehouseId?: string; quantity: number; description: string }[],
   createdByName: string,
 ): Promise<void> {
+  // Safety net — the caller should have already asserted availability, but
+  // re-check so a late race can't push stock negative.
+  await assertStockAvailableForInvoice(orgId, lines);
+
   for (const line of lines) {
-    if (!line.itemId) continue;
-
-    const item = await Item.findOne({
-      _id: new Types.ObjectId(line.itemId),
-      organizationId: new Types.ObjectId(orgId),
-      trackStock: true,
-      type: "product",
-    });
-    if (!item) continue;
-
-    let warehouseId = line.warehouseId;
-    let warehouseName = "";
-    if (warehouseId) {
-      const wh = await Warehouse.findOne({
-        _id: new Types.ObjectId(warehouseId),
-        organizationId: new Types.ObjectId(orgId),
-      });
-      warehouseName = (wh?.name as string) ?? "";
-    } else {
-      const defaultWh = await Warehouse.findOne({
-        organizationId: new Types.ObjectId(orgId),
-        isDefault: true,
-        isActive: true,
-      });
-      if (!defaultWh) continue;
-      warehouseId = defaultWh._id.toString();
-      warehouseName = defaultWh.name as string;
-    }
-
+    const t = await resolveStockTarget(orgId, line);
+    if (!t) continue;
     await applyStockChange({
-      orgId, itemId: line.itemId,
-      itemName: item.name as string, sku: item.sku as string,
-      warehouseId, warehouseName,
+      orgId, itemId: line.itemId!,
+      itemName: t.item.name as string, sku: t.item.sku as string,
+      warehouseId: t.warehouseId, warehouseName: t.warehouseName,
       delta: -line.quantity,
-      unitCostMinor: (item.costPriceMinor as number) ?? 0,
+      unitCostMinor: (t.item.costPriceMinor as number) ?? 0,
       movementType: "invoice_out",
       reference: invoiceNumber,
       referenceType: "invoice",

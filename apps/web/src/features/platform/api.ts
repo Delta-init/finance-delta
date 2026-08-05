@@ -25,10 +25,13 @@ export interface MemberListItem {
 
 export interface OrgRoleItem { id: string; key: string; name: string }
 
-export function usePlatformOrgs() {
+/** Platform org list is super-admin only; pass enabled=false for normal users
+ *  so the query doesn't fire a guaranteed 403 (and its error toast). */
+export function usePlatformOrgs(enabled = true) {
   return useQuery({
     queryKey: ["platform", "organizations"],
     queryFn: () => api.get<OrgListItem[]>("platform/organizations"),
+    enabled,
   });
 }
 

@@ -1,12 +1,42 @@
 import type { Request } from "express";
-import { asyncHandler, ok } from "../../lib/http";
+import { asyncHandler, ok, AppError } from "../../lib/http";
 import * as svc from "./reports.service";
 
 const org = (req: Request) => req.auth!.organizationId;
 
+/** Reads a date query param, defaulting when absent and rejecting garbage with
+ *  a clean 400 instead of letting it reach (and crash) the DB layer. */
 function dateParam(req: Request, key: string, fallback: string): string {
   const v = req.query[key] as string | undefined;
-  return v ?? fallback;
+  if (v === undefined || v === "") return fallback;
+  if (Number.isNaN(new Date(v).getTime())) {
+    throw new AppError("VALIDATION_ERROR", `Invalid date for '${key}' (expected YYYY-MM-DD)`);
+  }
+  return v;
+}
+
+const INVOICE_SUMMARY_GROUPS = ["salesperson", "customer", "tag", "department"] as const;
+type InvoiceSummaryGroupBy = (typeof INVOICE_SUMMARY_GROUPS)[number];
+
+function groupByParam(req: Request): InvoiceSummaryGroupBy {
+  const v = (req.query.groupBy as string | undefined) ?? "customer";
+  if (!INVOICE_SUMMARY_GROUPS.includes(v as InvoiceSummaryGroupBy)) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      `Invalid groupBy '${v}' (expected one of ${INVOICE_SUMMARY_GROUPS.join(", ")})`,
+    );
+  }
+  return v as InvoiceSummaryGroupBy;
+}
+
+/** Optional 24-hex ObjectId query param; rejects malformed ids with 400. */
+function objectIdParam(req: Request, key: string): string | undefined {
+  const v = req.query[key] as string | undefined;
+  if (!v) return undefined;
+  if (!/^[a-f0-9]{24}$/i.test(v)) {
+    throw new AppError("VALIDATION_ERROR", `Invalid ${key}`);
+  }
+  return v;
 }
 
 function todayStr(): string {
@@ -33,14 +63,14 @@ export const agedReceivables = asyncHandler(async (req, res) => {
 export const invoiceSummary = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", monthStartStr());
   const to = dateParam(req, "to", todayStr());
-  const groupBy = ((req.query.groupBy as string) ?? "customer") as "salesperson" | "customer" | "tag" | "department";
+  const groupBy = groupByParam(req);
   ok(res, await svc.getInvoiceSummary(org(req), from, to, groupBy));
 });
 
 export const dailyReport = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", monthStartStr());
   const to = dateParam(req, "to", todayStr());
-  const departmentId = (req.query.departmentId as string | undefined) || undefined;
+  const departmentId = objectIdParam(req, "departmentId");
   ok(res, await svc.getDailyReport(org(req), from, to, departmentId));
 });
 

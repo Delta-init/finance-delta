@@ -43,6 +43,22 @@ export function errorHandler(
     });
   }
 
+  // Malformed input reaching Mongoose (invalid ObjectId, unparseable date fed
+  // to a query) throws CastError — that's a bad request, not a server fault.
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { name?: string }).name === "CastError"
+  ) {
+    const path = (err as { path?: string }).path;
+    return res.status(400).json({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: path ? `Invalid value for '${path}'` : "Invalid parameter",
+      },
+    });
+  }
+
   logger.error({ err }, "Unhandled error");
   return res.status(500).json({
     error: { code: "INTERNAL", message: "Internal server error" },

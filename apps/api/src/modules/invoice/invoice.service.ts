@@ -339,6 +339,13 @@ export async function sendInvoice(orgId: string, id: string): Promise<InvoiceDTO
   const doc = await findDoc(orgId, id);
   const eff = effectiveStatus(doc);
   if (eff !== "draft") throw new AppError("CONFLICT", `Cannot send a ${eff} invoice`);
+
+  // Reject the send up front if any tracked line would oversell (drive stock
+  // negative). Done synchronously so the client gets a 409 and nothing changes.
+  const stockLines = (doc.lineItems as unknown as { itemId?: string; warehouseId?: string; quantity: number; description: string }[]) ?? [];
+  const { assertStockAvailableForInvoice } = await import("../inventory/inventory.service");
+  await assertStockAvailableForInvoice(orgId, stockLines);
+
   doc.status = "sent";
   doc.sentAt = new Date();
   await doc.save();

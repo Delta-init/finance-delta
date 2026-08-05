@@ -662,21 +662,44 @@ export async function getVATReport(
       billDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $nin: ["draft", "voided"] },
     })
-      .select("taxTotalMinor")
+      .select("taxTotalMinor lineItems")
       .lean(),
   ]);
 
   const outputTaxMinor = invoices.reduce((s, i) => s + ((i.taxTotalMinor as number) ?? 0), 0);
   const inputTaxMinor = bills.reduce((s, b) => s + ((b.taxTotalMinor as number) ?? 0), 0);
 
-  // Breakdown by tax code from invoice taxBreakdown
-  const byCodeOutput = new Map<string, { code: string; rate: number; outputMinor: number; inputMinor: number }>();
+  // Breakdown rows keyed by code (output, from invoices) and by rate (input,
+  // from bills — bills carry a per-line taxPct but no tax code). Both sides are
+  // included so the breakdown reconciles with the output/input totals.
+  const byKey = new Map<string, { code: string; rate: number; outputMinor: number; inputMinor: number }>();
+
+  // Output side — invoice taxBreakdown (per code).
   for (const inv of invoices) {
     const breakdown = (inv as unknown as { taxBreakdown?: { code: string; amountMinor: number }[] }).taxBreakdown ?? [];
     for (const tb of breakdown) {
-      const existing = byCodeOutput.get(tb.code) ?? { code: tb.code, rate: 0, outputMinor: 0, inputMinor: 0 };
+      const k = `out:${tb.code}`;
+      const existing = byKey.get(k) ?? { code: tb.code, rate: 0, outputMinor: 0, inputMinor: 0 };
       existing.outputMinor += tb.amountMinor;
-      byCodeOutput.set(tb.code, existing);
+      byKey.set(k, existing);
+    }
+  }
+
+  // Input side — bill line taxes bucketed by rate (percentage).
+  for (const bill of bills) {
+    const lines = (bill as unknown as {
+      lineItems?: { quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number }[];
+    }).lineItems ?? [];
+    for (const l of lines) {
+      const rate = l.taxPct ?? 0;
+      if (rate <= 0) continue;
+      const taxable = Math.round(l.quantity * l.unitPriceMinor * (1 - (l.discountPct ?? 0) / 100));
+      const tax = Math.round((taxable * rate) / 100);
+      if (tax === 0) continue;
+      const k = `in:${rate}`;
+      const existing = byKey.get(k) ?? { code: `Input ${rate}%`, rate, outputMinor: 0, inputMinor: 0 };
+      existing.inputMinor += tax;
+      byKey.set(k, existing);
     }
   }
 
@@ -687,7 +710,7 @@ export async function getVATReport(
     outputTaxMinor,
     inputTaxMinor,
     netPayableMinor: outputTaxMinor - inputTaxMinor,
-    byRate: [...byCodeOutput.values()],
+    byRate: [...byKey.values()],
   };
 }
 

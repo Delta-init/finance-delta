@@ -122,7 +122,8 @@ export function OrgSwitcher() {
   const currentOrgName = session?.user?.orgName || "Organization";
 
   const { data: myOrgs = [] } = useMyOrgs();
-  const { data: allOrgs = [] } = usePlatformOrgs();
+  // Only super-admins can list all orgs; gating avoids a guaranteed 403 + toast.
+  const { data: allOrgs = [] } = usePlatformOrgs(isSuperAdmin);
 
   // Super admin sees all orgs; regular users see only their memberships.
   const orgs: Array<{ id: string; name: string; baseCurrency: string }> = isSuperAdmin

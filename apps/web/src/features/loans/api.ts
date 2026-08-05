@@ -10,26 +10,24 @@ import type {
   RecordRepaymentInput,
   LoanQuery,
 } from "@delta/shared";
-import { api } from "@/lib/api";
+import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["loans"] as const;
-
-interface LoansResult {
-  data: Loan[];
-  meta: { total: number; page: number; pageSize: number; pageCount: number };
-}
 
 // ── Loans ─────────────────────────────────────────────────────────────────────
 
 export function useLoans(params: Partial<LoanQuery> = {}) {
-  const qs = new URLSearchParams();
-  if (params.type) qs.set("type", params.type);
-  if (params.status) qs.set("status", params.status);
-  if (params.page) qs.set("page", String(params.page));
-  if (params.pageSize) qs.set("pageSize", String(params.pageSize));
   return useQuery({
     queryKey: [...KEY, "list", params],
-    queryFn: () => api.get<LoansResult>(`loans?${qs.toString()}`),
+    // getList preserves the { data, meta } envelope; api.get would unwrap it to
+    // the bare array and break `activeData.data` on the loans page.
+    queryFn: () =>
+      api.getList<Loan>("loans", {
+        type: params.type,
+        status: params.status,
+        page: params.page,
+        pageSize: params.pageSize,
+      } as QueryParams),
   });
 }
 

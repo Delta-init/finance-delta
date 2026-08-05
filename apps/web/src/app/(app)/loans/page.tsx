@@ -131,7 +131,7 @@ export default function LoansPage() {
               <div key={i} className="h-16 animate-pulse rounded-xl bg-surface-muted" />
             ))}
           </div>
-        ) : !activeData?.data.length ? (
+        ) : !activeData?.data?.length ? (
           <div className="rounded-xl border border-border bg-surface p-8 text-center">
             <Landmark className="mx-auto h-10 w-10 text-foreground-subtle" />
             <p className="mt-3 text-sm font-medium text-foreground">No active loans</p>
@@ -158,7 +158,7 @@ export default function LoansPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {activeData.data.map((loan) => (
+                {activeData.data?.map((loan) => (
                   <tr key={loan.id} className="bg-surface hover:bg-surface-muted/50">
                     <td className="px-4 py-3">
                       <Link

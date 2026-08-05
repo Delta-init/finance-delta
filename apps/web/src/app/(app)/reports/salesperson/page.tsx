@@ -30,7 +30,7 @@ export default function SalespersonReportPage() {
   const [to, setTo] = useState(today);
 
   const { data, isLoading } = useInvoiceSummary(from, to, "salesperson");
-  const { data: usersData } = useUsers({ pageSize: 200, sort: "name", dir: "asc" });
+  const { data: usersData } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const departmentByUserId = new Map(
     (usersData?.data ?? []).map((u) => [u.id, u.department?.name ?? null]),
   );

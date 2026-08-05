@@ -38,7 +38,7 @@ export default function SalespersonDetailPage({ params }: { params: Promise<{ id
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
 
-  const { data: usersData } = useUsers({ pageSize: 200, sort: "name", dir: "asc" });
+  const { data: usersData } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: summary, isLoading: summaryLoading } = useInvoiceSummary(from, to, "salesperson");
   const { data: commissions, isLoading: commissionsLoading } = useCommissionRecords({
     salespersonId: id,

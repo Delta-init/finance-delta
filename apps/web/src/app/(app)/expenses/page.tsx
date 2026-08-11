@@ -137,9 +137,14 @@ export default function ExpensesPage() {
         title="Expenses"
         description="Track and manage business expenses."
         action={
-          <Button onClick={() => router.push("/expenses/new")}>
-            <Plus className="h-4 w-4" /> New expense
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => router.push("/expenses/recurring")}>
+              <Repeat className="h-4 w-4" /> Recurring
+            </Button>
+            <Button onClick={() => router.push("/expenses/new")}>
+              <Plus className="h-4 w-4" /> New expense
+            </Button>
+          </div>
         }
       />
 

@@ -20,7 +20,7 @@ function dateOnly(d: Date | undefined): string {
 
 function toDTO(doc: ExpenseDoc): ExpenseDTO {
   const d = doc as unknown as Record<string, unknown>;
-  const rec = d.recurrence as { frequency: string; nextDate: Date; endDate?: Date } | undefined;
+  const rec = d.recurrence as { frequency: string; nextDate: Date; endDate?: Date; isActive?: boolean } | undefined;
   const mil = d.mileage as { distanceKm: number; ratePerKmMinor: number; totalMinor: number } | undefined;
   const atts = (d.attachments as { name: string; url: string }[]) ?? [];
 
@@ -51,6 +51,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
           frequency: rec.frequency as NonNullable<ExpenseDTO["recurrence"]>["frequency"],
           nextDate: dateOnly(rec.nextDate),
           endDate: rec.endDate ? dateOnly(rec.endDate) : undefined,
+          isActive: rec.isActive ?? true,
         }
       : undefined,
     parentExpenseId: d.parentExpenseId ? String(d.parentExpenseId) : undefined,
@@ -87,6 +88,7 @@ export async function listExpenses(orgId: string, query: ExpenseQuery): Promise<
   if (query.dateTo) and.push({ expenseDate: { $lte: new Date(query.dateTo) } });
   if (query.projectName) and.push({ projectName: { $regex: query.projectName, $options: "i" } });
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
+  if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
 
   const filter: Record<string, unknown> = { organizationId: orgId };
   if (and.length) filter.$and = and;
@@ -150,6 +152,7 @@ export async function createExpense(
           frequency: input.recurrence.frequency,
           nextDate: new Date(input.recurrence.nextDate),
           endDate: input.recurrence.endDate ? new Date(input.recurrence.endDate) : undefined,
+          isActive: input.recurrence.isActive ?? true,
         }
       : undefined,
     mileage,
@@ -191,6 +194,7 @@ export async function updateExpense(
           frequency: input.recurrence.frequency,
           nextDate: new Date(input.recurrence.nextDate),
           endDate: input.recurrence.endDate ? new Date(input.recurrence.endDate) : undefined,
+          isActive: input.recurrence.isActive ?? true,
         }
       : undefined;
   }
@@ -278,6 +282,38 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "Expense is already voided");
   doc.status = "voided";
+  await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
+// ── Recurring template controls ────────────────────────────────────────────────
+
+/** Pause (isActive=false) or resume (isActive=true) a recurring expense template.
+ *  A paused template is skipped by the generator until resumed. */
+export async function setRecurrenceActive(
+  orgId: string,
+  id: string,
+  isActive: boolean,
+): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  const d = doc as unknown as Record<string, unknown>;
+  if (!doc.isRecurring || !d.recurrence)
+    throw new AppError("CONFLICT", "This expense is not a recurring template");
+  (d.recurrence as { isActive?: boolean }).isActive = isActive;
+  doc.markModified("recurrence");
+  await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
+/** Stop a recurring template for good — no further expenses will be generated.
+ *  Past generated expenses are untouched. */
+export async function stopRecurrence(orgId: string, id: string): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  if (!doc.isRecurring)
+    throw new AppError("CONFLICT", "This expense is not a recurring template");
+  doc.isRecurring = false;
   await doc.save();
   return toDTO(doc as unknown as ExpenseDoc);
 }

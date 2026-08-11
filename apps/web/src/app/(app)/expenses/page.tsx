@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, ReceiptText, X } from "lucide-react";
+import { Plus, Search, ReceiptText, X, Repeat, PauseCircle } from "lucide-react";
 import { formatMoney, type Expense, EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -45,19 +45,21 @@ export default function ExpensesPage() {
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
+  const [recurring, setRecurring] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  useEffect(() => t.resetPage(), [status, category, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => t.resetPage(), [status, category, recurring, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data, isLoading } = useExpenses({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     category: category === "all" ? undefined : category,
+    isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   });
 
-  const hasFilters = status !== "all" || category !== "all" || dateFrom || dateTo || !!t.q;
+  const hasFilters = status !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
 
   const columns: Column<Expense>[] = [
     {
@@ -70,7 +72,22 @@ export default function ExpensesPage() {
       key: "description",
       header: "Description",
       sortable: true,
-      cell: (e) => <span className="max-w-xs truncate block">{e.description}</span>,
+      cell: (e) => (
+        <div className="flex items-center gap-2">
+          <span className="max-w-xs truncate">{e.description}</span>
+          {e.isRecurring && (
+            e.recurrence?.isActive === false ? (
+              <Badge tone="neutral" className="shrink-0 gap-1">
+                <PauseCircle className="h-3 w-3" /> Paused
+              </Badge>
+            ) : (
+              <Badge tone="primary" className="shrink-0 gap-1 capitalize">
+                <Repeat className="h-3 w-3" /> {e.recurrence?.frequency ?? "recurring"}
+              </Badge>
+            )
+          )}
+        </div>
+      ),
     },
     {
       key: "category",
@@ -149,6 +166,15 @@ export default function ExpensesPage() {
             {CATEGORIES.map((c) => (
               <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={recurring} onValueChange={setRecurring}>
+          <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All expenses</SelectItem>
+            <SelectItem value="recurring">Recurring only</SelectItem>
+            <SelectItem value="oneoff">One-off only</SelectItem>
           </SelectContent>
         </Select>
 

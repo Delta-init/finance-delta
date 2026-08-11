@@ -126,6 +126,7 @@ export default function NewExpensePage() {
               frequency: values.recurrenceFrequency,
               nextDate: values.recurrenceNextDate,
               endDate: values.recurrenceEndDate || undefined,
+              isActive: true,
             }
           : undefined,
       mileage:

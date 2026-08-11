@@ -28,12 +28,14 @@ function addFrequency(date: Date, freq: "weekly" | "monthly" | "quarterly" | "ye
   return d;
 }
 
-async function processRecurring() {
+export async function processRecurringExpenses() {
   const now = new Date();
   const due = await Expense.find({
     isRecurring: true,
     status: { $in: ["approved", "draft"] },
     "recurrence.nextDate": { $lte: now },
+    // Skip paused templates — resume sets this back to true.
+    "recurrence.isActive": { $ne: false },
   });
 
   for (const template of due) {
@@ -93,10 +95,31 @@ async function processRecurring() {
 }
 
 let recurringQueue: Queue | null = null;
+let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** When Redis (BullMQ) isn't available, keep recurring expenses working with a
+ *  simple in-process daily timer. Runs a catch-up pass shortly after boot, then
+ *  every 24h. Note: this runs per API process, so for multi-instance
+ *  deployments use Redis (which coordinates a single scheduled job) instead. */
+function startFallbackScheduler(): void {
+  const runSafely = async () => {
+    try {
+      await processRecurringExpenses();
+    } catch (err) {
+      logger.error({ err }, "Recurring expense fallback pass failed");
+    }
+  };
+  // Catch-up shortly after startup (delay lets the DB connection settle).
+  setTimeout(runSafely, 10_000);
+  fallbackTimer = setInterval(runSafely, DAY_MS);
+  logger.info("Recurring expense fallback scheduler started (no Redis — in-process daily timer)");
+}
 
 export async function startRecurringExpenseWorker(): Promise<void> {
   if (!(await redisIsAvailable())) {
-    logger.warn("Recurring expense worker disabled — Redis unavailable");
+    startFallbackScheduler();
     return;
   }
 
@@ -107,11 +130,14 @@ export async function startRecurringExpenseWorker(): Promise<void> {
     jobId: "daily-recurring-expense-check",
   });
 
-  const worker = new Worker(QUEUE_NAME, processRecurring, { connection });
+  const worker = new Worker(QUEUE_NAME, processRecurringExpenses, { connection });
   worker.on("failed", (_job, err) => logger.error({ err }, "Recurring expense worker job failed"));
   worker.on("error", (err) => logger.warn({ err }, "Recurring expense worker connection issue"));
 
-  logger.info("Recurring expense worker started");
+  logger.info("Recurring expense worker started (Redis/BullMQ, daily at 01:30)");
 }
 
 export function getRecurringExpenseQueue(): Queue | null { return recurringQueue; }
+export function stopFallbackScheduler(): void {
+  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+}

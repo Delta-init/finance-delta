@@ -64,6 +64,7 @@ export const createExpenseSchema = z.object({
       frequency: expenseRecurrenceFrequencySchema,
       nextDate: z.string().min(1, "Next date is required"),
       endDate: z.string().optional(),
+      isActive: z.boolean().optional().default(true),
     })
     .optional(),
   mileage: z
@@ -122,6 +123,7 @@ export const expenseSchema = z.object({
       frequency: expenseRecurrenceFrequencySchema,
       nextDate: z.string(),
       endDate: z.string().optional(),
+      isActive: z.boolean().default(true),
     })
     .optional(),
   parentExpenseId: z.string().optional(),

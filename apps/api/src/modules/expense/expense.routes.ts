@@ -16,5 +16,9 @@ router.post("/:id/submit", requirePermission("expense:create"), c.submit);
 router.post("/:id/approve", requirePermission("expense:approve"), c.approve);
 router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectExpenseSchema), c.reject);
 router.post("/:id/void", requirePermission("expense:delete"), c.voidExpense);
+// Recurring template controls
+router.post("/:id/recurrence/pause", requirePermission("expense:update"), c.pauseRecurrence);
+router.post("/:id/recurrence/resume", requirePermission("expense:update"), c.resumeRecurrence);
+router.post("/:id/recurrence/stop", requirePermission("expense:update"), c.stopRecurrence);
 
 export default router;

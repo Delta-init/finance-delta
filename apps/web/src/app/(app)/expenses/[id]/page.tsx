@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, Paperclip, User,
+  Repeat, Pause, Play, CircleStop,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
@@ -24,6 +25,9 @@ import {
   useApproveExpense,
   useRejectExpense,
   useVoidExpense,
+  usePauseRecurrence,
+  useResumeRecurrence,
+  useStopRecurrence,
 } from "@/features/expenses/api";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
@@ -54,6 +58,9 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const approveExpense = useApproveExpense(id);
   const rejectExpense = useRejectExpense(id);
   const voidExpense = useVoidExpense(id);
+  const pauseRecurrence = usePauseRecurrence(id);
+  const resumeRecurrence = useResumeRecurrence(id);
+  const stopRecurrence = useStopRecurrence(id);
   const [rejectOpen, setRejectOpen] = useState(false);
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
@@ -165,6 +172,52 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Main column */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Recurring schedule */}
+          {expense.isRecurring && expense.recurrence && (
+            <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <Repeat className="h-4 w-4 text-primary" /> Recurring schedule
+                </h2>
+                <Badge tone={expense.recurrence.isActive === false ? "warning" : "success"}>
+                  {expense.recurrence.isActive === false ? "Paused" : "Active"}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-foreground-muted">Frequency</p>
+                  <p className="font-medium capitalize">{expense.recurrence.frequency}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-foreground-muted">Next charge</p>
+                  <p className="font-medium">{expense.recurrence.nextDate}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-foreground-muted">Ends</p>
+                  <p className="font-medium">{expense.recurrence.endDate ?? "—"}</p>
+                </div>
+              </div>
+              <p className="text-xs text-foreground-subtle">
+                A new expense is generated automatically on each schedule date until you stop it
+                {expense.recurrence.endDate ? " or the end date passes" : ""}.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {expense.recurrence.isActive === false ? (
+                  <Button variant="outline" size="sm" onClick={() => handleAction(() => resumeRecurrence.mutateAsync(undefined), "Recurring schedule resumed")} loading={resumeRecurrence.isPending}>
+                    <Play className="h-4 w-4" /> Resume
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => handleAction(() => pauseRecurrence.mutateAsync(undefined), "Recurring schedule paused")} loading={pauseRecurrence.isPending}>
+                    <Pause className="h-4 w-4" /> Pause
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={() => handleAction(() => stopRecurrence.mutateAsync(undefined), "Recurring schedule stopped")} loading={stopRecurrence.isPending}>
+                  <CircleStop className="h-4 w-4" /> Stop
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Mileage */}
           {expense.mileage && (
             <div className="rounded-lg border border-border bg-surface p-5 space-y-3">
@@ -184,30 +237,6 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
                 <div>
                   <p className="text-xs text-foreground-muted">Mileage Total</p>
                   <p className="font-semibold">{formatMoney(expense.mileage.totalMinor, expense.currency)}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Recurring info */}
-          {expense.isRecurring && expense.recurrence && (
-            <div className="rounded-lg border border-border bg-surface p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-4 w-4 text-foreground-muted" />
-                <h2 className="text-sm font-semibold">Recurrence Schedule</h2>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div>
-                  <p className="text-xs text-foreground-muted">Frequency</p>
-                  <p className="font-medium capitalize">{expense.recurrence.frequency}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-foreground-muted">Next Date</p>
-                  <p className="font-medium">{expense.recurrence.nextDate}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-foreground-muted">End Date</p>
-                  <p className="font-medium">{expense.recurrence.endDate ?? "Ongoing"}</p>
                 </div>
               </div>
             </div>

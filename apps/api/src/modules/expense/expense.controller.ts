@@ -48,3 +48,15 @@ export const reject = asyncHandler(async (req: Request, res: Response) => {
 export const voidExpense = asyncHandler(async (req, res) => {
   ok(res, await svc.voidExpense(org(req), req.params.id!));
 });
+
+export const pauseRecurrence = asyncHandler(async (req, res) => {
+  ok(res, await svc.setRecurrenceActive(org(req), req.params.id!, false));
+});
+
+export const resumeRecurrence = asyncHandler(async (req, res) => {
+  ok(res, await svc.setRecurrenceActive(org(req), req.params.id!, true));
+});
+
+export const stopRecurrence = asyncHandler(async (req, res) => {
+  ok(res, await svc.stopRecurrence(org(req), req.params.id!));
+});

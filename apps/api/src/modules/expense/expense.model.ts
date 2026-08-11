@@ -18,6 +18,7 @@ const expenseRecurrenceSchema = new Schema(
     },
     nextDate: { type: Date, required: true },
     endDate: { type: Date },
+    isActive: { type: Boolean, default: true },
   },
   { _id: false },
 );

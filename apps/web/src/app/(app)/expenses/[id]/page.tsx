@@ -115,7 +115,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-foreground-muted">{expense.description}</p>
         </div>
         <div className="flex items-center gap-2">
-          {(expense.status === "draft" || expense.status === "rejected") && (
+          {expense.status !== "voided" && (
             <Link href={`/expenses/${id}/edit`}>
               <Button variant="outline" size="sm">
                 <Pencil className="h-4 w-4" /> Edit

@@ -188,8 +188,8 @@ export async function updateExpense(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
-  if (!["draft", "rejected"].includes(doc.status as string))
-    throw new AppError("CONFLICT", "Only draft or rejected expenses can be edited");
+  if (doc.status === "voided")
+    throw new AppError("CONFLICT", "A voided expense can't be edited");
 
   const d = doc as unknown as Record<string, unknown>;
 

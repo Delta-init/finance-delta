@@ -17,8 +17,8 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     return <div className="flex h-64 items-center justify-center text-foreground-muted">Expense not found.</div>;
   }
 
-  // Only draft or rejected expenses can be edited (mirrors the API guard).
-  if (expense.status !== "draft" && expense.status !== "rejected") {
+  // Any non-voided expense can be edited (mirrors the API guard).
+  if (expense.status === "voided") {
     return (
       <div className="mx-auto max-w-3xl space-y-4 p-6">
         <div className="flex items-center gap-3">
@@ -28,9 +28,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
           <h1 className="text-xl font-semibold">Edit Expense</h1>
         </div>
         <div className="rounded-lg border border-border bg-surface p-6 text-sm text-foreground-muted">
-          Only <span className="font-medium text-foreground">draft</span> or{" "}
-          <span className="font-medium text-foreground">rejected</span> expenses can be edited. This expense is{" "}
-          <span className="font-medium text-foreground">{expense.status}</span>.
+          This expense has been <span className="font-medium text-foreground">voided</span> and can no longer be edited.
           <div className="mt-3">
             <Link href={`/expenses/${id}`} className="text-primary hover:underline">Back to expense →</Link>
           </div>

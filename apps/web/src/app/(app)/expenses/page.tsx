@@ -167,7 +167,7 @@ export default function ExpensesPage() {
       align: "right",
       cell: (e) => (
         <div className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
-          {(e.status === "draft" || e.status === "rejected") && (
+          {e.status !== "voided" && (
             <button
               type="button"
               title="Edit"

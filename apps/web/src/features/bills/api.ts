@@ -74,6 +74,19 @@ export function useRecordBillPayment(id: string) {
   });
 }
 
+export function useUpdateBillPayment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ paymentId, input }: { paymentId: string; input: RecordBillPaymentInput }) =>
+      api.patch<Bill>(`bills/${id}/payments/${paymentId}`, input),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
 export function useUpdateBillNotes(id: string) {
   const qc = useQueryClient();
   return useMutation({

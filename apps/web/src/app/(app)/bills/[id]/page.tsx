@@ -1,12 +1,12 @@
 "use client";
 
-import { use, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Building2, CheckCircle, XCircle, Ban, CreditCard, Paperclip, Upload, Download, Trash2, FileText, Save } from "lucide-react";
-import { formatMoney, recordBillPaymentSchema, type RecordBillPaymentInput } from "@delta/shared";
+import { ArrowLeft, Building2, CheckCircle, XCircle, Ban, CreditCard, Paperclip, Upload, Download, Trash2, FileText, Save, Pencil } from "lucide-react";
+import { formatMoney, recordBillPaymentSchema, type RecordBillPaymentInput, type Bill } from "@delta/shared";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ import {
   useRejectBill,
   useVoidBill,
   useRecordBillPayment,
+  useUpdateBillPayment,
   useUpdateBillNotes,
   useAddBillAttachment,
   useRemoveBillAttachment,
@@ -65,10 +66,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const rejectBill = useRejectBill(id);
   const voidBill = useVoidBill(id);
   const recordPayment = useRecordBillPayment(id);
+  const updatePayment = useUpdateBillPayment(id);
   const updateNotes = useUpdateBillNotes(id);
   const addAttachment = useAddBillAttachment(id);
   const removeAttachment = useRemoveBillAttachment(id);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Bill["payments"][number] | null>(null);
+  const isEdit = !!editingPayment;
   const [notesDraft, setNotesDraft] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +83,31 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     });
 
   const method = watch("method");
+
+  useEffect(() => {
+    if (paymentOpen && editingPayment) {
+      reset({
+        method: editingPayment.method,
+        amountMinor: editingPayment.amountMinor,
+        paidOn: editingPayment.paidOn,
+        reference: editingPayment.reference ?? "",
+        accountName: editingPayment.accountName ?? "",
+        notes: editingPayment.notes ?? "",
+        chargesMinor: editingPayment.chargesMinor ?? 0,
+        emi: editingPayment.emi ? { ...editingPayment.emi } : undefined,
+      });
+    } else if (paymentOpen && !editingPayment) {
+      reset({
+        method: "bank_transfer",
+        amountMinor: 0,
+        paidOn: new Date().toISOString().slice(0, 10),
+        reference: "",
+        accountName: "",
+        notes: "",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentOpen, editingPayment]);
 
   function handleMethodChange(v: string) {
     setValue("method", v as RecordBillPaymentInput["method"]);
@@ -102,12 +131,18 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     const payload: RecordBillPaymentInput = { ...values };
     if (payload.method !== "easebuzz_emi") delete (payload as { emi?: unknown }).emi;
     try {
-      await recordPayment.mutateAsync(payload);
-      toast.success("Payment recorded");
+      if (editingPayment) {
+        await updatePayment.mutateAsync({ paymentId: editingPayment.id, input: payload });
+        toast.success("Payment updated");
+      } else {
+        await recordPayment.mutateAsync(payload);
+        toast.success("Payment recorded");
+      }
       setPaymentOpen(false);
+      setEditingPayment(null);
       reset();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to record payment");
+      toast.error(e instanceof ApiError ? e.message : `Failed to ${editingPayment ? "update" : "record"} payment`);
     }
   }
 
@@ -173,6 +208,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <p className="text-sm text-foreground-muted">{bill.vendorName}</p>
         </div>
         <div className="flex items-center gap-2">
+          {bill.status !== "voided" && bill.amountPaidMinor === 0 && (
+            <Link href={`/bills/${id}/edit`}>
+              <Button variant="outline" size="sm">
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            </Link>
+          )}
           {canApprove && (
             <>
               <Button variant="outline" size="sm" onClick={() => handleAction(() => rejectBill.mutateAsync(undefined), "Bill rejected")} loading={rejectBill.isPending}>
@@ -184,7 +226,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             </>
           )}
           {canPay && (
-            <Button size="sm" onClick={() => setPaymentOpen(true)}>
+            <Button size="sm" onClick={() => { setEditingPayment(null); setPaymentOpen(true); }}>
               <CreditCard className="h-4 w-4" /> Record Payment
             </Button>
           )}
@@ -274,6 +316,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                     <th className="px-3 py-2.5 text-left font-medium">Account</th>
                     <th className="px-3 py-2.5 text-left font-medium">Reference</th>
                     <th className="px-5 py-2.5 text-right font-medium">Amount</th>
+                    <th className="px-3 py-2.5 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -294,6 +337,18 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                         <MoneyDisplay minor={p.amountMinor} currency={bill.currency} className="font-medium" />
                         {p.chargesMinor > 0 && (
                           <span className="mt-0.5 block text-xs text-foreground-muted">charges {formatMoney(p.chargesMinor, bill.currency)}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right align-top">
+                        {bill.status !== "voided" && (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingPayment(p); setPaymentOpen(true); }}
+                            className="inline-flex items-center text-foreground-muted hover:text-foreground"
+                            title="Edit payment"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -416,9 +471,9 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </div>
 
-      <Dialog open={paymentOpen} onOpenChange={(o) => { if (!o) { setPaymentOpen(false); reset(); } }}>
+      <Dialog open={paymentOpen} onOpenChange={(o) => { if (!o) { setPaymentOpen(false); setEditingPayment(null); reset(); } }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Record Payment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{isEdit ? "Edit Payment" : "Record Payment"}</DialogTitle></DialogHeader>
           <form onSubmit={handleSubmit(onPaymentSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label>Payment Method *</Label>
@@ -435,9 +490,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
               <div className="space-y-1.5">
                 <Label>Amount ({bill.currency}) *</Label>
                 <Input
+                  key={editingPayment?.id ?? "new"}
                   type="number"
                   step="0.01"
                   placeholder="0.00"
+                  defaultValue={editingPayment ? (editingPayment.amountMinor / 100).toString() : ""}
                   onChange={(e) => setValue("amountMinor", toMinorFromInput(e.target.value))}
                 />
                 {errors.amountMinor && <p className="text-xs text-danger">{errors.amountMinor.message}</p>}
@@ -460,25 +517,26 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                   <div className="space-y-1.5">
                     <Label>Tenure (months) *</Label>
                     <Input
+                      key={editingPayment?.id ?? "new"}
                       type="number"
                       min={1}
                       max={60}
-                      defaultValue={3}
+                      defaultValue={editingPayment?.emi?.tenureMonths ?? 3}
                       onChange={(e) => setValue("emi.tenureMonths", parseInt(e.target.value || "0", 10))}
                     />
                     {errors.emi?.tenureMonths && <p className="text-xs text-danger">{errors.emi.tenureMonths.message}</p>}
                   </div>
                   <div className="space-y-1.5">
                     <Label>Monthly EMI ({bill.currency})</Label>
-                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.monthlyAmountMinor", toMinorFromInput(e.target.value))} />
+                    <Input key={editingPayment?.id ?? "new"} type="number" step="0.01" placeholder="0.00" defaultValue={editingPayment?.emi?.monthlyAmountMinor ? (editingPayment.emi.monthlyAmountMinor / 100).toString() : ""} onChange={(e) => setValue("emi.monthlyAmountMinor", toMinorFromInput(e.target.value))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Interest %</Label>
-                    <Input type="number" step="0.01" placeholder="0" onChange={(e) => setValue("emi.interestPct", parseFloat(e.target.value || "0"))} />
+                    <Input key={editingPayment?.id ?? "new"} type="number" step="0.01" placeholder="0" defaultValue={editingPayment?.emi?.interestPct ? editingPayment.emi.interestPct.toString() : ""} onChange={(e) => setValue("emi.interestPct", parseFloat(e.target.value || "0"))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Processing Fee ({bill.currency})</Label>
-                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.processingFeeMinor", toMinorFromInput(e.target.value))} />
+                    <Input key={editingPayment?.id ?? "new"} type="number" step="0.01" placeholder="0.00" defaultValue={editingPayment?.emi?.processingFeeMinor ? (editingPayment.emi.processingFeeMinor / 100).toString() : ""} onChange={(e) => setValue("emi.processingFeeMinor", toMinorFromInput(e.target.value))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Easebuzz Txn ID</Label>
@@ -501,7 +559,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Charges ({bill.currency})</Label>
-                <Input type="number" step="0.01" min="0" placeholder="0.00" onChange={(e) => setValue("chargesMinor", toMinorFromInput(e.target.value))} />
+                <Input key={editingPayment?.id ?? "new"} type="number" step="0.01" min="0" placeholder="0.00" defaultValue={editingPayment?.chargesMinor ? (editingPayment.chargesMinor / 100).toString() : ""} onChange={(e) => setValue("chargesMinor", toMinorFromInput(e.target.value))} />
               </div>
               <div className="space-y-1.5">
                 <Label>Notes</Label>
@@ -509,8 +567,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </div>
             <DialogFooter>
-              <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-              <Button type="submit" loading={isSubmitting}>Record payment</Button>
+              <DialogClose asChild><Button type="button" variant="ghost" onClick={() => setEditingPayment(null)}>Cancel</Button></DialogClose>
+              <Button type="submit" loading={isSubmitting}>{isEdit ? "Save changes" : "Record payment"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

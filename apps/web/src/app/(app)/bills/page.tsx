@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, ShoppingCart, X, AlertTriangle } from "lucide-react";
+import { Plus, Search, ShoppingCart, X, AlertTriangle, Pencil } from "lucide-react";
 import { type Bill } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,25 @@ export default function BillsPage() {
     {
       key: "balance", header: "Balance", align: "right", sortable: true,
       cell: (b) => <MoneyDisplay minor={b.balanceMinor} currency={b.currency} className={b.balanceMinor > 0 ? "font-medium text-danger" : "font-medium"} />,
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      cell: (b) => (
+        <div className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
+          {b.status !== "voided" && b.amountPaidMinor === 0 && (
+            <button
+              type="button"
+              title="Edit"
+              onClick={() => router.push(`/bills/${b.id}/edit`)}
+              className="rounded p-1.5 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ),
     },
   ];
 

@@ -179,8 +179,8 @@ export async function createBill(orgId: string, input: CreateBillInput): Promise
 export async function updateBill(orgId: string, id: string, input: UpdateBillInput): Promise<BillDTO> {
   const doc = await Bill.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
-  if (!["draft", "pending_approval"].includes(doc.status as string))
-    throw new AppError("CONFLICT", "Only draft or pending bills can be edited");
+  if (doc.status === "voided") throw new AppError("CONFLICT", "A voided bill can't be edited");
+  if (((doc.amountPaidMinor as number) ?? 0) > 0) throw new AppError("CONFLICT", "A bill with recorded payments can't be edited");
 
   if (input.billDate) doc.billDate = new Date(input.billDate) as unknown as typeof doc.billDate;
   if (input.dueDate) doc.dueDate = new Date(input.dueDate) as unknown as typeof doc.dueDate;
@@ -319,6 +319,61 @@ export async function removeBillAttachment(orgId: string, id: string, attId: str
     await deleteFile(target.key);
   }
   arr.pull(attId);
+  await doc.save();
+  return toDTO(doc as unknown as BillDoc);
+}
+
+export async function updateBillPayment(
+  orgId: string,
+  id: string,
+  paymentId: string,
+  input: RecordBillPaymentInput,
+): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+  if (doc.status === "voided") throw new AppError("CONFLICT", "Cannot edit a payment on a voided bill");
+
+  const list = doc.payments as unknown as {
+    id: (pid: string) => Record<string, unknown> | null;
+  };
+  const pm = list.id(paymentId);
+  if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+
+  if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {
+    throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
+  }
+
+  const others = (doc.payments as unknown as { amountMinor: number; _id: { toString(): string } }[])
+    .filter((p) => p._id.toString() !== paymentId)
+    .reduce((s, p) => s + (p.amountMinor ?? 0), 0);
+  const newPaid = others + input.amountMinor;
+  if (newPaid > ((doc.totalMinor as number) ?? 0)) {
+    throw new AppError("CONFLICT", `Total payments would exceed the bill total of ${(doc.totalMinor as number) ?? 0}`);
+  }
+
+  const p = pm as Record<string, unknown>;
+  p.method = input.method;
+  p.amountMinor = input.amountMinor;
+  p.paidOn = new Date(input.paidOn);
+  p.reference = input.reference ?? "";
+  p.accountName = input.accountName ?? "";
+  p.notes = input.notes ?? "";
+  p.chargesMinor = input.chargesMinor ?? 0;
+  p.emi =
+    input.method === "easebuzz_emi" && input.emi
+      ? {
+          bank: input.emi.bank ?? "",
+          tenureMonths: input.emi.tenureMonths,
+          monthlyAmountMinor: input.emi.monthlyAmountMinor ?? 0,
+          interestPct: input.emi.interestPct ?? 0,
+          processingFeeMinor: input.emi.processingFeeMinor ?? 0,
+          transactionId: input.emi.transactionId ?? "",
+        }
+      : undefined;
+
+  doc.amountPaidMinor = newPaid;
+  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - newPaid;
+  doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
   return toDTO(doc as unknown as BillDoc);
 }

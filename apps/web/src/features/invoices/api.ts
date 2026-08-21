@@ -94,3 +94,16 @@ export function useRecordPayment(invoiceId: string) {
     },
   });
 }
+
+export function useUpdatePayment(invoiceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ paymentId, input }: { paymentId: string; input: RecordPaymentInput }) =>
+      api.patch<Invoice>(`invoices/${invoiceId}/payments/${paymentId}`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
+    },
+  });
+}

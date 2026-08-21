@@ -19,5 +19,6 @@ router.post("/:id/send", requirePermission("invoice:write"), c.send);
 router.post("/:id/resend", requirePermission("invoice:write"), c.resend);
 router.post("/:id/void", requirePermission("invoice:write"), c.voidInvoice);
 router.post("/:id/payments", requirePermission("invoice:write"), parseUpload, validateBody(recordPaymentSchema), c.recordPayment);
+router.patch("/:id/payments/:paymentId", requirePermission("invoice:write"), validateBody(recordPaymentSchema), c.updatePayment);
 
 export default router;

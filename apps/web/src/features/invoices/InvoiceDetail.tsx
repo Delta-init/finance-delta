@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,7 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput,
+  type Invoice, type RecordPaymentInput, type Payment,
 } from "@delta/shared";
 
 const paymentFormSchema = z.object({
@@ -39,7 +39,7 @@ import {
 import { TagList } from "@/features/tags/TagBadge";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useResendInvoice } from "./api";
+import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 
 export function InvoiceDetail({ id }: { id: string }) {
@@ -49,6 +49,7 @@ export function InvoiceDetail({ id }: { id: string }) {
   const voidInv = useVoidInvoice();
   const resend = useResendInvoice();
   const [payOpen, setPayOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [resendOpen, setResendOpen] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
 
@@ -153,10 +154,11 @@ export function InvoiceDetail({ id }: { id: string }) {
 
       <PaymentDialog
         open={payOpen}
-        onClose={() => setPayOpen(false)}
+        onClose={() => { setPayOpen(false); setEditingPayment(null); }}
         invoiceId={id}
         balanceMinor={invoice.balanceMinor}
         currency={invoice.currency}
+        editing={editingPayment}
       />
 
       {/* Resend dialog */}
@@ -347,6 +349,15 @@ export function InvoiceDetail({ id }: { id: string }) {
                           <Paperclip className="h-3.5 w-3.5" />
                         </a>
                       )}
+                      {invoice.status !== "void" && (
+                        <button
+                          onClick={() => { setEditingPayment(p); setPayOpen(true); }}
+                          className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
+                          title="Edit payment"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <button
                         onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
                         className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
@@ -372,14 +383,18 @@ function PaymentDialog({
   invoiceId,
   balanceMinor,
   currency,
+  editing,
 }: {
   open: boolean;
   onClose: () => void;
   invoiceId: string;
   balanceMinor: number;
   currency: string;
+  editing?: Payment | null;
 }) {
   const record = useRecordPayment(invoiceId);
+  const update = useUpdatePayment(invoiceId);
+  const isEdit = !!editing;
   const [proofFile, setProofFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -401,6 +416,35 @@ function PaymentDialog({
       accountName: "",
     },
   });
+
+  // Sync the form to the payment being edited (or reset to defaults) each open.
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      reset({
+        method: editing.method,
+        amount: editing.amountMinor / 100,
+        paidOn: editing.paidOn,
+        reference: editing.reference ?? "",
+        notes: editing.notes ?? "",
+        accountName: editing.accountName ?? "",
+        charges: (editing.chargesMinor ?? 0) / 100,
+        emi: editing.emi ? { ...editing.emi } : undefined,
+      });
+    } else {
+      reset({
+        method: "bank_transfer",
+        amount: balanceMinor / 100,
+        paidOn: new Date().toISOString().slice(0, 10),
+        reference: "",
+        notes: "",
+        accountName: "",
+        charges: 0,
+        emi: undefined,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
 
   const method = watch("method");
 
@@ -431,13 +475,18 @@ function PaymentDialog({
       ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
     };
     try {
-      await record.mutateAsync({ input, file: proofFile ?? undefined });
-      toast.success("Payment recorded");
+      if (editing) {
+        await update.mutateAsync({ paymentId: editing.id, input });
+        toast.success("Payment updated");
+      } else {
+        await record.mutateAsync({ input, file: proofFile ?? undefined });
+        toast.success("Payment recorded");
+      }
       reset();
       setProofFile(null);
       onClose();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to record payment");
+      toast.error(e instanceof ApiError ? e.message : `Failed to ${editing ? "update" : "record"} payment`);
     }
   }
 
@@ -454,7 +503,7 @@ function PaymentDialog({
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Record Payment</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit Payment" : "Record Payment"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-2">
           <div className="grid grid-cols-2 gap-3">
@@ -555,7 +604,7 @@ function PaymentDialog({
               </label>
               <Input {...register("notes")} placeholder="Any additional notes…" />
             </div>
-            <div className="col-span-2">
+            <div className={`col-span-2 ${isEdit ? "hidden" : ""}`}>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Proof of Payment <span className="text-foreground-subtle">(optional)</span>
               </label>
@@ -601,7 +650,7 @@ function PaymentDialog({
               <Button type="button" variant="ghost" size="sm" onClick={handleClose}>Cancel</Button>
             </DialogClose>
             <Button type="submit" size="sm" loading={isSubmitting || record.isPending}>
-              <Plus className="h-3.5 w-3.5" /> Save Payment
+              <Plus className="h-3.5 w-3.5" /> {isEdit ? "Save changes" : "Save Payment"}
             </Button>
           </div>
         </form>

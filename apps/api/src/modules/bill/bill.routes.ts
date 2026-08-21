@@ -16,6 +16,7 @@ router.patch("/:id", requirePermission("bill:update"), validateBody(updateBillSc
 router.post("/:id/approve", requirePermission("bill:approve"), c.approve);
 router.post("/:id/reject", requirePermission("bill:approve"), c.reject);
 router.post("/:id/payments", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.recordPayment);
+router.patch("/:id/payments/:paymentId", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.updatePayment);
 router.patch("/:id/notes", requirePermission("bill:update"), validateBody(updateBillNotesSchema), c.updateNotes);
 router.post("/:id/attachments", requirePermission("bill:update"), parseUpload, c.addAttachment);
 router.delete("/:id/attachments/:attId", requirePermission("bill:update"), c.removeAttachment);

@@ -448,6 +448,63 @@ export async function voidInvoice(orgId: string, id: string): Promise<InvoiceDTO
   return toDTO(doc);
 }
 
+export async function updatePayment(
+  orgId: string,
+  id: string,
+  paymentId: string,
+  input: RecordPaymentInput,
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  if (effectiveStatus(doc) === "void") throw new AppError("CONFLICT", "Cannot edit a payment on a voided invoice");
+
+  const list = doc.payments as unknown as {
+    id: (pid: string) => (Record<string, unknown>) | null;
+  } & { amountMinor: number; _id: { toString(): string } }[];
+  const pm = list.id(paymentId);
+  if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+
+  if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {
+    throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
+  }
+
+  // Total paid with this payment's amount swapped in — must not exceed the invoice total.
+  const others = (doc.payments as unknown as { amountMinor: number; _id: { toString(): string } }[])
+    .filter((p) => p._id.toString() !== paymentId)
+    .reduce((s, p) => s + (p.amountMinor ?? 0), 0);
+  const newPaid = others + input.amountMinor;
+  if (newPaid > (doc.totalMinor ?? 0)) {
+    throw new AppError("CONFLICT", `Total payments would exceed the invoice total of ${doc.totalMinor ?? 0}`);
+  }
+
+  const p = pm as Record<string, unknown>;
+  p.method = input.method;
+  p.amountMinor = input.amountMinor;
+  p.paidOn = new Date(input.paidOn);
+  p.reference = input.reference ?? "";
+  p.notes = input.notes ?? "";
+  p.accountName = input.accountName ?? "";
+  p.chargesMinor = input.chargesMinor ?? 0;
+  p.emi =
+    input.method === "easebuzz_emi" && input.emi
+      ? {
+          bank: input.emi.bank ?? "",
+          tenureMonths: input.emi.tenureMonths,
+          monthlyAmountMinor: input.emi.monthlyAmountMinor ?? 0,
+          interestPct: input.emi.interestPct ?? 0,
+          processingFeeMinor: input.emi.processingFeeMinor ?? 0,
+          transactionId: input.emi.transactionId ?? "",
+        }
+      : undefined;
+
+  doc.amountPaidMinor = newPaid;
+  doc.balanceMinor = (doc.totalMinor ?? 0) - newPaid;
+  doc.status = doc.balanceMinor <= 0 ? "paid" : "partial";
+
+  await doc.save();
+  await doc.populate("tagIds", "name color");
+  return toDTO(doc);
+}
+
 async function _restoreInventory(orgId: string, doc: InvoiceDoc) {
   try {
     const { restoreStockForInvoice } = await import("../inventory/inventory.service");

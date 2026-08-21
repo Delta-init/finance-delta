@@ -114,16 +114,22 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
 
   const rateFor = (code: CurrencyCode) => rates[code] ?? 1;
 
-  const convert = (minorAED: number): number => {
-    const rate = rateFor(currency);
-    return Math.round(minorAED * rate);
+  // Stored amounts are in the organization's base currency (not always AED).
+  // Convert from base → the selected display currency. When display == base
+  // (the common case) this is a no-op, which prevents the earlier bug where
+  // a non-AED org's amounts were multiplied by the FX rate a second time.
+  const baseCurrency = (orgCurrency ?? "AED") as CurrencyCode;
+  const convert = (minorInBase: number): number => {
+    const baseRate = rateFor(baseCurrency);
+    if (!baseRate) return minorInBase;
+    return Math.round((minorInBase * rateFor(currency)) / baseRate);
   };
 
   return (
     <CurrencyContext.Provider
       value={{
         currency,
-        baseCurrency: orgCurrency ?? "AED",
+        baseCurrency,
         setCurrency,
         rates,
         ratesDate: data?.date ?? "",

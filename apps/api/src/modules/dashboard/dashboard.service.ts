@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
+import { categoryNameMap } from "../expense-category/expense-category.service";
 
 function oid(id: string) { return new Types.ObjectId(id); }
 function startOf(d: Date) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
@@ -195,6 +196,8 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
 
   const dateOnly = (d: Date | undefined) => d ? new Date(d).toISOString().slice(0, 10) : "";
 
+  const catNameMap = await categoryNameMap(orgId);
+
   return {
     currency,
     kpi: {
@@ -227,7 +230,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
       invoiceCount: c.count,
     })),
     expenseBreakdown: expByCatAgg.map((e: { _id: string; total: number }) => ({
-      category: e._id || "Other",
+      category: catNameMap.get(e._id) || e._id || "Other",
       totalMinor: e.total,
     })),
     aging,

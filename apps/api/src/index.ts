@@ -26,6 +26,7 @@ import purchaseOrderRoutes from "./modules/purchase-order/purchase-order.routes"
 import billRoutes from "./modules/bill/bill.routes";
 import vendorCreditRoutes from "./modules/vendor-credit/vendor-credit.routes";
 import expenseRoutes from "./modules/expense/expense.routes";
+import expenseCategoryRoutes from "./modules/expense-category/expense-category.routes";
 import bankingRoutes from "./modules/banking/banking.routes";
 import inventoryRoutes from "./modules/inventory/inventory.routes";
 import reportRoutes from "./modules/reports/reports.routes";
@@ -74,6 +75,7 @@ async function bootstrap() {
   api.use("/bills", billRoutes);
   api.use("/vendor-credits", vendorCreditRoutes);
   api.use("/expenses", expenseRoutes);
+  api.use("/expense-categories", expenseCategoryRoutes);
   api.use("/bank-accounts", bankingRoutes);
   api.use("/inventory", inventoryRoutes);
   api.use("/reports", reportRoutes);

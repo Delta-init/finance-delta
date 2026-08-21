@@ -14,18 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
-import type { CreateExpenseInput, ExpenseCategory } from "@delta/shared";
+import { useExpenseCategories } from "@/features/expense-categories/api";
+import type { CreateExpenseInput } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
-
-const CATEGORIES: { value: ExpenseCategory; label: string }[] = [
-  { value: "salaries_wages", label: "Salaries & Wages" },
-  { value: "commissions", label: "Commissions" },
-  { value: "rent", label: "Rent" },
-  { value: "utilities", label: "Utilities" },
-  { value: "travel", label: "Travel" },
-  { value: "marketing", label: "Marketing" },
-  { value: "other", label: "Other" },
-];
 
 const PAYMENT_METHODS = [
   { value: "bank_transfer", label: "Bank Transfer" },
@@ -43,7 +34,7 @@ const FREQUENCIES = [
 ] as const;
 
 const formSchema = z.object({
-  category: z.enum(["salaries_wages", "commissions", "rent", "utilities", "travel", "marketing", "other"]),
+  category: z.string().min(1, "Category is required"),
   description: z.string().min(1, "Description is required"),
   expenseDate: z.string().min(1, "Expense date is required"),
   amountDisplay: z.string().min(1, "Amount is required"),
@@ -82,6 +73,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const router = useRouter();
   const createExpense = useCreateExpense();
   const updateExpense = useUpdateExpense(expenseId ?? "");
+  const { data: categoryList } = useExpenseCategories();
   const { currency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
   const isEdit = mode === "edit";
@@ -186,12 +178,12 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               <Label>Category *</Label>
               <Select
                 value={watch("category")}
-                onValueChange={(v) => setValue("category", v as ExpenseCategory)}
+                onValueChange={(v) => setValue("category", v)}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  {(categoryList ?? []).map((c) => (
+                    <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

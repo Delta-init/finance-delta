@@ -48,7 +48,9 @@ export const expenseRecurrenceFrequencySchema = z.enum([
 export type ExpenseRecurrenceFrequency = z.infer<typeof expenseRecurrenceFrequencySchema>;
 
 export const createExpenseSchema = z.object({
-  category: expenseCategorySchema,
+  // Category is a managed-category slug (see expense-category.schema). Kept as a
+  // string so custom, org-defined categories validate alongside the defaults.
+  category: z.string().min(1, "Category is required"),
   description: z.string().min(1, "Description is required"),
   expenseDate: z.string().min(1, "Expense date is required"),
   amountMinor: z.number().min(0, "Amount must be non-negative"),
@@ -99,7 +101,9 @@ export type RejectExpenseInput = z.infer<typeof rejectExpenseSchema>;
 export const expenseSchema = z.object({
   id: z.string(),
   expenseNumber: z.string(),
-  category: expenseCategorySchema,
+  category: z.string(),
+  /** Human-readable category name resolved from the managed category list. */
+  categoryName: z.string(),
   description: z.string(),
   expenseDate: z.string(),
   amountMinor: z.number(),

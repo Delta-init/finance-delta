@@ -23,6 +23,7 @@ import type {
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
+import { categoryNameMap } from "../expense-category/expense-category.service";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
 
@@ -485,9 +486,10 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
     categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + amt);
   }
 
+  const nameMap = await categoryNameMap(orgId);
   const expenseCategories: PLCategory[] = [
     { label: "Supplier bills", amountMinor: billExpenses },
-    ...[...categoryMap.entries()].map(([label, amountMinor]) => ({ label, amountMinor })),
+    ...[...categoryMap.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
   ].filter((c) => c.amountMinor > 0);
 
   const totalExpenses = billExpenses + expenseTotal;
@@ -788,8 +790,9 @@ export async function getExpenseByCategory(
     { $sort: { totalMinor: -1 } },
   ]);
 
+  const nameMap = await categoryNameMap(orgId);
   const categories = agg.map((a: { _id: string; count: number; totalMinor: number }) => ({
-    category: a._id,
+    category: nameMap.get(a._id) ?? a._id,
     count: a.count,
     totalMinor: a.totalMinor,
   }));

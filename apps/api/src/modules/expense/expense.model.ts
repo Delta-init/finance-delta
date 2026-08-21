@@ -40,11 +40,10 @@ const expenseSchema = new Schema(
       index: true,
     },
     expenseNumber: { type: String, required: true },
-    category: {
-      type: String,
-      enum: ["salaries_wages", "commissions", "rent", "utilities", "travel", "marketing", "other"],
-      required: true,
-    },
+    // Slug of a managed expense category (see expense-category module).
+    category: { type: String, required: true },
+    // Denormalized display name, kept in sync on category rename.
+    categoryName: { type: String, default: "" },
     description: { type: String, required: true },
     expenseDate: { type: Date, required: true },
     amountMinor: { type: Number, required: true, default: 0 },

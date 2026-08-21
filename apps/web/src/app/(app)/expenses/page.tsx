@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2 } from "lucide-react";
-import { formatMoney, type Expense, EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
+import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
+import { type Expense } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useExpenses, useVoidExpense } from "@/features/expenses/api";
+import { useExpenseCategories } from "@/features/expense-categories/api";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -32,16 +33,6 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "Rejected",
   voided: "Voided",
 };
-
-const CATEGORIES = [
-  { value: "salaries_wages", label: "Salaries & Wages" },
-  { value: "commissions", label: "Commissions" },
-  { value: "rent", label: "Rent" },
-  { value: "utilities", label: "Utilities" },
-  { value: "travel", label: "Travel" },
-  { value: "marketing", label: "Marketing" },
-  { value: "other", label: "Other" },
-] as const;
 
 function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const voidExpense = useVoidExpense(expense.id);
@@ -75,6 +66,7 @@ export default function ExpensesPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
   const [voidTarget, setVoidTarget] = useState<Expense | null>(null);
+  const { data: categoryList } = useExpenseCategories();
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
   const [recurring, setRecurring] = useState("all");
@@ -125,11 +117,7 @@ export default function ExpensesPage() {
       key: "category",
       header: "Category",
       sortable: true,
-      cell: (e) => (
-        <span className="text-foreground-muted">
-          {EXPENSE_CATEGORY_LABELS[e.category as ExpenseCategory] ?? e.category}
-        </span>
-      ),
+      cell: (e) => <span className="text-foreground-muted">{e.categoryName || e.category}</span>,
     },
     {
       key: "date",
@@ -199,6 +187,9 @@ export default function ExpensesPage() {
         description="Track and manage business expenses."
         action={
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => router.push("/expenses/categories")}>
+              <Tag className="h-4 w-4" /> Categories
+            </Button>
             <Button variant="outline" onClick={() => router.push("/expenses/recurring")}>
               <Repeat className="h-4 w-4" /> Recurring
             </Button>
@@ -229,8 +220,8 @@ export default function ExpensesPage() {
           <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All categories</SelectItem>
-            {CATEGORIES.map((c) => (
-              <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+            {(categoryList ?? []).map((c) => (
+              <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

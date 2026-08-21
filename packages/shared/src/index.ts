@@ -20,6 +20,7 @@ export * from "./schemas/purchase-order.schema";
 export * from "./schemas/bill.schema";
 export * from "./schemas/vendor-credit.schema";
 export * from "./schemas/expense.schema";
+export * from "./schemas/expense-category.schema";
 export * from "./schemas/banking.schema";
 export * from "./schemas/inventory.schema";
 export * from "./schemas/reports.schema";

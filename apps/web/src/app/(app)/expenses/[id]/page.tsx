@@ -292,7 +292,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             <div>
               <p className="text-xs text-foreground-muted">Category</p>
               <p className="text-sm font-medium mt-0.5">
-                {EXPENSE_CATEGORY_LABELS[expense.category as ExpenseCategory] ?? expense.category}
+                {expense.categoryName || expense.category}
               </p>
             </div>
 

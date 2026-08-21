@@ -180,7 +180,7 @@ function RecurringRow({ expense }: { expense: Expense }) {
         <span className="block font-mono text-xs text-foreground-subtle">{expense.expenseNumber}</span>
       </td>
       <td className="px-4 py-3 text-foreground-muted">
-        {EXPENSE_CATEGORY_LABELS[expense.category as ExpenseCategory] ?? expense.category}
+        {expense.categoryName || expense.category}
       </td>
       <td className="px-4 py-3">{FREQ_LABEL[rec?.frequency ?? ""] ?? rec?.frequency}</td>
       <td className="px-4 py-3 font-numeric">{rec?.nextDate ?? "—"}</td>

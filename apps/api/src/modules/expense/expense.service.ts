@@ -7,11 +7,21 @@ import type {
   Paginated,
   RejectExpenseInput,
 } from "@delta/shared";
+import { EXPENSE_CATEGORY_LABELS } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
+import { categoryNameMap } from "../expense-category/expense-category.service";
+
+/** Resolve a category's display name: denormalized value, then default label, then a humanized slug. */
+function categoryDisplay(slug: string, denorm?: string): string {
+  if (denorm && denorm.trim()) return denorm;
+  const label = (EXPENSE_CATEGORY_LABELS as Record<string, string>)[slug];
+  if (label) return label;
+  return slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function dateOnly(d: Date | undefined): string {
   if (!d) return "";
@@ -27,7 +37,8 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
   return {
     id: doc._id.toString(),
     expenseNumber: doc.expenseNumber,
-    category: doc.category as ExpenseDTO["category"],
+    category: doc.category as string,
+    categoryName: categoryDisplay(doc.category as string, d.categoryName as string | undefined),
     description: doc.description,
     expenseDate: dateOnly(doc.expenseDate as unknown as Date),
     amountMinor: (doc.amountMinor as number) ?? 0,
@@ -129,10 +140,15 @@ export async function createExpense(
 
   const status = input.requiresApproval ? "submitted" : "approved";
 
+  const catMap = await categoryNameMap(orgId);
+  const catName = catMap.get(input.category);
+  if (!catName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
+
   const doc = await Expense.create({
     organizationId: new Types.ObjectId(orgId),
     expenseNumber,
     category: input.category,
+    categoryName: catName,
     description: input.description,
     expenseDate: new Date(input.expenseDate),
     amountMinor: input.amountMinor,
@@ -177,7 +193,13 @@ export async function updateExpense(
 
   const d = doc as unknown as Record<string, unknown>;
 
-  if (input.category !== undefined) d.category = input.category;
+  if (input.category !== undefined) {
+    d.category = input.category;
+    const catMap = await categoryNameMap(orgId);
+    const nm = catMap.get(input.category);
+    if (!nm) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
+    d.categoryName = nm;
+  }
   if (input.description !== undefined) doc.description = input.description;
   if (input.expenseDate !== undefined) d.expenseDate = new Date(input.expenseDate);
   if (input.currency !== undefined) d.currency = input.currency;

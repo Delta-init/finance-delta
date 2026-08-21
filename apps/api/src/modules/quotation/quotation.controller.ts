@@ -46,5 +46,5 @@ export const convert = asyncHandler(async (req, res) => {
 });
 
 export const convertInvoice = asyncHandler(async (req, res) => {
-  ok(res, await quotationService.convertToInvoice(orgId(req), req.params.id!, req.auth!.userId));
+  ok(res, await quotationService.convertToInvoice(orgId(req), req.params.id!, req.auth!.userId, req.body));
 });

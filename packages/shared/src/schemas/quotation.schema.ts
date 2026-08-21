@@ -50,6 +50,19 @@ export const convertQuotationSchema = z.object({
 });
 export type ConvertQuotationInput = z.infer<typeof convertQuotationSchema>;
 
+/** Convert-to-invoice payload — supports partial / progressive invoicing.
+ *  - full: invoice the entire remaining balance of the quote
+ *  - percentage: invoice a % of the quote total
+ *  - amount: invoice a fixed amount (minor units, quote currency)
+ *  - per_line: invoice a custom ex-tax amount per line (by index) */
+export const convertToInvoiceSchema = z.object({
+  mode: z.enum(["full", "percentage", "amount", "per_line"]).default("full"),
+  percentage: z.coerce.number().min(0).max(100).optional(),
+  amountMinor: z.coerce.number().int().min(0).optional(),
+  lineAmountsMinor: z.array(z.coerce.number().int().min(0)).optional(),
+});
+export type ConvertToInvoiceInput = z.infer<typeof convertToInvoiceSchema>;
+
 // ── Output DTOs ──
 export const lineItemSchema = lineItemInputSchema.extend({
   discountPct: z.number(),
@@ -83,11 +96,17 @@ export const quotationSchema = z.object({
   taxTotalMinor: z.number(),
   taxBreakdown: z.array(taxBreakdownItemSchema).default([]),
   totalMinor: z.number(),
+  /** Cumulative invoiced amount (sum of created invoices' totals), quote currency. */
+  invoicedMinor: z.number().default(0),
   notes: z.string(),
   terms: z.string(),
   tags: z.array(tagRefSchema).default([]),
   convertedTo: z
-    .object({ salesOrderId: z.string().optional(), invoiceId: z.string().optional() })
+    .object({
+      salesOrderId: z.string().optional(),
+      invoiceId: z.string().optional(),
+      invoiceIds: z.array(z.string()).default([]),
+    })
     .optional(),
   createdAt: z.string(),
 });

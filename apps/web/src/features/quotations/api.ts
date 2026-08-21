@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ConvertQuotationInput,
+  ConvertToInvoiceInput,
   CreateQuotationInput,
   Quotation,
   SalesOrder,
@@ -97,11 +98,12 @@ export function useConvertToInvoice() {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (id: string) =>
+    mutationFn: ({ id, input }: { id: string; input: ConvertToInvoiceInput }) =>
       api.post<{ quotation: Quotation; invoice: { id: string; invoiceNumber: string } }>(
         `quotations/${id}/convert-invoice`,
+        input,
       ),
-    onSuccess: (_d, id) => {
+    onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["quotation", id] });
       qc.invalidateQueries({ queryKey: ["invoices"] });

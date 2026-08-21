@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import type {
   ConvertQuotationInput,
+  ConvertToInvoiceInput,
   CreateQuotationInput,
   Invoice as InvoiceDTO,
   Paginated,
@@ -57,6 +58,7 @@ function toDTO(doc: QuotationDoc): QuotationDTO {
     taxTotalMinor: doc.taxTotalMinor ?? 0,
     taxBreakdown: (doc.taxBreakdown ?? []) as QuotationDTO["taxBreakdown"],
     totalMinor: doc.totalMinor ?? 0,
+    invoicedMinor: (doc as unknown as { invoicedMinor?: number }).invoicedMinor ?? 0,
     notes: doc.notes ?? "",
     terms: doc.terms ?? "",
     tags: toTagRefs(doc.tagIds),
@@ -64,6 +66,7 @@ function toDTO(doc: QuotationDoc): QuotationDTO {
       ? {
           salesOrderId: doc.convertedTo.salesOrderId?.toString(),
           invoiceId: doc.convertedTo.invoiceId?.toString(),
+          invoiceIds: ((doc.convertedTo as unknown as { invoiceIds?: { toString(): string }[] }).invoiceIds ?? []).map((x) => x.toString()),
         }
       : undefined,
     createdAt: doc.createdAt.toISOString(),
@@ -262,7 +265,11 @@ export async function convertQuotation(
   }
 
   const so = await createFromQuote(orgId, doc, input.lines);
-  doc.convertedTo = { salesOrderId: so._id };
+  doc.convertedTo = {
+    ...(doc.convertedTo ?? {}),
+    salesOrderId: so._id,
+    invoiceIds: (doc.convertedTo as unknown as { invoiceIds?: Types.ObjectId[] })?.invoiceIds ?? [],
+  } as typeof doc.convertedTo;
   await doc.save();
 
   return { quotation: toDTO(doc), salesOrder: salesOrderToDTO(so) };
@@ -272,14 +279,18 @@ export async function convertToInvoice(
   orgId: string,
   id: string,
   userId: string,
+  input: ConvertToInvoiceInput = { mode: "full" },
 ): Promise<{ quotation: QuotationDTO; invoice: Pick<InvoiceDTO, "id" | "invoiceNumber"> }> {
   const doc = await findDoc(orgId, id);
   if (effectiveStatus(doc) !== "accepted") {
     throw new AppError("CONFLICT", "Only accepted quotations can be converted to an invoice");
   }
-  if (doc.convertedTo?.invoiceId) {
-    throw new AppError("CONFLICT", "Quotation already converted to an invoice");
-  }
+
+  const quoteTotal = doc.totalMinor ?? 0;
+  const alreadyInvoiced = (doc as unknown as { invoicedMinor?: number }).invoicedMinor ?? 0;
+  const remaining = quoteTotal - alreadyInvoiced;
+  if (quoteTotal <= 0) throw new AppError("VALIDATION_ERROR", "Quotation has no invoiceable amount");
+  if (remaining <= 0) throw new AppError("CONFLICT", "Quotation is already fully invoiced");
 
   const [salesperson, org] = await Promise.all([
     User.findOne({ _id: userId, organizationId: orgId }),
@@ -287,7 +298,7 @@ export async function convertToInvoice(
   ]);
   if (!salesperson) throw new AppError("NOT_FOUND", "User not found");
 
-  const rawLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number; taxes?: { code: string; rate: number }[]; itemId?: string }[]).map(
+  const baseLines = (doc.lineItems as { description: string; quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number; taxes?: { code: string; rate: number }[]; itemId?: string }[]).map(
     (l) => ({
       description: l.description,
       quantity: l.quantity,
@@ -302,11 +313,44 @@ export async function convertToInvoice(
     }),
   );
 
+  // Build the invoice's lines for the requested portion of the quote.
+  let rawLines: typeof baseLines;
+  if (input.mode === "per_line") {
+    const amounts = input.lineAmountsMinor ?? [];
+    rawLines = baseLines
+      .map((l, i) => ({ ...l, unitPriceMinor: amounts[i] ?? 0, quantity: 1, discountPct: 0 }))
+      .filter((l) => l.unitPriceMinor > 0);
+    if (rawLines.length === 0) throw new AppError("VALIDATION_ERROR", "Enter an amount for at least one line");
+  } else {
+    let factor: number;
+    if (input.mode === "percentage") {
+      const pct = input.percentage ?? 0;
+      if (pct <= 0) throw new AppError("VALIDATION_ERROR", "Enter a percentage greater than 0");
+      factor = pct / 100;
+    } else if (input.mode === "amount") {
+      const amt = input.amountMinor ?? 0;
+      if (amt <= 0) throw new AppError("VALIDATION_ERROR", "Enter an amount greater than 0");
+      factor = amt / quoteTotal;
+    } else {
+      // "full" → invoice the entire remaining balance
+      factor = remaining / quoteTotal;
+    }
+    rawLines = baseLines.map((l) => ({ ...l, unitPriceMinor: Math.round(l.unitPriceMinor * factor) }));
+  }
+
   const computedLines = rawLines.map((l) => {
     const b = computeInvoiceLine(l);
     return { ...l, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
   });
   const totals = sumInvoiceTotals(rawLines);
+
+  // Never invoice beyond the remaining balance (small tolerance for rounding).
+  if (totals.totalMinor > remaining + 2) {
+    throw new AppError("CONFLICT", "The amount to invoice exceeds the quotation's remaining balance");
+  }
+  if (totals.totalMinor <= 0) {
+    throw new AppError("VALIDATION_ERROR", "The amount to invoice must be greater than 0");
+  }
 
   const invoiceNumber = await nextNumber(orgId, "invoice", "IN-");
   const today = new Date();
@@ -351,7 +395,13 @@ export async function convertToInvoice(
     payments: [],
   });
 
-  doc.convertedTo = { ...(doc.convertedTo ?? {}), invoiceId: invoice._id };
+  (doc as unknown as { invoicedMinor: number }).invoicedMinor = alreadyInvoiced + totals.totalMinor;
+  const prevIds = ((doc.convertedTo as unknown as { invoiceIds?: Types.ObjectId[] })?.invoiceIds) ?? [];
+  doc.convertedTo = {
+    ...(doc.convertedTo ?? {}),
+    invoiceId: invoice._id,
+    invoiceIds: [...prevIds, invoice._id],
+  } as typeof doc.convertedTo;
   await doc.save();
 
   return {

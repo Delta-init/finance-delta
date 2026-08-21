@@ -15,9 +15,9 @@ import {
   useAcceptQuotation,
   useDeclineQuotation,
   useConvertQuotation,
-  useConvertToInvoice,
   useDeleteQuotation,
 } from "@/features/quotations/api";
+import { ConvertToInvoiceModal } from "@/features/quotations/ConvertToInvoiceModal";
 import { QUOTE_STATUS_TONE } from "@/features/quotations/status";
 
 export default function QuotationDetailPage() {
@@ -28,8 +28,8 @@ export default function QuotationDetailPage() {
   const accept = useAcceptQuotation();
   const decline = useDeclineQuotation();
   const convert = useConvertQuotation();
-  const convertInv = useConvertToInvoice();
   const del = useDeleteQuotation();
+  const [convertOpen, setConvertOpen] = useState(false);
   if (isLoading || !q) {
     return <div className="p-6 text-foreground-muted">Loading…</div>;
   }
@@ -46,7 +46,8 @@ export default function QuotationDetailPage() {
   const isOpen = q.status === "draft" || q.status === "sent" || q.status === "expired";
   const isAccepted = q.status === "accepted";
   const converted = !!q.convertedTo?.salesOrderId;
-  const convertedToInvoice = !!q.convertedTo?.invoiceId;
+  const hasInvoice = !!q.convertedTo?.invoiceId;
+  const fullyInvoiced = (q.invoicedMinor ?? 0) >= q.totalMinor && q.totalMinor > 0;
 
   return (
     <div className="space-y-4 p-6">
@@ -94,23 +95,12 @@ export default function QuotationDetailPage() {
               <FileText className="h-4 w-4" /> Convert to Sales Order
             </Button>
           )}
-          {isAccepted && !convertedToInvoice && (
-            <Button
-              size="sm"
-              variant="outline"
-              loading={convertInv.isPending}
-              onClick={() =>
-                run(async () => {
-                  const r = await convertInv.mutateAsync(id);
-                  toast.success("Invoice created");
-                  router.push(`/invoices/${r.invoice.id}`);
-                })
-              }
-            >
-              <FileText className="h-4 w-4" /> Convert to Invoice
+          {isAccepted && !fullyInvoiced && (
+            <Button size="sm" variant="outline" onClick={() => setConvertOpen(true)}>
+              <FileText className="h-4 w-4" /> {hasInvoice ? "Invoice more" : "Convert to Invoice"}
             </Button>
           )}
-          {convertedToInvoice && (
+          {hasInvoice && (
             <Button
               size="sm"
               variant="outline"
@@ -259,6 +249,13 @@ export default function QuotationDetailPage() {
           </div>
         )}
       </div>
+
+      <ConvertToInvoiceModal
+        quote={q}
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        onConverted={(invoiceId) => { setConvertOpen(false); router.push(`/invoices/${invoiceId}`); }}
+      />
     </div>
   );
 }

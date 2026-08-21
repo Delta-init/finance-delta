@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   convertQuotationSchema,
+  convertToInvoiceSchema,
   createQuotationSchema,
   updateQuotationSchema,
 } from "@delta/shared";
@@ -27,6 +28,6 @@ router.post(
   validateBody(convertQuotationSchema),
   c.convert,
 );
-router.post("/:id/convert-invoice", requirePermission("quotation:update"), c.convertInvoice);
+router.post("/:id/convert-invoice", requirePermission("quotation:update"), validateBody(convertToInvoiceSchema), c.convertInvoice);
 
 export default router;

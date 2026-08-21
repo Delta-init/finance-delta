@@ -27,7 +27,7 @@ interface RawLine {
  *  Lines with a `taxes` array (multi-tax, e.g. CGST + SGST) are computed
  *  per-code; `taxPct` is stored as the combined rate so legacy displays keep
  *  working. Lines without `taxes` follow the legacy single-rate path. */
-export function buildLines(raw: RawLine[]) {
+export function buildLines(raw: RawLine[], taxInclusive = false) {
   const breakdownMap = new Map<string, number>();
   const totals = { subtotalMinor: 0, discountTotalMinor: 0, taxTotalMinor: 0, totalMinor: 0 };
 
@@ -39,6 +39,7 @@ export function buildLines(raw: RawLine[]) {
         unitPriceMinor: l.unitPriceMinor,
         discountPct: l.discountPct ?? 0,
         taxes: l.taxes,
+        taxInclusive,
       });
       for (const t of b.taxes) {
         breakdownMap.set(t.code, (breakdownMap.get(t.code) ?? 0) + t.amountMinor);
@@ -69,8 +70,10 @@ export function buildLines(raw: RawLine[]) {
         ...b,
       };
     }
-    totals.subtotalMinor += line.lineSubtotalMinor;
-    totals.discountTotalMinor += line.discountMinor;
+    // When prices include tax, the subtotal must be shown net of tax so
+    // Subtotal + Tax reconciles to the (unchanged) Total for any tax code.
+    totals.subtotalMinor += taxInclusive ? line.lineTotalMinor - line.taxMinor : line.lineSubtotalMinor;
+    totals.discountTotalMinor += taxInclusive ? 0 : line.discountMinor;
     totals.taxTotalMinor += line.taxMinor;
     totals.totalMinor += line.lineTotalMinor;
     return line;

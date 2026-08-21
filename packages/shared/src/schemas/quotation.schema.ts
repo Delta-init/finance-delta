@@ -35,6 +35,7 @@ export const createQuotationSchema = z.object({
   terms: z.string().max(2000).optional().default(""),
   tagIds: z.array(z.string()).optional().default([]),
   lineItems: z.array(lineItemInputSchema).min(1, "Add at least one line item"),
+  taxInclusive: z.boolean().optional().default(false),
 });
 export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
 
@@ -96,6 +97,7 @@ export const quotationSchema = z.object({
   taxTotalMinor: z.number(),
   taxBreakdown: z.array(taxBreakdownItemSchema).default([]),
   totalMinor: z.number(),
+  taxInclusive: z.boolean().default(false),
   /** Cumulative invoiced amount (sum of created invoices' totals), quote currency. */
   invoicedMinor: z.number().default(0),
   notes: z.string(),

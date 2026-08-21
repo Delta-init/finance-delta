@@ -58,6 +58,7 @@ function toDTO(doc: QuotationDoc): QuotationDTO {
     taxTotalMinor: doc.taxTotalMinor ?? 0,
     taxBreakdown: (doc.taxBreakdown ?? []) as QuotationDTO["taxBreakdown"],
     totalMinor: doc.totalMinor ?? 0,
+    taxInclusive: (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false,
     invoicedMinor: (doc as unknown as { invoicedMinor?: number }).invoicedMinor ?? 0,
     notes: doc.notes ?? "",
     terms: doc.terms ?? "",
@@ -147,7 +148,7 @@ export async function createQuotation(
   const customer = await Customer.findOne({ _id: input.customerId, organizationId: orgId });
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
 
-  const { lineItems, totals } = buildLines(input.lineItems);
+  const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false);
   const quoteNumber = await nextNumber(orgId, "quotation", "QT-");
   const tagIds = await resolveTagIds(orgId, input.tagIds);
 
@@ -162,6 +163,7 @@ export async function createQuotation(
     currency: input.currency ?? customer.currency ?? "AED",
     lineItems,
     ...totals,
+    taxInclusive: input.taxInclusive ?? false,
     notes: input.notes ?? "",
     terms: input.terms ?? "",
     tagIds,
@@ -192,8 +194,10 @@ export async function updateQuotation(
   if (input.currency) doc.currency = input.currency;
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.terms !== undefined) doc.terms = input.terms;
+  if (input.taxInclusive !== undefined) doc.set("taxInclusive", input.taxInclusive);
   if (input.lineItems) {
-    const { lineItems, totals } = buildLines(input.lineItems);
+    const effectiveInclusive = input.taxInclusive ?? (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
+    const { lineItems, totals } = buildLines(input.lineItems, effectiveInclusive);
     doc.set({
       lineItems,
       subtotalMinor: totals.subtotalMinor,
@@ -287,6 +291,7 @@ export async function convertToInvoice(
   }
 
   const quoteTotal = doc.totalMinor ?? 0;
+  const quoteInclusive = (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
   const alreadyInvoiced = (doc as unknown as { invoicedMinor?: number }).invoicedMinor ?? 0;
   const remaining = quoteTotal - alreadyInvoiced;
   if (quoteTotal <= 0) throw new AppError("VALIDATION_ERROR", "Quotation has no invoiceable amount");
@@ -339,10 +344,10 @@ export async function convertToInvoice(
   }
 
   const computedLines = rawLines.map((l) => {
-    const b = computeInvoiceLine(l);
+    const b = computeInvoiceLine({ ...l, taxInclusive: quoteInclusive });
     return { ...l, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
   });
-  const totals = sumInvoiceTotals(rawLines);
+  const totals = sumInvoiceTotals(rawLines.map((l) => ({ ...l, taxInclusive: quoteInclusive })));
 
   // Never invoice beyond the remaining balance (small tolerance for rounding).
   if (totals.totalMinor > remaining + 2) {
@@ -391,6 +396,7 @@ export async function convertToInvoice(
     branding,
     progress: null,
     recurring: null,
+    taxInclusive: quoteInclusive,
     sourceQuoteId: doc._id,
     payments: [],
   });

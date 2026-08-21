@@ -58,6 +58,7 @@ const quotationSchema = new Schema(
     taxTotalMinor: { type: Number, default: 0 },
     taxBreakdown: { type: [taxBreakdownSchema], default: [] },
     totalMinor: { type: Number, default: 0 },
+    taxInclusive: { type: Boolean, default: false },
     invoicedMinor: { type: Number, default: 0 },
     notes: { type: String, default: "" },
     terms: { type: String, default: "" },

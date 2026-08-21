@@ -104,7 +104,7 @@ function fromQuotation(q: Quotation): FormValues {
           : [],
       itemId: l.itemId,
     })),
-    taxInclusive: false,
+    taxInclusive: q.taxInclusive ?? false,
   };
 }
 function toApiInput(v: FormValues): CreateQuotationInput {

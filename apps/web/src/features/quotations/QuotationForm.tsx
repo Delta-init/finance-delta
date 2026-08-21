@@ -417,6 +417,7 @@ export function QuotationForm({
                     setValue={setValue}
                     configuredRates={effectiveRates}
                     currency={currency}
+                    taxInclusive={taxInclusive}
                     canRemove={fields.length > 1}
                     onRemove={() => remove(i)}
                   />
@@ -455,7 +456,7 @@ export function QuotationForm({
               />
             </div>
           </div>
-          <Totals control={control} currency={currency} />
+          <Totals control={control} currency={currency} taxInclusive={taxInclusive} />
         </FadeIn>
 
         {error && <p className="text-sm text-danger">{error}</p>}
@@ -473,6 +474,7 @@ function LineRow({
   setValue,
   configuredRates,
   currency,
+  taxInclusive,
   canRemove,
   onRemove,
 }: {
@@ -483,6 +485,7 @@ function LineRow({
   setValue: UseFormSetValue<FormValues>;
   configuredRates: TaxConfigItem[];
   currency: string;
+  taxInclusive: boolean;
   canRemove: boolean;
   onRemove: () => void;
 }) {
@@ -511,7 +514,7 @@ function LineRow({
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />
       <TaxCell control={control} index={index} setValue={setValue} configuredRates={configuredRates} />
       <div className="text-right">
-        <LineAmount control={control} index={index} currency={currency} />
+        <LineAmount control={control} index={index} currency={currency} taxInclusive={taxInclusive} />
       </div>
       <div className="text-right">
         {canRemove && (
@@ -678,10 +681,12 @@ function LineAmount({
   control,
   index,
   currency,
+  taxInclusive,
 }: {
   control: Control<FormValues>;
   index: number;
   currency: string;
+  taxInclusive: boolean;
 }) {
   const line = useWatch({ control, name: `lineItems.${index}` });
   const b = computeInvoiceLine({
@@ -689,17 +694,19 @@ function LineAmount({
     unitPriceMinor: toMinor(line?.unitPrice ?? 0),
     discountPct: Number(line?.discountPct) || 0,
     taxes: (line?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
+    taxInclusive,
   });
   return <span className="font-numeric text-sm">{formatMoney(b.lineTotalMinor, currency)}</span>;
 }
 
-function Totals({ control, currency }: { control: Control<FormValues>; currency: string }) {
+function Totals({ control, currency, taxInclusive }: { control: Control<FormValues>; currency: string; taxInclusive: boolean }) {
   const lines = useWatch({ control, name: "lineItems" }) ?? [];
   const totals = sumInvoiceTotals(
     lines.map((l) => ({
       quantity: Number(l?.quantity) || 0,
       unitPriceMinor: toMinor(l?.unitPrice ?? 0),
       discountPct: Number(l?.discountPct) || 0,
+      taxInclusive,
       taxes: (l?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
     })),
   );

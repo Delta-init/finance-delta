@@ -42,11 +42,17 @@ export function ConvertToInvoiceModal({
       if (!isFinite(n) || n <= 0) return 0;
       return customKind === "percentage" ? Math.round((quoteTotal * n) / 100) : toMinor(n);
     }
-    // per_line — sum of the ex-tax line amounts (tax is added on top, so this is an approximation)
-    return lineAmounts.reduce((s, v) => s + (parseFloat(v) > 0 ? toMinor(v) : 0), 0);
-  }, [mode, customKind, customValue, lineAmounts, quoteTotal, remaining]);
+    // per_line — each entered ex-tax amount plus that line's own tax
+    return lineAmounts.reduce((s, v, i) => {
+      const amt = parseFloat(v) > 0 ? toMinor(v) : 0;
+      const l = quote.lineItems[i];
+      if (!amt || !l) return s;
+      const ratePct = l.taxes?.length ? l.taxes.reduce((a, t) => a + t.rate, 0) : (l.taxPct ?? 0);
+      return s + amt + Math.round((amt * ratePct) / 100);
+    }, 0);
+  }, [mode, customKind, customValue, lineAmounts, quoteTotal, remaining, quote.lineItems]);
 
-  const exceeds = mode !== "per_line" && toBeInvoicedMinor > remaining + 2;
+  const exceeds = toBeInvoicedMinor > remaining + 2;
   const canSubmit = toBeInvoicedMinor > 0 && !exceeds;
 
   async function handleConvert() {
@@ -136,6 +142,11 @@ export function ConvertToInvoiceModal({
                   />
                 </div>
               ))}
+              <div className="flex justify-between border-t border-border pt-2 text-xs">
+                <span className="text-foreground-muted">To be invoiced (incl. tax)</span>
+                <span className="font-numeric font-medium">{formatMoney(toBeInvoicedMinor, currency)}</span>
+              </div>
+              {exceeds && <p className="text-xs text-danger">Exceeds the remaining balance of {formatMoney(remaining, currency)}</p>}
               <p className="text-xs text-foreground-muted">Amounts are pre-tax; tax is added per line. Leave a line at 0 to skip it.</p>
             </div>
           </Radio>

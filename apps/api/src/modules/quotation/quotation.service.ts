@@ -320,34 +320,59 @@ export async function convertToInvoice(
 
   // Build the invoice's lines for the requested portion of the quote.
   let rawLines: typeof baseLines;
+  // The invoice's own tax mode. Full-from-scratch keeps the quote's mode and
+  // exact lines; every partial mode emits ex-tax lines, so it is exclusive.
+  let invoiceInclusive = quoteInclusive;
+
   if (input.mode === "per_line") {
     const amounts = input.lineAmountsMinor ?? [];
     rawLines = baseLines
       .map((l, i) => ({ ...l, unitPriceMinor: amounts[i] ?? 0, quantity: 1, discountPct: 0 }))
       .filter((l) => l.unitPriceMinor > 0);
     if (rawLines.length === 0) throw new AppError("VALIDATION_ERROR", "Enter an amount for at least one line");
+    invoiceInclusive = false; // per-line amounts are entered pre-tax
+  } else if (input.mode === "full" && alreadyInvoiced === 0) {
+    // Whole quote, exact line items and prices.
+    rawLines = baseLines;
   } else {
-    let factor: number;
+    // percentage / amount / remaining-balance → a single, clearly-labelled portion
+    // line so per-item unit prices are never silently rescaled on the invoice.
+    let portion: number; // tax-inclusive amount to invoice
+    let label: string;
     if (input.mode === "percentage") {
       const pct = input.percentage ?? 0;
       if (pct <= 0) throw new AppError("VALIDATION_ERROR", "Enter a percentage greater than 0");
-      factor = pct / 100;
+      portion = Math.round((quoteTotal * pct) / 100);
+      label = `${doc.quoteNumber} — ${pct}% partial invoice`;
     } else if (input.mode === "amount") {
       const amt = input.amountMinor ?? 0;
       if (amt <= 0) throw new AppError("VALIDATION_ERROR", "Enter an amount greater than 0");
-      factor = amt / quoteTotal;
+      portion = amt;
+      label = `${doc.quoteNumber} — partial invoice`;
     } else {
-      // "full" → invoice the entire remaining balance
-      factor = remaining / quoteTotal;
+      portion = remaining; // "full" with some already invoiced → the remaining balance
+      label = `${doc.quoteNumber} — balance`;
     }
-    rawLines = baseLines.map((l) => ({ ...l, unitPriceMinor: Math.round(l.unitPriceMinor * factor) }));
+
+    // Split the portion into an ex-tax base plus the quote's tax codes (blended by
+    // the quote's overall effective rate) so the invoice keeps a tax breakdown.
+    const quoteSubtotal = doc.subtotalMinor ?? 0;
+    const quoteTaxTotal = doc.taxTotalMinor ?? 0;
+    const effRate = quoteSubtotal > 0 ? quoteTaxTotal / quoteSubtotal : 0;
+    const exTax = Math.round(portion / (1 + effRate));
+    const aggTaxes = ((doc.taxBreakdown ?? []) as { code: string; amountMinor: number }[]).map((b) => ({
+      code: b.code,
+      rate: quoteSubtotal > 0 ? (b.amountMinor / quoteSubtotal) * 100 : 0,
+    }));
+    rawLines = [{ description: label, quantity: 1, unitPriceMinor: exTax, discountPct: 0, taxes: aggTaxes, itemId: undefined }];
+    invoiceInclusive = false; // portion already reduced to an ex-tax base
   }
 
   const computedLines = rawLines.map((l) => {
-    const b = computeInvoiceLine({ ...l, taxInclusive: quoteInclusive });
+    const b = computeInvoiceLine({ ...l, taxInclusive: invoiceInclusive });
     return { ...l, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
   });
-  const totals = sumInvoiceTotals(rawLines.map((l) => ({ ...l, taxInclusive: quoteInclusive })));
+  const totals = sumInvoiceTotals(rawLines.map((l) => ({ ...l, taxInclusive: invoiceInclusive })));
 
   // Never invoice beyond the remaining balance (small tolerance for rounding).
   if (totals.totalMinor > remaining + 2) {
@@ -396,7 +421,7 @@ export async function convertToInvoice(
     branding,
     progress: null,
     recurring: null,
-    taxInclusive: quoteInclusive,
+    taxInclusive: invoiceInclusive,
     sourceQuoteId: doc._id,
     payments: [],
   });

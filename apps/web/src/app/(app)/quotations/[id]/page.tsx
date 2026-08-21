@@ -159,6 +159,11 @@ export default function QuotationDetailPage() {
             <Badge tone={QUOTE_STATUS_TONE[q.status]} className="mt-1 capitalize">
               {q.status}
             </Badge>
+            {(q.invoicedMinor ?? 0) > 0 && (
+              <Badge tone={fullyInvoiced ? "success" : "warning"} className="mt-1 ml-1">
+                {fullyInvoiced ? "Invoiced" : "Partially invoiced"}
+              </Badge>
+            )}
           </div>
         </div>
 
@@ -229,6 +234,20 @@ export default function QuotationDetailPage() {
               <span>Total</span>
               <span className="font-numeric">{formatMoney(q.totalMinor, q.currency)}</span>
             </div>
+            {(q.invoicedMinor ?? 0) > 0 && (
+              <>
+                <div className="flex justify-between text-sm text-foreground-muted">
+                  <span>Invoiced</span>
+                  <span className="font-numeric">{formatMoney(q.invoicedMinor ?? 0, q.currency)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-medium">
+                  <span>Remaining</span>
+                  <span className={`font-numeric ${q.totalMinor - (q.invoicedMinor ?? 0) > 0 ? "text-warning" : "text-success"}`}>
+                    {formatMoney(Math.max(0, q.totalMinor - (q.invoicedMinor ?? 0)), q.currency)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

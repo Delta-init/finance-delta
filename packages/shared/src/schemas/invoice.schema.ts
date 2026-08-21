@@ -73,6 +73,8 @@ export const recordPaymentSchema = z.object({
   reference: z.string().max(200).optional().default(""),
   notes: z.string().max(1000).optional().default(""),
   accountName: z.string().max(100).optional().default(""),
+  /** Transaction/bank charges deducted, in minor units (informational). */
+  chargesMinor: z.coerce.number().int().min(0).optional().default(0),
   /** Easebuzz EMI details — sent only when method is "easebuzz_emi". */
   emi: emiDetailInputSchema.optional(),
   /** Populated by the server after uploading to R2 — not accepted from client directly. */
@@ -123,6 +125,7 @@ export const paymentSchema = z.object({
   reference: z.string(),
   notes: z.string(),
   accountName: z.string(),
+  chargesMinor: z.number().default(0),
   emi: emiDetailSchema.optional(),
   proofUrl: z.string().optional(),
   createdAt: z.string(),

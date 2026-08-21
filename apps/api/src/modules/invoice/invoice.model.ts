@@ -69,6 +69,7 @@ const paymentSubSchema = new Schema(
     reference: { type: String, default: "" },
     notes: { type: String, default: "" },
     accountName: { type: String, default: "" },
+    chargesMinor: { type: Number, default: 0 },
     emi: { type: emiSubSchema, default: undefined },
     proofUrl: { type: String, default: "" },
     proofKey: { type: String, default: "" },

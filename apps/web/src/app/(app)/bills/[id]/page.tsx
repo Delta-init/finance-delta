@@ -290,7 +290,12 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                       </td>
                       <td className="px-3 py-3 text-foreground-muted align-top">{p.accountName || "—"}</td>
                       <td className="px-3 py-3 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
-                      <td className="px-5 py-3 text-right font-medium align-top"><MoneyDisplay minor={p.amountMinor} currency={bill.currency} /></td>
+                      <td className="px-5 py-3 text-right align-top">
+                        <MoneyDisplay minor={p.amountMinor} currency={bill.currency} className="font-medium" />
+                        {p.chargesMinor > 0 && (
+                          <span className="mt-0.5 block text-xs text-foreground-muted">charges {formatMoney(p.chargesMinor, bill.currency)}</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -493,9 +498,15 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 <Input {...register("reference")} placeholder="Ref / check #" />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Input {...register("notes")} placeholder="Optional notes" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Charges ({bill.currency})</Label>
+                <Input type="number" step="0.01" min="0" placeholder="0.00" onChange={(e) => setValue("chargesMinor", toMinorFromInput(e.target.value))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notes</Label>
+                <Input {...register("notes")} placeholder="Optional notes" />
+              </div>
             </div>
             <DialogFooter>
               <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>

@@ -22,6 +22,7 @@ const paymentFormSchema = z.object({
   reference: z.string().max(200).default(""),
   notes: z.string().max(1000).default(""),
   accountName: z.string().max(100).default(""),
+  charges: z.coerce.number().min(0).default(0),
   emi: emiDetailInputSchema.optional(),
 });
 type PaymentFormValues = z.infer<typeof paymentFormSchema>;
@@ -325,8 +326,13 @@ export function InvoiceDetail({ id }: { id: string }) {
                   </td>
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.accountName || "—"}</td>
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
-                  <td className="px-4 py-2.5 text-right font-numeric font-medium text-success">
-                    {formatMoney(p.amountMinor, invoice.currency)}
+                  <td className="px-4 py-2.5 text-right align-top">
+                    <span className="font-numeric font-medium text-success">{formatMoney(p.amountMinor, invoice.currency)}</span>
+                    {p.chargesMinor > 0 && (
+                      <span className="mt-0.5 block text-xs text-foreground-muted">
+                        charges {formatMoney(p.chargesMinor, invoice.currency)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
@@ -421,6 +427,7 @@ function PaymentDialog({
       reference: data.reference,
       notes: data.notes,
       accountName: data.accountName,
+      chargesMinor: Math.round((data.charges || 0) * 100),
       ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
     };
     try {
@@ -524,11 +531,17 @@ function PaymentDialog({
                 <p className="mt-1 text-xs text-danger">{errors.paidOn.message}</p>
               )}
             </div>
-            <div className="col-span-2">
+            <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Account <span className="text-foreground-subtle">(optional)</span>
               </label>
               <Input {...register("accountName")} placeholder="Bank account name…" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                Charges ({currency}) <span className="text-foreground-subtle">(optional)</span>
+              </label>
+              <Input type="number" step="0.01" min="0" placeholder="0.00" {...register("charges", { valueAsNumber: true })} />
             </div>
             <div className="col-span-2">
               <label className="mb-1 block text-xs font-medium text-foreground-muted">

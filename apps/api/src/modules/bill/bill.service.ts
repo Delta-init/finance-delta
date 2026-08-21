@@ -48,6 +48,7 @@ function toDTO(doc: BillDoc): BillDTO {
         reference: string;
         accountName: string;
         notes: string;
+        chargesMinor?: number;
         emi?: {
           bank?: string;
           tenureMonths?: number;
@@ -66,6 +67,7 @@ function toDTO(doc: BillDoc): BillDTO {
         reference: pm.reference ?? "",
         accountName: pm.accountName ?? "",
         notes: pm.notes ?? "",
+        chargesMinor: pm.chargesMinor ?? 0,
         emi: pm.emi
           ? {
               bank: pm.emi.bank ?? "",
@@ -241,6 +243,7 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
     reference: input.reference ?? "",
     accountName: input.accountName ?? "",
     notes: input.notes ?? "",
+    chargesMinor: input.chargesMinor ?? 0,
     emi:
       input.method === "easebuzz_emi" && input.emi
         ? {

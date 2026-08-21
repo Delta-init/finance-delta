@@ -71,6 +71,8 @@ export const recordBillPaymentSchema = z.object({
   reference: z.string().optional().default(""),
   accountName: z.string().optional().default(""),
   notes: z.string().optional().default(""),
+  /** Transaction/bank charges deducted, in minor units (informational). */
+  chargesMinor: z.coerce.number().int().min(0).optional().default(0),
   /** Easebuzz EMI details — sent only when method is "easebuzz_emi". */
   emi: emiDetailInputSchema.optional(),
 });
@@ -103,6 +105,7 @@ export const billSchema = z.object({
       reference: z.string(),
       accountName: z.string(),
       notes: z.string(),
+      chargesMinor: z.number().default(0),
       emi: emiDetailSchema.optional(),
       createdAt: z.string(),
     }),

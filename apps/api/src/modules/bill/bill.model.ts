@@ -32,6 +32,7 @@ const billPaymentSchema = new Schema(
     reference: { type: String, default: "" },
     accountName: { type: String, default: "" },
     notes: { type: String, default: "" },
+    chargesMinor: { type: Number, default: 0 },
     emi: { type: emiSubSchema, default: undefined },
     createdAt: { type: Date, default: Date.now },
   },

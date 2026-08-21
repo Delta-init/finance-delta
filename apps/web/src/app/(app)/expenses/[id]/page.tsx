@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, Paperclip, User,
-  Repeat, Pause, Play, CircleStop,
+  Repeat, Pause, Play, CircleStop, Pencil,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
@@ -115,6 +115,13 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-foreground-muted">{expense.description}</p>
         </div>
         <div className="flex items-center gap-2">
+          {(expense.status === "draft" || expense.status === "rejected") && (
+            <Link href={`/expenses/${id}/edit`}>
+              <Button variant="outline" size="sm">
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            </Link>
+          )}
           {canSubmit && (
             <>
               {canVoid && (

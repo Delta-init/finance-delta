@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, ReceiptText, X, Repeat, PauseCircle } from "lucide-react";
+import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2 } from "lucide-react";
 import { formatMoney, type Expense, EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
-import { useExpenses } from "@/features/expenses/api";
+import { useExpenses, useVoidExpense } from "@/features/expenses/api";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -40,9 +43,38 @@ const CATEGORIES = [
   { value: "other", label: "Other" },
 ] as const;
 
+function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
+  const voidExpense = useVoidExpense(expense.id);
+  async function handleVoid() {
+    try {
+      await voidExpense.mutateAsync(undefined);
+      toast.success("Expense deleted");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to delete expense");
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Delete expense?</DialogTitle></DialogHeader>
+        <p className="text-sm text-foreground-muted">
+          This voids <span className="font-medium text-foreground">{expense.expenseNumber}</span>
+          {expense.description ? ` — ${expense.description}` : ""}. It stays in history for audit but no longer counts toward totals.
+        </p>
+        <DialogFooter>
+          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
+          <Button variant="destructive" onClick={handleVoid} loading={voidExpense.isPending}>Delete expense</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ExpensesPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
+  const [voidTarget, setVoidTarget] = useState<Expense | null>(null);
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
   const [recurring, setRecurring] = useState("all");
@@ -127,6 +159,35 @@ export default function ExpensesPage() {
       align: "right",
       sortable: true,
       cell: (e) => <MoneyDisplay minor={e.totalMinor} currency={e.currency} className="font-medium" />,
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      cell: (e) => (
+        <div className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
+          {(e.status === "draft" || e.status === "rejected") && (
+            <button
+              type="button"
+              title="Edit"
+              onClick={() => router.push(`/expenses/${e.id}/edit`)}
+              className="rounded p-1.5 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          )}
+          {e.status !== "voided" && (
+            <button
+              type="button"
+              title="Delete"
+              onClick={() => setVoidTarget(e)}
+              className="rounded p-1.5 text-foreground-muted hover:bg-danger/10 hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -222,6 +283,8 @@ export default function ExpensesPage() {
         isLoading={isLoading}
         emptyMessage="No expenses found."
       />
+
+      {voidTarget && <DeleteExpenseDialog expense={voidTarget} onClose={() => setVoidTarget(null)} />}
     </div>
   );
 }

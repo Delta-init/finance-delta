@@ -31,6 +31,7 @@ import {
 } from "@delta/shared";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { SuggestInput } from "@/components/ui/suggest-input";
+import { useRecentSuggestion } from "@/features/suggestions/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -250,6 +251,21 @@ export function InvoiceForm({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultTaxes.length, isINROrg]);
+
+  // Pre-fill Notes & Terms with the last-used values on a brand-new invoice
+  // (so repeated boilerplate carries over). Applied once; editing untouched.
+  const isNew = !initial;
+  const { data: recentNotes } = useRecentSuggestion("notes", "invoice", isNew);
+  const { data: recentTerms } = useRecentSuggestion("terms", "invoice", isNew);
+  const appliedRecentText = useRef(false);
+  useEffect(() => {
+    if (!isNew || appliedRecentText.current) return;
+    if (recentNotes === undefined && recentTerms === undefined) return;
+    appliedRecentText.current = true;
+    if (recentNotes && !getValues("notes")) setValue("notes", recentNotes);
+    if (recentTerms && !getValues("terms")) setValue("terms", recentTerms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentNotes, recentTerms, isNew]);
 
   const currency = initial?.currency ?? orgCurrency;
   const hasProgress = watch("hasProgress");

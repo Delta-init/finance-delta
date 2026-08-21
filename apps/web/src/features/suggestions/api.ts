@@ -18,3 +18,17 @@ export function useSuggestions(field: SuggestionField, q: string, enabled: boole
     placeholderData: (prev) => prev,
   });
 }
+
+export type SuggestionSource = "invoice" | "quotation" | "bill" | "purchase_order" | "credit_note";
+
+/** The single most-recently-entered value for a field on a given document type
+ *  — used to pre-fill Notes/Terms on a brand-new document from the same kind of
+ *  document. Returns "" when there's no history. */
+export function useRecentSuggestion(field: SuggestionField, from: SuggestionSource, enabled: boolean) {
+  return useQuery({
+    queryKey: ["suggestions-recent", field, from],
+    queryFn: () => api.get<string>(`suggestions?field=${field}&recent=1&from=${from}`),
+    enabled,
+    staleTime: 60_000,
+  });
+}

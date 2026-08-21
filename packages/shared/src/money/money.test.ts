@@ -155,4 +155,23 @@ describe("sumInvoiceTotals", () => {
     const codes = t.taxBreakdown.map((x) => x.code).sort();
     expect(codes).toEqual(["IGST", "VAT"]);
   });
+
+  it("shows a net-of-tax subtotal for tax-inclusive prices (any tax code)", () => {
+    // Subtotal + Tax must equal Total, regardless of the tax code.
+    const vat = sumInvoiceTotals([
+      { quantity: 1, unitPriceMinor: 10500, taxes: [{ code: "VAT", rate: 5 }], taxInclusive: true },
+    ]);
+    expect(vat.subtotalMinor).toBe(10000);
+    expect(vat.taxTotalMinor).toBe(500);
+    expect(vat.totalMinor).toBe(10500);
+    expect(vat.subtotalMinor - vat.discountTotalMinor + vat.taxTotalMinor).toBe(vat.totalMinor);
+
+    const gst = sumInvoiceTotals([
+      { quantity: 1, unitPriceMinor: 11800, taxes: [{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }], taxInclusive: true },
+    ]);
+    expect(gst.subtotalMinor).toBe(10000);
+    expect(gst.taxTotalMinor).toBe(1800);
+    expect(gst.totalMinor).toBe(11800);
+    expect(gst.subtotalMinor - gst.discountTotalMinor + gst.taxTotalMinor).toBe(gst.totalMinor);
+  });
 });

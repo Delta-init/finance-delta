@@ -43,6 +43,7 @@ import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { SuggestInput } from "@/components/ui/suggest-input";
+import { useRecentSuggestion } from "@/features/suggestions/api";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
@@ -203,6 +204,20 @@ export function QuotationForm({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultTaxes.length, isINROrg]);
+
+  // Pre-fill Notes & Terms with the last-used values on a brand-new quotation.
+  const isNew = !initial;
+  const { data: recentNotes } = useRecentSuggestion("notes", "quotation", isNew);
+  const { data: recentTerms } = useRecentSuggestion("terms", "quotation", isNew);
+  const appliedRecentText = useRef(false);
+  useEffect(() => {
+    if (!isNew || appliedRecentText.current) return;
+    if (recentNotes === undefined && recentTerms === undefined) return;
+    appliedRecentText.current = true;
+    if (recentNotes && !getValues("notes")) setValue("notes", recentNotes);
+    if (recentTerms && !getValues("terms")) setValue("terms", recentTerms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentNotes, recentTerms, isNew]);
 
   const handleReorder = (newOrder: typeof fields) => {
     const oldIds = fields.map((f) => f.id);

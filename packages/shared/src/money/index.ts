@@ -159,8 +159,15 @@ export function sumInvoiceTotals(lines: InvoiceLineCalcInput[]): InvoiceTotals {
   let totalMinor = 0;
   for (const line of lines) {
     const b = computeInvoiceLine(line);
-    subtotalMinor += b.lineSubtotalMinor;
-    discountTotalMinor += b.discountMinor;
+    const inclusive = line.taxInclusive ?? false;
+    // When prices are tax-inclusive the entered amounts already contain the
+    // tax, so the displayed subtotal must be net of tax (ex-tax) — otherwise
+    // Subtotal + Tax would exceed the (unchanged) Total for any tax code.
+    // Derive it as total − tax so the breakdown always reconciles exactly.
+    // The discount is already baked into the inclusive price, so it is not
+    // shown separately in inclusive mode.
+    subtotalMinor += inclusive ? b.lineTotalMinor - b.taxTotalMinor : b.lineSubtotalMinor;
+    discountTotalMinor += inclusive ? 0 : b.discountMinor;
     taxTotalMinor += b.taxTotalMinor;
     totalMinor += b.lineTotalMinor;
     for (const t of b.taxes) {

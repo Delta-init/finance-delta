@@ -20,6 +20,15 @@ const FIELDS: Record<string, { path: string; models: Model<unknown>[] }> = {
 
 export const SUGGESTION_FIELDS = Object.keys(FIELDS);
 
+/** Document types a "most recent value" default can be sourced from. */
+const SOURCE_MODELS: Record<string, Model<unknown>> = {
+  invoice: Invoice as unknown as Model<unknown>,
+  quotation: Quotation as unknown as Model<unknown>,
+  bill: Bill as unknown as Model<unknown>,
+  purchase_order: PurchaseOrder as unknown as Model<unknown>,
+  credit_note: CreditNote as unknown as Model<unknown>,
+};
+
 const LIMIT = 8;
 
 export async function getSuggestions(orgId: string, field: string, q: string): Promise<string[]> {
@@ -50,4 +59,26 @@ export async function getSuggestions(orgId: string, field: string, q: string): P
     return aStarts - bStarts || a.localeCompare(b);
   });
   return matched.slice(0, LIMIT);
+}
+
+/**
+ * The single most-recently-entered non-empty value for a field on a specific
+ * document type — used to pre-fill Notes/Terms on a new document from the same
+ * kind of document (an invoice defaults from your last invoice, etc.).
+ */
+export async function getRecentValue(orgId: string, field: string, from: string): Promise<string> {
+  const def = FIELDS[field];
+  if (!def) throw new AppError("VALIDATION_ERROR", `Invalid suggestion field '${field}'`);
+  if (def.path.includes(".")) return ""; // nested (line) fields have no meaningful "last used" default
+  const model = SOURCE_MODELS[from];
+  if (!model) throw new AppError("VALIDATION_ERROR", `Invalid source '${from}'`);
+
+  const oid = new Types.ObjectId(orgId);
+  const doc = await model
+    .findOne({ organizationId: oid, [def.path]: { $exists: true, $nin: ["", null] } }, { [def.path]: 1 })
+    .sort({ createdAt: -1 })
+    .lean();
+  if (!doc) return "";
+  const val = (doc as Record<string, unknown>)[def.path];
+  return typeof val === "string" ? val.trim() : "";
 }

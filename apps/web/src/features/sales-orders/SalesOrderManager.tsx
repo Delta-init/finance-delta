@@ -16,9 +16,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { ExportButton } from "@/components/ui/export-button";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useTableQuery } from "@/lib/use-table-query";
+import type { ExportColumn } from "@/lib/export";
 import { useSalesOrders } from "./api";
 
 const TONE: Record<SalesOrder["status"], NonNullable<BadgeProps["tone"]>> = {
@@ -26,6 +28,17 @@ const TONE: Record<SalesOrder["status"], NonNullable<BadgeProps["tone"]>> = {
   fulfilled: "success",
   cancelled: "danger",
 };
+
+const SALES_ORDER_EXPORT_COLUMNS: ExportColumn<SalesOrder>[] = [
+  { header: "Order #", value: (o) => o.orderNumber },
+  { header: "Customer", value: (o) => o.customerName },
+  { header: "From quote", value: (o) => o.sourceQuoteNumber ?? "" },
+  { header: "Tags", value: (o) => o.tags.map((tag) => tag.name).join(", ") },
+  { header: "Status", value: (o) => o.status.charAt(0).toUpperCase() + o.status.slice(1) },
+  { header: "Currency", value: (o) => o.currency },
+  { header: "Total", value: (o) => o.totalMinor / 100 },
+  { header: "Created", value: (o) => o.createdAt.slice(0, 10) },
+];
 
 export function SalesOrderManager() {
   const router = useRouter();
@@ -76,6 +89,18 @@ export function SalesOrderManager() {
         <div className="w-[220px]">
           <TagPicker value={tagIds} onChange={setTagIds} placeholder="Filter by tags…" />
         </div>
+        <ExportButton
+          resource="sales-orders"
+          params={{
+            ...t.baseParams,
+            status: status === "all" ? undefined : status,
+            tagIds: tagIds.length ? tagIds : undefined,
+          }}
+          columns={SALES_ORDER_EXPORT_COLUMNS}
+          filename="sales-orders"
+          title="Sales Orders"
+          size="md"
+        />
       </div>
 
       <DataTable

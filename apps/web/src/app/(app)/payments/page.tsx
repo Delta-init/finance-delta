@@ -11,11 +11,24 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { ExportButton } from "@/components/ui/export-button";
 import { useTableQuery } from "@/lib/use-table-query";
+import type { ExportColumn } from "@/lib/export";
 import { CreditCard, Search, X, Printer } from "lucide-react";
 
 const METHODS = ["bank_transfer", "cash", "cheque", "card", "online", "easebuzz_emi"] as const;
 const METHOD_LABEL = (m: string) => (m === "easebuzz_emi" ? "Easebuzz EMI" : m.replace("_", " "));
+
+const PAYMENTS_EXPORT_COLUMNS: ExportColumn<PaymentDTO>[] = [
+  { header: "Date", value: (p) => p.paidOn },
+  { header: "Invoice", value: (p) => p.invoiceNumber },
+  { header: "Customer", value: (p) => p.customerName },
+  { header: "Method", value: (p) => METHOD_LABEL(p.method) },
+  { header: "Account", value: (p) => p.accountName || "" },
+  { header: "Reference", value: (p) => p.reference || "" },
+  { header: "Amount", value: (p) => p.amountMinor / 100 },
+  { header: "Currency", value: (p) => p.currency },
+];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -35,12 +48,13 @@ export default function PaymentsPage() {
 
   useEffect(() => t.resetPage(), [method, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = usePayments({
+  const queryParams = {
     ...t.baseParams,
     method: method === "all" ? undefined : method,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
-  });
+  };
+  const { data, isLoading } = usePayments(queryParams);
 
   const hasFilters = method !== "all" || !!dateFrom || !!dateTo || !!t.q;
   const clear = () => { setMethod("all"); setDateFrom(""); setDateTo(""); t.setQ(""); };
@@ -108,7 +122,21 @@ export default function PaymentsPage() {
 
   return (
     <div className="space-y-4 p-6">
-      <PageHeader icon={CreditCard} title="Payments" description="All payments received across invoices" />
+      <PageHeader
+        icon={CreditCard}
+        title="Payments"
+        description="All payments received across invoices"
+        action={
+          <ExportButton
+            resource="payments"
+            params={queryParams}
+            columns={PAYMENTS_EXPORT_COLUMNS}
+            filename="payments"
+            title="Payments"
+            size="md"
+          />
+        }
+      />
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3">
         <Field label="Search">

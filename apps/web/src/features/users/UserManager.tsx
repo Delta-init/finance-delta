@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import {
   Select,
   SelectContent,
@@ -34,6 +36,16 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
 import { useCreateUser, useUsers } from "./api";
+
+const USERS_EXPORT_COLUMNS: ExportColumn<User>[] = [
+  { header: "Name", value: (u) => u.name || "—" },
+  { header: "Email", value: (u) => u.email },
+  { header: "Role", value: (u) => u.role.name },
+  { header: "Department", value: (u) => u.department?.name ?? "—" },
+  { header: "Tags", value: (u) => u.tags.map((tag) => tag.name).join(", ") },
+  { header: "Status", value: (u) => u.status },
+  { header: "Created", value: (u) => u.createdAt },
+];
 
 export function UserManager() {
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
@@ -94,9 +106,23 @@ export function UserManager() {
         title="Users"
         description="Team members who can sign in, scoped by their role."
         action={
-          <Button onClick={openModal}>
-            <Plus className="h-4 w-4" /> New user
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="users"
+              params={{
+                ...t.baseParams,
+                status: status === "all" ? undefined : status,
+                tagIds: tagIds.length ? tagIds : undefined,
+              }}
+              columns={USERS_EXPORT_COLUMNS}
+              filename="users"
+              title="Users"
+              size="md"
+            />
+            <Button onClick={openModal}>
+              <Plus className="h-4 w-4" /> New user
+            </Button>
+          </div>
         }
       />
 

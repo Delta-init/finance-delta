@@ -12,12 +12,26 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { useTableQuery } from "@/lib/use-table-query";
 import { usePurchaseOrders } from "@/features/purchase-orders/api";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral", sent: "primary", received: "warning", billed: "success", cancelled: "danger",
 };
+
+const PURCHASE_ORDERS_EXPORT_COLUMNS: ExportColumn<PurchaseOrder>[] = [
+  { header: "PO #", value: (p) => p.poNumber },
+  { header: "Vendor", value: (p) => p.vendorName },
+  { header: "Issue Date", value: (p) => p.issueDate },
+  { header: "Expected", value: (p) => p.expectedDate ?? "" },
+  { header: "Status", value: (p) => p.status },
+  { header: "Currency", value: (p) => p.currency },
+  { header: "Subtotal", value: (p) => p.subtotalMinor / 100 },
+  { header: "Tax", value: (p) => p.taxTotalMinor / 100 },
+  { header: "Total", value: (p) => p.totalMinor / 100 },
+];
 
 export default function PurchaseOrdersPage() {
   const router = useRouter();
@@ -39,7 +53,19 @@ export default function PurchaseOrdersPage() {
   return (
     <div className="space-y-4 p-6">
       <PageHeader icon={ClipboardList} title="Purchase Orders" description="Orders sent to vendors for goods and services."
-        action={<Button onClick={() => router.push("/purchase-orders/new")}><Plus className="h-4 w-4" /> New PO</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="purchase-orders"
+              params={{ ...t.baseParams, status: status === "all" ? undefined : status }}
+              columns={PURCHASE_ORDERS_EXPORT_COLUMNS}
+              filename="purchase-orders"
+              title="Purchase Orders"
+              size="md"
+            />
+            <Button onClick={() => router.push("/purchase-orders/new")}><Plus className="h-4 w-4" /> New PO</Button>
+          </div>
+        }
       />
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">

@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,6 +20,16 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useQuotations } from "./api";
 import { QUOTE_STATUS_TONE } from "./status";
+
+const QUOTATION_EXPORT_COLUMNS: ExportColumn<Quotation>[] = [
+  { header: "Quote #", value: (q) => q.quoteNumber },
+  { header: "Customer", value: (q) => q.customerName },
+  { header: "Issue Date", value: (q) => q.issueDate },
+  { header: "Expiry Date", value: (q) => q.expiryDate },
+  { header: "Status", value: (q) => q.status },
+  { header: "Currency", value: (q) => q.currency },
+  { header: "Total", value: (q) => q.totalMinor / 100 },
+];
 
 export function QuotationManager() {
   const router = useRouter();
@@ -31,7 +43,7 @@ export function QuotationManager() {
 
   useEffect(() => t.resetPage(), [status, issueFrom, issueTo, expiryFrom, expiryTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useQuotations({
+  const queryParams = {
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     issueFrom: issueFrom || undefined,
@@ -39,7 +51,9 @@ export function QuotationManager() {
     expiryFrom: expiryFrom || undefined,
     expiryTo: expiryTo || undefined,
     tagIds: tagIds.length ? tagIds : undefined,
-  });
+  };
+
+  const { data, isLoading } = useQuotations(queryParams);
 
   const hasFilters =
     status !== "all" || issueFrom || issueTo || expiryFrom || expiryTo || tagIds.length > 0;
@@ -89,9 +103,19 @@ export function QuotationManager() {
         title="Quotations"
         description="Create, send and track quotes through to accepted orders."
         action={
-          <Button onClick={() => router.push("/quotations/new")}>
-            <Plus className="h-4 w-4" /> New quotation
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="quotations"
+              params={queryParams}
+              columns={QUOTATION_EXPORT_COLUMNS}
+              filename="quotations"
+              title="Quotations"
+              size="md"
+            />
+            <Button onClick={() => router.push("/quotations/new")}>
+              <Plus className="h-4 w-4" /> New quotation
+            </Button>
+          </div>
         }
       />
 

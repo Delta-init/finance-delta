@@ -11,6 +11,8 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useBills } from "@/features/bills/api";
 
@@ -18,6 +20,17 @@ const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral", pending_approval: "warning", approved: "primary",
   partially_paid: "warning", paid: "success", overdue: "danger", voided: "neutral",
 };
+
+const BILLS_EXPORT_COLUMNS: ExportColumn<Bill>[] = [
+  { header: "Bill #", value: (b) => b.billNumber },
+  { header: "Vendor", value: (b) => b.vendorName },
+  { header: "Bill Date", value: (b) => b.billDate },
+  { header: "Due Date", value: (b) => b.dueDate },
+  { header: "Status", value: (b) => b.status.replace(/_/g, " ") },
+  { header: "Currency", value: (b) => b.currency },
+  { header: "Total", value: (b) => b.totalMinor / 100 },
+  { header: "Balance", value: (b) => b.balanceMinor / 100 },
+];
 
 export default function BillsPage() {
   const router = useRouter();
@@ -53,7 +66,23 @@ export default function BillsPage() {
   return (
     <div className="space-y-4 p-6">
       <PageHeader icon={ShoppingCart} title="Bills" description="Vendor bills and payables outstanding."
-        action={<Button onClick={() => router.push("/bills/new")}><Plus className="h-4 w-4" /> New bill</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="bills"
+              params={{
+                ...t.baseParams,
+                status: status === "all" ? undefined : status,
+                overdue: overdue ? "true" : undefined,
+              }}
+              columns={BILLS_EXPORT_COLUMNS}
+              filename="bills"
+              title="Bills"
+              size="md"
+            />
+            <Button onClick={() => router.push("/bills/new")}><Plus className="h-4 w-4" /> New bill</Button>
+          </div>
+        }
       />
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">

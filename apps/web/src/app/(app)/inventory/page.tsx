@@ -14,6 +14,21 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useItems, useLowStockItems } from "@/features/inventory/api";
 import { useCurrency } from "@/lib/currency-context";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
+
+const INVENTORY_EXPORT_COLUMNS: ExportColumn<Item>[] = [
+  { header: "Item #", value: (i) => i.itemNumber },
+  { header: "Name", value: (i) => i.name },
+  { header: "SKU", value: (i) => i.sku },
+  { header: "Type", value: (i) => (i.type === "product" ? "Product" : "Service") },
+  { header: "Unit", value: (i) => ITEM_UNIT_LABELS[i.unit as ItemUnit] ?? i.unit },
+  { header: "Department", value: (i) => i.department?.name ?? "" },
+  { header: "In Stock", value: (i) => (i.trackStock && i.type !== "service" ? i.totalStock : "") },
+  { header: "Unit Price", value: (i) => i.unitPriceMinor / 100 },
+  { header: "Cost", value: (i) => i.costPriceMinor / 100 },
+  { header: "Status", value: (i) => (i.isActive ? "Active" : "Inactive") },
+];
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -148,6 +163,19 @@ export default function InventoryPage() {
             <Button variant="outline" onClick={() => router.push("/inventory/valuation")}>
               <BarChart3 className="h-4 w-4" /> Valuation
             </Button>
+            <ExportButton
+              resource="inventory"
+              params={{
+                ...t.baseParams,
+                type: type === "all" ? undefined : type,
+                lowStock: lowStock ? "true" : undefined,
+                isActive: isActive === "all" ? undefined : isActive,
+              }}
+              columns={INVENTORY_EXPORT_COLUMNS}
+              filename="inventory"
+              title="Inventory"
+              size="md"
+            />
             <Button onClick={() => router.push("/inventory/new")}>
               <Plus className="h-4 w-4" /> New item
             </Button>

@@ -15,6 +15,8 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useExpenses, useVoidExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -33,6 +35,17 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "Rejected",
   voided: "Voided",
 };
+
+const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
+  { header: "Expense #", value: (e) => e.expenseNumber },
+  { header: "Description", value: (e) => e.description },
+  { header: "Category", value: (e) => e.categoryName || e.category },
+  { header: "Date", value: (e) => e.expenseDate },
+  { header: "Submitted By", value: (e) => e.submittedByName },
+  { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
+  { header: "Currency", value: (e) => e.currency },
+  { header: "Total", value: (e) => e.totalMinor / 100 },
+];
 
 function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const voidExpense = useVoidExpense(expense.id);
@@ -187,6 +200,21 @@ export default function ExpensesPage() {
         description="Track and manage business expenses."
         action={
           <div className="flex items-center gap-2">
+            <ExportButton
+              resource="expenses"
+              params={{
+                ...t.baseParams,
+                status: status === "all" ? undefined : status,
+                category: category === "all" ? undefined : category,
+                isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
+                dateFrom: dateFrom || undefined,
+                dateTo: dateTo || undefined,
+              }}
+              columns={EXPENSE_EXPORT_COLUMNS}
+              filename="expenses"
+              title="Expenses"
+              size="md"
+            />
             <Button variant="outline" onClick={() => router.push("/expenses/categories")}>
               <Tag className="h-4 w-4" /> Categories
             </Button>

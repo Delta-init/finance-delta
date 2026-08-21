@@ -17,8 +17,22 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useUsers } from "@/features/users/api";
 import { useTableQuery } from "@/lib/use-table-query";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { useInvoices } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
+
+const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
+  { header: "Invoice #", value: (inv) => inv.invoiceNumber },
+  { header: "Customer", value: (inv) => inv.customerName },
+  { header: "Salesperson", value: (inv) => inv.salespersonName },
+  { header: "Issue", value: (inv) => inv.issueDate },
+  { header: "Due", value: (inv) => inv.dueDate },
+  { header: "Status", value: (inv) => inv.status },
+  { header: "Currency", value: (inv) => inv.currency },
+  { header: "Total", value: (inv) => inv.totalMinor / 100 },
+  { header: "Balance", value: (inv) => inv.balanceMinor / 100 },
+];
 
 export function InvoiceManager() {
   const router = useRouter();
@@ -114,9 +128,28 @@ export function InvoiceManager() {
         title="Invoices"
         description="Create, send and track invoices through to payment."
         action={
-          <Button onClick={() => router.push("/invoices/new")}>
-            <Plus className="h-4 w-4" /> New invoice
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="invoices"
+              params={{
+                ...t.baseParams,
+                status: status === "all" ? undefined : status,
+                salespersonId: salespersonId || undefined,
+                issueFrom: issueFrom || undefined,
+                issueTo: issueTo || undefined,
+                dueFrom: dueFrom || undefined,
+                dueTo: dueTo || undefined,
+                tagIds: tagIds.length ? tagIds : undefined,
+              }}
+              columns={INVOICE_EXPORT_COLUMNS}
+              filename="invoices"
+              title="Invoices"
+              size="md"
+            />
+            <Button onClick={() => router.push("/invoices/new")}>
+              <Plus className="h-4 w-4" /> New invoice
+            </Button>
+          </div>
         }
       />
 

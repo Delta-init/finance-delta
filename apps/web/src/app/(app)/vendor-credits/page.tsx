@@ -11,12 +11,25 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useVendorCredits } from "@/features/vendor-credits/api";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral", issued: "primary", applied: "success", voided: "neutral",
 };
+
+const VENDOR_CREDITS_EXPORT_COLUMNS: ExportColumn<VendorCredit>[] = [
+  { header: "Credit #", value: (vc) => vc.creditNumber },
+  { header: "Vendor", value: (vc) => vc.vendorName },
+  { header: "Issue Date", value: (vc) => vc.issueDate },
+  { header: "Reason", value: (vc) => vc.reason },
+  { header: "Status", value: (vc) => vc.status },
+  { header: "Currency", value: (vc) => vc.currency },
+  { header: "Total", value: (vc) => vc.totalMinor / 100 },
+  { header: "Applied", value: (vc) => vc.amountAppliedMinor / 100 },
+];
 
 export default function VendorCreditsPage() {
   const router = useRouter();
@@ -50,7 +63,19 @@ export default function VendorCreditsPage() {
   return (
     <div className="space-y-4 p-6">
       <PageHeader icon={ReceiptText} title="Vendor Credits" description="Credits received from vendors, applied against bills."
-        action={<Button onClick={() => router.push("/vendor-credits/new")}><Plus className="h-4 w-4" /> New credit</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="vendor-credits"
+              params={{ ...t.baseParams, status: status === "all" ? undefined : status }}
+              columns={VENDOR_CREDITS_EXPORT_COLUMNS}
+              filename="vendor-credits"
+              title="Vendor Credits"
+              size="md"
+            />
+            <Button onClick={() => router.push("/vendor-credits/new")}><Plus className="h-4 w-4" /> New credit</Button>
+          </div>
+        }
       />
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">

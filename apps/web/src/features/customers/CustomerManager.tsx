@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { ExportButton } from "@/components/ui/export-button";
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { ApiError } from "@/lib/api";
+import type { ExportColumn } from "@/lib/export";
 import { toast } from "@/lib/toast";
 import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
@@ -45,6 +47,18 @@ import { useAllDepartments } from "@/features/departments/api";
 import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
+
+const CUSTOMER_EXPORT_COLUMNS: ExportColumn<Customer>[] = [
+  { header: "ID", value: (c) => c.customerCode },
+  { header: "Name", value: (c) => c.name },
+  { header: "Company", value: (c) => c.companyName },
+  { header: "Email", value: (c) => c.email },
+  { header: "Phone", value: (c) => c.phone },
+  { header: "Department", value: (c) => c.department?.name ?? "" },
+  { header: "Tags", value: (c) => c.tags.map((t) => t.name).join(", ") },
+  { header: "Status", value: (c) => c.status },
+  { header: "Currency", value: (c) => c.currency },
+];
 
 function emptyAddress() {
   return { street: "", city: "", state: "", zip: "", country: "" };
@@ -241,9 +255,23 @@ export function CustomerManager() {
         title="Customers"
         description="People and companies you bill and send quotations to."
         action={
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" /> New customer
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              resource="customers"
+              params={{
+                ...t.baseParams,
+                status: status === "all" ? undefined : status,
+                tagIds: tagIds.length ? tagIds : undefined,
+              }}
+              columns={CUSTOMER_EXPORT_COLUMNS}
+              filename="customers"
+              title="Customers"
+              size="md"
+            />
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4" /> New customer
+            </Button>
+          </div>
         }
       />
 

@@ -22,8 +22,22 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useVendors, useCreateVendor, useUpdateVendor, useDeleteVendor } from "@/features/vendors/api";
 import { useCurrency } from "@/lib/currency-context";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
+
+const VENDOR_EXPORT_COLUMNS: ExportColumn<Vendor>[] = [
+  { header: "ID", value: (v) => v.vendorCode },
+  { header: "Name", value: (v) => v.name },
+  { header: "Company", value: (v) => v.companyName },
+  { header: "Email", value: (v) => v.email },
+  { header: "Phone", value: (v) => v.phone },
+  { header: "VAT Number", value: (v) => v.vatNumber },
+  { header: "Tags", value: (v) => v.tags.map((t) => t.name).join(", ") },
+  { header: "Currency", value: (v) => v.currency },
+  { header: "Status", value: (v) => v.status },
+];
 
 function defaultValues(currency: string): CreateVendorInput {
   return { name: "", email: "", phone: "", companyName: "", currency, vatNumber: "", billingAddress: { street: "", city: "", state: "", zip: "", country: "" }, tagIds: [] };
@@ -88,7 +102,12 @@ export default function VendorsPage() {
   return (
     <div className="space-y-4 p-6">
       <PageHeader icon={Truck} title="Vendors" description="Manage your supplier relationships and purchase history."
-        action={<Button onClick={() => { reset(defaultValues(orgCurrency)); setModal("create"); }}><Plus className="h-4 w-4" /> New vendor</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <ExportButton resource="vendors" params={{ ...t.baseParams, status: status === "all" ? undefined : status }} columns={VENDOR_EXPORT_COLUMNS} filename="vendors" title="Vendors" size="md" />
+            <Button onClick={() => { reset(defaultValues(orgCurrency)); setModal("create"); }}><Plus className="h-4 w-4" /> New vendor</Button>
+          </div>
+        }
       />
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">

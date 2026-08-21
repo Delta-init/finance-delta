@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { formatMoney } from "@delta/shared";
+import { formatMoney, type CreditNote } from "@delta/shared";
 import { useCreditNotes } from "@/features/credit-notes/api";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 import { FileX } from "lucide-react";
 
 const STATUS_TONE: Record<string, BadgeProps["tone"]> = {
@@ -13,6 +15,17 @@ const STATUS_TONE: Record<string, BadgeProps["tone"]> = {
   applied: "success",
   voided: "danger",
 };
+
+const CREDIT_NOTES_EXPORT_COLUMNS: ExportColumn<CreditNote>[] = [
+  { header: "Number", value: (cn) => cn.creditNoteNumber },
+  { header: "Customer", value: (cn) => cn.customerName },
+  { header: "Invoice", value: (cn) => cn.invoiceNumber },
+  { header: "Status", value: (cn) => cn.status },
+  { header: "Created", value: (cn) => cn.createdAt.slice(0, 10) },
+  { header: "Currency", value: (cn) => cn.currency },
+  { header: "Total", value: (cn) => cn.totalMinor / 100 },
+  { header: "Remaining", value: (cn) => (cn.totalMinor - cn.amountAppliedMinor) / 100 },
+];
 
 export default function CreditNotesPage() {
   const { data, isLoading } = useCreditNotes();
@@ -23,6 +36,16 @@ export default function CreditNotesPage() {
         <div>
           <h1 className="text-xl font-semibold">Credit Notes</h1>
           <p className="text-sm text-foreground-muted">Issue credits against invoices</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ExportButton
+            resource="credit-notes"
+            params={{}}
+            columns={CREDIT_NOTES_EXPORT_COLUMNS}
+            filename="credit-notes"
+            title="Credit Notes"
+            size="md"
+          />
         </div>
       </div>
 

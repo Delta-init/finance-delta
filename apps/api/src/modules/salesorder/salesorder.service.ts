@@ -1,6 +1,5 @@
 import { Types } from "mongoose";
 import {
-  computeLine,
   computeInvoiceLine,
   type Paginated,
   type SalesOrder as SalesOrderDTO,
@@ -58,7 +57,15 @@ export function buildLines(raw: RawLine[], taxInclusive = false) {
         lineTotalMinor: b.lineTotalMinor,
       };
     } else {
-      const b = computeLine(l);
+      // Legacy single-rate line (taxPct, no taxes[]). Route through the
+      // multi-tax calc so "prices include tax" is honored here too.
+      const b = computeInvoiceLine({
+        quantity: l.quantity,
+        unitPriceMinor: l.unitPriceMinor,
+        discountPct: l.discountPct ?? 0,
+        taxes: (l.taxPct ?? 0) > 0 ? [{ code: "VAT", rate: l.taxPct as number }] : [],
+        taxInclusive,
+      });
       line = {
         description: l.description,
         quantity: l.quantity,
@@ -67,7 +74,11 @@ export function buildLines(raw: RawLine[], taxInclusive = false) {
         taxPct: l.taxPct ?? 0,
         taxes: [] as { code: string; rate: number }[],
         itemId: l.itemId,
-        ...b,
+        lineSubtotalMinor: b.lineSubtotalMinor,
+        discountMinor: b.discountMinor,
+        taxableMinor: b.taxableMinor,
+        taxMinor: b.taxTotalMinor,
+        lineTotalMinor: b.lineTotalMinor,
       };
     }
     // When prices include tax, the subtotal must be shown net of tax so

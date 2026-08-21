@@ -13,7 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useItems, useLowStockItems } from "@/features/inventory/api";
-import { useCurrency } from "@/lib/currency-context";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 
@@ -32,7 +31,6 @@ const INVENTORY_EXPORT_COLUMNS: ExportColumn<Item>[] = [
 
 export default function InventoryPage() {
   const router = useRouter();
-  const { currency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
   const [type, setType] = useState("all");
   const [lowStock, setLowStock] = useState(false);
@@ -126,14 +124,14 @@ export default function InventoryPage() {
       header: "Unit Price",
       align: "right",
       sortable: true,
-      cell: (item) => <MoneyDisplay minor={item.unitPriceMinor} currency={orgCurrency} className="font-medium" />,
+      cell: (item) => <MoneyDisplay minor={item.unitPriceMinor} className="font-medium" />,
     },
     {
       key: "cost",
       header: "Cost",
       align: "right",
       sortable: true,
-      cell: (item) => <MoneyDisplay minor={item.costPriceMinor} currency={orgCurrency} className="text-foreground-muted" />,
+      cell: (item) => <MoneyDisplay minor={item.costPriceMinor} className="text-foreground-muted" />,
     },
     {
       key: "status",

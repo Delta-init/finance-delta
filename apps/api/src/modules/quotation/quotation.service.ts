@@ -195,9 +195,12 @@ export async function updateQuotation(
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.terms !== undefined) doc.terms = input.terms;
   if (input.taxInclusive !== undefined) doc.set("taxInclusive", input.taxInclusive);
-  if (input.lineItems) {
+  // Recompute when the lines change OR when only the tax-inclusive flag toggles
+  // (the latter changes the totals even with the same lines).
+  if (input.lineItems || input.taxInclusive !== undefined) {
     const effectiveInclusive = input.taxInclusive ?? (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
-    const { lineItems, totals } = buildLines(input.lineItems, effectiveInclusive);
+    const rawLines = (input.lineItems ?? (doc.lineItems as unknown as Parameters<typeof buildLines>[0]));
+    const { lineItems, totals } = buildLines(rawLines, effectiveInclusive);
     doc.set({
       lineItems,
       subtotalMinor: totals.subtotalMinor,
@@ -356,13 +359,17 @@ export async function convertToInvoice(
 
     // Split the portion into an ex-tax base plus the quote's tax codes (blended by
     // the quote's overall effective rate) so the invoice keeps a tax breakdown.
+    // Use the net taxable base (subtotal − discount) — that's what the quote's
+    // tax was actually computed on — so discounted quotes split correctly.
     const quoteSubtotal = doc.subtotalMinor ?? 0;
+    const quoteDiscount = (doc as unknown as { discountTotalMinor?: number }).discountTotalMinor ?? 0;
     const quoteTaxTotal = doc.taxTotalMinor ?? 0;
-    const effRate = quoteSubtotal > 0 ? quoteTaxTotal / quoteSubtotal : 0;
+    const taxableBase = quoteSubtotal - quoteDiscount;
+    const effRate = taxableBase > 0 ? quoteTaxTotal / taxableBase : 0;
     const exTax = Math.round(portion / (1 + effRate));
     const aggTaxes = ((doc.taxBreakdown ?? []) as { code: string; amountMinor: number }[]).map((b) => ({
       code: b.code,
-      rate: quoteSubtotal > 0 ? (b.amountMinor / quoteSubtotal) * 100 : 0,
+      rate: taxableBase > 0 ? (b.amountMinor / taxableBase) * 100 : 0,
     }));
     rawLines = [{ description: label, quantity: 1, unitPriceMinor: exTax, discountPct: 0, taxes: aggTaxes, itemId: undefined }];
     invoiceInclusive = false; // portion already reduced to an ex-tax base

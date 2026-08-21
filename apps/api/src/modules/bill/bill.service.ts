@@ -182,6 +182,13 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
   if (doc.status === "voided") throw new AppError("CONFLICT", "A voided bill can't be edited");
   if (((doc.amountPaidMinor as number) ?? 0) > 0) throw new AppError("CONFLICT", "A bill with recorded payments can't be edited");
 
+  if (input.vendorId && String(doc.vendorId) !== input.vendorId) {
+    const vendor = await Vendor.findOne({ _id: input.vendorId, organizationId: orgId });
+    if (!vendor) throw new AppError("NOT_FOUND", "Vendor not found");
+    doc.vendorId = new Types.ObjectId(input.vendorId) as unknown as typeof doc.vendorId;
+    doc.vendorName = vendor.name;
+  }
+  if (input.currency !== undefined) doc.currency = input.currency;
   if (input.billDate) doc.billDate = new Date(input.billDate) as unknown as typeof doc.billDate;
   if (input.dueDate) doc.dueDate = new Date(input.dueDate) as unknown as typeof doc.dueDate;
   if (input.notes !== undefined) doc.notes = input.notes;

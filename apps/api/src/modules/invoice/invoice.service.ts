@@ -502,6 +502,13 @@ export async function updatePayment(
 
   await doc.save();
   await doc.populate("tagIds", "name color");
+
+  if (doc.balanceMinor <= 0) {
+    const org = await Organization.findById(orgId);
+    const intervals: number[] = (org as unknown as { reminderIntervals?: number[] })?.reminderIntervals ?? [-3, 1, 7];
+    void cancelReminders(id, intervals);
+  }
+
   return toDTO(doc);
 }
 

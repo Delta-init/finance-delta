@@ -52,14 +52,14 @@ export default function ValuationPage() {
       header: "Avg Cost",
       align: "right",
       sortable: true,
-      cell: (row) => <MoneyDisplay minor={row.avgCostMinor} currency={orgCurrency} className="text-foreground-muted" />,
+      cell: (row) => <MoneyDisplay minor={row.avgCostMinor} className="text-foreground-muted" />,
     },
     {
       key: "valuationMinor",
       header: "Valuation",
       align: "right",
       sortable: true,
-      cell: (row) => <MoneyDisplay minor={row.valuationMinor} currency={orgCurrency} className="font-semibold" />,
+      cell: (row) => <MoneyDisplay minor={row.valuationMinor} className="font-semibold" />,
     },
   ];
 
@@ -93,7 +93,6 @@ export default function ValuationPage() {
             <p className="text-sm font-medium text-foreground-muted uppercase tracking-wide">Total Inventory Value</p>
             <MoneyDisplay
               minor={report.totalValueMinor}
-              currency={orgCurrency}
               className="mt-1 text-2xl font-bold text-foreground"
             />
           </div>

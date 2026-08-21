@@ -532,25 +532,26 @@ function PaymentDialog({
                   <div>
                     <label className="mb-1 block text-xs font-medium text-foreground-muted">Tenure (months)</label>
                     <Input
+                      key={`tenure-${editing?.id ?? "new"}`}
                       type="number"
                       min={1}
                       max={60}
-                      defaultValue={3}
+                      defaultValue={editing?.emi?.tenureMonths ?? 3}
                       onChange={(e) => setValue("emi.tenureMonths", parseInt(e.target.value || "0", 10))}
                     />
                     {errors.emi?.tenureMonths && <p className="mt-1 text-xs text-danger">{errors.emi.tenureMonths.message}</p>}
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-foreground-muted">Monthly EMI ({currency})</label>
-                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.monthlyAmountMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
+                    <Input key={`monthly-${editing?.id ?? "new"}`} type="number" step="0.01" placeholder="0.00" defaultValue={editing?.emi?.monthlyAmountMinor ? editing.emi.monthlyAmountMinor / 100 : undefined} onChange={(e) => setValue("emi.monthlyAmountMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-foreground-muted">Interest %</label>
-                    <Input type="number" step="0.01" placeholder="0" onChange={(e) => setValue("emi.interestPct", parseFloat(e.target.value) || 0)} />
+                    <Input key={`interest-${editing?.id ?? "new"}`} type="number" step="0.01" placeholder="0" defaultValue={editing?.emi?.interestPct || undefined} onChange={(e) => setValue("emi.interestPct", parseFloat(e.target.value) || 0)} />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-foreground-muted">Processing Fee ({currency})</label>
-                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.processingFeeMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
+                    <Input key={`procfee-${editing?.id ?? "new"}`} type="number" step="0.01" placeholder="0.00" defaultValue={editing?.emi?.processingFeeMinor ? editing.emi.processingFeeMinor / 100 : undefined} onChange={(e) => setValue("emi.processingFeeMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-foreground-muted">Easebuzz Txn ID</label>

@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { billQuerySchema } from "@delta/shared";
-import { asyncHandler, created, ok } from "../../lib/http";
+import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as svc from "./bill.service";
 
@@ -38,4 +38,18 @@ export const recordPayment = asyncHandler(async (req, res) => {
 
 export const voidBill = asyncHandler(async (req, res) => {
   ok(res, await svc.voidBill(org(req), req.params.id!));
+});
+
+export const updateNotes = asyncHandler(async (req, res) => {
+  ok(res, await svc.updateBillNotes(org(req), req.params.id!, (req.body?.notes as string) ?? ""));
+});
+
+export const addAttachment = asyncHandler(async (req, res) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file uploaded");
+  const name = typeof req.body?.name === "string" ? req.body.name : undefined;
+  created(res, await svc.addBillAttachment(org(req), req.params.id!, req.file, name));
+});
+
+export const removeAttachment = asyncHandler(async (req, res) => {
+  ok(res, await svc.removeBillAttachment(org(req), req.params.id!, req.params.attId!));
 });

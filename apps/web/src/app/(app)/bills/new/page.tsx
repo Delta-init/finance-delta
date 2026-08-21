@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Paperclip, Upload, FileText } from "lucide-react";
 import { formatMoney, toMinor } from "@delta/shared";
 import type { CreateBillInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SuggestInput } from "@/components/ui/suggest-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreateBill } from "@/features/bills/api";
@@ -47,6 +47,17 @@ function emptyLine() {
   return { description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxPct: 0 };
 }
 
+function formatBytes(bytes: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const ACCEPTED_UPLOAD = "image/jpeg,image/png,image/webp,image/gif,application/pdf";
+const ACCEPTED_TYPE_SET = new Set(ACCEPTED_UPLOAD.split(","));
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 export default function NewBillPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -78,6 +89,26 @@ export default function NewBillPage() {
   const { fields, append, remove } = useFieldArray({ control, name: "lineItems" });
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
+
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function onFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    const valid = picked.filter((f) => {
+      if (f.type && !ACCEPTED_TYPE_SET.has(f.type)) {
+        toast.error(`"${f.name}" is not a supported type (JPG, PNG, WebP, GIF or PDF)`);
+        return false;
+      }
+      if (f.size > MAX_UPLOAD_BYTES) {
+        toast.error(`"${f.name}" exceeds the 10 MB limit`);
+        return false;
+      }
+      return true;
+    });
+    if (valid.length) setStagedFiles((prev) => [...prev, ...valid]);
+  }
 
   useEffect(() => {
     setValue("currency", orgCurrency, { shouldDirty: false });
@@ -114,7 +145,23 @@ export default function NewBillPage() {
     };
     try {
       const bill = await createBill.mutateAsync(input);
-      toast.success("Bill created");
+
+      // Upload any staged attachments against the freshly-created bill (best effort).
+      let failed = 0;
+      for (const file of stagedFiles) {
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          await api.postForm(`bills/${bill.id}/attachments`, form);
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed > 0) {
+        toast.error(`Bill created, but ${failed} attachment${failed > 1 ? "s" : ""} failed to upload. You can re-add them on the bill page.`);
+      } else {
+        toast.success("Bill created");
+      }
       router.push(`/bills/${bill.id}`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to create bill");
@@ -258,6 +305,40 @@ export default function NewBillPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Paperclip className="h-4 w-4 text-foreground-muted" />
+              <Label className="m-0">Attachments</Label>
+            </div>
+            <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_UPLOAD} className="hidden" onChange={onFilesPicked} />
+            <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="h-3.5 w-3.5" /> Add files
+            </Button>
+          </div>
+          {stagedFiles.length === 0 ? (
+            <p className="text-sm text-foreground-muted">Attach a bill PDF, receipt, or supporting document (JPG, PNG, WebP, GIF or PDF, max 10&nbsp;MB each). Files upload when you create the bill.</p>
+          ) : (
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {stagedFiles.map((f, i) => (
+                <li key={`${f.name}-${i}`} className="flex items-center gap-3 px-3 py-2">
+                  <FileText className="h-4 w-4 shrink-0 text-foreground-muted" />
+                  <span className="flex-1 truncate text-sm">{f.name}</span>
+                  <span className="text-xs text-foreground-muted">{formatBytes(f.size)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setStagedFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="rounded p-1 text-foreground-muted hover:bg-danger/10 hover:text-danger"
+                    title="Remove"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="rounded-lg border border-border bg-surface p-5 space-y-1.5">

@@ -8,6 +8,7 @@ export * from "./schemas/customer.schema";
 export * from "./schemas/quotation.schema";
 export * from "./schemas/sales-order.schema";
 export * from "./schemas/invoice.schema";
+export * from "./schemas/emi.schema";
 export * from "./schemas/tag.schema";
 export * from "./schemas/department.schema";
 export * from "./schemas/query.schema";

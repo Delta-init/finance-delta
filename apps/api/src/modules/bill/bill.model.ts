@@ -12,6 +12,18 @@ const billLineSchema = new Schema(
   { _id: false },
 );
 
+const emiSubSchema = new Schema(
+  {
+    bank: { type: String, default: "" },
+    tenureMonths: { type: Number, default: 0 },
+    monthlyAmountMinor: { type: Number, default: 0 },
+    interestPct: { type: Number, default: 0 },
+    processingFeeMinor: { type: Number, default: 0 },
+    transactionId: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
 const billPaymentSchema = new Schema(
   {
     method: { type: String, required: true },
@@ -20,9 +32,21 @@ const billPaymentSchema = new Schema(
     reference: { type: String, default: "" },
     accountName: { type: String, default: "" },
     notes: { type: String, default: "" },
+    emi: { type: emiSubSchema, default: undefined },
     createdAt: { type: Date, default: Date.now },
   },
   { _id: true },
+);
+
+const billAttachmentSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    url: { type: String, required: true },
+    key: { type: String, default: "" },
+    mimeType: { type: String, default: "" },
+    size: { type: Number, default: 0 },
+  },
+  { _id: true, timestamps: { createdAt: true, updatedAt: false } },
 );
 
 const billSchema = new Schema(
@@ -53,6 +77,7 @@ const billSchema = new Schema(
     amountPaidMinor: { type: Number, default: 0 },
     balanceMinor: { type: Number, default: 0 },
     payments: { type: [billPaymentSchema], default: [] },
+    attachments: { type: [billAttachmentSchema], default: [] },
     notes: { type: String, default: "" },
     paymentTerms: { type: String, default: "" },
   },

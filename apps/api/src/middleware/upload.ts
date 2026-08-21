@@ -49,6 +49,17 @@ export function parseUpload(
   let file: ParsedFile | undefined;
   let fileSizeExceeded = false;
 
+  // Busboy can emit both a rejecting event (bad MIME) and its terminal "finish"
+  // event for the same request. Guard so next() is invoked exactly once —
+  // otherwise Express double-dispatches and throws ERR_HTTP_HEADERS_SENT.
+  let settled = false;
+  const done = (err?: Error) => {
+    if (settled) return;
+    settled = true;
+    if (err) next(err);
+    else next();
+  };
+
   const bb = Busboy({ headers: req.headers, limits: { fileSize: MAX_BYTES } });
 
   bb.on("field", (name, value) => {
@@ -74,7 +85,7 @@ export function parseUpload(
     const { filename, mimeType } = info;
     if (!ALLOWED_MIME.has(mimeType)) {
       stream.resume();
-      next(
+      done(
         new AppError(
           "VALIDATION_ERROR",
           `File type "${mimeType}" is not allowed. Upload JPEG, PNG, WebP, GIF, or PDF.`,
@@ -100,14 +111,14 @@ export function parseUpload(
 
   bb.on("finish", () => {
     if (fileSizeExceeded) {
-      return next(new AppError("VALIDATION_ERROR", "File exceeds the 10 MB limit."));
+      return done(new AppError("VALIDATION_ERROR", "File exceeds the 10 MB limit."));
     }
     req.body = body;
     if (file) req.file = file;
-    next();
+    done();
   });
 
-  bb.on("error", (err: Error) => next(err));
+  bb.on("error", (err: Error) => done(err));
 
   req.pipe(bb);
 }

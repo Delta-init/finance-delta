@@ -67,9 +67,50 @@ export function useRecordBillPayment(id: string) {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (input: RecordBillPaymentInput) => api.post<Bill>(`bills/${id}/payments`, input),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
       qc.invalidateQueries({ queryKey: KEY });
-      qc.invalidateQueries({ queryKey: [...KEY, id] });
+    },
+  });
+}
+
+export function useUpdateBillNotes(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (notes: string) => api.patch<Bill>(`bills/${id}/notes`, { notes }),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useAddBillAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ file, name }: { file: File; name?: string }) => {
+      const form = new FormData();
+      if (name) form.append("name", name);
+      form.append("file", file);
+      return api.postForm<Bill>(`bills/${id}/attachments`, form);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useRemoveBillAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (attId: string) => api.del<Bill>(`bills/${id}/attachments/${attId}`),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
     },
   });
 }

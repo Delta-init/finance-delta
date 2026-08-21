@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { emiDetailInputSchema, emiDetailSchema } from "./emi.schema";
 
 export const billStatusSchema = z.enum([
   "draft",
@@ -17,8 +18,26 @@ export const billPaymentMethodSchema = z.enum([
   "cheque",
   "card",
   "online",
+  "easebuzz_emi",
 ]);
 export type BillPaymentMethod = z.infer<typeof billPaymentMethodSchema>;
+
+/** A file attached to a bill (stored in R2). */
+export const billAttachmentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  mimeType: z.string(),
+  size: z.number(),
+  uploadedAt: z.string(),
+});
+export type BillAttachment = z.infer<typeof billAttachmentSchema>;
+
+/** Update just the free-text notes on a bill (allowed on any non-voided bill). */
+export const updateBillNotesSchema = z.object({
+  notes: z.string().max(5000).optional().default(""),
+});
+export type UpdateBillNotesInput = z.infer<typeof updateBillNotesSchema>;
 
 export const billLineSchema = z.object({
   description: z.string().min(1, "Description required"),
@@ -52,6 +71,8 @@ export const recordBillPaymentSchema = z.object({
   reference: z.string().optional().default(""),
   accountName: z.string().optional().default(""),
   notes: z.string().optional().default(""),
+  /** Easebuzz EMI details — sent only when method is "easebuzz_emi". */
+  emi: emiDetailInputSchema.optional(),
 });
 export type RecordBillPaymentInput = z.infer<typeof recordBillPaymentSchema>;
 
@@ -82,9 +103,11 @@ export const billSchema = z.object({
       reference: z.string(),
       accountName: z.string(),
       notes: z.string(),
+      emi: emiDetailSchema.optional(),
       createdAt: z.string(),
     }),
   ),
+  attachments: z.array(billAttachmentSchema).default([]),
   notes: z.string(),
   paymentTerms: z.string(),
   createdAt: z.string(),

@@ -11,7 +11,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  formatMoney, PAYMENT_METHODS,
+  formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
   type Invoice, type RecordPaymentInput,
 } from "@delta/shared";
 
@@ -22,6 +22,7 @@ const paymentFormSchema = z.object({
   reference: z.string().max(200).default(""),
   notes: z.string().max(1000).default(""),
   accountName: z.string().max(100).default(""),
+  emi: emiDetailInputSchema.optional(),
 });
 type PaymentFormValues = z.infer<typeof paymentFormSchema>;
 import { Button } from "@/components/ui/button";
@@ -313,10 +314,17 @@ export function InvoiceDetail({ id }: { id: string }) {
             <tbody>
               {invoice.payments.map((p) => (
                 <tr key={p.id} className="border-t border-border">
-                  <td className="px-4 py-2.5 text-foreground-muted">{p.paidOn}</td>
-                  <td className="px-4 py-2.5 capitalize">{p.method.replace("_", " ")}</td>
-                  <td className="px-4 py-2.5 text-foreground-muted">{p.accountName || "—"}</td>
-                  <td className="px-4 py-2.5 text-foreground-muted">{p.reference || "—"}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted align-top">{p.paidOn}</td>
+                  <td className="px-4 py-2.5 align-top">
+                    <span className="capitalize">{p.method === "easebuzz_emi" ? "Easebuzz EMI" : p.method.replace("_", " ")}</span>
+                    {p.emi && (
+                      <span className="mt-0.5 block text-xs text-foreground-muted">
+                        {p.emi.tenureMonths} mo{p.emi.interestPct ? ` · ${p.emi.interestPct}%` : ""}{p.emi.bank ? ` · ${p.emi.bank}` : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-foreground-muted align-top">{p.accountName || "—"}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
                   <td className="px-4 py-2.5 text-right font-numeric font-medium text-success">
                     {formatMoney(p.amountMinor, invoice.currency)}
                   </td>
@@ -396,6 +404,15 @@ function PaymentDialog({
     onClose();
   }
 
+  function handleMethodChange(v: string) {
+    setValue("method", v as PaymentFormValues["method"]);
+    if (v === "easebuzz_emi") {
+      setValue("emi", { bank: "", tenureMonths: 3, monthlyAmountMinor: 0, interestPct: 0, processingFeeMinor: 0, transactionId: "" });
+    } else {
+      setValue("emi", undefined);
+    }
+  }
+
   async function onSubmit(data: PaymentFormValues) {
     const input: RecordPaymentInput = {
       method: data.method,
@@ -404,6 +421,7 @@ function PaymentDialog({
       reference: data.reference,
       notes: data.notes,
       accountName: data.accountName,
+      ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
     };
     try {
       await record.mutateAsync({ input, file: proofFile ?? undefined });
@@ -421,6 +439,7 @@ function PaymentDialog({
     bank_transfer: "Bank Transfer",
     cheque: "Cheque",
     card: "Card",
+    easebuzz_emi: "Easebuzz EMI",
     other: "Other",
   };
 
@@ -434,7 +453,7 @@ function PaymentDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="mb-1 block text-xs font-medium text-foreground-muted">Method</label>
-              <Select value={method} onValueChange={(v) => setValue("method", v as PaymentFormValues["method"])}>
+              <Select value={method} onValueChange={handleMethodChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -445,6 +464,45 @@ function PaymentDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {method === "easebuzz_emi" && (
+              <div className="col-span-2 rounded-md border border-border bg-surface-muted/40 p-3">
+                <p className="mb-2 text-xs font-semibold text-foreground-muted">Easebuzz EMI details</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Bank / Provider</label>
+                    <Input {...register("emi.bank")} placeholder="e.g. HDFC Bank" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Tenure (months)</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={60}
+                      defaultValue={3}
+                      onChange={(e) => setValue("emi.tenureMonths", parseInt(e.target.value || "0", 10))}
+                    />
+                    {errors.emi?.tenureMonths && <p className="mt-1 text-xs text-danger">{errors.emi.tenureMonths.message}</p>}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Monthly EMI ({currency})</label>
+                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.monthlyAmountMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Interest %</label>
+                    <Input type="number" step="0.01" placeholder="0" onChange={(e) => setValue("emi.interestPct", parseFloat(e.target.value) || 0)} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Processing Fee ({currency})</label>
+                    <Input type="number" step="0.01" placeholder="0.00" onChange={(e) => setValue("emi.processingFeeMinor", Math.round((parseFloat(e.target.value) || 0) * 100))} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-foreground-muted">Easebuzz Txn ID</label>
+                    <Input {...register("emi.transactionId")} placeholder="Transaction / reference id" />
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Amount ({currency})

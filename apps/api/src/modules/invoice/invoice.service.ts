@@ -83,6 +83,14 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         reference: string;
         notes: string;
         accountName?: string;
+        emi?: {
+          bank?: string;
+          tenureMonths?: number;
+          monthlyAmountMinor?: number;
+          interestPct?: number;
+          processingFeeMinor?: number;
+          transactionId?: string;
+        };
         proofUrl?: string;
         proofKey?: string;
         createdAt: Date;
@@ -95,6 +103,16 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         reference: pm.reference ?? "",
         notes: pm.notes ?? "",
         accountName: pm.accountName ?? "",
+        emi: pm.emi
+          ? {
+              bank: pm.emi.bank ?? "",
+              tenureMonths: pm.emi.tenureMonths ?? 0,
+              monthlyAmountMinor: pm.emi.monthlyAmountMinor ?? 0,
+              interestPct: pm.emi.interestPct ?? 0,
+              processingFeeMinor: pm.emi.processingFeeMinor ?? 0,
+              transactionId: pm.emi.transactionId ?? "",
+            }
+          : undefined,
         proofUrl: pm.proofUrl || undefined,
         createdAt: pm.createdAt.toISOString(),
       };
@@ -455,6 +473,10 @@ export async function recordPayment(
     throw new AppError("CONFLICT", `Payment of ${input.amountMinor} exceeds balance of ${currentBalance}`);
   }
 
+  if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {
+    throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
+  }
+
   let proofUrl = "";
   let proofKey = "";
   if (file) {
@@ -473,6 +495,17 @@ export async function recordPayment(
     reference: input.reference ?? "",
     notes: input.notes ?? "",
     accountName: input.accountName ?? "",
+    emi:
+      input.method === "easebuzz_emi" && input.emi
+        ? {
+            bank: input.emi.bank ?? "",
+            tenureMonths: input.emi.tenureMonths,
+            monthlyAmountMinor: input.emi.monthlyAmountMinor ?? 0,
+            interestPct: input.emi.interestPct ?? 0,
+            processingFeeMinor: input.emi.processingFeeMinor ?? 0,
+            transactionId: input.emi.transactionId ?? "",
+          }
+        : undefined,
     proofUrl,
     proofKey,
   };

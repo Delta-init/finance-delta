@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import type { CreateBillInput, UpdateBillInput, Bill as BillDTO, BillQuery, Paginated, RecordBillPaymentInput } from "@delta/shared";
+import type { ParsedFile } from "../../middleware/upload";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Bill, type BillDoc } from "./bill.model";
@@ -39,7 +40,24 @@ function toDTO(doc: BillDoc): BillDTO {
     amountPaidMinor: (doc.amountPaidMinor as number) ?? 0,
     balanceMinor: (doc.balanceMinor as number) ?? 0,
     payments: ((doc.payments as unknown[]) ?? []).map((p) => {
-      const pm = p as { _id: { toString(): string }; method: string; amountMinor: number; paidOn: Date; reference: string; accountName: string; notes: string; createdAt: Date };
+      const pm = p as {
+        _id: { toString(): string };
+        method: string;
+        amountMinor: number;
+        paidOn: Date;
+        reference: string;
+        accountName: string;
+        notes: string;
+        emi?: {
+          bank?: string;
+          tenureMonths?: number;
+          monthlyAmountMinor?: number;
+          interestPct?: number;
+          processingFeeMinor?: number;
+          transactionId?: string;
+        };
+        createdAt: Date;
+      };
       return {
         id: pm._id.toString(),
         method: pm.method as BillDTO["payments"][0]["method"],
@@ -48,7 +66,28 @@ function toDTO(doc: BillDoc): BillDTO {
         reference: pm.reference ?? "",
         accountName: pm.accountName ?? "",
         notes: pm.notes ?? "",
+        emi: pm.emi
+          ? {
+              bank: pm.emi.bank ?? "",
+              tenureMonths: pm.emi.tenureMonths ?? 0,
+              monthlyAmountMinor: pm.emi.monthlyAmountMinor ?? 0,
+              interestPct: pm.emi.interestPct ?? 0,
+              processingFeeMinor: pm.emi.processingFeeMinor ?? 0,
+              transactionId: pm.emi.transactionId ?? "",
+            }
+          : undefined,
         createdAt: pm.createdAt?.toISOString() ?? new Date().toISOString(),
+      };
+    }),
+    attachments: ((doc as unknown as Record<string, unknown>).attachments as unknown[] ?? []).map((a) => {
+      const at = a as { _id: { toString(): string }; name: string; url: string; mimeType?: string; size?: number; createdAt?: Date };
+      return {
+        id: at._id.toString(),
+        name: at.name,
+        url: at.url,
+        mimeType: at.mimeType ?? "",
+        size: at.size ?? 0,
+        uploadedAt: at.createdAt?.toISOString() ?? new Date().toISOString(),
       };
     }),
     notes: (doc.notes as string) ?? "",
@@ -191,6 +230,10 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
   const balance = (doc.balanceMinor as number) ?? 0;
   if (input.amountMinor > balance) throw new AppError("CONFLICT", "Payment exceeds outstanding balance");
 
+  if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {
+    throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
+  }
+
   const payment = {
     method: input.method,
     amountMinor: input.amountMinor,
@@ -198,12 +241,81 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
     reference: input.reference ?? "",
     accountName: input.accountName ?? "",
     notes: input.notes ?? "",
+    emi:
+      input.method === "easebuzz_emi" && input.emi
+        ? {
+            bank: input.emi.bank ?? "",
+            tenureMonths: input.emi.tenureMonths,
+            monthlyAmountMinor: input.emi.monthlyAmountMinor ?? 0,
+            interestPct: input.emi.interestPct ?? 0,
+            processingFeeMinor: input.emi.processingFeeMinor ?? 0,
+            transactionId: input.emi.transactionId ?? "",
+          }
+        : undefined,
     createdAt: new Date(),
   };
   (doc.payments as unknown[]).push(payment);
   doc.amountPaidMinor = ((doc.amountPaidMinor as number) ?? 0) + input.amountMinor;
   doc.balanceMinor = ((doc.balanceMinor as number) ?? 0) - input.amountMinor;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
+  await doc.save();
+  return toDTO(doc as unknown as BillDoc);
+}
+
+export async function updateBillNotes(orgId: string, id: string, notes: string): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+  if (doc.status === "voided") throw new AppError("CONFLICT", "Cannot edit a voided bill");
+  doc.notes = notes ?? "";
+  await doc.save();
+  return toDTO(doc as unknown as BillDoc);
+}
+
+export async function addBillAttachment(
+  orgId: string,
+  id: string,
+  file: ParsedFile,
+  name?: string,
+): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key = `bills/${orgId}/${id}/att-${Date.now()}-${safe}`;
+  const uploaded = await uploadFile({ key, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+
+  const atts = (doc as unknown as { attachments: Array<Record<string, unknown>> }).attachments;
+  atts.push({
+    name: name?.trim() || file.originalName,
+    url: uploaded.url,
+    key: uploaded.key,
+    mimeType: file.mimeType,
+    size: uploaded.size,
+  });
+  await doc.save();
+  return toDTO(doc as unknown as BillDoc);
+}
+
+export async function removeBillAttachment(orgId: string, id: string, attId: string): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+
+  const arr = (doc as unknown as {
+    attachments: {
+      id: (id: string) => { key?: string } | null;
+      pull: (id: string) => void;
+    };
+  }).attachments;
+  const target = arr.id(attId);
+  if (!target) throw new AppError("NOT_FOUND", "Attachment not found");
+  if (target.key) {
+    const { deleteFile } = await import("../../lib/storage");
+    await deleteFile(target.key);
+  }
+  arr.pull(attId);
   await doc.save();
   return toDTO(doc as unknown as BillDoc);
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
+import { emiDetailInputSchema, emiDetailSchema } from "./emi.schema";
 
 export const TAX_CODES = ["VAT", "GST", "CGST", "SGST", "IGST", "TDS", "WHT", "NONE"] as const;
 export type TaxCode = (typeof TAX_CODES)[number];
@@ -9,6 +10,7 @@ export const PAYMENT_METHODS = [
   "bank_transfer",
   "cheque",
   "card",
+  "easebuzz_emi",
   "other",
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -71,6 +73,8 @@ export const recordPaymentSchema = z.object({
   reference: z.string().max(200).optional().default(""),
   notes: z.string().max(1000).optional().default(""),
   accountName: z.string().max(100).optional().default(""),
+  /** Easebuzz EMI details — sent only when method is "easebuzz_emi". */
+  emi: emiDetailInputSchema.optional(),
   /** Populated by the server after uploading to R2 — not accepted from client directly. */
   proofUrl: z.string().url().optional(),
   proofKey: z.string().optional(),
@@ -119,6 +123,7 @@ export const paymentSchema = z.object({
   reference: z.string(),
   notes: z.string(),
   accountName: z.string(),
+  emi: emiDetailSchema.optional(),
   proofUrl: z.string().optional(),
   createdAt: z.string(),
 });

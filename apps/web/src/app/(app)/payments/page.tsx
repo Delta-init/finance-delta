@@ -14,7 +14,8 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { CreditCard, Search, X, Printer } from "lucide-react";
 
-const METHODS = ["bank_transfer", "cash", "cheque", "card", "online"] as const;
+const METHODS = ["bank_transfer", "cash", "cheque", "card", "online", "easebuzz_emi"] as const;
+const METHOD_LABEL = (m: string) => (m === "easebuzz_emi" ? "Easebuzz EMI" : m.replace("_", " "));
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -71,7 +72,7 @@ export default function PaymentsPage() {
       key: "method",
       header: "Method",
       sortable: true,
-      cell: (p) => <span className="capitalize text-foreground-muted">{p.method.replace("_", " ")}</span>,
+      cell: (p) => <span className="capitalize text-foreground-muted">{METHOD_LABEL(p.method)}</span>,
     },
     {
       key: "account",
@@ -125,7 +126,7 @@ export default function PaymentsPage() {
               <SelectItem value="all">All methods</SelectItem>
               {METHODS.map((m) => (
                 <SelectItem key={m} value={m} className="capitalize">
-                  {m.replace("_", " ")}
+                  {METHOD_LABEL(m)}
                 </SelectItem>
               ))}
             </SelectContent>

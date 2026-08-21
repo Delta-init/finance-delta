@@ -45,11 +45,23 @@ const recurringSchema = new Schema(
   { _id: false },
 );
 
+const emiSubSchema = new Schema(
+  {
+    bank: { type: String, default: "" },
+    tenureMonths: { type: Number, default: 0 },
+    monthlyAmountMinor: { type: Number, default: 0 },
+    interestPct: { type: Number, default: 0 },
+    processingFeeMinor: { type: Number, default: 0 },
+    transactionId: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
 const paymentSubSchema = new Schema(
   {
     method: {
       type: String,
-      enum: ["cash", "bank_transfer", "cheque", "card", "other"],
+      enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "other"],
       required: true,
     },
     amountMinor: { type: Number, required: true, min: 0 },
@@ -57,6 +69,7 @@ const paymentSubSchema = new Schema(
     reference: { type: String, default: "" },
     notes: { type: String, default: "" },
     accountName: { type: String, default: "" },
+    emi: { type: emiSubSchema, default: undefined },
     proofUrl: { type: String, default: "" },
     proofKey: { type: String, default: "" },
   },

@@ -42,6 +42,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
+import { SuggestInput } from "@/components/ui/suggest-input";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
@@ -418,20 +419,24 @@ export function QuotationForm({
           <div className="flex-1 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="notes">Notes</Label>
-              <textarea
+              <SuggestInput
                 id="notes"
+                multiline
                 rows={3}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm shadow-xs focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                {...register("notes")}
+                field="notes"
+                value={watch("notes") ?? ""}
+                onChange={(v) => setValue("notes", v, { shouldDirty: true })}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="terms">Terms</Label>
-              <textarea
+              <SuggestInput
                 id="terms"
+                multiline
                 rows={2}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm shadow-xs focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                {...register("terms")}
+                field="terms"
+                value={watch("terms") ?? ""}
+                onChange={(v) => setValue("terms", v, { shouldDirty: true })}
               />
             </div>
           </div>
@@ -534,6 +539,10 @@ function QuotationProductCell({
         setValue(`lineItems.${index}.description`, item.name, { shouldDirty: true, shouldValidate: true });
         setValue(`lineItems.${index}.unitPrice`, item.unitPriceMinor / 100, { shouldDirty: true });
         setValue(`lineItems.${index}.itemId`, item.id, { shouldDirty: true });
+      }}
+      onPickText={(text) => {
+        setValue(`lineItems.${index}.description`, text, { shouldDirty: true, shouldValidate: true });
+        setValue(`lineItems.${index}.itemId`, undefined);
       }}
       currency={currency}
     />

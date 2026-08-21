@@ -30,6 +30,7 @@ import {
   type TaxConfigItem,
 } from "@delta/shared";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
+import { SuggestInput } from "@/components/ui/suggest-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -376,7 +377,12 @@ export function InvoiceForm({
 
           <div className="space-y-1.5">
             <Label>Reference / PO#</Label>
-            <Input {...register("reference")} placeholder="e.g. PO-1234" />
+            <SuggestInput
+              field="reference"
+              value={watch("reference") ?? ""}
+              onChange={(v) => setValue("reference", v, { shouldDirty: true })}
+              placeholder="e.g. PO-1234"
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -467,20 +473,24 @@ export function InvoiceForm({
           <div className="flex-1 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="notes">Notes</Label>
-              <textarea
+              <SuggestInput
                 id="notes"
+                multiline
                 rows={3}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm shadow-xs focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                {...register("notes")}
+                field="notes"
+                value={watch("notes") ?? ""}
+                onChange={(v) => setValue("notes", v, { shouldDirty: true })}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="terms">Terms</Label>
-              <textarea
+              <SuggestInput
                 id="terms"
+                multiline
                 rows={2}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm shadow-xs focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                {...register("terms")}
+                field="terms"
+                value={watch("terms") ?? ""}
+                onChange={(v) => setValue("terms", v, { shouldDirty: true })}
               />
             </div>
             <div className="space-y-1.5">
@@ -689,6 +699,10 @@ function ProductCell({
         setValue(`lineItems.${index}.description`, item.name, { shouldDirty: true, shouldValidate: true });
         setValue(`lineItems.${index}.unitPrice`, item.unitPriceMinor / 100, { shouldDirty: true });
         setValue(`lineItems.${index}.itemId`, item.id, { shouldDirty: true });
+      }}
+      onPickText={(text) => {
+        setValue(`lineItems.${index}.description`, text, { shouldDirty: true, shouldValidate: true });
+        setValue(`lineItems.${index}.itemId`, undefined);
       }}
       currency={currency}
     />

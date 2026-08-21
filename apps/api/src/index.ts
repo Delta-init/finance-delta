@@ -18,6 +18,7 @@ import departmentRoutes from "./modules/department/department.routes";
 import invoiceRoutes from "./modules/invoice/invoice.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
 import searchRoutes from "./modules/search/search.routes";
+import suggestionsRoutes from "./modules/suggestions/suggestions.routes";
 import creditNoteRoutes from "./modules/credit-note/credit-note.routes";
 import paymentRoutes from "./modules/invoice/payment.routes";
 import vendorRoutes from "./modules/vendor/vendor.routes";
@@ -65,6 +66,7 @@ async function bootstrap() {
   api.use("/invoices", invoiceRoutes);
   api.use("/organizations", organizationRoutes);
   api.use("/search", searchRoutes);
+  api.use("/suggestions", suggestionsRoutes);
   api.use("/credit-notes", creditNoteRoutes);
   api.use("/payments", paymentRoutes);
   api.use("/vendors", vendorRoutes);

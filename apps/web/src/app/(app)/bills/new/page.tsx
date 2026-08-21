@@ -11,6 +11,7 @@ import type { CreateBillInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SuggestInput } from "@/components/ui/suggest-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -208,7 +209,7 @@ export default function NewBillPage() {
                   return (
                     <tr key={field.id}>
                       <td className="py-2 pr-2">
-                        <Input {...register(`lineItems.${i}.description`)} placeholder="Item description" className="h-8" />
+                        <SuggestInput field="lineDescription" value={watch(`lineItems.${i}.description`) ?? ""} onChange={(v) => setValue(`lineItems.${i}.description`, v, { shouldDirty: true })} placeholder="Item description" className="h-8" />
                         {errors.lineItems?.[i]?.description && <p className="text-xs text-danger">{errors.lineItems[i].description?.message}</p>}
                       </td>
                       <td className="py-2 pr-2">

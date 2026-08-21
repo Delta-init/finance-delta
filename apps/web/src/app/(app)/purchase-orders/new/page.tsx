@@ -10,6 +10,7 @@ import { formatMoney, toMinor } from "@delta/shared";
 import type { CreatePOInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SuggestInput } from "@/components/ui/suggest-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
@@ -179,7 +180,7 @@ export default function NewPurchaseOrderPage() {
                   return (
                     <tr key={field.id}>
                       <td className="py-2 pr-2">
-                        <Input {...register(`lineItems.${i}.description`)} placeholder="Item description" className="h-8" />
+                        <SuggestInput field="lineDescription" value={watch(`lineItems.${i}.description`) ?? ""} onChange={(v) => setValue(`lineItems.${i}.description`, v, { shouldDirty: true })} placeholder="Item description" className="h-8" />
                         {errors.lineItems?.[i]?.description && <p className="text-xs text-danger">{errors.lineItems[i].description?.message}</p>}
                       </td>
                       <td className="py-2 pr-2">
@@ -233,8 +234,7 @@ export default function NewPurchaseOrderPage() {
 
         <div className="rounded-lg border border-border bg-surface p-5 space-y-1.5">
           <Label>Notes</Label>
-          <textarea {...register("notes")} rows={3} placeholder="Internal notes or instructions for the vendor…"
-            className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-foreground-subtle focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30" />
+          <SuggestInput field="notes" multiline rows={3} value={watch("notes") ?? ""} onChange={(v) => setValue("notes", v, { shouldDirty: true })} placeholder="Internal notes or instructions for the vendor…" />
         </div>
 
         <div className="flex justify-end gap-3">

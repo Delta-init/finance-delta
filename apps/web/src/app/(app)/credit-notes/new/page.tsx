@@ -9,6 +9,7 @@ import { useCreateCreditNote } from "@/features/credit-notes/api";
 import { useInvoices, useInvoice } from "@/features/invoices/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SuggestInput } from "@/components/ui/suggest-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import { Plus, Trash2, ArrowLeft } from "lucide-react";
@@ -137,7 +138,7 @@ export default function NewCreditNotePage() {
             <div key={field.id} className="grid grid-cols-12 gap-2 items-end text-sm">
               <div className="col-span-4">
                 {i === 0 && <label className="mb-1 block text-xs font-medium text-foreground-muted">Description</label>}
-                <Input {...register(`lineItems.${i}.description`)} placeholder="Item description" />
+                <SuggestInput field="lineDescription" value={watch(`lineItems.${i}.description`) ?? ""} onChange={(v) => setValue(`lineItems.${i}.description`, v, { shouldDirty: true })} placeholder="Item description" />
               </div>
               <div className="col-span-2">
                 {i === 0 && <label className="mb-1 block text-xs font-medium text-foreground-muted">Qty</label>}

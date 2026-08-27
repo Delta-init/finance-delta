@@ -23,6 +23,7 @@ import {
   TrendingUp,
   Building2,
   Repeat,
+  Link2,
   type LucideIcon,
 } from "lucide-react";
 import { hasPermission, type Permission } from "@delta/shared";
@@ -93,6 +94,7 @@ const NAV: NavGroup[] = [
       { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true },
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
+      { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
     ],
   },
   {

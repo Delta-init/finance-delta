@@ -1,0 +1,190 @@
+import crypto from "node:crypto";
+import { env } from "../config/env";
+import { AppError } from "./http";
+import { logger } from "./logger";
+import { buildCanonical } from "./signing";
+
+/**
+ * Signed client for the HRMS integration API.
+ *
+ * The other half of `hrms-backend/src/middleware/serviceAuth.ts`. Every request
+ * carries a timestamp, a single-use nonce and an HMAC over
+ *
+ *   METHOD \n PATH_WITH_QUERY \n TIMESTAMP \n NONCE \n sha256(body)
+ *
+ * so that a captured request cannot be replayed and an altered one cannot be
+ * passed off as ours. Keep the canonical string byte-identical to the HRMS side
+ * — a mismatch here shows up as a blanket 401 with no hint as to which field
+ * disagreed, because the server deliberately will not say.
+ */
+
+const TIMEOUT_MS = 20_000;
+
+function assertConfigured(): { baseUrl: string; clientId: string; secret: string } {
+  const baseUrl = env.HRMS_API_URL.replace(/\/+$/, "");
+  if (!baseUrl || !env.HRMS_CLIENT_ID || !env.HRMS_INTEGRATION_SECRET) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "HRMS integration is not configured. Set HRMS_API_URL, HRMS_CLIENT_ID and HRMS_INTEGRATION_SECRET.",
+    );
+  }
+  return { baseUrl, clientId: env.HRMS_CLIENT_ID, secret: env.HRMS_INTEGRATION_SECRET };
+}
+
+interface HrmsEnvelope<T> {
+  success: boolean;
+  message: string;
+  data: T;
+  pagination?: { total: number; page: number; limit: number; totalPages: number };
+}
+
+async function request<T>(
+  method: "GET" | "POST",
+  path: string,
+  opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
+): Promise<HrmsEnvelope<T>> {
+  const { baseUrl, clientId, secret } = assertConfigured();
+
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(opts.query ?? {})) {
+    if (v !== undefined && v !== "") search.set(k, String(v));
+  }
+  const qs = search.toString();
+
+  // Signed exactly as the server will see it in `req.originalUrl`: the API
+  // prefix included, the query string included, nothing normalised away.
+  const signedPath = `/api/v1/integrations${path}${qs ? `?${qs}` : ""}`;
+  const rawBody = opts.body === undefined ? "" : JSON.stringify(opts.body);
+  const timestamp = String(Date.now());
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(buildCanonical(method, signedPath, timestamp, nonce, rawBody))
+    .digest("hex");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${baseUrl}${signedPath}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Delta-Client": clientId,
+        "X-Delta-Timestamp": timestamp,
+        "X-Delta-Nonce": nonce,
+        "X-Delta-Signature": signature,
+      },
+      body: rawBody === "" ? undefined : rawBody,
+      signal: controller.signal,
+    });
+
+    const text = await res.text();
+    let parsed: HrmsEnvelope<T> | undefined;
+    try {
+      parsed = text ? (JSON.parse(text) as HrmsEnvelope<T>) : undefined;
+    } catch {
+      // Falls through to the error below with the raw text for diagnosis.
+    }
+
+    if (!res.ok || !parsed?.success) {
+      const detail = parsed?.message ?? text.slice(0, 300);
+      logger.warn(`HRMS ${method} ${signedPath} → ${res.status}: ${detail}`);
+      if (res.status === 401) {
+        throw new AppError(
+          "FORBIDDEN",
+          "HRMS rejected our credentials. Check HRMS_CLIENT_ID / HRMS_INTEGRATION_SECRET and that both servers' clocks are within 5 minutes.",
+        );
+      }
+      if (res.status === 503) {
+        throw new AppError("VALIDATION_ERROR", "The HRMS integration API is disabled on that server.");
+      }
+      throw new AppError("INTERNAL", `HRMS request failed (${res.status}): ${detail}`);
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if ((err as Error).name === "AbortError") {
+      throw new AppError("INTERNAL", `HRMS did not respond within ${TIMEOUT_MS / 1000}s.`);
+    }
+    throw new AppError("INTERNAL", `Could not reach HRMS: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface HrmsOrganization {
+  id: string;
+  name: string;
+  code: string;
+  currency: string;
+  timeZone: string;
+  status: string;
+}
+
+export interface HrmsDepartment {
+  id: string;
+  organizationId: string | null;
+  name: string;
+  code: string;
+  status: string;
+}
+
+export interface HrmsEmployee {
+  id: string;
+  organizationId: string | null;
+  employeeCode: string;
+  name: string;
+  email: string;
+  departmentId: string | null;
+  designation: string;
+  employmentType: string;
+  status: string;
+  joiningDate: string | null;
+  currency: string;
+  hasBankDetails: boolean;
+  updatedAt: string;
+}
+
+export const hrmsClient = {
+  isConfigured(): boolean {
+    return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
+  },
+
+  async ping() {
+    return (await request<{ service: string; time: string }>("GET", "/ping")).data;
+  },
+
+  async organizations(): Promise<HrmsOrganization[]> {
+    return (await request<HrmsOrganization[]>("GET", "/directory/organizations")).data;
+  },
+
+  async departments(organizationId: string): Promise<HrmsDepartment[]> {
+    return (await request<HrmsDepartment[]>("GET", "/directory/departments", { query: { organizationId } })).data;
+  },
+
+  /**
+   * The whole roster, paged through to the end.
+   *
+   * Bounded by `maxPages` rather than trusting the server's own count: a sync
+   * that silently loops is worse than one that stops and says the roster is
+   * larger than expected.
+   */
+  async allEmployees(organizationId: string, opts: { updatedSince?: string; includeInactive?: boolean } = {}) {
+    const limit = 200;
+    const maxPages = 50;
+    const out: HrmsEmployee[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await request<HrmsEmployee[]>("GET", "/directory/employees", {
+        query: { organizationId, page, limit, updatedSince: opts.updatedSince, includeInactive: opts.includeInactive },
+      });
+      out.push(...res.data);
+      const totalPages = res.pagination?.totalPages ?? 1;
+      if (page >= totalPages) return out;
+      if (page === maxPages) {
+        throw new AppError("INTERNAL", `HRMS roster exceeded ${maxPages * limit} employees; sync aborted rather than truncated.`);
+      }
+    }
+    return out;
+  },
+};

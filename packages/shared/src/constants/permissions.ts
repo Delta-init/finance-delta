@@ -98,6 +98,14 @@ export const PERMISSIONS = [
   // Loans & Credit
   "loan:read",
   "loan:write",
+
+  // Payroll (HRMS integration). `write` covers the mapping layer and the
+  // additions/deductions on a run; `approve` signs a run off; `pay` is the one
+  // that moves money and is deliberately separate from the rest.
+  "payroll:read",
+  "payroll:write",
+  "payroll:approve",
+  "payroll:pay",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

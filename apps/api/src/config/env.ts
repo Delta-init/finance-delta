@@ -28,6 +28,14 @@ const envSchema = z.object({
   R2_BUCKET_NAME: z.string().default("delta-uploads"),
   R2_PUBLIC_URL: z.string().default(""),
 
+  // ── HRMS integration ──────────────────────────────────────────────────────
+  // Where the HRMS API lives and the shared-secret credentials we sign with.
+  // All three empty means the payroll integration is off and its endpoints say
+  // so plainly, rather than failing with a connection error at sync time.
+  HRMS_API_URL: z.string().default(""),
+  HRMS_CLIENT_ID: z.string().default(""),
+  HRMS_INTEGRATION_SECRET: z.string().default(""),
+
   // Seed bootstrap (used by scripts/seed.ts)
   SEED_ORG_NAME: z.string().default("Delta HQ"),
   SEED_ADMIN_NAME: z.string().default("Owner"),

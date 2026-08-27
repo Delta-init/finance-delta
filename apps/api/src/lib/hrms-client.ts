@@ -39,7 +39,7 @@ interface HrmsEnvelope<T> {
 }
 
 async function request<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
 ): Promise<HrmsEnvelope<T>> {
@@ -178,6 +178,27 @@ export interface HrmsBatchSummary {
   financeRunId: string;
 }
 
+export interface HrmsAdjustmentOutcome {
+  externalId: string;
+  employeeId: string;
+  payslipId: string;
+  label: string;
+  kind: "payment" | "deduction";
+  amount: number;
+  /** What the month could actually take. Below `amount` when it could not afford it. */
+  appliedAmount: number;
+  outstanding: number;
+  netBefore: number;
+  netAfter: number;
+  deferred: number;
+}
+
+export interface HrmsAdjustmentResult {
+  month: string;
+  applied: number;
+  outcomes: HrmsAdjustmentOutcome[];
+}
+
 export interface HrmsBatch {
   month: string;
   organizationId: string;
@@ -216,6 +237,40 @@ export const hrmsClient = {
 
   async payrollBatch(organizationId: string, month: string): Promise<HrmsBatch> {
     return (await request<HrmsBatch>("GET", `/payroll/batches/${month}`, { query: { organizationId } })).data;
+  },
+
+  /**
+   * Push additions and deductions onto a month HR has handed over, and get back
+   * what each one actually did to the payslip.
+   *
+   * Idempotent on each item's `externalId`, which is what makes a retry after a
+   * timeout safe — the alternative is paying somebody twice because a response
+   * was lost.
+   */
+  async applyAdjustments(
+    organizationId: string,
+    month: string,
+    items: Array<{
+      externalId: string; employeeId: string;
+      kind: "payment" | "deduction"; label: string; amount: number; notes?: string;
+    }>,
+  ): Promise<HrmsAdjustmentResult> {
+    return (
+      await request<HrmsAdjustmentResult>("POST", `/payroll/batches/${month}/adjustments`, {
+        query: { organizationId },
+        body: { organizationId, items },
+      })
+    ).data;
+  },
+
+  async removeAdjustment(organizationId: string, month: string, externalId: string) {
+    return (
+      await request<{ externalId: string }>(
+        "DELETE",
+        `/payroll/batches/${month}/adjustments/${externalId}`,
+        { query: { organizationId } },
+      )
+    ).data;
   },
 
   /** Take possession of a month. Idempotent on `financeRunId`. */

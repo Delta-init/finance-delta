@@ -68,6 +68,45 @@ const payrollLineSchema = new Schema(
   { _id: true },
 );
 
+/**
+ * An accounts-side addition or deduction on one person's pay.
+ *
+ * `externalId` is generated here and is what makes the write-back to HRMS
+ * idempotent: a retry after a timeout updates the row it created last time
+ * rather than paying somebody twice.
+ *
+ * `recoveredMinor` is not decoration. HRMS only recovers what a month can
+ * afford, so a deduction of 2,000 against a take-home of 1,400 recovers 1,400
+ * and carries 600 to next month. Storing what was asked for without storing
+ * what happened would have accounts booking a recovery that did not occur.
+ */
+const payrollAdjustmentSchema = new Schema(
+  {
+    externalId: { type: String, required: true },
+    hrmsEmployeeId: { type: String, required: true },
+    lineId: { type: Schema.Types.ObjectId, required: true },
+
+    kind: { type: String, enum: ["addition", "deduction"], required: true },
+    source: { type: String, enum: ["commission", "manual"], required: true },
+    label: { type: String, required: true },
+    amountMinor: { type: Number, required: true },
+    notes: { type: String, default: "" },
+
+    /** The commission records this addition pays off, if it came from them. */
+    commissionRecordIds: { type: [Schema.Types.ObjectId], default: [] },
+
+    /** What HRMS actually took. Equal to amountMinor for an addition. */
+    recoveredMinor: { type: Number, default: 0 },
+    /** Still owed after this month; only ever non-zero for a deduction. */
+    outstandingMinor: { type: Number, default: 0 },
+
+    syncedAt: { type: Date, default: null },
+    createdById: { type: Schema.Types.ObjectId, ref: "User" },
+    createdByName: { type: String, default: "" },
+  },
+  { _id: true, timestamps: { createdAt: true, updatedAt: false } },
+);
+
 const payrollRunSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
@@ -88,6 +127,7 @@ const payrollRunSchema = new Schema(
     },
 
     lines: { type: [payrollLineSchema], default: [] },
+    adjustments: { type: [payrollAdjustmentSchema], default: [] },
 
     // Totals as HRMS handed them over, kept apart from the running totals so a
     // later phase's additions never overwrite what was originally agreed.

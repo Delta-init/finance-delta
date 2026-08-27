@@ -2,7 +2,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type QueryParams } from "@/lib/api";
-import type { AvailableBatch, ImportPreview, ImportResult, RunDetail, RunSummary } from "./types";
+import type {
+  AdjustmentResult, AvailableBatch, CommissionPullResult,
+  ImportPreview, ImportResult, RunDetail, RunSummary,
+} from "./types";
 
 const KEY = ["payroll"] as const;
 
@@ -53,5 +56,39 @@ export function usePayrollRun(id: string | null) {
     queryKey: [...KEY, "runs", id],
     queryFn: () => api.get<RunDetail>(`payroll/runs/${id}`),
     enabled: Boolean(id),
+  });
+}
+
+export interface NewAdjustment {
+  lineId: string;
+  kind: "addition" | "deduction";
+  label: string;
+  amountMinor: number;
+  notes?: string;
+}
+
+export function useAddAdjustments(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: NewAdjustment[]) =>
+      api.post<AdjustmentResult>(`payroll/runs/${runId}/adjustments`, { items }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] }),
+  });
+}
+
+export function usePullCommissions(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<CommissionPullResult>(`payroll/runs/${runId}/commissions/pull`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] }),
+  });
+}
+
+export function useRemoveAdjustment(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (externalId: string) =>
+      api.del<{ externalId: string }>(`payroll/runs/${runId}/adjustments/${encodeURIComponent(externalId)}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] }),
   });
 }

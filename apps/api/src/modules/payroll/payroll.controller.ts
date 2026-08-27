@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as service from "./payroll.service";
+import * as adjustments from "./adjustments.service";
 import { importPreviewQuerySchema, runQuerySchema } from "./payroll.schemas";
 
 const orgId = (req: Request) => req.auth!.organizationId;
@@ -30,3 +31,15 @@ export const getRun = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await service.getRun(orgId(req), req.params.id!));
 });
 
+export const addAdjustments = asyncHandler(async (req: Request, res: Response) => {
+  const { items } = req.body as { items: adjustments.AddAdjustmentInput[] };
+  ok(res, await adjustments.addAdjustments(orgId(req), req.params.id!, items, { userId: req.auth!.userId }));
+});
+
+export const pullCommissions = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await adjustments.pullCommissions(orgId(req), req.params.id!, { userId: req.auth!.userId }));
+});
+
+export const removeAdjustment = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await adjustments.removeAdjustment(orgId(req), req.params.id!, req.params.externalId!));
+});

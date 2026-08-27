@@ -12,3 +12,20 @@ export const runQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+export const addAdjustmentsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        lineId: objectId,
+        kind: z.enum(["addition", "deduction"]),
+        label: z.string().trim().min(1).max(80),
+        // Minor units, so this is an integer by definition. A float here would
+        // mean somebody is still thinking in decimals somewhere upstream.
+        amountMinor: z.number().int().positive(),
+        notes: z.string().trim().max(300).optional(),
+      }),
+    )
+    .min(1)
+    .max(200),
+});

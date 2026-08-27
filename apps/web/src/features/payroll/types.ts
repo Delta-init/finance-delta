@@ -106,7 +106,41 @@ export interface RunDetail {
     heldCount: number;
   };
   lines: RunLine[];
+  adjustments: RunAdjustment[];
   importedAt: string | null;
   importedByName: string;
   notes: string;
+}
+
+export interface RunAdjustment {
+  externalId: string;
+  hrmsEmployeeId: string;
+  lineId: string;
+  kind: "addition" | "deduction";
+  source: "commission" | "manual";
+  label: string;
+  amountMinor: number;
+  notes: string;
+  /** What HRMS actually took. Below `amountMinor` when the month could not afford it. */
+  recoveredMinor: number;
+  outstandingMinor: number;
+  syncedAt: string | null;
+  createdByName: string;
+}
+
+export interface AdjustmentResult {
+  runId: string;
+  adjustmentsMinor: number;
+  payableMinor: number;
+  /**
+   * Plain-language surprises. Adding money can change deductions, because a
+   * bonus can make a loan instalment affordable that the month was carrying —
+   * so these say what actually happened rather than what was asked for.
+   */
+  notes: string[];
+}
+
+export interface CommissionPullResult extends Partial<AdjustmentResult> {
+  pulled: number;
+  message: string;
 }

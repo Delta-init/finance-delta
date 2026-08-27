@@ -2,14 +2,18 @@
 
 import { Fragment, use, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Wallet, PauseCircle } from "lucide-react";
+import { ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
-import { usePayrollRun } from "@/features/payroll/api";
-import { RUN_STATUS_LABELS, type LineStatus, type RunStatus } from "@/features/payroll/types";
+import {
+  usePayrollRun, useAddAdjustments, usePullCommissions, useRemoveAdjustment,
+} from "@/features/payroll/api";
+import { AdjustDialog } from "@/features/payroll/adjust-dialog";
+import { RUN_STATUS_LABELS, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
+import { Button } from "@/components/ui/button";
 
 const RUN_TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "primary"> = {
   imported: "primary", additions: "primary", approved: "warning",
@@ -29,6 +33,16 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const { data: run, isLoading } = usePayrollRun(id);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [adjusting, setAdjusting] = useState<RunLine | null>(null);
+
+  const addAdjustments = useAddAdjustments(id);
+  const pullCommissions = usePullCommissions(id);
+  const removeAdjustment = useRemoveAdjustment(id);
+
+  // What HRMS actually did, once it has told us. Adding money can move net pay
+  // by a different amount, so this is shown rather than assumed.
+  const notes = addAdjustments.data?.notes ?? pullCommissions.data?.notes ?? [];
+
   const lines = useMemo(() => {
     if (!run) return [];
     const q = search.trim().toLowerCase();
@@ -40,6 +54,16 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
 
   if (isLoading) return <p className="text-sm text-foreground-muted">Loading…</p>;
   if (!run) return <p className="text-sm text-danger">Payroll run not found.</p>;
+
+  // Only while accounts still own the figures. Once a run is approved or paid,
+  // changing a payslip underneath it would put the payslip and the transfer out
+  // of step — which is the whole thing this handover exists to prevent.
+  const openForAdjustment = run.status === "imported" || run.status === "additions";
+  const adjustmentsByLine = new Map<string, typeof run.adjustments>();
+  for (const a of run.adjustments) {
+    if (!adjustmentsByLine.has(a.lineId)) adjustmentsByLine.set(a.lineId, []);
+    adjustmentsByLine.get(a.lineId)!.push(a);
+  }
 
   return (
     <div className="space-y-6">
@@ -58,9 +82,48 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         <Stat label="People" value={String(run.totals.employeeCount)} />
         <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} />} />
         <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={run.currency} />} />
+        <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} />} />
         <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={run.currency} />} strong />
         <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} />} />
       </div>
+
+      {openForAdjustment && (
+        <Card className="flex flex-wrap items-center gap-3 p-4">
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-medium">Additions and deductions</p>
+            <p className="text-foreground-muted">
+              Everything added here is written to the payslip in HRMS, so the employee sees the same
+              figure that is paid.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={pullCommissions.isPending}
+            onClick={() => pullCommissions.mutate()}
+          >
+            <TrendingUp className="mr-1.5 h-3.5 w-3.5" />Pull earned commission
+          </Button>
+        </Card>
+      )}
+
+      {pullCommissions.data && (
+        <p className="text-sm text-foreground-muted">{pullCommissions.data.message}</p>
+      )}
+      {(addAdjustments.isError || pullCommissions.isError || removeAdjustment.isError) && (
+        <Card className="border-danger/20 bg-danger/5 p-4 text-sm text-danger">
+          {((addAdjustments.error ?? pullCommissions.error ?? removeAdjustment.error) as Error).message}
+        </Card>
+      )}
+
+      {notes.length > 0 && (
+        <Card className="space-y-1.5 border-warning/20 bg-warning/5 p-4 text-sm">
+          <p className="flex items-center gap-2 font-medium text-warning">
+            <Info className="h-4 w-4" />What actually happened
+          </p>
+          {notes.map((n) => <p key={n} className="text-foreground">{n}</p>)}
+        </Card>
+      )}
 
       {run.totals.heldCount > 0 && (
         <Card className="flex items-start gap-2 border-danger/20 bg-danger/5 p-4 text-sm">
@@ -127,6 +190,63 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                           <Breakdown title="Earnings" items={l.earnings} currency={run.currency} />
                           <Breakdown title="Deductions" items={l.deductions} currency={run.currency} />
                         </div>
+
+                        {(adjustmentsByLine.get(l.id) ?? []).length > 0 && (
+                          <div className="mt-4">
+                            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                              Added by accounts
+                            </p>
+                            <ul className="space-y-1">
+                              {(adjustmentsByLine.get(l.id) ?? []).map((a) => (
+                                <li key={a.externalId} className="flex items-center justify-between gap-2 text-sm">
+                                  <span>
+                                    {a.kind === "deduction" ? "−" : "+"} {a.label}
+                                    {a.source === "commission" && (
+                                      <Badge tone="primary" className="ml-2">Commission</Badge>
+                                    )}
+                                    {a.outstandingMinor > 0 && (
+                                      <span className="ml-2 text-xs text-warning">
+                                        only <MoneyDisplay minor={a.recoveredMinor} currency={run.currency} /> recovered,{" "}
+                                        <MoneyDisplay minor={a.outstandingMinor} currency={run.currency} /> carried forward
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="flex items-center gap-2">
+                                    <MoneyDisplay minor={a.amountMinor} currency={run.currency} />
+                                    {openForAdjustment && (
+                                      <button
+                                        type="button"
+                                        aria-label={`Remove ${a.label}`}
+                                        className="text-foreground-muted hover:text-danger"
+                                        onClick={(e) => { e.stopPropagation(); removeAdjustment.mutate(a.externalId); }}
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {openForAdjustment && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="mt-4"
+                            onClick={(e) => { e.stopPropagation(); setAdjusting(l); }}
+                          >
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />Add or deduct
+                          </Button>
+                        )}
+                        <p className="mt-3 text-xs text-foreground-muted">
+                          {/* Enough to tell one account from another without
+                              putting a full IBAN on screen for a passer-by. */}
+                          {l.bank.bankName || "No bank"}
+                          {l.bank.iban ? ` · ${l.bank.iban.slice(0, 4)}…${l.bank.iban.slice(-4)}` : ""}
+                          {l.bank.nameInBank ? ` · ${l.bank.nameInBank}` : ""}
+                        </p>
                       </td>
                     </tr>
                   )}
@@ -140,6 +260,16 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         </div>
       </Card>
 
+      <AdjustDialog
+        line={adjusting}
+        currency={run.currency}
+        open={Boolean(adjusting)}
+        onOpenChange={(o) => { if (!o) setAdjusting(null); }}
+        pending={addAdjustments.isPending}
+        onSubmit={(item) =>
+          addAdjustments.mutate([item], { onSuccess: () => setAdjusting(null) })
+        }
+      />
     </div>
   );
 }

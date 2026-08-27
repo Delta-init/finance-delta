@@ -146,6 +146,53 @@ export interface HrmsEmployee {
   updatedAt: string;
 }
 
+
+export interface HrmsHandoverLine {
+  payslipId: string;
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  departmentId: string | null;
+  departmentName: string;
+  designation: string;
+  grossPay: number;
+  totalDeductions: number;
+  netPay: number;
+  earnings: Array<{ label: string; amount: number }>;
+  deductions: Array<{ label: string; amount: number }>;
+  status: string;
+  paidAt: string | null;
+  bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string };
+  payable: boolean;
+}
+
+export interface HrmsBatchSummary {
+  month: string;
+  status: string;
+  currency: string;
+  employeeCount: number;
+  grossTotal: number;
+  deductionTotal: number;
+  netTotal: number;
+  submittedAt: string | null;
+  financeRunId: string;
+}
+
+export interface HrmsBatch {
+  month: string;
+  organizationId: string;
+  status: string;
+  currency: string;
+  submittedAt: string | null;
+  financeRunId: string;
+  lines: HrmsHandoverLine[];
+  totals: {
+    employeeCount: number; grossTotal: number; deductionTotal: number;
+    netTotal: number; unpayable: number;
+  };
+  snapshot: { employeeCount: number; grossTotal: number; deductionTotal: number; netTotal: number };
+}
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -161,6 +208,24 @@ export const hrmsClient = {
 
   async departments(organizationId: string): Promise<HrmsDepartment[]> {
     return (await request<HrmsDepartment[]>("GET", "/directory/departments", { query: { organizationId } })).data;
+  },
+
+  async payrollBatches(organizationId: string, status?: string): Promise<HrmsBatchSummary[]> {
+    return (await request<HrmsBatchSummary[]>("GET", "/payroll/batches", { query: { organizationId, status } })).data;
+  },
+
+  async payrollBatch(organizationId: string, month: string): Promise<HrmsBatch> {
+    return (await request<HrmsBatch>("GET", `/payroll/batches/${month}`, { query: { organizationId } })).data;
+  },
+
+  /** Take possession of a month. Idempotent on `financeRunId`. */
+  async claimPayrollBatch(organizationId: string, month: string, financeRunId: string) {
+    return (
+      await request<{ month: string; status: string }>("POST", `/payroll/batches/${month}/claim`, {
+        query: { organizationId },
+        body: { organizationId, financeRunId },
+      })
+    ).data;
   },
 
   /**

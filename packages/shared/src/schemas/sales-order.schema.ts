@@ -15,6 +15,8 @@ export const salesOrderSchema = z.object({
   sourceQuoteNumber: z.string().optional(),
   status: salesOrderStatusSchema,
   currency: z.string(),
+  /** Carried over from the quotation, so the order prices the same way it did. */
+  taxInclusive: z.boolean().default(false),
   lineItems: z.array(lineItemSchema),
   subtotalMinor: z.number(),
   discountTotalMinor: z.number(),

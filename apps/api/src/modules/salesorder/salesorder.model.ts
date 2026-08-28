@@ -52,6 +52,14 @@ const salesOrderSchema = new Schema(
       default: "open",
     },
     currency: { type: String, default: "AED" },
+    /**
+     * Carried over from the quotation this order came from.
+     *
+     * Without it a tax-inclusive quote was re-priced as exclusive on
+     * conversion: a line quoted at 105.00 became an order for 110.25, because
+     * the tax already inside the price was added a second time.
+     */
+    taxInclusive: { type: Boolean, default: false },
     lineItems: { type: [lineItemSchema], default: [] },
     subtotalMinor: { type: Number, default: 0 },
     discountTotalMinor: { type: Number, default: 0 },

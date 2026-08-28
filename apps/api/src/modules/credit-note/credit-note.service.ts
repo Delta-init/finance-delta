@@ -3,15 +3,8 @@ import type { CreateCreditNoteInput, CreditNote as DTO, ApplyCreditNoteInput } f
 import { AppError } from "../../lib/http";
 import { nextNumber } from "../sequence/sequence.service";
 import { Invoice } from "../invoice/invoice.model";
+import { computeInvoiceLine, sumInvoiceTotals } from "@delta/shared";
 import { CreditNote, type CreditNoteDoc } from "./credit-note.model";
-
-function lineTotal(l: { quantity: number; unitPriceMinor: number; discountPct: number; taxPct: number }) {
-  const sub = l.quantity * l.unitPriceMinor;
-  const disc = Math.round(sub * l.discountPct / 100);
-  const taxable = sub - disc;
-  const tax = Math.round(taxable * l.taxPct / 100);
-  return taxable + tax;
-}
 
 function toDTO(doc: CreditNoteDoc): DTO {
   return {
@@ -39,13 +32,30 @@ export async function createCreditNote(orgId: string, input: CreateCreditNoteInp
   if (!invoice) throw new AppError("NOT_FOUND", "Invoice not found");
   if (["void"].includes(invoice.status as string)) throw new AppError("CONFLICT", "Cannot credit a voided invoice");
 
-  const lines = input.lineItems.map((l) => ({ ...l, lineTotalMinor: lineTotal(l) }));
-  const subtotalMinor = lines.reduce((s, l) => s + l.quantity * l.unitPriceMinor, 0);
-  const taxTotalMinor = lines.reduce((s, l) => {
-    const taxable = l.quantity * l.unitPriceMinor - Math.round(l.quantity * l.unitPriceMinor * l.discountPct / 100);
-    return s + Math.round(taxable * l.taxPct / 100);
-  }, 0);
-  const totalMinor = lines.reduce((s, l) => s + l.lineTotalMinor, 0);
+  /**
+   * A credit note prices the way the invoice it credits did.
+   *
+   * It used to keep its own arithmetic and always add tax on top, so crediting
+   * a tax-inclusive invoice gave back more than had been charged — 110.25
+   * against a line invoiced at 105.00, because the 5% already inside the price
+   * was applied a second time. Using the shared calculator, with the invoice's
+   * own basis, is what keeps a full credit equal to the invoice.
+   */
+  const taxInclusive = (invoice as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
+  const calcInput = input.lineItems.map((l) => ({
+    quantity: l.quantity,
+    unitPriceMinor: l.unitPriceMinor,
+    discountPct: l.discountPct,
+    taxPct: l.taxPct,
+    taxInclusive,
+  }));
+
+  const lines = input.lineItems.map((l, i) => ({
+    ...l,
+    lineTotalMinor: computeInvoiceLine(calcInput[i]!).lineTotalMinor,
+  }));
+  const totals = sumInvoiceTotals(calcInput);
+  const { subtotalMinor, taxTotalMinor, totalMinor } = totals;
   const creditNoteNumber = await nextNumber(orgId, "credit-note", "CN");
 
   const doc = await CreditNote.create({

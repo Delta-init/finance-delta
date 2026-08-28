@@ -107,6 +107,7 @@ export function toDTO(doc: SalesOrderDoc): SalesOrderDTO {
     sourceQuoteNumber: doc.sourceQuoteNumber ?? undefined,
     status: doc.status as "open" | "fulfilled" | "cancelled",
     currency: doc.currency ?? "AED",
+    taxInclusive: (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false,
     lineItems: doc.lineItems as SalesOrderDTO["lineItems"],
     subtotalMinor: doc.subtotalMinor ?? 0,
     discountTotalMinor: doc.discountTotalMinor ?? 0,
@@ -181,7 +182,10 @@ export async function createFromQuote(
     itemId: (l as unknown as { itemId?: string }).itemId,
   }));
 
-  const { lineItems, totals } = buildLines(raw);
+  // The quote's own pricing basis, or the order re-prices it: buildLines has
+  // always been able to do this, it was simply never told.
+  const taxInclusive = (quote as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
+  const { lineItems, totals } = buildLines(raw, taxInclusive);
   const orderNumber = await nextNumber(orgId, "salesorder", "SO-");
 
   return SalesOrder.create({
@@ -193,6 +197,7 @@ export async function createFromQuote(
     sourceQuoteNumber: quote.quoteNumber,
     status: "open",
     currency: quote.currency,
+    taxInclusive,
     lineItems,
     ...totals,
     tagIds: quote.tagIds ?? [],

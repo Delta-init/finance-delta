@@ -86,6 +86,15 @@ export interface InvoiceLineCalcInput {
   unitPriceMinor: number;
   discountPct?: number;
   taxes?: TaxRateInput[];
+  /**
+   * A single rate, for lines that predate per-code taxes or never needed them.
+   *
+   * Used only when `taxes` is empty. Credit notes still describe a line this
+   * way, and until this was honoured they were taxed at zero however the rate
+   * was set — the exclusive branch read `taxes` too, so `taxPct` reached
+   * nothing at all.
+   */
+  taxPct?: number;
   taxInclusive?: boolean;
 }
 
@@ -108,7 +117,14 @@ export interface InvoiceTotals {
 
 export function computeInvoiceLine(input: InvoiceLineCalcInput): InvoiceLineBreakdown {
   const discountPct = input.discountPct ?? 0;
-  const taxes = input.taxes ?? [];
+  // Per-code taxes win when present; a bare taxPct stands in for them so a line
+  // described the older way is still taxed, and still respects tax-inclusive
+  // pricing, rather than silently coming out at zero.
+  const taxes: TaxRateInput[] = input.taxes?.length
+    ? input.taxes
+    : input.taxPct
+      ? [{ code: "TAX", rate: input.taxPct }]
+      : [];
   const taxInclusive = input.taxInclusive ?? false;
 
   const lineSubtotalMinor = Math.round(input.quantity * input.unitPriceMinor);

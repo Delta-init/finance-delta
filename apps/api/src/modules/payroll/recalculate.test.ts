@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { recalculate } from "./recalculate";
+import { recalculate, lineAdjustmentTotal } from "./recalculate";
 
 /**
  * The signed arithmetic behind a payroll line.
@@ -124,5 +124,54 @@ describe("recalculate", () => {
     const first = r.payableMinor;
     calc(r);
     expect(r.payableMinor).toBe(first);
+  });
+});
+
+describe("lineAdjustmentTotal", () => {
+  const adj = (lineId: string, kind: "addition" | "deduction", amount: number, recovered = amount) =>
+    ({ lineId, kind, amountMinor: amount, recoveredMinor: recovered });
+
+  it("sums only the adjustments belonging to that line", () => {
+    const all = [adj("a", "addition", 100_00), adj("b", "addition", 999_00)];
+    expect(lineAdjustmentTotal(all, "a")).toBe(100_00);
+  });
+
+  it("signs additions up and deductions down", () => {
+    const all = [adj("a", "addition", 500_00), adj("a", "deduction", 200_00)];
+    expect(lineAdjustmentTotal(all, "a")).toBe(300_00);
+  });
+
+  it("counts a deduction by what was recovered, not what was asked", () => {
+    expect(lineAdjustmentTotal([adj("a", "deduction", 2_000_00, 1_400_00)], "a")).toBe(-1_400_00);
+  });
+
+  it("is zero for a line with nothing on it", () => {
+    expect(lineAdjustmentTotal([adj("b", "addition", 100_00)], "a")).toBe(0);
+  });
+
+  /**
+   * The regression this function exists for.
+   *
+   * The write-back subtracts a run's own adjustments from the net HRMS returns,
+   * to recover HRMS's own figure. It used to read `line.adjustmentsMinor`,
+   * which still held the total from before the item that had just landed — so a
+   * commission payment was added to the payable a second time and the transfer
+   * would have gone out too high, with nothing downstream comparing the two.
+   */
+  it("reflects an adjustment the line's cached total has not seen yet", () => {
+    const line = { _id: "a", netFromHrmsMinor: 1_200_00, adjustmentsMinor: 0, payableMinor: 1_200_00 };
+    const adjustments = [adj("a", "addition", 500_00)];
+
+    // What the stale field would have said, versus the truth.
+    expect(line.adjustmentsMinor).toBe(0);
+    expect(lineAdjustmentTotal(adjustments, line._id)).toBe(500_00);
+
+    const netAfterFromHrms = 1_700_00;
+    line.netFromHrmsMinor = netAfterFromHrms - lineAdjustmentTotal(adjustments, line._id);
+    recalculate({
+      status: "imported", lines: [line], adjustments,
+      adjustmentsMinor: 0, payableMinor: 0, amountPaidMinor: 0, balanceMinor: 0,
+    });
+    expect(line.payableMinor).toBe(1_700_00);
   });
 });

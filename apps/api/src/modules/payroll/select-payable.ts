@@ -68,3 +68,16 @@ export function selectPayableLines(lines: PayableLine[], lineIds?: string[]): Se
     skipped,
   };
 }
+
+/**
+ * Is there anything left to do for this person?
+ *
+ * A line whose payable has been consumed entirely — somebody whose whole salary
+ * went to an advance recovery — is owed nothing and will never appear in a
+ * transfer. Counting it as outstanding leaves the run stuck at partially_paid
+ * for ever, waiting on a payment that can never be made.
+ */
+export function isSettled(line: PayableLine): boolean {
+  if (line.status === "paid" || line.status === "on_hold") return true;
+  return line.payableMinor - line.amountPaidMinor <= 0;
+}

@@ -6,7 +6,7 @@ import { Employee } from "../employee/employee.model";
 import { User } from "../user/user.model";
 import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { toMinor, formatMinor } from "./money";
-import { recalculate, type RecalcRun } from "./recalculate";
+import { recalculate, lineAdjustmentTotal, type RecalcAdjustment, type RecalcRun } from "./recalculate";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -69,7 +69,14 @@ function absorbOutcomes(run: PayrollRunDoc, outcomes: HrmsAdjustmentOutcome[]) {
   }
   for (const line of run.lines) {
     const outcome = outcomes.find((o) => o.employeeId === line.hrmsEmployeeId);
-    if (outcome) line.netFromHrmsMinor = toMinor(outcome.netAfter) - line.adjustmentsMinor;
+    if (!outcome) continue;
+    // HRMS reports the net *including* the adjustment it just applied, so the
+    // run's own adjustments have to come back off to leave HRMS's own figure.
+    // Computed from run.adjustments rather than read off the line, whose
+    // adjustmentsMinor is still the total from before this item landed —
+    // reading it there added a commission payment to the payable twice.
+    const mine = lineAdjustmentTotal(run.adjustments as unknown as RecalcAdjustment[], line._id);
+    line.netFromHrmsMinor = toMinor(outcome.netAfter) - mine;
   }
 }
 

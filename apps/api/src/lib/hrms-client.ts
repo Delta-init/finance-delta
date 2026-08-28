@@ -21,7 +21,12 @@ import { buildCanonical } from "./signing";
 const TIMEOUT_MS = 20_000;
 
 function assertConfigured(): { baseUrl: string; clientId: string; secret: string } {
-  const baseUrl = env.HRMS_API_URL.replace(/\/+$/, "");
+  // Trailing slash and a trailing /api/v1 are both stripped. The client signs
+  // and sends the full path itself, so a base URL that already carries the
+  // prefix produces /api/v1/api/v1/... and a 404 that says nothing useful —
+  // and the same .env has NEXT_PUBLIC_API_URL, which does include it, sitting a
+  // few lines away.
+  const baseUrl = env.HRMS_API_URL.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
   if (!baseUrl || !env.HRMS_CLIENT_ID || !env.HRMS_INTEGRATION_SECRET) {
     throw new AppError(
       "VALIDATION_ERROR",

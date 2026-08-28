@@ -49,13 +49,23 @@ export interface RecalcRun {
  * Reassigns rather than accumulates, so calling it twice is safe. That matters:
  * a write-back that fails halfway is re-run, not unwound.
  */
+/**
+ * The signed total of one person's adjustments on a run.
+ *
+ * Exported so nothing computes it a second way. It was computed a second way
+ * once: the write-back read `line.adjustmentsMinor`, which still held the value
+ * from before the item that had just landed, and a commission payment ended up
+ * added to the payable twice.
+ */
+export function lineAdjustmentTotal(adjustments: RecalcAdjustment[], lineId: unknown): number {
+  return adjustments
+    .filter((a) => String(a.lineId) === String(lineId))
+    .reduce((acc, a) => acc + (a.kind === "addition" ? a.amountMinor : -a.recoveredMinor), 0);
+}
+
 export function recalculate(run: RecalcRun): void {
   for (const line of run.lines) {
-    const mine = run.adjustments.filter((a) => String(a.lineId) === String(line._id));
-    const net = mine.reduce(
-      (a, adj) => a + (adj.kind === "addition" ? adj.amountMinor : -adj.recoveredMinor),
-      0,
-    );
+    const net = lineAdjustmentTotal(run.adjustments, line._id);
     line.adjustmentsMinor = net;
     line.payableMinor = line.netFromHrmsMinor + net;
   }

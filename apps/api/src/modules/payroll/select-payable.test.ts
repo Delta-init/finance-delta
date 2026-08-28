@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { selectPayableLines, type PayableLine } from "./select-payable";
+import { selectPayableLines, isSettled, type PayableLine } from "./select-payable";
 
 const line = (
   id: string,
@@ -70,5 +70,27 @@ describe("selectPayableLines", () => {
   it("adds up exactly, with no float drift across many lines", () => {
     const lines = Array.from({ length: 60 }, (_, i) => line(`e${i}`, 3_333_33));
     expect(selectPayableLines(lines).amountMinor).toBe(60 * 3_333_33);
+  });
+});
+
+describe("isSettled", () => {
+  it("treats a paid or held line as settled", () => {
+    expect(isSettled(line("a", 500_00, 500_00, "paid"))).toBe(true);
+    expect(isSettled(line("a", 500_00, 0, "on_hold"))).toBe(true);
+  });
+
+  it("treats somebody still owed money as unsettled", () => {
+    expect(isSettled(line("a", 500_00))).toBe(false);
+    expect(isSettled(line("a", 500_00, 200_00, "partially_paid"))).toBe(false);
+  });
+
+  /**
+   * Somebody whose whole salary went to a recovery is owed nothing and will
+   * never appear in a transfer. Counted as outstanding, they left the run stuck
+   * at partially_paid for ever, waiting on a payment that could not be made.
+   */
+  it("treats a person owed nothing as settled", () => {
+    expect(isSettled(line("a", 0, 0))).toBe(true);
+    expect(isSettled(line("a", 100_00, 300_00, "partially_paid"))).toBe(true);
   });
 });

@@ -199,6 +199,16 @@ export interface HrmsAdjustmentResult {
   outcomes: HrmsAdjustmentOutcome[];
 }
 
+export interface HrmsPaymentResult {
+  duplicate: boolean;
+  message: string;
+  month: string;
+  status: string;
+  paidCount: number;
+  skipped?: number;
+  outstanding?: number;
+}
+
 export interface HrmsBatch {
   month: string;
   organizationId: string;
@@ -270,6 +280,47 @@ export const hrmsClient = {
         `/payroll/batches/${month}/adjustments/${externalId}`,
         { query: { organizationId } },
       )
+    ).data;
+  },
+
+  async approveBatch(organizationId: string, month: string, note?: string) {
+    return (
+      await request<{ month: string; status: string }>("POST", `/payroll/batches/${month}/approve`, {
+        query: { organizationId },
+        body: { organizationId, note },
+      })
+    ).data;
+  },
+
+  async returnBatch(organizationId: string, month: string, reason: string) {
+    return (
+      await request<{ month: string; status: string }>("POST", `/payroll/batches/${month}/return`, {
+        query: { organizationId },
+        body: { organizationId, reason },
+      })
+    ).data;
+  },
+
+  /**
+   * Tell HRMS that money has left the bank.
+   *
+   * Idempotent on `paymentId`, and that matters more here than anywhere else:
+   * by the time this is called the transfer has already happened, so a retry
+   * after a lost response must be recognised rather than argued with.
+   */
+  async recordPayment(
+    organizationId: string,
+    month: string,
+    input: {
+      paymentId: string; paidOn: string; reference?: string; method?: string;
+      lines: Array<{ payslipId: string; amount: number }>;
+    },
+  ): Promise<HrmsPaymentResult> {
+    return (
+      await request<HrmsPaymentResult>("POST", `/payroll/batches/${month}/payments`, {
+        query: { organizationId },
+        body: { organizationId, ...input },
+      })
     ).data;
   },
 

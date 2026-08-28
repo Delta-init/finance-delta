@@ -362,6 +362,20 @@ export async function getRun(orgId: string, id: string) {
       syncedAt: a.syncedAt ? (a.syncedAt as Date).toISOString() : null,
       createdByName: a.createdByName,
     })),
+    payments: run.payments.map((p) => ({
+      paymentId: p.paymentId,
+      method: p.method,
+      paidOn: (p.paidOn as Date).toISOString(),
+      reference: p.reference,
+      bankAccountName: p.bankAccountName,
+      amountMinor: p.amountMinor,
+      payslipCount: p.allocations.length,
+      // Surfaced, never hidden: money moved but HRMS was not told is the one
+      // state where the two systems disagree about whether somebody was paid.
+      syncedToHrms: p.syncedToHrms,
+      syncError: p.syncError,
+      createdByName: p.createdByName,
+    })),
     importedAt: run.importedAt ? (run.importedAt as Date).toISOString() : null,
     importedByName: run.importedByName,
     notes: run.notes,

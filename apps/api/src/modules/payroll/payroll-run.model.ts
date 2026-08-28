@@ -107,6 +107,54 @@ const payrollAdjustmentSchema = new Schema(
   { _id: true, timestamps: { createdAt: true, updatedAt: false } },
 );
 
+/**
+ * One transfer out, and which people it settled.
+ *
+ * Allocated per line rather than stored as a lump, because a payroll is
+ * normally one bulk debit covering many salaries and occasionally a single
+ * transfer for one person. Both are the same shape here: a payment with a list
+ * of who it paid and how much of each.
+ */
+const payrollPaymentSchema = new Schema(
+  {
+    /** Ours, and what makes telling HRMS about it safe to retry. */
+    paymentId: { type: String, required: true },
+    method: { type: String, enum: ["bank_transfer", "cash", "cheque", "card", "online"], required: true },
+    paidOn: { type: Date, required: true },
+    reference: { type: String, default: "" },
+
+    bankAccountId: { type: Schema.Types.ObjectId, ref: "BankAccount", default: null },
+    bankAccountName: { type: String, default: "" },
+    bankTransactionId: { type: Schema.Types.ObjectId, ref: "BankTransaction", default: null },
+
+    amountMinor: { type: Number, required: true },
+    allocations: {
+      type: [
+        new Schema(
+          { lineId: { type: Schema.Types.ObjectId, required: true }, amountMinor: { type: Number, required: true } },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+
+    /**
+     * Whether HRMS has been told. False means the money moved but the payslips
+     * still say issued — the one state this system must never hide, because
+     * nothing else would ever notice it.
+     */
+    syncedToHrms: { type: Boolean, default: false },
+    syncError: { type: String, default: "" },
+    syncAttempts: { type: Number, default: 0 },
+    lastSyncAttemptAt: { type: Date, default: null },
+
+    createdById: { type: Schema.Types.ObjectId, ref: "User" },
+    createdByName: { type: String, default: "" },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: true },
+);
+
 const payrollRunSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
@@ -128,6 +176,7 @@ const payrollRunSchema = new Schema(
 
     lines: { type: [payrollLineSchema], default: [] },
     adjustments: { type: [payrollAdjustmentSchema], default: [] },
+    payments: { type: [payrollPaymentSchema], default: [] },
 
     // Totals as HRMS handed them over, kept apart from the running totals so a
     // later phase's additions never overwrite what was originally agreed.

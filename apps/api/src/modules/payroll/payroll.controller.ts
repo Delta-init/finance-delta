@@ -3,6 +3,7 @@ import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as service from "./payroll.service";
 import * as adjustments from "./adjustments.service";
+import * as payments from "./payment.service";
 import { importPreviewQuerySchema, runQuerySchema } from "./payroll.schemas";
 
 const orgId = (req: Request) => req.auth!.organizationId;
@@ -42,4 +43,21 @@ export const pullCommissions = asyncHandler(async (req: Request, res: Response) 
 
 export const removeAdjustment = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await adjustments.removeAdjustment(orgId(req), req.params.id!, req.params.externalId!));
+});
+
+export const approveRun = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await payments.approveRun(orgId(req), req.params.id!, { userId: req.auth!.userId }));
+});
+
+export const returnRun = asyncHandler(async (req: Request, res: Response) => {
+  const { reason } = req.body as { reason: string };
+  ok(res, await payments.returnRun(orgId(req), req.params.id!, reason));
+});
+
+export const payRun = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await payments.payRun(orgId(req), req.params.id!, req.body as payments.PayInput, { userId: req.auth!.userId }));
+});
+
+export const retrySync = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await payments.retrySync(orgId(req), req.params.id!, req.params.paymentId!));
 });

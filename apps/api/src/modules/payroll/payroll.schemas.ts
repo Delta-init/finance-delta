@@ -29,3 +29,17 @@ export const addAdjustmentsSchema = z.object({
     .min(1)
     .max(200),
 });
+
+export const payRunSchema = z.object({
+  // Empty or absent means everybody still owed. Held lines are never included
+  // either way — the service excludes them.
+  lineIds: z.array(objectId).max(2000).optional(),
+  bankAccountId: objectId,
+  method: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]),
+  paidOn: z.string().min(1),
+  reference: z.string().trim().max(120).optional(),
+});
+
+export const returnRunSchema = z.object({
+  reason: z.string().trim().min(1, "Tell HR what needs fixing").max(300),
+});

@@ -2,7 +2,11 @@ import { Schema, model, Types, type InferSchemaType } from "mongoose";
 
 const transactionMatchSchema = new Schema(
   {
-    type: { type: String, enum: ["invoice", "bill", "expense"], required: true },
+    // "payroll" belongs here for the same reason the others do: a payroll
+    // transfer appears on the bank statement and has to be matchable against
+    // the run that caused it, or every payroll month leaves an unexplained
+    // debit in reconciliation.
+    type: { type: String, enum: ["invoice", "bill", "expense", "payroll"], required: true },
     referenceId: { type: String, required: true },
     referenceNumber: { type: String, required: true },
     amountMinor: { type: Number, required: true },

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type QueryParams } from "@/lib/api";
 import type {
   AdjustmentResult, AvailableBatch, CommissionPullResult,
-  ImportPreview, ImportResult, RunDetail, RunSummary,
+  ImportPreview, ImportResult, PayResult, RunDetail, RunSummary,
 } from "./types";
 
 const KEY = ["payroll"] as const;
@@ -90,5 +90,48 @@ export function useRemoveAdjustment(runId: string) {
     mutationFn: (externalId: string) =>
       api.del<{ externalId: string }>(`payroll/runs/${runId}/adjustments/${encodeURIComponent(externalId)}`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] }),
+  });
+}
+
+export interface PayPayload {
+  lineIds?: string[];
+  bankAccountId: string;
+  method: "bank_transfer" | "cash" | "cheque" | "card" | "online";
+  paidOn: string;
+  reference?: string;
+}
+
+export function useApproveRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ status: string; message: string }>(`payroll/runs/${runId}/approve`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useReturnRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string) =>
+      api.post<{ status: string; message: string }>(`payroll/runs/${runId}/return`, { reason }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function usePayRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: PayPayload) => api.post<PayResult>(`payroll/runs/${runId}/pay`, input),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Re-tell HRMS about a payment it never acknowledged. Moves no money. */
+export function useRetrySync(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentId: string) =>
+      api.post<{ synced: boolean; message: string }>(`payroll/runs/${runId}/payments/${paymentId}/retry-sync`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
   });
 }

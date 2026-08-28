@@ -107,6 +107,7 @@ export interface RunDetail {
   };
   lines: RunLine[];
   adjustments: RunAdjustment[];
+  payments: RunPayment[];
   importedAt: string | null;
   importedByName: string;
   notes: string;
@@ -143,4 +144,32 @@ export interface AdjustmentResult {
 export interface CommissionPullResult extends Partial<AdjustmentResult> {
   pulled: number;
   message: string;
+}
+
+export interface RunPayment {
+  paymentId: string;
+  method: string;
+  paidOn: string;
+  reference: string;
+  bankAccountName: string;
+  amountMinor: number;
+  payslipCount: number;
+  /** False means the money moved but HRMS still shows the payslips as issued. */
+  syncedToHrms: boolean;
+  syncError: string;
+  createdByName: string;
+}
+
+export interface PayResult {
+  paymentId: string;
+  runNumber: string;
+  status: RunStatus;
+  paidCount: number;
+  amountMinor: number;
+  amountFormatted: string;
+  bankTransactionId: string;
+  commissionsSettled: number;
+  heldCount: number;
+  synced: boolean;
+  warning: string | null;
 }

@@ -347,6 +347,24 @@ export default function PayrollMappingPage() {
                       Applied — {applied.employeesCreated} imported, {applied.employeesLinked} updated,{" "}
                       {applied.employeesDeactivated} deactivated, {applied.departmentsCreated + applied.departmentsLinked} department(s) mapped.
                     </p>
+                    {applied.loginsCreated > 0 && (
+                      <p className="mt-1">
+                        {applied.loginsCreated} salesperson login(s) created, so those people can be selected on
+                        an invoice and earn commission. They carry no permissions and no usable password.
+                      </p>
+                    )}
+                    {applied.warnings.length > 0 && (
+                      <div className="mt-2">
+                        <p className="font-medium text-warning">
+                          {/* Mapped and payable, but not able to earn commission
+                              — a smaller problem than a failure, and a different one. */}
+                          {applied.warnings.length} person(s) were mapped but could not be made salespeople:
+                        </p>
+                        <ul className="mt-1 space-y-0.5 text-xs text-warning">
+                          {applied.warnings.map((w) => <li key={w}>{w}</li>)}
+                        </ul>
+                      </div>
+                    )}
                     {applied.errors.length > 0 && (
                       <div className="mt-2">
                         <p className="font-medium text-danger">

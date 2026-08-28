@@ -13,13 +13,16 @@ import { useMappedEmployees } from "@/features/payroll-mapping/api";
 import type { MappedEmployee } from "@/features/payroll-mapping/types";
 
 /**
- * Who payroll knows about, and which of them are salespeople.
+ * Who payroll knows about, and whether each of them can earn on a sale.
  *
- * The two are not the same set, and the page says so rather than leaving it to
- * be inferred: everybody here is mapped from HRMS and will appear on a payroll
- * run, but only those holding a finance login with a commission structure
- * against it can earn commission. On a typical payroll that is a small
- * minority, and the "Salespeople" filter is how you see just them.
+ * Everybody mapped from HRMS is a salesperson: the sync gives each of them a
+ * finance login, because an invoice's salesperson and a commission structure
+ * both reference a User, and without one they could not be picked at all.
+ *
+ * What varies is whether a rate has been set. Somebody with no commission
+ * structure can still be named on an invoice; they simply earn nothing from it,
+ * which is why the filter here finds people with no rate rather than people who
+ * are not salespeople.
  */
 export default function PayrollPeoplePage() {
   const [page, setPage] = useState(1);
@@ -37,7 +40,7 @@ export default function PayrollPeoplePage() {
   });
 
   const rows = data?.data ?? [];
-  const salespeople = rows.filter((r) => r.isSalesperson).length;
+  const withRate = rows.filter((r) => r.hasCommissionStructure).length;
 
   const columns: Column<MappedEmployee>[] = [
     {
@@ -56,14 +59,20 @@ export default function PayrollPeoplePage() {
     { key: "department", header: "Department", cell: (r) => r.department ?? <span className="text-foreground-muted">—</span> },
     {
       key: "role",
-      header: "Role",
+      header: "Commission rate",
       cell: (r) =>
-        r.isSalesperson ? (
+        !r.isSalesperson ? (
+          // No login means they cannot be picked on an invoice at all — which
+          // after a sync only happens when HRMS has no email for them.
+          <span className="inline-flex items-center gap-1.5 text-xs text-warning">
+            <AlertTriangle className="h-3.5 w-3.5" />No login — needs an email in HRMS
+          </span>
+        ) : r.hasCommissionStructure ? (
           <Badge tone="primary">
-            <TrendingUp className="mr-1 inline h-3 w-3" />Salesperson
+            <TrendingUp className="mr-1 inline h-3 w-3" />Rate set
           </Badge>
         ) : (
-          <span className="text-foreground-muted">Payroll only</span>
+          <span className="text-foreground-muted">No rate yet</span>
         ),
     },
     {
@@ -106,7 +115,7 @@ export default function PayrollPeoplePage() {
       <PageHeader
         icon={Users2}
         title="People on payroll"
-        description="Everyone mapped from HRMS. Salespeople are the ones who can also earn commission."
+        description="Everyone mapped from HRMS. All of them can be picked as the salesperson on an invoice; those with a commission rate earn on it."
       />
 
       <Card className="flex flex-wrap items-center gap-2 p-3">
@@ -117,10 +126,10 @@ export default function PayrollPeoplePage() {
           className="w-full sm:w-64"
         />
         <Select value={role} onValueChange={(v) => { setRole(v); setPage(1); }}>
-          <SelectTrigger className="w-[170px]"><SelectValue placeholder="Everyone" /></SelectTrigger>
+          <SelectTrigger className="w-[190px]"><SelectValue placeholder="Everyone" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="">Everyone</SelectItem>
-            <SelectItem value="salesperson">Salespeople only</SelectItem>
+            <SelectItem value="no_commission_rate">No commission rate yet</SelectItem>
           </SelectContent>
         </Select>
         <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
@@ -132,9 +141,9 @@ export default function PayrollPeoplePage() {
           </SelectContent>
         </Select>
         <span className="ml-auto text-xs text-foreground-muted">
-          {/* Stated on the page because "are they all salespeople?" is the
-              question this list exists to answer. */}
-          {salespeople} of {rows.length} shown can earn commission
+          {/* Everyone mapped is a salesperson; the open question is who still
+              has no rate, which is what stops them earning anything. */}
+          {withRate} of {rows.length} shown have a commission rate
         </span>
       </Card>
 

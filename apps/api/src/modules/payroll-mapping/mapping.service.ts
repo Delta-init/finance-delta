@@ -7,6 +7,8 @@ import { User } from "../user/user.model";
 import { CommissionStructure } from "../commission/commission-structure.model";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { Employee } from "../employee/employee.model";
+import { Role } from "../role/role.model";
+import { hashPassword } from "../../lib/password";
 import { PayrollOrgLink } from "./org-link.model";
 import { PayrollDeptLink } from "./dept-link.model";
 
@@ -94,6 +96,85 @@ export async function listOrgLinks(orgId: string) {
     lastSyncedAt: l.lastSyncedAt ? (l.lastSyncedAt as Date).toISOString() : null,
     linkedByName: l.linkedByName,
   }));
+}
+
+/**
+ * The role every mapped employee is given.
+ *
+ * No permissions at all. These accounts exist so that a person can be picked as
+ * the salesperson on an invoice and own a commission structure — both of which
+ * reference a User — not so they can use the finance application. Anybody who
+ * genuinely needs access is given a real role by an administrator afterwards.
+ */
+async function payrollRoleId(orgId: string): Promise<Types.ObjectId> {
+  const role = await Role.findOneAndUpdate(
+    { organizationId: oid(orgId), key: "payroll-employee" },
+    {
+      $setOnInsert: {
+        organizationId: oid(orgId),
+        key: "payroll-employee",
+        name: "Payroll employee",
+        description: "Mapped from HRMS so they can be selected as a salesperson. No access to the application.",
+        permissions: [],
+      },
+    },
+    { upsert: true, new: true },
+  );
+  return role._id;
+}
+
+/**
+ * Find or create the finance login that lets a mapped employee be a salesperson.
+ *
+ * An invoice's salesperson and a commission structure both reference a User, so
+ * without one an employee cannot be selected on either — which is the whole
+ * reason these accounts exist.
+ *
+ * They are not accounts anybody asked for, so they must not be usable. The
+ * password is derived from random bytes that are discarded on the spot: there
+ * is nothing to type, and giving somebody real access means an administrator
+ * setting a password deliberately. Status stays "active" rather than
+ * "suspended" because these are current employees, and suspended reads as
+ * "this person was disabled".
+ *
+ * Returns null when there is no email to create one from. That is reported
+ * rather than worked around — it is the one thing standing between an employee
+ * and earning commission.
+ */
+async function ensureSalespersonLogin(
+  orgId: string,
+  employee: { name: string; email: string; employeeCode: string },
+): Promise<{ userId: Types.ObjectId | null; created: boolean; reason?: string }> {
+  const email = norm(employee.email);
+  if (!email) {
+    return {
+      userId: null, created: false,
+      reason: `${employee.employeeCode} has no email in HRMS, so no finance login could be created`,
+    };
+  }
+
+  // Email is unique across the whole system, so an existing one is reused
+  // rather than fought with.
+  const existing = await User.findOne({ email }).lean();
+  if (existing) {
+    const inOrg = (existing.memberships ?? []).some((m) => String(m.organizationId) === orgId);
+    if (!inOrg) {
+      return {
+        userId: null, created: false,
+        reason: `${employee.employeeCode}: ${email} already belongs to an account outside this organization`,
+      };
+    }
+    return { userId: existing._id, created: false };
+  }
+
+  const user = await User.create({
+    name: employee.name,
+    email,
+    passwordHash: await hashPassword(`${crypto.randomUUID()}${crypto.randomUUID()}`),
+    status: "active",
+    memberships: [{ organizationId: oid(orgId), roleId: await payrollRoleId(orgId), status: "active" }],
+  });
+  return { userId: user._id, created: true };
 }
 
 /** The display name for an audit field, read from the record rather than the token. */
@@ -269,6 +350,17 @@ export async function previewSync(orgId: string, hrmsOrgId: string) {
       if (current.employeeCode !== e.employeeCode) {
         changes.push({ field: "employeeCode", from: current.employeeCode, to: e.employeeCode });
       }
+      // Somebody mapped before every employee became a salesperson, or whose
+      // login could not be created last time. Counted as a change so the row
+      // does not sit quietly at "leave alone" for ever — without this it looks
+      // up to date while being unable to earn commission.
+      if (!current.userId) {
+        changes.push({
+          field: "salesperson login",
+          from: "none",
+          to: e.email ? "will be created" : "needs an email in HRMS",
+        });
+      }
       const shouldBeActive = e.status !== "terminated";
       if (shouldBeActive !== (current.status === "active")) {
         changes.push({ field: "status", from: current.status, to: shouldBeActive ? "active" : "inactive" });
@@ -399,7 +491,16 @@ export async function applySync(
   const deptById = new Map(hrmsDepts.map((d) => [d.id, d]));
   const empById = new Map(hrmsEmps.map((e) => [e.id, e]));
 
-  const result = { departmentsLinked: 0, departmentsCreated: 0, employeesLinked: 0, employeesCreated: 0, employeesDeactivated: 0, skipped: 0, errors: [] as { hrmsId: string; message: string }[] };
+  const result = {
+    departmentsLinked: 0, departmentsCreated: 0,
+    employeesLinked: 0, employeesCreated: 0, employeesDeactivated: 0,
+    /** Salesperson logins minted for people who had none. */
+    loginsCreated: 0,
+    skipped: 0,
+    errors: [] as { hrmsId: string; message: string }[],
+    /** Non-fatal: the employee is mapped, but could not be made a salesperson. */
+    warnings: [] as string[],
+  };
 
   // Departments first: an employee's department mapping is resolved from them.
   for (const d of decisions.filter((x) => x.kind === "department")) {
@@ -467,6 +568,33 @@ export async function applySync(
 
       const existed = await Employee.findOne({ hrmsOrgId, hrmsEmployeeId: remote.id }).lean();
 
+      /**
+       * Every mapped employee gets a finance login, whether or not one was
+       * picked for them.
+       *
+       * An invoice's salesperson and a commission structure both reference a
+       * User, so an employee without one cannot be selected on either — they
+       * would be on the payroll but unable to earn anything through it. The
+       * account carries no permissions and no usable password; it exists to be
+       * chosen from a list.
+       *
+       * A failure here does not fail the import. The employee is still mapped
+       * and still gets paid — they simply cannot be a salesperson yet, and the
+       * reason is reported so somebody can fix the email in HRMS and re-sync.
+       */
+      let userId = d.targetUserId ? oid(d.targetUserId) : (existed?.userId ?? null);
+      if (!userId) {
+        const login = await ensureSalespersonLogin(orgId, {
+          name: remote.name, email: remote.email, employeeCode: remote.employeeCode,
+        });
+        if (login.userId) {
+          userId = login.userId;
+          if (login.created) result.loginsCreated++;
+        } else if (login.reason) {
+          result.warnings.push(login.reason);
+        }
+      }
+
       await Employee.findOneAndUpdate(
         { hrmsOrgId, hrmsEmployeeId: remote.id },
         {
@@ -485,7 +613,7 @@ export async function applySync(
             status: remote.status === "terminated" ? "inactive" : "active",
             hasBankDetails: remote.hasBankDetails,
             lastSyncedAt: new Date(),
-            ...(d.targetUserId ? { userId: oid(d.targetUserId) } : {}),
+            ...(userId ? { userId } : {}),
           },
         },
         { upsert: true, new: true },
@@ -539,9 +667,12 @@ export async function listEmployees(
     .lean();
   const salesUserIds = new Set(structures.map((s) => String(s.salespersonId)));
 
-  if (query.role === "salesperson") {
+  // "Salespeople" now means everybody who can be picked on an invoice, so the
+  // useful filter is the opposite one: who still has no rate configured.
+  if (query.role === "salesperson") filter.userId = { $ne: null };
+  if (query.role === "no_commission_rate") {
     const ids = [...salesUserIds].map((id) => oid(id));
-    filter.userId = { $in: ids };
+    filter.userId = { $ne: null, $nin: ids };
   }
 
   const [rows, total] = await Promise.all([
@@ -589,7 +720,14 @@ export async function listEmployees(
       // The pre-payroll health check, answered per row rather than in aggregate.
       payable: e.status === "active" && e.hasBankDetails && Boolean(e.departmentId),
       hasBankDetails: e.hasBankDetails,
-      isSalesperson: Boolean(e.userId && salesUserIds.has(String(e.userId))),
+      /**
+       * Every mapped employee is a salesperson — that is what the login is for.
+       * Whether they have a *rate* yet is a separate question, and conflating
+       * the two made people who simply had no commission structure look as
+       * though they were not salespeople at all.
+       */
+      isSalesperson: Boolean(e.userId),
+      hasCommissionStructure: Boolean(e.userId && salesUserIds.has(String(e.userId))),
       commissionEarnedMinor: commissionByUser.get(String(e.userId ?? ""))?.earnedMinor ?? 0,
       commissionPaidMinor: commissionByUser.get(String(e.userId ?? ""))?.paidMinor ?? 0,
       lastSyncedAt: e.lastSyncedAt ? (e.lastSyncedAt as Date).toISOString() : null,

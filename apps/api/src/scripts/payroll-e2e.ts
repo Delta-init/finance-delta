@@ -132,8 +132,19 @@ async function main() {
 
   const mapped = await Employee.countDocuments({ organizationId: org._id });
   check("employees persisted in finance", mapped === 3, `${mapped} rows`);
+  // Every mapped employee gets one, because an invoice's salesperson and a
+  // commission structure both reference a User — without a login they could not
+  // be picked on either.
   const withLogin = await Employee.countDocuments({ organizationId: org._id, userId: { $ne: null } });
-  check("only the salesperson carries a login", withLogin === 1, `${withLogin} linked`);
+  check("every mapped employee is a salesperson", withLogin === 3, `${withLogin} of 3 have a login`);
+
+  const provisioned = await User.findOne({ email: "e2e002@e2e.local" }).lean();
+  check("a provisioned login exists for somebody who had none", Boolean(provisioned), provisioned?.email);
+  check(
+    "provisioned logins carry no permissions",
+    Boolean(provisioned) &&
+      (await Role.findById(provisioned!.memberships[0]!.roleId).lean())?.permissions.length === 0,
+  );
 
   // ── Commission owed ────────────────────────────────────────────────────
   step("3. Commission the salesperson has earned");

@@ -35,7 +35,7 @@ export const syncPreviewQuerySchema = z.object({
 export const employeeQuerySchema = z.object({
   hrmsOrgId: objectId.optional(),
   status: z.enum(["active", "inactive"]).optional(),
-  role: z.enum(["salesperson"]).optional(),
+  role: z.enum(["salesperson", "no_commission_rate"]).optional(),
   search: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),

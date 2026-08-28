@@ -125,7 +125,9 @@ async function main() {
   const mapped = await Employee.countDocuments({ organizationId: org._id });
   check("employees persisted in finance", mapped === 3, `${mapped} rows`);
   const withLogin = await Employee.countDocuments({ organizationId: org._id, userId: { $ne: null } });
-  check("only the salesperson carries a login", withLogin === 1, `${withLogin} linked`);
+  // Every mapped employee gets one — that is what makes them selectable as the
+  // salesperson on an invoice.
+  check("every mapped employee is a salesperson", withLogin === 3, `${withLogin} of 3 have a login`);
 
   // ── Commission owed ────────────────────────────────────────────────────
   step("3. Commission the salesperson has earned");

@@ -97,8 +97,12 @@ export interface ApplyResult {
   employeesLinked: number;
   employeesCreated: number;
   employeesDeactivated: number;
+  /** Salesperson logins minted for mapped people who had none. */
+  loginsCreated: number;
   skipped: number;
   errors: { hrmsId: string; message: string }[];
+  /** Non-fatal: the person is mapped, but could not be made a salesperson. */
+  warnings: string[];
 }
 
 export interface MappedEmployee {
@@ -115,8 +119,10 @@ export interface MappedEmployee {
   hrmsStatus: string;
   payable: boolean;
   hasBankDetails: boolean;
-  /** Holds a finance login with an active commission structure against it. */
+  /** Has a finance login, so can be picked as the salesperson on an invoice. */
   isSalesperson: boolean;
+  /** Has a commission structure, so a rate is actually configured for them. */
+  hasCommissionStructure: boolean;
   commissionEarnedMinor: number;
   commissionPaidMinor: number;
   lastSyncedAt: string | null;

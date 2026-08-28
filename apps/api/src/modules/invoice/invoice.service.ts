@@ -221,7 +221,7 @@ export async function createInvoice(
 ): Promise<InvoiceDTO> {
   const [customer, salesperson, org] = await Promise.all([
     Customer.findOne({ _id: input.customerId, organizationId: orgId }),
-    User.findOne({ _id: input.salespersonId, organizationId: orgId }),
+    User.findOne({ _id: input.salespersonId, "memberships.organizationId": orgId }),
     Organization.findById(orgId),
   ]);
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
@@ -300,7 +300,7 @@ export async function updateInvoice(
     doc.customerName = customer.name;
   }
   if (input.salespersonId) {
-    const salesperson = await User.findOne({ _id: input.salespersonId, organizationId: orgId });
+    const salesperson = await User.findOne({ _id: input.salespersonId, "memberships.organizationId": orgId });
     if (!salesperson) throw new AppError("VALIDATION_ERROR", "Invalid salesperson selected");
     doc.salespersonId = salesperson._id;
     doc.salespersonName = salesperson.name;

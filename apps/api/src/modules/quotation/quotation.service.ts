@@ -301,7 +301,7 @@ export async function convertToInvoice(
   if (remaining <= 0) throw new AppError("CONFLICT", "Quotation is already fully invoiced");
 
   const [salesperson, org] = await Promise.all([
-    User.findOne({ _id: userId, organizationId: orgId }),
+    User.findOne({ _id: userId, "memberships.organizationId": orgId }),
     Organization.findById(orgId),
   ]);
   if (!salesperson) throw new AppError("NOT_FOUND", "User not found");

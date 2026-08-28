@@ -94,7 +94,7 @@ export const updateReconciliation = asyncHandler(async (req, res) => {
 
 export const completeReconciliation = asyncHandler(async (req: Request, res: Response) => {
   const user = await import("../user/user.model").then(({ User }) =>
-    User.findOne({ _id: uid(req), organizationId: org(req) }),
+    User.findOne({ _id: uid(req), "memberships.organizationId": org(req) }),
   );
   const completedByName = user?.name ?? "Unknown";
   ok(res, await svc.completeReconciliation(org(req), req.params.sessionId!, completedByName));

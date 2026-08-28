@@ -31,7 +31,7 @@ export const submit = asyncHandler(async (req, res) => {
 
 export const approve = asyncHandler(async (req: Request, res: Response) => {
   const user = await import("../user/user.model").then(({ User }) =>
-    User.findOne({ _id: uid(req), organizationId: org(req) }),
+    User.findOne({ _id: uid(req), "memberships.organizationId": org(req) }),
   );
   const approverName = user?.name ?? "Unknown";
   ok(res, await svc.approveExpense(org(req), req.params.id!, uid(req), approverName));
@@ -39,7 +39,7 @@ export const approve = asyncHandler(async (req: Request, res: Response) => {
 
 export const reject = asyncHandler(async (req: Request, res: Response) => {
   const user = await import("../user/user.model").then(({ User }) =>
-    User.findOne({ _id: uid(req), organizationId: org(req) }),
+    User.findOne({ _id: uid(req), "memberships.organizationId": org(req) }),
   );
   const approverName = user?.name ?? "Unknown";
   ok(res, await svc.rejectExpense(org(req), req.params.id!, uid(req), approverName, req.body));

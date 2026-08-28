@@ -123,7 +123,7 @@ export async function createExpense(
   userId: string,
   input: CreateExpenseInput,
 ): Promise<ExpenseDTO> {
-  const user = await User.findOne({ _id: userId, organizationId: orgId });
+  const user = await User.findOne({ _id: userId, "memberships.organizationId": orgId });
   if (!user) throw new AppError("NOT_FOUND", "User not found");
 
   const taxMinor = Math.round(input.amountMinor * (input.taxPct ?? 0) / 100);

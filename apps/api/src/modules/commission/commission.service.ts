@@ -167,7 +167,7 @@ export async function createStructure(
   input: CreateCommissionStructureInput,
   createdById: string,
 ): Promise<CommissionStructureDTO> {
-  const user = await User.findOne({ _id: oid(input.salespersonId), organizationId: oid(orgId) }).lean();
+  const user = await User.findOne({ _id: oid(input.salespersonId), "memberships.organizationId": oid(orgId) }).lean();
   if (!user) throw new AppError("NOT_FOUND", "Salesperson not found");
 
   const doc = await CommissionStructure.create({
@@ -205,7 +205,7 @@ export async function updateStructure(
   }
 
   if (input.salespersonId && input.salespersonId !== String(d.salespersonId)) {
-    const user = await User.findOne({ _id: oid(input.salespersonId), organizationId: oid(orgId) }).lean();
+    const user = await User.findOne({ _id: oid(input.salespersonId), "memberships.organizationId": oid(orgId) }).lean();
     if (!user) throw new AppError("NOT_FOUND", "Salesperson not found");
     (doc as unknown as Record<string, unknown>).salespersonId = oid(input.salespersonId);
     (doc as unknown as Record<string, unknown>).salespersonName = (user as unknown as { name: string }).name;

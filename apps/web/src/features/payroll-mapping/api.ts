@@ -81,6 +81,10 @@ export function useApplySync() {
   });
 }
 
+/**
+ * The mapped roster. `role: "salesperson"` narrows it to the people who can
+ * actually earn commission, which is a subset — most of a payroll is not.
+ */
 export function useMappedEmployees(params: QueryParams) {
   return useQuery({
     queryKey: [...KEY, "employees", params],

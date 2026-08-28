@@ -4,6 +4,8 @@ import { hrmsClient, type HrmsDepartment, type HrmsEmployee } from "../../lib/hr
 import { Organization } from "../organization/organization.model";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
+import { CommissionStructure } from "../commission/commission-structure.model";
+import { CommissionRecord } from "../commission/commission-record.model";
 import { Employee } from "../employee/employee.model";
 import { PayrollOrgLink } from "./org-link.model";
 import { PayrollDeptLink } from "./dept-link.model";
@@ -502,9 +504,22 @@ export async function applySync(
 
 // ── Mapped roster ────────────────────────────────────────────────────────────
 
+/**
+ * The mapped roster, and which of those people can earn commission.
+ *
+ * Being mapped and being a salesperson are not the same thing, and the
+ * difference matters: a mapped employee is somebody payroll knows about, while
+ * a salesperson is one of the minority who also holds a finance login and has a
+ * commission structure against it. Most of a payroll is the former.
+ */
 export async function listEmployees(
   orgId: string,
-  query: { hrmsOrgId?: string; status?: string; search?: string; page?: number; limit?: number },
+  query: {
+    hrmsOrgId?: string; status?: string; search?: string;
+    /** "salesperson" narrows to people who can actually earn commission. */
+    role?: string;
+    page?: number; limit?: number;
+  },
 ) {
   const page = Math.max(1, query.page ?? 1);
   const limit = Math.min(200, Math.max(1, query.limit ?? 50));
@@ -516,6 +531,19 @@ export async function listEmployees(
     filter.$or = [{ name: rx }, { employeeCode: rx }, { email: rx }];
   }
 
+  // Commission hangs off the finance login, not off the employee record, so the
+  // set of salespeople is worked out here rather than stored on the row —
+  // storing it would go stale the moment somebody's structure changed.
+  const structures = await CommissionStructure.find({ organizationId: oid(orgId), isActive: true })
+    .select("salespersonId")
+    .lean();
+  const salesUserIds = new Set(structures.map((s) => String(s.salespersonId)));
+
+  if (query.role === "salesperson") {
+    const ids = [...salesUserIds].map((id) => oid(id));
+    filter.userId = { $in: ids };
+  }
+
   const [rows, total] = await Promise.all([
     Employee.find(filter)
       .populate("departmentId", "name")
@@ -525,6 +553,25 @@ export async function listEmployees(
       .lean(),
     Employee.countDocuments(filter),
   ]);
+
+  // Only for the people on this page, and only those who could have any.
+  const pageSalesIds = rows.filter((e) => e.userId && salesUserIds.has(String(e.userId))).map((e) => e.userId);
+  const commissionByUser = new Map<string, { earnedMinor: number; paidMinor: number }>();
+  if (pageSalesIds.length) {
+    const agg = await CommissionRecord.aggregate([
+      { $match: { organizationId: oid(orgId), salespersonId: { $in: pageSalesIds }, status: { $ne: "cancelled" } } },
+      {
+        $group: {
+          _id: "$salespersonId",
+          earnedMinor: { $sum: { $cond: [{ $eq: ["$status", "earned"] }, "$commissionMinor", 0] } },
+          paidMinor: { $sum: { $cond: [{ $eq: ["$status", "paid"] }, "$commissionMinor", 0] } },
+        },
+      },
+    ]);
+    for (const a of agg as Array<{ _id: Types.ObjectId; earnedMinor: number; paidMinor: number }>) {
+      commissionByUser.set(String(a._id), { earnedMinor: a.earnedMinor, paidMinor: a.paidMinor });
+    }
+  }
 
   return {
     data: rows.map((e) => ({
@@ -542,6 +589,9 @@ export async function listEmployees(
       // The pre-payroll health check, answered per row rather than in aggregate.
       payable: e.status === "active" && e.hasBankDetails && Boolean(e.departmentId),
       hasBankDetails: e.hasBankDetails,
+      isSalesperson: Boolean(e.userId && salesUserIds.has(String(e.userId))),
+      commissionEarnedMinor: commissionByUser.get(String(e.userId ?? ""))?.earnedMinor ?? 0,
+      commissionPaidMinor: commissionByUser.get(String(e.userId ?? ""))?.paidMinor ?? 0,
       lastSyncedAt: e.lastSyncedAt ? (e.lastSyncedAt as Date).toISOString() : null,
     })),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },

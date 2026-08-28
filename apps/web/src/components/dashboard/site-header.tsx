@@ -137,6 +137,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   payroll: "Payroll",
   mapping: "Mapping",
   runs: "Runs",
+  people: "People",
   settings: "Settings",
   admin: "Administration",
   users: "Users",

@@ -115,5 +115,9 @@ export interface MappedEmployee {
   hrmsStatus: string;
   payable: boolean;
   hasBankDetails: boolean;
+  /** Holds a finance login with an active commission structure against it. */
+  isSalesperson: boolean;
+  commissionEarnedMinor: number;
+  commissionPaidMinor: number;
   lastSyncedAt: string | null;
 }

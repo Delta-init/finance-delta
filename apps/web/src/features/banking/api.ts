@@ -8,6 +8,7 @@ import type {
   BankTransaction,
   ReconciliationSession,
   CreateBankTransactionInput,
+  UpdateBankTransactionInput,
   BulkImportTransactionsInput,
   MatchTransactionInput,
   StartReconciliationInput,
@@ -89,6 +90,39 @@ export function useCreateBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (input: CreateBankTransactionInput) =>
       api.post<BankTransaction>(`bank-accounts/${accountId}/transactions`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}
+
+/**
+ * Correcting or removing an entry.
+ *
+ * Both invalidate the account as well as the list: a change anywhere restates
+ * the running balance down the whole statement and the account's own balance,
+ * so the figures on screen above the table are stale too.
+ */
+export function useUpdateBankTransaction(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ txId, input }: { txId: string; input: UpdateBankTransactionInput }) =>
+      api.patch<BankTransaction>(`bank-accounts/${accountId}/transactions/${txId}`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}
+
+export function useDeleteBankTransaction(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (txId: string) =>
+      api.del<void>(`bank-accounts/${accountId}/transactions/${txId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: txKey(accountId) });
       qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });

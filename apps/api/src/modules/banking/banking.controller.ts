@@ -63,6 +63,15 @@ export const unmatchTransaction = asyncHandler(async (req, res) => {
   ok(res, await svc.unmatchTransaction(org(req), req.params.txId!));
 });
 
+export const updateTransaction = asyncHandler(async (req, res) => {
+  ok(res, await svc.updateTransaction(org(req), req.params.id!, req.params.txId!, req.body));
+});
+
+export const deleteTransaction = asyncHandler(async (req, res) => {
+  await svc.deleteTransaction(org(req), req.params.id!, req.params.txId!);
+  res.status(204).end();
+});
+
 export const excludeTransaction = asyncHandler(async (req, res) => {
   ok(res, await svc.excludeTransaction(org(req), req.params.txId!));
 });

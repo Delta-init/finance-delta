@@ -9,6 +9,7 @@ import type {
   BankTransactionQuery,
   Paginated,
   CreateBankTransactionInput,
+  UpdateBankTransactionInput,
   BulkImportTransactionsInput,
   MatchTransactionInput,
   StartReconciliationInput,
@@ -18,6 +19,7 @@ import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { BankAccount, type BankAccountDoc } from "./bank-account.model";
 import { BankTransaction, type BankTransactionDoc } from "./bank-transaction.model";
+import { computeRunningBalances, type BalanceRow } from "./running-balance";
 import { ReconciliationSession, type ReconciliationSessionDoc } from "./reconciliation.model";
 
 function dateOnly(d: Date | undefined): string {
@@ -209,6 +211,128 @@ async function getLastRunningBalance(orgId: string, accountId: string): Promise<
   return (account as unknown as { currentBalanceMinor: number }).currentBalanceMinor;
 }
 
+/**
+ * Restate the running balance down an account, and the account's own balance.
+ *
+ * Called after anything that changes an amount or a date — an insert, an edit,
+ * a deletion. A transaction's running balance is the account's balance as at
+ * that point in the statement, so it belongs to the sequence rather than to the
+ * row, and a single correction moves every figure below it.
+ *
+ * Writes only the rows that actually moved, so correcting something recent in a
+ * long history touches a handful of documents rather than all of them.
+ */
+export async function recalculateRunningBalances(
+  orgId: string,
+  accountId: Types.ObjectId,
+): Promise<number> {
+  const account = await BankAccount.findOne({ _id: accountId, organizationId: new Types.ObjectId(orgId) });
+  if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
+
+  const txs = await BankTransaction.find({ accountId, organizationId: new Types.ObjectId(orgId) })
+    .select("date amountMinor runningBalanceMinor createdAt")
+    .lean();
+
+  const rows: BalanceRow[] = txs.map((t) => ({
+    id: String(t._id),
+    dateMs: new Date(t.date).getTime(),
+    // Insertion order as the tiebreak within a day. `_id` is monotonic when
+    // createdAt is missing on rows written before timestamps were added.
+    seq: t.createdAt ? new Date(t.createdAt as Date).getTime() : 0,
+    amountMinor: t.amountMinor,
+    runningBalanceMinor: t.runningBalanceMinor ?? 0,
+  }));
+
+  const { changed, closingBalanceMinor } = computeRunningBalances(account.openingBalanceMinor ?? 0, rows);
+
+  if (changed.length) {
+    await BankTransaction.bulkWrite(
+      changed.map((c) => ({
+        updateOne: {
+          filter: { _id: new Types.ObjectId(c.id) },
+          update: { $set: { runningBalanceMinor: c.runningBalanceMinor } },
+        },
+      })),
+    );
+  }
+  await BankAccount.updateOne({ _id: accountId }, { $set: { currentBalanceMinor: closingBalanceMinor } });
+  return closingBalanceMinor;
+}
+
+/**
+ * Whether a transaction is still somebody's to change.
+ *
+ * Two things put it beyond reach. A reconciled row is evidence: it was signed
+ * off against a statement balance, and altering it would quietly invalidate
+ * that sign-off with nothing to show for it. A matched row belongs to the
+ * document it was matched to — a payroll payment records the transaction it
+ * created, so deleting it here would leave that payment pointing at nothing and
+ * its reversal unable to give the money back.
+ */
+// Return type inferred from findOne, so the caller gets a hydrated document it
+// can save rather than the plain shape BankTransactionDoc describes.
+async function assertEditable(orgId: string, accountId: string, txId: string) {
+  const tx = await BankTransaction.findOne({
+    _id: new Types.ObjectId(txId),
+    accountId: new Types.ObjectId(accountId),
+    organizationId: new Types.ObjectId(orgId),
+  });
+  if (!tx) throw new AppError("NOT_FOUND", "Transaction not found");
+
+  if (tx.isReconciled) {
+    throw new AppError(
+      "CONFLICT",
+      "This transaction has been reconciled and can no longer be changed. Add a correcting entry instead.",
+    );
+  }
+  if (tx.matches?.length) {
+    const m = tx.matches[0]!;
+    throw new AppError(
+      "CONFLICT",
+      `This transaction is matched to ${m.type} ${m.referenceNumber}. Unmatch it first, or change it from there.`,
+    );
+  }
+  return tx;
+}
+
+/** Correct an entry. Only what somebody typed; the rest is derived. */
+export async function updateTransaction(
+  orgId: string,
+  accountId: string,
+  txId: string,
+  input: UpdateBankTransactionInput,
+): Promise<BankTransactionDTO> {
+  const tx = await assertEditable(orgId, accountId, txId);
+
+  if (input.date !== undefined) tx.date = new Date(input.date);
+  if (input.description !== undefined) tx.description = input.description;
+  if (input.reference !== undefined) tx.reference = input.reference;
+  if (input.notes !== undefined) tx.notes = input.notes;
+  if (input.amountMinor !== undefined) {
+    tx.amountMinor = input.amountMinor;
+    // Direction follows the sign, exactly as it does on the way in.
+    tx.type = input.amountMinor >= 0 ? "credit" : "debit";
+  }
+  await tx.save();
+
+  await recalculateRunningBalances(orgId, tx.accountId as Types.ObjectId);
+
+  const fresh = await BankTransaction.findById(tx._id);
+  return txToDTO(fresh!);
+}
+
+/** Remove an entry that should never have been there. */
+export async function deleteTransaction(
+  orgId: string,
+  accountId: string,
+  txId: string,
+): Promise<void> {
+  const tx = await assertEditable(orgId, accountId, txId);
+  const account = tx.accountId as Types.ObjectId;
+  await BankTransaction.deleteOne({ _id: tx._id });
+  await recalculateRunningBalances(orgId, account);
+}
+
 export async function addTransaction(
   orgId: string,
   accountId: string,
@@ -222,8 +346,6 @@ export async function addTransaction(
   });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
-  const prevBalance = (account.currentBalanceMinor as number) ?? 0;
-  const newBalance = prevBalance + input.amountMinor;
   const txType = input.amountMinor >= 0 ? "credit" : "debit";
 
   const doc = await BankTransaction.create({
@@ -236,18 +358,20 @@ export async function addTransaction(
     reference: input.reference ?? "",
     amountMinor: input.amountMinor,
     type: txType,
-    runningBalanceMinor: newBalance,
+    // Filled in by the recompute below, which places the row by its date rather
+    // than assuming it belongs at the end. Entering a back-dated transaction
+    // used to stamp it with today's closing balance and leave every row after
+    // it unchanged, so the column stopped agreeing with itself.
+    runningBalanceMinor: 0,
     source,
     importBatchId: importBatchId ?? undefined,
     notes: input.notes ?? "",
   });
 
-  await BankAccount.updateOne(
-    { _id: account._id },
-    { $set: { currentBalanceMinor: newBalance } },
-  );
+  await recalculateRunningBalances(orgId, account._id);
 
-  return txToDTO(doc);
+  const fresh = await BankTransaction.findById(doc._id);
+  return txToDTO(fresh!);
 }
 
 export async function bulkImportTransactions(
@@ -288,14 +412,19 @@ export async function bulkImportTransactions(
   });
 
   const inserted = await BankTransaction.insertMany(docs);
-  await BankAccount.updateOne(
-    { _id: account._id },
-    { $set: { currentBalanceMinor: runningBalance } },
-  );
+
+  // The batch was sorted and numbered on its own, which is right only when it
+  // lands entirely after everything already on the account. Importing a
+  // statement that overlaps existing entries needs the whole column restated.
+  await recalculateRunningBalances(orgId, account._id);
+
+  const fresh = await BankTransaction.find({
+    _id: { $in: (inserted as unknown as BankTransactionDoc[]).map((d) => d._id) },
+  });
 
   return {
     count: inserted.length,
-    transactions: (inserted as unknown as BankTransactionDoc[]).map(txToDTO),
+    transactions: fresh.map(txToDTO),
   };
 }
 

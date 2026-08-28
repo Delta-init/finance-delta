@@ -67,6 +67,26 @@ export const createBankTransactionSchema = z.object({
 });
 export type CreateBankTransactionInput = z.infer<typeof createBankTransactionSchema>;
 
+/**
+ * Correcting an entry after the fact.
+ *
+ * Only what a person actually typed. `type` follows the sign of the amount,
+ * and the running balance is derived from every transaction on the account in
+ * date order — neither is somebody's to set, and accepting them here would let
+ * a correction contradict the ledger it sits in.
+ */
+export const updateBankTransactionSchema = z
+  .object({
+    date: z.string().min(1),
+    description: z.string().min(1, "Description is required"),
+    reference: z.string(),
+    amountMinor: z.number(),
+    notes: z.string(),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, "Nothing to change");
+export type UpdateBankTransactionInput = z.infer<typeof updateBankTransactionSchema>;
+
 export const bulkImportTransactionsSchema = z.object({
   transactions: z.array(createBankTransactionSchema).min(1, "At least one transaction required"),
   importBatchId: z.string().optional(),

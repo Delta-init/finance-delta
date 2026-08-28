@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, Upload, BarChart3, Search, X, TrendingUp, TrendingDown,
-  CheckCircle2, CircleDot, Ban, Copy,
+  CheckCircle2, CircleDot, Ban, Copy, Pencil, Trash2, AlertTriangle,
 } from "lucide-react";
 import {
   type BankTransaction,
@@ -17,6 +17,9 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
@@ -29,7 +32,10 @@ import {
   useMarkDuplicate,
   useUnmatchTransaction,
   useDeactivateBankAccount,
+  useUpdateBankTransaction,
+  useDeleteBankTransaction,
 } from "@/features/banking/api";
+import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -54,6 +60,10 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [source, setSource] = useState("all");
+  const [editing, setEditing] = useState<BankTransaction | null>(null);
+  const [deleting, setDeleting] = useState<BankTransaction | null>(null);
+  const updateTx = useUpdateBankTransaction(id);
+  const deleteTx = useDeleteBankTransaction(id);
   useEffect(() => t.resetPage(), [status, dateFrom, dateTo, source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: txData, isLoading: txLoading } = useBankTransactions(id, {
@@ -143,7 +153,13 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
       key: "actions",
       header: "",
       cell: (tx) => (
-        <TxActions tx={tx} accountId={id} onAction={handleTxAction} />
+        <TxActions
+          tx={tx}
+          accountId={id}
+          onAction={handleTxAction}
+          onEdit={setEditing}
+          onDelete={setDeleting}
+        />
       ),
     },
   ];
@@ -329,6 +345,60 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         isLoading={txLoading}
         emptyMessage="No transactions found."
       />
+
+      <EditTransactionDialog
+        tx={editing}
+        open={Boolean(editing)}
+        onOpenChange={(o) => { if (!o) { setEditing(null); updateTx.reset(); } }}
+        pending={updateTx.isPending}
+        error={updateTx.error ? (updateTx.error as Error).message : null}
+        onSubmit={(input) =>
+          editing &&
+          updateTx.mutate(
+            { txId: editing.id, input },
+            { onSuccess: () => { setEditing(null); toast.success("Transaction updated"); } },
+          )
+        }
+      />
+
+      {deleting && (
+        <Dialog open onOpenChange={(o) => { if (!o) { setDeleting(null); deleteTx.reset(); } }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete this transaction?</DialogTitle>
+              <DialogDescription>
+                {deleting.description} · {deleting.date}
+              </DialogDescription>
+            </DialogHeader>
+            <p className="flex items-start gap-2 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <span>
+                {/* Said plainly, because the figure people are looking at while
+                    they decide is the one that is about to move. */}
+                The running balance is recalculated in date order, so every figure after this entry
+                will change, and so will the account balance. This cannot be undone.
+              </span>
+            </p>
+            {deleteTx.error && (
+              <p className="text-sm text-danger">{(deleteTx.error as Error).message}</p>
+            )}
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                loading={deleteTx.isPending}
+                onClick={() =>
+                  deleteTx.mutate(deleting.id, {
+                    onSuccess: () => { setDeleting(null); toast.success("Transaction deleted"); },
+                  })
+                }
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -337,17 +407,44 @@ function TxActions({
   tx,
   accountId,
   onAction,
+  onEdit,
+  onDelete,
 }: {
   tx: BankTransaction;
   accountId: string;
   onAction: (action: () => Promise<unknown>, msg: string) => Promise<void>;
+  onEdit: (tx: BankTransaction) => void;
+  onDelete: (tx: BankTransaction) => void;
 }) {
   const exclude = useExcludeTransaction(accountId, tx.id);
   const markDup = useMarkDuplicate(accountId, tx.id);
   const unmatch = useUnmatchTransaction(accountId, tx.id);
 
+  // Reconciled rows are evidence and matched rows belong to the document they
+  // were matched to, so neither offers editing at all rather than offering it
+  // and being refused.
+  const frozen = tx.isReconciled || (tx.matches?.length ?? 0) > 0;
+
   return (
     <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+      {!frozen && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(tx); }}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+            title="Edit"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(tx); }}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-danger"
+            title="Delete"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </>
+      )}
       {tx.status === "matched" && (
         <button
           onClick={(e) => { e.stopPropagation(); onAction(() => unmatch.mutateAsync(undefined), "Unmatched"); }}

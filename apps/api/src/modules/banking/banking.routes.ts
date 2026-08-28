@@ -3,6 +3,7 @@ import {
   createBankAccountSchema,
   updateBankAccountSchema,
   createBankTransactionSchema,
+  updateBankTransactionSchema,
   bulkImportTransactionsSchema,
   matchTransactionSchema,
   startReconciliationSchema,
@@ -28,6 +29,10 @@ router.get("/:id/transactions", requirePermission("banking:read"), c.listTransac
 router.post("/:id/transactions", requirePermission("banking:write"), validateBody(createBankTransactionSchema), c.createTransaction);
 router.post("/:id/transactions/bulk", requirePermission("banking:write"), validateBody(bulkImportTransactionsSchema), c.bulkImport);
 router.get("/:id/transactions/:txId", requirePermission("banking:read"), c.getTransaction);
+// Correcting or removing an entry. Refused once it has been reconciled or
+// matched to a document — see assertEditable in the service.
+router.patch("/:id/transactions/:txId", requirePermission("banking:write"), validateBody(updateBankTransactionSchema), c.updateTransaction);
+router.delete("/:id/transactions/:txId", requirePermission("banking:write"), c.deleteTransaction);
 router.post("/:id/transactions/:txId/match", requirePermission("banking:write"), validateBody(matchTransactionSchema), c.matchTransaction);
 router.post("/:id/transactions/:txId/unmatch", requirePermission("banking:write"), c.unmatchTransaction);
 router.post("/:id/transactions/:txId/exclude", requirePermission("banking:write"), c.excludeTransaction);

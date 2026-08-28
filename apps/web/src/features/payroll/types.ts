@@ -173,3 +173,19 @@ export interface PayResult {
   synced: boolean;
   warning: string | null;
 }
+
+export interface Reconciliation {
+  unsyncedPayments: Array<{
+    runId: string; runNumber: string; period: string; paymentId: string;
+    amountMinor: number; currency: string; paidOn: string; error: string; attempts: number;
+  }>;
+  heldPeople: Array<{
+    runId: string; runNumber: string; period: string; currency: string;
+    name: string; employeeCode: string; reason: string; payableMinor: number;
+  }>;
+  unfinished: Array<{
+    runId: string; runNumber: string; period: string; currency: string;
+    status: string; outstandingMinor: number; peopleLeft: number;
+  }>;
+  total: number;
+}

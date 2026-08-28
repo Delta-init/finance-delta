@@ -43,3 +43,9 @@ export const payRunSchema = z.object({
 export const returnRunSchema = z.object({
   reason: z.string().trim().min(1, "Tell HR what needs fixing").max(300),
 });
+
+export const reversePaymentSchema = z.object({
+  // Required: a payment that came back with no explanation is one nobody can
+  // account for later.
+  reason: z.string().trim().min(1, "Say why the payment is being reversed").max(300),
+});

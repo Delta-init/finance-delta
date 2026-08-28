@@ -10,6 +10,7 @@ import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { formatMinor } from "./money";
 import { recalculate, type RecalcRun } from "./recalculate";
 import { selectPayableLines, type PayableLine } from "./select-payable";
+import { postPayrollExpense, voidPayrollExpense } from "./posting.service";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -182,6 +183,8 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   // ── Then everything that follows from it ─────────────────────────────────
   const sync = await syncPaymentToHrms(run, paymentId);
   const commissions = await settleCommissions(orgId, run, allocations.map((a) => String(a.lineId)));
+  // Without this the bank balance drops and no report explains why.
+  const expenseId = await postPayrollExpense(orgId, run, paymentId, { userId: actor.userId, name: user?.name ?? "" });
   await run.save();
 
   return {
@@ -192,6 +195,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     amountMinor,
     amountFormatted: formatMinor(amountMinor, run.currency),
     bankTransactionId: String(transaction._id),
+    expenseId,
     commissionsSettled: commissions,
     heldCount: held,
     synced: sync.ok,
@@ -276,3 +280,113 @@ async function settleCommissions(orgId: string, run: PayrollRunDoc, paidLineIds:
   return result.modifiedCount;
 }
 
+
+/**
+ * Reverse a payment, when a transfer bounced or was sent in error.
+ *
+ * Four things have to come undone together: the money, the payslips, the
+ * commission that was closed off, and the expense that hit the P&L. Any one of
+ * them left behind is a quiet inconsistency nobody would go looking for.
+ *
+ * The bank side is corrected with an opposite entry rather than by deleting the
+ * debit. A deleted transaction leaves a reconciled statement that no longer
+ * matches, and hides that the money went out at all.
+ */
+export async function reversePayment(
+  orgId: string,
+  runId: string,
+  paymentId: string,
+  reason: string,
+) {
+  const run = await loadRun(orgId, runId);
+  const payment = run.payments.find((p) => p.paymentId === paymentId);
+  if (!payment) throw new AppError("NOT_FOUND", "No such payment on this run");
+  if (payment.reversedAt) {
+    return { paymentId, message: "That payment was already reversed", alreadyReversed: true };
+  }
+
+  // HRMS first, and only if it ever knew. Reversing here while the payslips
+  // still say paid would leave the employee's record claiming money that came
+  // back — the exact disagreement this whole handover exists to prevent.
+  if (payment.syncedToHrms) {
+    await hrmsClient.reversePayment(run.hrmsOrgId, run.period, paymentId, reason);
+  }
+
+  const account = payment.bankAccountId
+    ? await BankAccount.findOne({ _id: payment.bankAccountId, organizationId: oid(orgId) })
+    : null;
+
+  let reversalTxId: Types.ObjectId | null = null;
+  if (account) {
+    const tx = await BankTransaction.create({
+      organizationId: oid(orgId),
+      accountId: account._id,
+      accountName: account.accountName,
+      currency: account.currency,
+      date: new Date(),
+      description: `Reversal of payroll ${run.runNumber} payment ${paymentId}`,
+      reference: payment.reference || paymentId,
+      amountMinor: payment.amountMinor,
+      type: "credit",
+      runningBalanceMinor: (account.currentBalanceMinor ?? 0) + payment.amountMinor,
+      source: "manual",
+      status: "matched",
+      matches: [{ type: "payroll", referenceId: String(run._id), referenceNumber: run.runNumber, amountMinor: payment.amountMinor }],
+      notes: reason.slice(0, 500),
+    });
+    reversalTxId = tx._id;
+    await BankAccount.updateOne(
+      { _id: account._id },
+      { $set: { currentBalanceMinor: (account.currentBalanceMinor ?? 0) + payment.amountMinor } },
+    );
+  }
+
+  for (const alloc of payment.allocations) {
+    const line = run.lines.find((l) => String(l._id) === String(alloc.lineId));
+    if (!line) continue;
+    line.amountPaidMinor = Math.max(0, line.amountPaidMinor - alloc.amountMinor);
+    // Held people keep their hold: the reason they could not be paid has not
+    // changed just because somebody else's transfer came back.
+    if (line.status !== "on_hold") {
+      line.status = line.amountPaidMinor <= 0 ? "pending" : "partially_paid";
+    }
+  }
+  run.amountPaidMinor = Math.max(0, run.amountPaidMinor - payment.amountMinor);
+
+  const unsettled = await unsettleCommissions(orgId, run, payment.allocations.map((a) => String(a.lineId)));
+  if (payment.expenseId) await voidPayrollExpense(orgId, String(payment.expenseId), reason);
+
+  payment.reversedAt = new Date();
+  payment.reversalReason = reason;
+  payment.reversalTransactionId = reversalTxId;
+
+  recalculate(run as unknown as RecalcRun);
+  const anyPaid = run.lines.some((l) => l.amountPaidMinor > 0);
+  const allSettled = run.lines.every((l) => l.status === "paid" || l.status === "on_hold");
+  run.status = allSettled ? "paid" : anyPaid ? "partially_paid" : "approved";
+  if (run.status !== "paid") run.paidAt = null;
+  await run.save();
+
+  return {
+    paymentId,
+    alreadyReversed: false,
+    message: `${formatMinor(payment.amountMinor, run.currency)} reversed across ${payment.allocations.length} people`,
+    status: run.status,
+    commissionsReopened: unsettled,
+    bankTransactionId: reversalTxId ? String(reversalTxId) : null,
+  };
+}
+
+/** Put commission back to earned when the payroll that paid it was reversed. */
+async function unsettleCommissions(orgId: string, run: PayrollRunDoc, lineIds: string[]): Promise<number> {
+  const ids = run.adjustments
+    .filter((a) => a.source === "commission" && lineIds.includes(String(a.lineId)))
+    .flatMap((a) => a.commissionRecordIds);
+  if (!ids.length) return 0;
+
+  const result = await CommissionRecord.updateMany(
+    { _id: { $in: ids }, organizationId: oid(orgId), status: "paid" },
+    { $set: { status: "earned", paidAt: null, notes: `Payroll ${run.runNumber} payment reversed` } },
+  );
+  return result.modifiedCount;
+}

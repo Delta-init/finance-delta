@@ -324,6 +324,16 @@ export const hrmsClient = {
     ).data;
   },
 
+  async reversePayment(organizationId: string, month: string, paymentId: string, reason: string) {
+    return (
+      await request<{ month: string; status: string; reversed: number }>(
+        "POST",
+        `/payroll/batches/${month}/payments/${paymentId}/reverse`,
+        { query: { organizationId }, body: { organizationId, reason } },
+      )
+    ).data;
+  },
+
   /** Take possession of a month. Idempotent on `financeRunId`. */
   async claimPayrollBatch(organizationId: string, month: string, financeRunId: string) {
     return (

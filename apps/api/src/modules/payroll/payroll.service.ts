@@ -413,3 +413,74 @@ export async function listAvailable(orgId: string) {
   }
   return out.sort((a, b) => b.period.localeCompare(a.period));
 }
+
+/**
+ * Everything about payroll that somebody needs to go and look at.
+ *
+ * The reason this exists as its own view rather than as a badge on a list: the
+ * states it reports are the ones nothing else would surface. A payment that
+ * moved money but never reached HRMS looks completely normal from either system
+ * on its own — finance shows a paid run, HR shows issued payslips, and only
+ * comparing them reveals the problem. Left to be noticed, it is noticed by an
+ * employee asking why their payslip says unpaid.
+ */
+export async function reconciliation(orgId: string) {
+  const runs = await PayrollRun.find({
+    organizationId: oid(orgId),
+    status: { $nin: ["voided"] },
+  })
+    .sort({ period: -1 })
+    .limit(24)
+    .lean();
+
+  const unsyncedPayments: Array<{
+    runId: string; runNumber: string; period: string; paymentId: string;
+    amountMinor: number; currency: string; paidOn: string; error: string; attempts: number;
+  }> = [];
+  const heldPeople: Array<{
+    runId: string; runNumber: string; period: string; currency: string;
+    name: string; employeeCode: string; reason: string; payableMinor: number;
+  }> = [];
+  const unfinished: Array<{
+    runId: string; runNumber: string; period: string; currency: string;
+    status: string; outstandingMinor: number; peopleLeft: number;
+  }> = [];
+
+  for (const run of runs) {
+    for (const p of run.payments) {
+      if (!p.syncedToHrms && !p.reversedAt) {
+        unsyncedPayments.push({
+          runId: String(run._id), runNumber: run.runNumber, period: run.period,
+          paymentId: p.paymentId, amountMinor: p.amountMinor, currency: run.currency,
+          paidOn: (p.paidOn as Date).toISOString(),
+          error: p.syncError || "Never acknowledged", attempts: p.syncAttempts,
+        });
+      }
+    }
+    for (const l of run.lines) {
+      if (l.status === "on_hold") {
+        heldPeople.push({
+          runId: String(run._id), runNumber: run.runNumber, period: run.period, currency: run.currency,
+          name: l.name, employeeCode: l.employeeCode,
+          reason: l.holdReason || "No bank details", payableMinor: l.payableMinor,
+        });
+      }
+    }
+    const left = run.lines.filter((l) => l.status !== "paid" && l.status !== "on_hold").length;
+    if (left > 0 && (run.status === "approved" || run.status === "partially_paid")) {
+      unfinished.push({
+        runId: String(run._id), runNumber: run.runNumber, period: run.period, currency: run.currency,
+        status: run.status, outstandingMinor: run.balanceMinor, peopleLeft: left,
+      });
+    }
+  }
+
+  return {
+    unsyncedPayments,
+    heldPeople,
+    unfinished,
+    // A single number the payroll page can badge, so somebody sees it without
+    // having to open this screen first.
+    total: unsyncedPayments.length + heldPeople.length + unfinished.length,
+  };
+}

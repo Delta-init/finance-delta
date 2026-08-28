@@ -148,6 +148,14 @@ const payrollPaymentSchema = new Schema(
     syncAttempts: { type: Number, default: 0 },
     lastSyncAttemptAt: { type: Date, default: null },
 
+    /** The expense this payment posted, so payroll reaches the P&L. */
+    expenseId: { type: Schema.Types.ObjectId, ref: "Expense", default: null },
+
+    reversedAt: { type: Date, default: null },
+    reversalReason: { type: String, default: "" },
+    /** The credit that put the money back, kept rather than deleting the debit. */
+    reversalTransactionId: { type: Schema.Types.ObjectId, ref: "BankTransaction", default: null },
+
     createdById: { type: Schema.Types.ObjectId, ref: "User" },
     createdByName: { type: String, default: "" },
     createdAt: { type: Date, default: Date.now },

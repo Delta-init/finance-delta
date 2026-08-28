@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
 import {
   usePayrollRun, useAddAdjustments, usePullCommissions, useRemoveAdjustment,
-  useApproveRun, useReturnRun, usePayRun, useRetrySync,
+  useApproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment,
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
 import { PayDialog } from "@/features/payroll/pay-dialog";
@@ -50,6 +50,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const returnRun = useReturnRun(id);
   const pay = usePayRun(id);
   const retrySync = useRetrySync(id);
+  const reverse = useReversePayment(id);
 
   // What HRMS actually did, once it has told us. Adding money can move net pay
   // by a different amount, so this is shown rather than assumed.
@@ -233,6 +234,55 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             is nowhere to send their money. They are excluded from payment until HR adds bank details and the
             month is re-synced, so they cannot be swept into a bulk transfer and counted as paid.
           </p>
+        </Card>
+      )}
+
+      {run.payments.length > 0 && (
+        <Card>
+          <div className="border-b border-border px-5 py-3 text-sm font-medium">Payments</div>
+          <div className="divide-y divide-border">
+            {run.payments.map((p) => (
+              <div key={p.paymentId} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">
+                    {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={run.currency} />
+                  </div>
+                  <div className="text-xs text-foreground-muted">
+                    {new Date(p.paidOn).toLocaleDateString()} · {p.bankAccountName || p.method} ·{" "}
+                    {p.payslipCount} people{p.reference ? ` · ${p.reference}` : ""}
+                  </div>
+                </div>
+                {p.syncedToHrms ? (
+                  <Badge tone="success">Confirmed by HRMS</Badge>
+                ) : (
+                  <Badge tone="danger">Not in HRMS</Badge>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={reverse.isPending}
+                  onClick={() => {
+                    const reason = window.prompt("Why is this payment being reversed?");
+                    if (reason?.trim()) reverse.mutate({ paymentId: p.paymentId, reason: reason.trim() });
+                  }}
+                >
+                  <Undo2 className="mr-1.5 h-3.5 w-3.5" />Reverse
+                </Button>
+              </div>
+            ))}
+          </div>
+          {reverse.data && (
+            <p className="border-t border-border px-5 py-3 text-sm text-foreground-muted">
+              {reverse.data.message}
+              {reverse.data.commissionsReopened > 0 &&
+                ` · ${reverse.data.commissionsReopened} commission record(s) returned to unpaid.`}
+            </p>
+          )}
+          {reverse.isError && (
+            <p className="border-t border-border px-5 py-3 text-sm text-danger">
+              {(reverse.error as Error).message}
+            </p>
+          )}
         </Card>
       )}
 

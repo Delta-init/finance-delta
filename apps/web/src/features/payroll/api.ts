@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type QueryParams } from "@/lib/api";
 import type {
   AdjustmentResult, AvailableBatch, CommissionPullResult,
-  ImportPreview, ImportResult, PayResult, RunDetail, RunSummary,
+  ImportPreview, ImportResult, PayResult, Reconciliation, RunDetail, RunSummary,
 } from "./types";
 
 const KEY = ["payroll"] as const;
@@ -132,6 +132,26 @@ export function useRetrySync(runId: string) {
   return useMutation({
     mutationFn: (paymentId: string) =>
       api.post<{ synced: boolean; message: string }>(`payroll/runs/${runId}/payments/${paymentId}/retry-sync`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Everything about payroll that needs somebody to look at it. */
+export function useReconciliation() {
+  return useQuery({
+    queryKey: [...KEY, "reconciliation"],
+    queryFn: () => api.get<Reconciliation>("payroll/reconciliation"),
+    retry: false,
+  });
+}
+
+export function useReversePayment(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ paymentId, reason }: { paymentId: string; reason: string }) =>
+      api.post<{ message: string; commissionsReopened: number }>(
+        `payroll/runs/${runId}/payments/${paymentId}/reverse`, { reason },
+      ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
   });
 }

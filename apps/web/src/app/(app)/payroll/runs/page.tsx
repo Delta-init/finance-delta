@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Wallet, Download, AlertTriangle, Info, CheckCircle2 } from "lucide-react";
+import { Wallet, Download, AlertTriangle, Info, CheckCircle2, PauseCircle, Clock } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,9 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
-import { useAvailableBatches, useImportPreview, useImportRun, usePayrollRuns } from "@/features/payroll/api";
+import {
+  useAvailableBatches, useImportPreview, useImportRun, usePayrollRuns, useReconciliation,
+} from "@/features/payroll/api";
 import { RUN_STATUS_LABELS, type AvailableBatch, type RunStatus, type RunSummary } from "@/features/payroll/types";
 
 const TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "primary"> = {
@@ -32,6 +35,7 @@ export default function PayrollRunsPage() {
   const [candidate, setCandidate] = useState<AvailableBatch | null>(null);
 
   const runs = usePayrollRuns({ page, limit: pageSize });
+  const attention = useReconciliation();
   const available = useAvailableBatches();
   const preview = useImportPreview(candidate?.hrmsOrgId ?? null, candidate?.period ?? null);
   const doImport = useImportRun();
@@ -85,6 +89,50 @@ export default function PayrollRunsPage() {
               </div>
             ))}
           </div>
+        </Card>
+      )}
+
+      {/* Anything needing a person. Above the run list, because a payment that
+          moved money without reaching HRMS looks entirely normal from either
+          system alone — only comparing them shows it. */}
+      {attention.data && attention.data.total > 0 && (
+        <Card className="space-y-3 border-warning/20 bg-warning/5 p-5">
+          <p className="font-medium">Needs attention</p>
+
+          {attention.data.unsyncedPayments.map((p) => (
+            <div key={p.paymentId} className="flex items-start gap-2 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <span>
+                <Link href={`/payroll/runs/${p.runId}`} className="font-medium underline">{p.runNumber}</Link>
+                {" · "}<MoneyDisplay minor={p.amountMinor} currency={p.currency} /> was paid but HRMS was never
+                told, so those payslips still say issued. {p.error}
+              </span>
+            </div>
+          ))}
+
+          {attention.data.unfinished.map((u) => (
+            <div key={u.runId} className="flex items-start gap-2 text-sm">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <span>
+                <Link href={`/payroll/runs/${u.runId}`} className="font-medium underline">{u.runNumber}</Link>
+                {" · "}{u.peopleLeft} {u.peopleLeft === 1 ? "person is" : "people are"} still unpaid,{" "}
+                <MoneyDisplay minor={u.outstandingMinor} currency={u.currency} /> outstanding.
+              </span>
+            </div>
+          ))}
+
+          {attention.data.heldPeople.length > 0 && (
+            <div className="flex items-start gap-2 text-sm">
+              <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <span>
+                {attention.data.heldPeople.length} {attention.data.heldPeople.length === 1 ? "person" : "people"} held
+                for missing bank details:{" "}
+                {attention.data.heldPeople.slice(0, 5).map((h) => `${h.name} (${h.period})`).join(", ")}
+                {attention.data.heldPeople.length > 5 && `, and ${attention.data.heldPeople.length - 5} more`}.
+                HR needs to add their details, then re-sync the month.
+              </span>
+            </div>
+          )}
         </Card>
       )}
 

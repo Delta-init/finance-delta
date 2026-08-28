@@ -61,3 +61,12 @@ export const payRun = asyncHandler(async (req: Request, res: Response) => {
 export const retrySync = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await payments.retrySync(orgId(req), req.params.id!, req.params.paymentId!));
 });
+
+export const reversePayment = asyncHandler(async (req: Request, res: Response) => {
+  const { reason } = req.body as { reason: string };
+  ok(res, await payments.reversePayment(orgId(req), req.params.id!, req.params.paymentId!, reason));
+});
+
+export const reconciliation = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await service.reconciliation(orgId(req)));
+});

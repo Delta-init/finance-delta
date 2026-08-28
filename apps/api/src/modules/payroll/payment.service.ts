@@ -9,7 +9,7 @@ import { User } from "../user/user.model";
 import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { formatMinor } from "./money";
 import { recalculate, type RecalcRun } from "./recalculate";
-import { selectPayableLines, type PayableLine } from "./select-payable";
+import { selectPayableLines, isSettled, type PayableLine } from "./select-payable";
 import { postPayrollExpense, voidPayrollExpense } from "./posting.service";
 
 const oid = (id: string) => new Types.ObjectId(id);
@@ -174,7 +174,9 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     createdByName: user?.name ?? "",
   } as never);
 
-  const anyOutstanding = run.lines.some((l) => l.status !== "paid" && l.status !== "on_hold");
+  // Somebody owed nothing counts as settled, or a person whose salary was
+  // entirely consumed by a recovery keeps the run open indefinitely.
+  const anyOutstanding = run.lines.some((l) => !isSettled(l as unknown as PayableLine));
   const held = run.lines.filter((l) => l.status === "on_hold").length;
   run.status = anyOutstanding || held > 0 ? "partially_paid" : "paid";
   if (run.status === "paid") run.paidAt = new Date();

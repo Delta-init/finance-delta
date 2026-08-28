@@ -14,7 +14,8 @@
     "test": "bun test",
     "seed": "bun run --filter '@delta/api' seed",
     "db:up": "docker compose up -d",
-    "db:init": "bun run --filter '@delta/api' db:init"
+    "db:init": "bun run --filter '@delta/api' db:init",
+    "test:payroll-e2e": "./scripts/payroll-e2e.sh"
   },
   "engines": {
     "bun": ">=1.3.0"

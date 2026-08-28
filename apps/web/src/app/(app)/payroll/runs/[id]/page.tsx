@@ -17,6 +17,7 @@ import {
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
 import { PayDialog } from "@/features/payroll/pay-dialog";
+import { ReasonDialog } from "@/features/payroll/reason-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RUN_STATUS_LABELS, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState<RunLine | null>(null);
   const [paying, setPaying] = useState(false);
+  const [sendingBack, setSendingBack] = useState(false);
+  const [reversing, setReversing] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const addAdjustments = useAddAdjustments(id);
@@ -96,13 +99,20 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         action={<Badge tone={RUN_TONE[run.status]}>{RUN_STATUS_LABELS[run.status]}</Badge>}
       />
 
+      {/* Six tiles wrapped to a second row with one lonely card on it.
+          Outstanding only differs from payable once something has been paid, so
+          it earns its place then and not before. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="People" value={String(run.totals.employeeCount)} />
         <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} />} />
         <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={run.currency} />} />
-        <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} />} />
+        {run.totals.adjustmentsMinor !== 0 && (
+          <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} />} />
+        )}
         <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={run.currency} />} strong />
-        <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} />} />
+        {run.totals.amountPaidMinor > 0 && (
+          <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} />} />
+        )}
       </div>
 
       {unsynced.length > 0 && (
@@ -147,14 +157,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           </div>
           {canApprove && (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const reason = window.prompt("What does HR need to fix?");
-                  if (reason?.trim()) returnRun.mutate(reason.trim());
-                }}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setSendingBack(true)}>
                 <Undo2 className="mr-1.5 h-3.5 w-3.5" />Send back to HR
               </Button>
               <Button size="sm" loading={approve.isPending} onClick={() => approve.mutate()}>
@@ -250,24 +253,21 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                   <div className="text-xs text-foreground-muted">
                     {new Date(p.paidOn).toLocaleDateString()} · {p.bankAccountName || p.method} ·{" "}
                     {p.payslipCount} people{p.reference ? ` · ${p.reference}` : ""}
+                    {p.reversalReason ? ` · reversed: ${p.reversalReason}` : ""}
                   </div>
                 </div>
-                {p.syncedToHrms ? (
+                {p.reversedAt ? (
+                  <Badge tone="neutral">Reversed</Badge>
+                ) : p.syncedToHrms ? (
                   <Badge tone="success">Confirmed by HRMS</Badge>
                 ) : (
                   <Badge tone="danger">Not in HRMS</Badge>
                 )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={reverse.isPending}
-                  onClick={() => {
-                    const reason = window.prompt("Why is this payment being reversed?");
-                    if (reason?.trim()) reverse.mutate({ paymentId: p.paymentId, reason: reason.trim() });
-                  }}
-                >
-                  <Undo2 className="mr-1.5 h-3.5 w-3.5" />Reverse
-                </Button>
+                {!p.reversedAt && (
+                  <Button size="sm" variant="ghost" onClick={() => setReversing(p.paymentId)}>
+                    <Undo2 className="mr-1.5 h-3.5 w-3.5" />Reverse
+                  </Button>
+                )}
               </div>
             ))}
           </div>
@@ -431,6 +431,33 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           </table>
         </div>
       </Card>
+
+      <ReasonDialog
+        open={sendingBack}
+        onOpenChange={setSendingBack}
+        title={`Send ${run.runNumber} back to HR?`}
+        description="The month unlocks on their side so they can correct it, and comes back to you when they resubmit."
+        label="What needs fixing?"
+        placeholder="Nadia Okafor has no bank details"
+        confirmLabel="Send back"
+        pending={returnRun.isPending}
+        onConfirm={(reason) => returnRun.mutate(reason, { onSuccess: () => setSendingBack(false) })}
+      />
+
+      <ReasonDialog
+        open={Boolean(reversing)}
+        onOpenChange={(o) => { if (!o) setReversing(null); }}
+        title="Reverse this payment?"
+        description="The money goes back on the bank account, the payslips return to issued, any commission it settled is owed again, and the expense is voided."
+        label="Why is it being reversed?"
+        placeholder="Bank returned the transfer — closed account"
+        confirmLabel="Reverse payment"
+        destructive
+        pending={reverse.isPending}
+        onConfirm={(reason) =>
+          reversing && reverse.mutate({ paymentId: reversing, reason }, { onSuccess: () => setReversing(null) })
+        }
+      />
 
       <PayDialog
         open={paying}

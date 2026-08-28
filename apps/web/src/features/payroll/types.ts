@@ -157,6 +157,8 @@ export interface RunPayment {
   /** False means the money moved but HRMS still shows the payslips as issued. */
   syncedToHrms: boolean;
   syncError: string;
+  reversedAt: string | null;
+  reversalReason: string;
   createdByName: string;
 }
 

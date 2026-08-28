@@ -17,12 +17,23 @@ const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
   orphaned: ["skip", "deactivate"],
 };
 
-const ACTION_LABEL: Record<SyncDecision["action"], string> = {
-  link: "Import + link login",
-  create: "Import",
-  deactivate: "Deactivate",
-  skip: "Leave alone",
-};
+/**
+ * What an action will do to one particular row.
+ *
+ * Not a flat lookup, because the same action means different things depending
+ * on where the row started. "Import + link login" on somebody already mapped
+ * and with no login to attach was both wrong statements at once.
+ */
+function actionLabel(action: SyncDecision["action"], row: EmpRow, hasLogin: boolean): string {
+  switch (action) {
+    case "skip": return "Leave alone";
+    case "deactivate": return "Deactivate here";
+    case "create": return row.state === "linked" ? "Refresh from HRMS" : "Import";
+    case "link":
+      if (row.state === "linked") return hasLogin ? "Refresh + keep login" : "Refresh from HRMS";
+      return hasLogin ? "Import + link login" : "Import";
+  }
+}
 
 export function EmployeeReview({
   rows,
@@ -155,7 +166,9 @@ export function EmployeeReview({
                       <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {allowed.map((a) => (
-                          <SelectItem key={a} value={a}>{ACTION_LABEL[a]}</SelectItem>
+                          <SelectItem key={a} value={a}>
+                            {actionLabel(a, row, Boolean(decision?.targetUserId ?? row.userId))}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -217,17 +230,29 @@ export function BulkActions({
     fresh: rows.filter((r) => r.state === "new").length,
     orphaned: rows.filter((r) => r.state === "orphaned").length,
   };
+  // Only offered when there is something to act on. Three greyed-out buttons
+  // all reading "0" is noise on a screen whose whole job is telling somebody
+  // what needs their attention.
+  const anything = counts.proposed + counts.fresh + counts.orphaned > 0;
+  if (!anything) return null;
+
   return (
     <div className="flex flex-wrap gap-2">
-      <Button variant="secondary" size="sm" disabled={!counts.proposed} onClick={() => onBulk(["proposed"], "link")}>
-        Accept {counts.proposed} suggested match{counts.proposed === 1 ? "" : "es"}
-      </Button>
-      <Button variant="secondary" size="sm" disabled={!counts.fresh} onClick={() => onBulk(["new"], "create")}>
-        Import {counts.fresh} new
-      </Button>
-      <Button variant="secondary" size="sm" disabled={!counts.orphaned} onClick={() => onBulk(["orphaned"], "deactivate")}>
-        Deactivate {counts.orphaned} missing
-      </Button>
+      {counts.proposed > 0 && (
+        <Button variant="secondary" size="sm" onClick={() => onBulk(["proposed"], "link")}>
+          Accept {counts.proposed} suggested match{counts.proposed === 1 ? "" : "es"}
+        </Button>
+      )}
+      {counts.fresh > 0 && (
+        <Button variant="secondary" size="sm" onClick={() => onBulk(["new"], "create")}>
+          Import {counts.fresh} new
+        </Button>
+      )}
+      {counts.orphaned > 0 && (
+        <Button variant="secondary" size="sm" onClick={() => onBulk(["orphaned"], "deactivate")}>
+          Deactivate {counts.orphaned} missing
+        </Button>
+      )}
       <Button variant="ghost" size="sm" onClick={() => onBulk(["linked", "proposed", "new", "conflict", "orphaned"], "skip")}>
         Clear all
       </Button>

@@ -39,9 +39,14 @@ function seedDecisions(preview: SyncPreview): Record<string, SyncDecision> {
     const base = { kind: "employee" as const, hrmsId: e.hrmsEmployeeId };
     if (e.state === "proposed") out[dkey(base)] = { ...base, action: "link", targetUserId: e.userId ?? undefined };
     else if (e.state === "new") out[dkey(base)] = { ...base, action: "create" };
-    // A re-sync of an already-mapped person refreshes their details, which is
-    // the point of running it again.
-    else if (e.state === "linked") out[dkey(base)] = { ...base, action: "link", targetUserId: e.userId ?? undefined };
+    // Somebody already mapped whose details still match needs nothing doing.
+    // Defaulting them to "link" meant a fully synced organization still offered
+    // to "import 3 people", which reads as though the mapping had not worked.
+    else if (e.state === "linked") {
+      out[dkey(base)] = e.changes.length > 0
+        ? { ...base, action: "link", targetUserId: e.userId ?? undefined }
+        : { ...base, action: "skip" };
+    }
     else out[dkey(base)] = { ...base, action: "skip" };
   }
   return out;
@@ -94,15 +99,22 @@ export default function PayrollMappingPage() {
   // the preview — the two diverge the moment anybody changes a row.
   const pending = useMemo(() => {
     const list = Object.values(decisions).filter((d) => d.action !== "skip");
+    const alreadyMapped = new Set(
+      (preview.data?.employees ?? []).filter((e) => e.state === "linked").map((e) => e.hrmsEmployeeId),
+    );
+    const employees = list.filter((d) => d.kind === "employee");
     return {
       list,
       deptCreate: list.filter((d) => d.kind === "department" && d.action === "create").length,
       deptLink: list.filter((d) => d.kind === "department" && d.action === "link").length,
-      empImport: list.filter((d) => d.kind === "employee" && (d.action === "create" || d.action === "link")).length,
-      empWithLogin: list.filter((d) => d.kind === "employee" && d.action === "link" && d.targetUserId).length,
-      empDeactivate: list.filter((d) => d.kind === "employee" && d.action === "deactivate").length,
+      // An existing row being brought up to date is a refresh, not an import;
+      // calling both "import" made a re-sync look like it was duplicating people.
+      empImport: employees.filter((d) => d.action !== "deactivate" && !alreadyMapped.has(d.hrmsId)).length,
+      empRefresh: employees.filter((d) => d.action !== "deactivate" && alreadyMapped.has(d.hrmsId)).length,
+      empWithLogin: employees.filter((d) => d.action === "link" && d.targetUserId).length,
+      empDeactivate: employees.filter((d) => d.action === "deactivate").length,
     };
-  }, [decisions]);
+  }, [decisions, preview.data]);
 
   // A "link" that never got a target would silently become a plain import.
   const incompleteDepartments = pending.list.filter(
@@ -189,9 +201,10 @@ export default function PayrollMappingPage() {
                 size="sm"
                 variant="ghost"
                 onClick={() => removeLink.mutate(l.id)}
-                title="Unlink"
+                title="Unlink this organization"
+                aria-label={`Unlink ${l.hrmsOrgName}`}
               >
-                <Unlink className="h-3.5 w-3.5" />
+                <Unlink className="mr-1.5 h-3.5 w-3.5" />Unlink
               </Button>
             </div>
           ))}
@@ -202,6 +215,7 @@ export default function PayrollMappingPage() {
 
         {health.data?.reachable && (
           <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3">
+            <span className="text-sm text-foreground-muted">Add an organization</span>
             <Select
               value=""
               onValueChange={(v) => createLink.mutate(v)}
@@ -242,13 +256,30 @@ export default function PayrollMappingPage() {
 
           {preview.data && (
             <>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+              {/* "Already mapped" always shows, because zero of it is the
+                  headline on a first sync. The rest appear only when there is
+                  something to report — six tiles of mostly zeroes told nobody
+                  anything and buried the one number that mattered. */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 <Stat label="Already mapped" value={preview.data.summary.employees.linked} />
-                <Stat label="New" value={preview.data.summary.employees.new} />
-                <Stat label="Match found" value={preview.data.summary.employees.proposed} />
-                <Stat label="Needs a decision" value={preview.data.summary.employees.conflict} tone="danger" />
-                <Stat label="No bank details" value={preview.data.summary.blockers.noBankDetails} tone="warning" />
-                <Stat label="Dept. unmapped" value={preview.data.summary.blockers.unmappedDepartment} tone="warning" />
+                {preview.data.summary.employees.new > 0 && (
+                  <Stat label="New" value={preview.data.summary.employees.new} />
+                )}
+                {preview.data.summary.employees.proposed > 0 && (
+                  <Stat label="Match found" value={preview.data.summary.employees.proposed} />
+                )}
+                {preview.data.summary.employees.orphaned > 0 && (
+                  <Stat label="Gone from HRMS" value={preview.data.summary.employees.orphaned} tone="warning" />
+                )}
+                {preview.data.summary.employees.conflict > 0 && (
+                  <Stat label="Needs a decision" value={preview.data.summary.employees.conflict} tone="danger" />
+                )}
+                {preview.data.summary.blockers.noBankDetails > 0 && (
+                  <Stat label="No bank details" value={preview.data.summary.blockers.noBankDetails} tone="warning" />
+                )}
+                {preview.data.summary.blockers.unmappedDepartment > 0 && (
+                  <Stat label="Dept. unmapped" value={preview.data.summary.blockers.unmappedDepartment} tone="warning" />
+                )}
               </div>
 
               <DepartmentReview
@@ -273,15 +304,16 @@ export default function PayrollMappingPage() {
                 <div className="flex flex-wrap items-center justify-between gap-4 p-5">
                   <div className="text-sm">
                     <div className="font-medium">
-                      {pending.list.length === 0 ? "Nothing selected" : "About to apply"}
+                      {pending.list.length === 0 ? "Everything is up to date" : "About to apply"}
                     </div>
                     <p className="mt-0.5 text-foreground-muted">
                       {pending.list.length === 0
-                        ? "Choose an action on at least one row."
+                        ? "Nothing here differs from HRMS. Change an action on a row if you want to force something through."
                         : [
                             pending.deptCreate && `create ${pending.deptCreate} department(s)`,
                             pending.deptLink && `map ${pending.deptLink} department(s)`,
                             pending.empImport && `import ${pending.empImport} person(s)`,
+                            pending.empRefresh && `refresh ${pending.empRefresh} already mapped`,
                             pending.empWithLogin && `${pending.empWithLogin} with a finance login`,
                             pending.empDeactivate && `deactivate ${pending.empDeactivate}`,
                           ].filter(Boolean).join(" · ")}
@@ -298,7 +330,9 @@ export default function PayrollMappingPage() {
                     loading={apply.isPending}
                     disabled={pending.list.length === 0 || incompleteDepartments > 0}
                   >
-                    Apply {pending.list.length} change{pending.list.length === 1 ? "" : "s"}
+                    {pending.list.length === 0
+                      ? "Nothing to apply"
+                      : `Apply ${pending.list.length} change${pending.list.length === 1 ? "" : "s"}`}
                   </Button>
                 </div>
 

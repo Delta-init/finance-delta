@@ -374,6 +374,10 @@ export async function getRun(orgId: string, id: string) {
       // state where the two systems disagree about whether somebody was paid.
       syncedToHrms: p.syncedToHrms,
       syncError: p.syncError,
+      // Kept so the screen can stop offering to reverse something already
+      // reversed, rather than letting the API refuse it after the click.
+      reversedAt: p.reversedAt ? (p.reversedAt as Date).toISOString() : null,
+      reversalReason: p.reversalReason,
       createdByName: p.createdByName,
     })),
     importedAt: run.importedAt ? (run.importedAt as Date).toISOString() : null,

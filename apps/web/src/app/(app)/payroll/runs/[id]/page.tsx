@@ -87,7 +87,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <Link href="/payroll/runs" className="inline-flex items-center gap-1.5 text-sm text-foreground-muted hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />All payroll runs
       </Link>

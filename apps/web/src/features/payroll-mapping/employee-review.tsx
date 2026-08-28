@@ -40,11 +40,14 @@ export function EmployeeReview({
   decisions,
   onChange,
   users,
+  usersTruncated = false,
 }: {
   rows: EmpRow[];
   decisions: Record<string, SyncDecision>;
   onChange: (hrmsId: string, next: SyncDecision) => void;
   users: { id: string; name: string; email: string }[];
+  /** True when this organization has more logins than the picker is showing. */
+  usersTruncated?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("all");
@@ -192,6 +195,11 @@ export function EmployeeReview({
                               {u.name} · {u.email}
                             </SelectItem>
                           ))}
+                          {usersTruncated && (
+                            <p className="px-2 py-1.5 text-xs text-foreground-muted">
+                              Only the first 100 logins are listed.
+                            </p>
+                          )}
                         </SelectContent>
                       </Select>
                     ) : (

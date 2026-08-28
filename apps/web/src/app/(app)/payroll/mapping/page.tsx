@@ -57,7 +57,9 @@ export default function PayrollMappingPage() {
   const orgLinks = useOrgLinks();
   const hrmsOrgs = useHrmsOrganizations(Boolean(health.data?.reachable));
   const departments = useAllDepartments();
-  const users = useUsers({ page: 1, pageSize: 200 });
+  // 100 is the server's maximum; asking for 200 was rejected outright, which
+  // left the finance-login picker silently empty rather than merely short.
+  const users = useUsers({ page: 1, pageSize: 100 });
 
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, SyncDecision>>({});
@@ -137,7 +139,7 @@ export default function PayrollMappingPage() {
   const linkableOrgs = (hrmsOrgs.data ?? []).filter((o) => !o.linked);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader
         icon={Link2}
         title="Payroll mapping"
@@ -296,6 +298,9 @@ export default function PayrollMappingPage() {
                   decisions={decisions}
                   onChange={setDecision("employee")}
                   users={(users.data?.data ?? []).map((u) => ({ id: u.id, name: u.name, email: u.email }))}
+                  // Said out loud rather than left as a short list somebody
+                  // scrolls to the end of and assumes is everybody.
+                  usersTruncated={(users.data?.meta.total ?? 0) > (users.data?.data.length ?? 0)}
                 />
               </div>
 

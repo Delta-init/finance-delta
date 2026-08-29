@@ -16,6 +16,12 @@ router.get("/import/preview", requirePermission("payroll:read"), c.previewImport
 router.post("/import", requirePermission("payroll:write"), validateBody(importRunSchema), c.importRun);
 
 router.get("/reconciliation", requirePermission("payroll:read"), c.reconciliation);
+
+// Who earned what and who cost what. Ahead of "/runs/:id" so the words are not
+// read as run identifiers.
+router.get("/people-report", requirePermission("payroll:read"), c.peopleReport_);
+router.get("/people-report/departments", requirePermission("payroll:read"), c.departmentReport);
+router.get("/people-report/:employeeId", requirePermission("payroll:read"), c.personDetail);
 router.get("/runs", requirePermission("payroll:read"), c.listRuns);
 router.get("/runs/:id", requirePermission("payroll:read"), c.getRun);
 

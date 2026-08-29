@@ -4,7 +4,11 @@ import { parseQuery } from "../../middleware/validate";
 import * as service from "./payroll.service";
 import * as adjustments from "./adjustments.service";
 import * as payments from "./payment.service";
-import { importPreviewQuerySchema, runQuerySchema } from "./payroll.schemas";
+import * as peopleReport from "./people-report.service";
+import {
+  importPreviewQuerySchema, runQuerySchema,
+  peopleReportQuerySchema, personDetailQuerySchema,
+} from "./payroll.schemas";
 
 const orgId = (req: Request) => req.auth!.organizationId;
 
@@ -69,4 +73,21 @@ export const reversePayment = asyncHandler(async (req: Request, res: Response) =
 
 export const reconciliation = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await service.reconciliation(orgId(req)));
+});
+
+// ── People: what each person earned, and what they cost ─────────────────────
+
+export const peopleReport_ = asyncHandler(async (req: Request, res: Response) => {
+  const query = parseQuery(peopleReportQuerySchema, req.query);
+  ok(res, await peopleReport.peopleReport(orgId(req), query));
+});
+
+export const personDetail = asyncHandler(async (req: Request, res: Response) => {
+  const query = parseQuery(personDetailQuerySchema, req.query);
+  ok(res, await peopleReport.personDetail(orgId(req), req.params.employeeId!, query));
+});
+
+export const departmentReport = asyncHandler(async (req: Request, res: Response) => {
+  const query = parseQuery(personDetailQuerySchema, req.query);
+  ok(res, await peopleReport.departmentReport(orgId(req), query));
 });

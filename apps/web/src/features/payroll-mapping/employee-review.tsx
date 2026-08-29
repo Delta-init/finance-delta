@@ -24,22 +24,34 @@ const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
  * on where the row started. "Import + link login" on somebody already mapped
  * and with no login to attach was both wrong statements at once.
  */
+/**
+ * What an action will do to one particular row.
+ *
+ * The two import options are genuinely different and must not read alike:
+ * `create` lets the sync make a salesperson login automatically, while `link`
+ * is the one that opens the picker so somebody can attach an existing finance
+ * account instead. Labelling both "Import + create login" made the dropdown
+ * look like it was offering the same thing twice.
+ *
+ * Importing somebody with an email always ends with them holding a login —
+ * that is what makes them selectable on an invoice — so no option here reads
+ * as a bare "Import" unless HRMS genuinely has no address for them.
+ */
 function actionLabel(action: SyncDecision["action"], row: EmpRow, hasLogin: boolean): string {
-  // Importing somebody with an email always gives them a salesperson login —
-  // that is what makes them selectable on an invoice — so the label says so.
-  // It used to read a bare "Import" whenever no *existing* login had been
-  // matched, which is exactly the case where one is about to be created.
-  const willCreateLogin = !hasLogin && Boolean(row.email);
+  const canHaveLogin = Boolean(row.email);
   switch (action) {
-    case "skip": return "Leave alone";
-    case "deactivate": return "Deactivate here";
+    case "skip":
+      return "Leave alone";
+    case "deactivate":
+      return "Deactivate here";
     case "create":
       if (row.state === "linked") return "Refresh from HRMS";
-      return willCreateLogin ? "Import + create login" : "Import (no login)";
+      return canHaveLogin ? "Import + create login" : "Import (no email, no login)";
     case "link":
       if (row.state === "linked") return hasLogin ? "Refresh + keep login" : "Refresh from HRMS";
-      if (hasLogin) return "Import + link login";
-      return willCreateLogin ? "Import + create login" : "Import (no login)";
+      // Whether a match was already found or not, this is the option that lets
+      // you say which account to use.
+      return hasLogin ? "Import + use matched login" : "Import + choose a login";
   }
 }
 
@@ -195,7 +207,9 @@ export function EmployeeReview({
                         }
                       >
                         <SelectTrigger className="w-[220px]">
-                          <SelectValue placeholder="No login — import only" />
+                          {/* Leaving it unset is fine: the sync creates one.
+                              It used to read "import only", which was wrong. */}
+                          <SelectValue placeholder="Leave blank to create one" />
                         </SelectTrigger>
                         <SelectContent>
                           {users.map((u) => (

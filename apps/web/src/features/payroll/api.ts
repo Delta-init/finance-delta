@@ -5,6 +5,7 @@ import { api, type QueryParams } from "@/lib/api";
 import type {
   AdjustmentResult, AvailableBatch, CommissionPullResult,
   ImportPreview, ImportResult, PayResult, Reconciliation, RunDetail, RunSummary,
+  PeopleReport, DepartmentReport, PersonDetail,
 } from "./types";
 
 const KEY = ["payroll"] as const;
@@ -153,5 +154,38 @@ export function useReversePayment(runId: string) {
         `payroll/runs/${runId}/payments/${paymentId}/reverse`, { reason },
       ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// ── People: earned vs cost ───────────────────────────────────────────────────
+
+export function usePeopleReport(params: { from: string; to: string; departmentId?: string; search?: string }) {
+  return useQuery({
+    queryKey: [...KEY, "people-report", params],
+    queryFn: () =>
+      api.get<PeopleReport>(
+        `payroll/people-report?${new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v) as [string, string][],
+        )}`,
+      ),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useDepartmentReport(params: { from: string; to: string }) {
+  return useQuery({
+    queryKey: [...KEY, "people-report", "departments", params],
+    queryFn: () =>
+      api.get<DepartmentReport>(`payroll/people-report/departments?from=${params.from}&to=${params.to}`),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function usePersonDetail(employeeId: string | null, params: { from: string; to: string }) {
+  return useQuery({
+    queryKey: [...KEY, "people-report", employeeId, params],
+    queryFn: () =>
+      api.get<PersonDetail>(`payroll/people-report/${employeeId}?from=${params.from}&to=${params.to}`),
+    enabled: Boolean(employeeId),
   });
 }

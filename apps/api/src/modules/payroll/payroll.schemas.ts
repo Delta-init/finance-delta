@@ -49,3 +49,14 @@ export const reversePaymentSchema = z.object({
   // account for later.
   reason: z.string().trim().min(1, "Say why the payment is being reversed").max(300),
 });
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+
+export const peopleReportQuerySchema = z.object({
+  from: isoDate,
+  to: isoDate,
+  departmentId: objectId.optional(),
+  search: z.string().trim().max(120).optional(),
+});
+
+export const personDetailQuerySchema = z.object({ from: isoDate, to: isoDate });

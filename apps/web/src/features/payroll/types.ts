@@ -191,3 +191,87 @@ export interface Reconciliation {
   }>;
   total: number;
 }
+
+// ── People: earned vs cost ───────────────────────────────────────────────────
+
+/**
+ * `totalCostMinor` is payroll paid plus expenses. Commission is *inside*
+ * payrollPaidMinor, never added to it — it reaches people as an addition on a
+ * payroll run, so counting it separately would double every commission payment.
+ */
+export interface PersonRow {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  designation: string;
+  departmentId: string | null;
+  departmentName: string;
+  userId: string | null;
+  status: "active" | "inactive";
+  invoiceCount: number;
+  invoicedMinor: number;
+  payrollPaidMinor: number;
+  expensesMinor: number;
+  totalCostMinor: number;
+  commissionInPayrollMinor: number;
+  commissionOutstandingMinor: number;
+}
+
+export interface PeopleReportTotals {
+  people: number;
+  invoiceCount: number;
+  invoicedMinor: number;
+  payrollPaidMinor: number;
+  expensesMinor: number;
+  totalCostMinor: number;
+  commissionInPayrollMinor: number;
+  commissionOutstandingMinor: number;
+}
+
+export interface PeopleReport {
+  rows: PersonRow[];
+  totals: PeopleReportTotals;
+  currency: string;
+}
+
+export interface DepartmentSummary {
+  departmentId: string | null;
+  name: string;
+  headcount: number;
+  invoicedMinor: number;
+  payrollPaidMinor: number;
+  expensesMinor: number;
+  totalCostMinor: number;
+  commissionInPayrollMinor: number;
+}
+
+export interface DepartmentReport {
+  departments: DepartmentSummary[];
+  currency: string;
+}
+
+export interface PersonDetail {
+  person: {
+    employeeId: string; employeeCode: string; name: string; email: string;
+    designation: string; departmentId: string | null; departmentName: string;
+    status: string; hasLogin: boolean;
+  };
+  summary: PersonRow | null;
+  payslips: Array<{
+    runId: string; runNumber: string; period: string; status: string; currency: string;
+    grossMinor: number; deductionsMinor: number; payableMinor: number;
+    amountPaidMinor: number; commissionMinor: number;
+  }>;
+  invoices: Array<{
+    id: string; invoiceNumber: string; customerName: string;
+    issueDate: string; totalMinor: number; status: string; currency: string;
+  }>;
+  expenses: Array<{
+    id: string; expenseNumber: string; description: string; categoryName: string;
+    expenseDate: string; totalMinor: number; status: string; currency: string;
+  }>;
+  commissions: Array<{
+    id: string; invoiceNumber: string; commissionMinor: number;
+    status: string; calculatedAt: string | null; paidAt: string | null;
+  }>;
+}

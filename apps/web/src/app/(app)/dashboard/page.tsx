@@ -1,14 +1,31 @@
 import { auth } from "@/auth";
+import { hasPermission, type Permission } from "@delta/shared";
 import { SectionCards } from "@/components/dashboard/section-cards";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
 import { RecentInvoices } from "@/components/dashboard/recent-invoices";
 import { TopCustomers } from "@/components/dashboard/top-customers";
 import { ExpenseChart } from "@/components/dashboard/expense-chart";
 import { AgingSummary } from "@/components/dashboard/aging-summary";
+import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
 
 export default async function DashboardPage() {
   const session = await auth();
   const name = session?.user.name ?? "there";
+  const permissions = session?.user.permissions ?? [];
+  const isSuperAdmin = session?.user.isSuperAdmin ?? false;
+  const can = (p: Permission) => isSuperAdmin || hasPermission(permissions, p);
+
+  // The overview below is revenue, receivables and aging — the company's
+  // finances. Somebody whose access is limited to their own records would get
+  // a page of refusals, so they get their own work instead. The same two
+  // permissions gate the endpoint that feeds it, so this decides which page to
+  // render rather than whether the data is allowed out.
+  const seesCompanyFinances = can("report:read") || can("invoice:read");
+
+  if (!seesCompanyFinances) {
+    const seesAnything = can("expense:read:own") || can("invoice:read:own");
+    return seesAnything ? <MyWorkspace name={name} /> : <NoAccessYet name={name} />;
+  }
 
   const now = new Date();
   const currentMonth = now.toLocaleString("en-US", { month: "long" });

@@ -19,6 +19,7 @@ import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { useCan } from "@/lib/use-can";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -98,6 +99,9 @@ export default function ExpensesPage() {
 
   const hasFilters = status !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
 
+  // True when this person only ever sees their own claims.
+  const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
+
   const columns: Column<Expense>[] = [
     {
       key: "number",
@@ -138,12 +142,18 @@ export default function ExpensesPage() {
       sortable: true,
       cell: (e) => <span className="text-foreground-muted">{e.expenseDate}</span>,
     },
-    {
-      key: "submittedBy",
-      header: "Submitted By",
-      sortable: true,
-      cell: (e) => <span className="text-foreground-muted">{e.submittedByName}</span>,
-    },
+    // Dropped for somebody who only ever sees their own: a column repeating
+    // the reader's own name on every row is a column of no information.
+    ...(ownOnly
+      ? []
+      : [
+          {
+            key: "submittedBy",
+            header: "Submitted By",
+            sortable: true,
+            cell: (e: Expense) => <span className="text-foreground-muted">{e.submittedByName}</span>,
+          },
+        ]),
     {
       key: "status",
       header: "Status",
@@ -215,9 +225,14 @@ export default function ExpensesPage() {
               title="Expenses"
               size="md"
             />
-            <Button variant="outline" onClick={() => router.push("/expenses/categories")}>
-              <Tag className="h-4 w-4" /> Categories
-            </Button>
+            {/* Managing categories reads them org-wide, which somebody scoped
+                to their own claims cannot do. Recurring is fine — it lists
+                their own. */}
+            {!ownOnly && (
+              <Button variant="outline" onClick={() => router.push("/expenses/categories")}>
+                <Tag className="h-4 w-4" /> Categories
+              </Button>
+            )}
             <Button variant="outline" onClick={() => router.push("/expenses/recurring")}>
               <Repeat className="h-4 w-4" /> Recurring
             </Button>

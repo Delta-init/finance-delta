@@ -30,6 +30,7 @@ import {
   useStopRecurrence,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
+import { useCan } from "@/lib/use-can";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -56,6 +57,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const { data: expense, isLoading } = useExpense(id);
   const submitExpense = useSubmitExpense(id);
+  const { can } = useCan();
   const approveExpense = useApproveExpense(id);
   const rejectExpense = useRejectExpense(id);
   const voidExpense = useVoidExpense(id);
@@ -91,7 +93,19 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   if (!expense) return <div className="flex h-64 items-center justify-center text-foreground-muted">Expense not found.</div>;
 
   const canSubmit = expense.status === "draft" || expense.status === "rejected";
-  const canApproveReject = expense.status === "submitted";
+  // A claimant may edit until it goes to an approver; after that the amount
+  // has been agreed against what was attached at the time. Somebody with the
+  // broader permission is an approver and may still correct it. The server
+  // enforces this either way — this is so the button is not offered to
+  // somebody it would only refuse.
+  const canEdit =
+    expense.status !== "voided" &&
+    (can("expense:update") || ["draft", "rejected"].includes(expense.status));
+
+  // Submitted is when it *can* be approved; expense:approve is who may. Without
+  // the permission these were still rendered, so a claimant saw Approve and
+  // Reject on their own claim and got a refusal for pressing either.
+  const canApproveReject = expense.status === "submitted" && can("expense:approve");
   const canVoid = expense.status !== "voided" && expense.status !== "approved";
 
   return (
@@ -116,7 +130,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-foreground-muted">{expense.description}</p>
         </div>
         <div className="flex items-center gap-2">
-          {expense.status !== "voided" && (
+          {canEdit && (
             <Link href={`/expenses/${id}/edit`}>
               <Button variant="outline" size="sm">
                 <Pencil className="h-4 w-4" /> Edit

@@ -47,7 +47,15 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   enabled?: boolean;
-  permission?: Permission;
+  /**
+   * Shown when the person holds any one of these.
+   *
+   * A list rather than a single permission because several now come in a broad
+   * and a narrow form — somebody with `expense:read:own` belongs on the
+   * expenses screen as much as somebody with `expense:read`, and gating on the
+   * broad one alone hid the screen from the people it was built for.
+   */
+  permission?: Permission | Permission[];
   superAdminOnly?: boolean;
 }
 
@@ -59,6 +67,10 @@ interface NavGroup {
 const NAV: NavGroup[] = [
   {
     items: [
+      // Ungated deliberately: everybody needs somewhere to land, and the page
+      // itself decides whether to show the company overview or the reader's
+      // own work. Every other entry names what it needs, or it is a link to a
+      // refusal for anybody who does not have it.
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, enabled: true },
     ],
   },
@@ -67,7 +79,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/quotations", label: "Quotations", icon: FileText, enabled: true, permission: "quotation:read" },
       { href: "/sales-orders", label: "Sales Orders", icon: ClipboardList, enabled: true, permission: "salesorder:read" },
-      { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: "invoice:read" },
+      { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
       { href: "/credit-notes", label: "Credit Notes", icon: FileX2, enabled: true, permission: "invoice:read" },
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
       { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read" },
@@ -85,14 +97,14 @@ const NAV: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: "expense:read" },
+      { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"] },
       { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
-      { href: "/banking", label: "Banking", icon: Landmark, enabled: true },
+      { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
       { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
-      { href: "/reports", label: "Reports", icon: BarChart3, enabled: true },
-      { href: "/reports/daily", label: "Daily Report", icon: BarChart3, enabled: true },
-      { href: "/reports/salesperson", label: "Salesperson", icon: TrendingUp, enabled: true },
-      { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true },
+      { href: "/reports", label: "Reports", icon: BarChart3, enabled: true, permission: "report:read" },
+      { href: "/reports/daily", label: "Daily Report", icon: BarChart3, enabled: true, permission: "report:read" },
+      { href: "/reports/salesperson", label: "Salesperson", icon: TrendingUp, enabled: true, permission: "report:read" },
+      { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true, permission: "report:read" },
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
       { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read" },
@@ -104,9 +116,9 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/admin/users", label: "Users", icon: Users2, enabled: true, permission: "user:read" },
       { href: "/admin/roles", label: "Roles", icon: ShieldCheck, enabled: true, permission: "role:read" },
-      { href: "/admin/departments", label: "Departments", icon: Building2, enabled: true },
+      { href: "/admin/departments", label: "Departments", icon: Building2, enabled: true, permission: "department:update" },
       { href: "/admin/tags", label: "Tags", icon: Tags, enabled: true, permission: "tag:read" },
-      { href: "/settings", label: "Settings", icon: Settings, enabled: true },
+      { href: "/settings", label: "Settings", icon: Settings, enabled: true, permission: "organization:read" },
     ],
   },
   {
@@ -151,7 +163,10 @@ export function AppSidebar({
         {NAV.map((group, gi) => {
           const items = group.items.filter((item) => {
             if (item.superAdminOnly && !user.isSuperAdmin) return false;
-            if (item.permission && !user.isSuperAdmin && !hasPermission(user.permissions, item.permission)) return false;
+            if (item.permission && !user.isSuperAdmin) {
+              const needed = Array.isArray(item.permission) ? item.permission : [item.permission];
+              if (!needed.some((p) => hasPermission(user.permissions, p))) return false;
+            }
             return true;
           });
           if (items.length === 0) return null;

@@ -1,171 +1,91 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, DollarSign, CheckCircle, Clock } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useRouter } from "next/navigation";
+import { Building2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { useCurrency } from "@/lib/currency-context";
-import { useInvoiceSummary } from "@/features/reports/api";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { MoneyDisplay } from "@/components/ui/money";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { useDepartmentReport } from "@/features/payroll/api";
+import type { DepartmentSummary } from "@/features/payroll/types";
 
+const monthStart = () => `${new Date().toISOString().slice(0, 7)}-01`;
 const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => {
-  const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
-};
 
-function fmt(currency: string, minor: number) {
-  return `${currency} ${(minor / 100).toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
-}
-
+/** What each department earned and what it cost, with a way into its people. */
 export default function DepartmentReportPage() {
-  const { currency, convert } = useCurrency();
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
+  const router = useRouter();
+  const [from, setFrom] = useState(monthStart());
+  const [to, setTo] = useState(today());
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
-  const { data, isLoading } = useInvoiceSummary(from, to, "department");
+  const { data, isLoading } = useDepartmentReport({ from, to });
+  const rows = data?.departments ?? [];
+  const currency = data?.currency ?? "AED";
 
-  const items = data?.items ?? [];
-  const grandTotal = items.reduce((s, i) => s + i.totalMinor, 0);
-  const grandPaid = items.reduce((s, i) => s + i.paidMinor, 0);
-  const grandOutstanding = items.reduce((s, i) => s + i.outstandingMinor, 0);
-
-  return (
-    <div className="flex flex-col gap-6 p-6">
-      <PageHeader
-        title="Department Performance"
-        description="Sales grouped by the salesperson's department"
-        icon={Building2}
-      />
-
-      {/* Date range filter */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-foreground-muted whitespace-nowrap">From</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-foreground-muted whitespace-nowrap">To</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-          />
-        </div>
-      </div>
-
-      {/* KPI summary cards */}
-      {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i} className="p-5">
-              <Skeleton className="h-3 w-32" />
-              <Skeleton className="mt-3 h-7 w-40" />
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <DollarSign className="h-3.5 w-3.5" /> Total Invoiced
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric">{fmt(currency, convert(grandTotal))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">{items.reduce((s, i) => s + i.count, 0)} invoices</p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <CheckCircle className="h-3.5 w-3.5" /> Paid
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric text-success">{fmt(currency, convert(grandPaid))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">
-              {grandTotal > 0 ? Math.round((grandPaid / grandTotal) * 100) : 0}% collected
-            </p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" /> Outstanding
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric text-warning">{fmt(currency, convert(grandOutstanding))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">pending collection</p>
-          </Card>
-        </div>
-      )}
-
-      {/* Department breakdown table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>By Department</CardTitle>
-          <CardDescription>
-            {from} — {to}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="space-y-3 p-6">
-              {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
-            </div>
-          ) : items.length === 0 ? (
-            <p className="py-12 text-center text-sm text-foreground-muted">
-              No invoice data for this period
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
-                    <th className="px-4 py-3 text-left">Department</th>
-                    <th className="px-4 py-3 text-right">Invoices</th>
-                    <th className="px-4 py-3 text-right">Invoiced</th>
-                    <th className="px-4 py-3 text-right">Paid</th>
-                    <th className="px-4 py-3 text-right">Outstanding</th>
-                    <th className="px-4 py-3 text-right">Collected %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((row) => {
-                    const pct = row.totalMinor > 0
-                      ? Math.round((row.paidMinor / row.totalMinor) * 100)
-                      : 0;
-                    return (
-                      <tr
-                        key={row.id}
-                        className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors"
-                      >
-                        <td className="px-4 py-3 font-medium">{row.label}</td>
-                        <td className="px-4 py-3 text-right font-numeric text-foreground-muted">{row.count}</td>
-                        <td className="px-4 py-3 text-right font-numeric">{fmt(currency, convert(row.totalMinor))}</td>
-                        <td className="px-4 py-3 text-right font-numeric text-success">{fmt(currency, convert(row.paidMinor))}</td>
-                        <td className="px-4 py-3 text-right font-numeric text-warning">{fmt(currency, convert(row.outstandingMinor))}</td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="h-1.5 w-16 rounded-full bg-surface-muted overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-success transition-all"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                            <span className="font-numeric text-xs text-foreground-muted w-8 text-right">{pct}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+  const columns: Column<DepartmentSummary>[] = [
+    { key: "name", header: "Department", cell: (d) => <span className="font-medium">{d.name}</span> },
+    { key: "headcount", header: "People", align: "right", cell: (d) => String(d.headcount) },
+    { key: "invoiced", header: "Invoiced", align: "right", cell: (d) => <MoneyDisplay minor={d.invoicedMinor} currency={currency} /> },
+    {
+      key: "payroll",
+      header: "Payroll paid",
+      align: "right",
+      cell: (d) => (
+        <div>
+          <MoneyDisplay minor={d.payrollPaidMinor} currency={currency} />
+          {d.commissionInPayrollMinor > 0 && (
+            <div className="text-xs text-foreground-muted">
+              incl. <MoneyDisplay minor={d.commissionInPayrollMinor} currency={currency} /> commission
             </div>
           )}
-        </CardContent>
+        </div>
+      ),
+    },
+    { key: "expenses", header: "Expenses", align: "right", cell: (d) => <MoneyDisplay minor={d.expensesMinor} currency={currency} /> },
+    { key: "cost", header: "Total cost", align: "right", cell: (d) => <MoneyDisplay minor={d.totalCostMinor} currency={currency} className="font-semibold" /> },
+  ];
+
+  return (
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={Building2}
+        title="Departments"
+        description="What each department earned and what it cost. Cost is payroll paid plus expenses; commission is already inside the payroll figure."
+      />
+
+      <Card className="flex flex-wrap items-end gap-3 p-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="d-from" className="text-xs">From</Label>
+          <Input id="d-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-[150px]" />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="d-to" className="text-xs">To</Label>
+          <Input id="d-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-[150px]" />
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <DataTable
+          columns={columns}
+          data={rows}
+          getRowId={(d) => d.departmentId ?? "none"}
+          total={rows.length}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          isLoading={isLoading}
+          // People with no department have no page to open — they are a bucket,
+          // not a record.
+          onRowClick={(d) => d.departmentId && router.push(`/reports/department/${d.departmentId}?from=${from}&to=${to}`)}
+          detailTitle={(d) => d.name}
+          emptyMessage="No departments yet."
+        />
       </Card>
     </div>
   );

@@ -39,6 +39,9 @@ export interface PersonRow {
   /** What they brought in. */
   invoiceCount: number;
   invoicedMinor: number;
+  /** Of what they invoiced, how much has been collected and how much has not. */
+  invoicePaidMinor: number;
+  invoiceOutstandingMinor: number;
 
   /** What they cost. */
   payrollPaidMinor: number;
@@ -94,7 +97,15 @@ export async function peopleReport(orgId: string, query: Query) {
             status: { $nin: ["void", "draft"] },
           },
         },
-        { $group: { _id: "$salespersonId", count: { $sum: 1 }, total: { $sum: "$totalMinor" } } },
+        {
+          $group: {
+            _id: "$salespersonId",
+            count: { $sum: 1 },
+            total: { $sum: "$totalMinor" },
+            paid: { $sum: "$amountPaidMinor" },
+            outstanding: { $sum: "$balanceMinor" },
+          },
+        },
       ])
     : [];
   const invoices = new Map(invoiceAgg.map((r) => [String(r._id), r]));
@@ -170,6 +181,8 @@ export async function peopleReport(orgId: string, query: Query) {
 
       invoiceCount: inv?.count ?? 0,
       invoicedMinor: inv?.total ?? 0,
+      invoicePaidMinor: inv?.paid ?? 0,
+      invoiceOutstandingMinor: inv?.outstanding ?? 0,
 
       payrollPaidMinor: pay.payroll,
       expensesMinor: exp,
@@ -189,6 +202,8 @@ export async function peopleReport(orgId: string, query: Query) {
         people: a.people + 1,
         invoiceCount: a.invoiceCount + r.invoiceCount,
         invoicedMinor: a.invoicedMinor + r.invoicedMinor,
+        invoicePaidMinor: a.invoicePaidMinor + r.invoicePaidMinor,
+        invoiceOutstandingMinor: a.invoiceOutstandingMinor + r.invoiceOutstandingMinor,
         payrollPaidMinor: a.payrollPaidMinor + r.payrollPaidMinor,
         expensesMinor: a.expensesMinor + r.expensesMinor,
         totalCostMinor: a.totalCostMinor + r.totalCostMinor,
@@ -204,6 +219,7 @@ export async function peopleReport(orgId: string, query: Query) {
 function emptyTotals() {
   return {
     people: 0, invoiceCount: 0, invoicedMinor: 0,
+    invoicePaidMinor: 0, invoiceOutstandingMinor: 0,
     payrollPaidMinor: 0, expensesMinor: 0, totalCostMinor: 0,
     commissionInPayrollMinor: 0, commissionOutstandingMinor: 0,
   };
@@ -336,6 +352,8 @@ function summarise(id: string | null, name: string, people: PersonRow[]) {
     name,
     headcount: people.length,
     invoicedMinor: people.reduce((s, p) => s + p.invoicedMinor, 0),
+    invoicePaidMinor: people.reduce((s, p) => s + p.invoicePaidMinor, 0),
+    invoiceOutstandingMinor: people.reduce((s, p) => s + p.invoiceOutstandingMinor, 0),
     payrollPaidMinor: people.reduce((s, p) => s + p.payrollPaidMinor, 0),
     expensesMinor: people.reduce((s, p) => s + p.expensesMinor, 0),
     totalCostMinor: people.reduce((s, p) => s + p.totalCostMinor, 0),

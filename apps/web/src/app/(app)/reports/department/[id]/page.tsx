@@ -58,7 +58,7 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="space-y-6 p-6">
-      <Link href="/payroll/departments" className="inline-flex items-center gap-1.5 text-sm text-foreground-muted hover:text-foreground">
+      <Link href="/reports/department" className="inline-flex items-center gap-1.5 text-sm text-foreground-muted hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />All departments
       </Link>
 
@@ -95,7 +95,7 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           isLoading={isLoading}
-          onRowClick={(r) => router.push(`/payroll/people/${r.employeeId}?from=${from}&to=${to}`)}
+          onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
           detailTitle={(r) => r.name}
           emptyMessage="Nobody is mapped to this department."
         />

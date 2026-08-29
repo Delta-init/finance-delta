@@ -1,186 +1,193 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { TrendingUp, DollarSign, CheckCircle, Clock } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useRouter } from "next/navigation";
+import { Users2, TrendingUp, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { useCurrency } from "@/lib/currency-context";
-import { useInvoiceSummary } from "@/features/reports/api";
-import { useUsers } from "@/features/users/api";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { MoneyDisplay } from "@/components/ui/money";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { usePeopleReport } from "@/features/payroll/api";
+import type { PersonRow } from "@/features/payroll/types";
 
+const monthStart = () => `${new Date().toISOString().slice(0, 7)}-01`;
 const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => {
-  const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
-};
 
-function fmt(currency: string, minor: number) {
-  return `${currency} ${(minor / 100).toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
-}
+/**
+ * Everyone on the payroll, what they brought in and what they cost.
+ *
+ * Driven by the roster rather than by activity: the older salesperson report
+ * groups invoices, so anybody who raised none had no row at all — right for
+ * "who sold the most", wrong for "who works here". Somebody with no sales
+ * appears here with zeroes.
+ *
+ * Cost is payroll paid plus expenses. Commission is shown as part of the
+ * payroll figure and never added to it, because it reaches people as an
+ * addition on a payroll run — adding it again would double every commission
+ * payment.
+ */
+export default function SalespeoplePage() {
+  const router = useRouter();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState(monthStart());
+  const [to, setTo] = useState(today());
 
-export default function SalespersonReportPage() {
-  const { currency, convert } = useCurrency();
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
+  const { data, isLoading } = usePeopleReport({ from, to, search: search.trim() || undefined });
+  const rows = data?.rows ?? [];
+  const totals = data?.totals;
+  const currency = data?.currency ?? "AED";
 
-  const { data, isLoading } = useInvoiceSummary(from, to, "salesperson");
-  const { data: usersData } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
-  const departmentByUserId = new Map(
-    (usersData?.data ?? []).map((u) => [u.id, u.department?.name ?? null]),
-  );
-
-  const items = data?.items ?? [];
-  const grandTotal = items.reduce((s, i) => s + i.totalMinor, 0);
-  const grandPaid = items.reduce((s, i) => s + i.paidMinor, 0);
-  const grandOutstanding = items.reduce((s, i) => s + i.outstandingMinor, 0);
+  const columns: Column<PersonRow>[] = [
+    {
+      key: "name",
+      header: "Employee",
+      cell: (r) => (
+        <div>
+          <div className="font-medium">{r.name}</div>
+          <div className="text-xs text-foreground-muted">
+            {r.employeeCode}
+            {r.designation ? ` · ${r.designation}` : ""}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "department",
+      header: "Department",
+      cell: (r) =>
+        r.departmentName ? (
+          r.departmentName
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-xs text-warning">
+            <AlertTriangle className="h-3.5 w-3.5" />Not mapped
+          </span>
+        ),
+    },
+    {
+      key: "invoiced",
+      header: "Invoiced",
+      align: "right",
+      cell: (r) =>
+        r.invoiceCount ? (
+          <div>
+            <MoneyDisplay minor={r.invoicedMinor} currency={currency} />
+            <div className="text-xs text-foreground-muted">{r.invoiceCount} invoice(s)</div>
+          </div>
+        ) : (
+          <span className="text-foreground-muted">—</span>
+        ),
+    },
+    {
+      key: "payroll",
+      header: "Payroll paid",
+      align: "right",
+      cell: (r) => (
+        <div>
+          <MoneyDisplay minor={r.payrollPaidMinor} currency={currency} />
+          {r.commissionInPayrollMinor > 0 && (
+            <div className="text-xs text-foreground-muted">
+              incl. <MoneyDisplay minor={r.commissionInPayrollMinor} currency={currency} /> commission
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "expenses",
+      header: "Expenses",
+      align: "right",
+      cell: (r) => <MoneyDisplay minor={r.expensesMinor} currency={currency} />,
+    },
+    {
+      key: "cost",
+      header: "Total cost",
+      align: "right",
+      cell: (r) => <MoneyDisplay minor={r.totalCostMinor} currency={currency} className="font-semibold" />,
+    },
+    {
+      key: "owed",
+      header: "Commission owed",
+      align: "right",
+      cell: (r) =>
+        r.commissionOutstandingMinor > 0 ? (
+          <Badge tone="warning">
+            <TrendingUp className="mr-1 inline h-3 w-3" />
+            <MoneyDisplay minor={r.commissionOutstandingMinor} currency={currency} />
+          </Badge>
+        ) : (
+          <span className="text-foreground-muted">—</span>
+        ),
+    },
+  ];
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="space-y-6 p-6">
       <PageHeader
-        title="Salesperson Performance"
-        description="Revenue, paid, and outstanding amounts by salesperson"
-        icon={TrendingUp}
+        icon={Users2}
+        title="Salespeople"
+        description="Everyone on the payroll — all of them can be named on an invoice. What they brought in, and what they cost: payroll paid plus expenses, with commission already inside the payroll figure."
       />
 
-      {/* Date range filter */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-foreground-muted whitespace-nowrap">From</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      <Card className="flex flex-wrap items-end gap-3 p-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="pp-search" className="text-xs">Search</Label>
+          <Input
+            id="pp-search"
+            placeholder="Name, code or email"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            className="w-full sm:w-56"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-foreground-muted whitespace-nowrap">To</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-          />
+        <div className="space-y-1.5">
+          <Label htmlFor="pp-from" className="text-xs">From</Label>
+          <Input id="pp-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-[150px]" />
         </div>
-      </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="pp-to" className="text-xs">To</Label>
+          <Input id="pp-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-[150px]" />
+        </div>
+      </Card>
 
-      {/* KPI summary cards */}
-      {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i} className="p-5">
-              <Skeleton className="h-3 w-32" />
-              <Skeleton className="mt-3 h-7 w-40" />
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <DollarSign className="h-3.5 w-3.5" /> Total Invoiced
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric">{fmt(currency, convert(grandTotal))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">{items.reduce((s, i) => s + i.count, 0)} invoices</p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <CheckCircle className="h-3.5 w-3.5" /> Paid
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric text-success">{fmt(currency, convert(grandPaid))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">
-              {grandTotal > 0 ? Math.round((grandPaid / grandTotal) * 100) : 0}% collected
-            </p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" /> Outstanding
-            </p>
-            <p className="mt-2 text-2xl font-bold font-numeric text-warning">{fmt(currency, convert(grandOutstanding))}</p>
-            <p className="mt-1 text-xs text-foreground-subtle">pending collection</p>
-          </Card>
+      {totals && totals.people > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="People" value={String(totals.people)} />
+          <Stat label="Invoiced" value={<MoneyDisplay minor={totals.invoicedMinor} currency={currency} />} />
+          <Stat label="Payroll paid" value={<MoneyDisplay minor={totals.payrollPaidMinor} currency={currency} />} />
+          <Stat label="Total cost" value={<MoneyDisplay minor={totals.totalCostMinor} currency={currency} />} strong />
         </div>
       )}
 
-      {/* Salesperson breakdown table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>By Salesperson</CardTitle>
-          <CardDescription>
-            {from} — {to}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="space-y-3 p-6">
-              {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
-            </div>
-          ) : items.length === 0 ? (
-            <p className="py-12 text-center text-sm text-foreground-muted">
-              No invoice data for this period
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
-                    <th className="px-4 py-3 text-left">Salesperson</th>
-                    <th className="px-4 py-3 text-left">Department</th>
-                    <th className="px-4 py-3 text-right">Invoices</th>
-                    <th className="px-4 py-3 text-right">Invoiced</th>
-                    <th className="px-4 py-3 text-right">Paid</th>
-                    <th className="px-4 py-3 text-right">Outstanding</th>
-                    <th className="px-4 py-3 text-right">Collected %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((row) => {
-                    const pct = row.totalMinor > 0
-                      ? Math.round((row.paidMinor / row.totalMinor) * 100)
-                      : 0;
-                    return (
-                      <tr
-                        key={row.id}
-                        className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors"
-                      >
-                        <td className="px-4 py-3 font-medium">
-                          <Link href={`/reports/salesperson/${row.id}`} className="hover:text-primary hover:underline">
-                            {row.label}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3 text-foreground-muted">
-                          {departmentByUserId.get(row.id) ?? "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right font-numeric text-foreground-muted">{row.count}</td>
-                        <td className="px-4 py-3 text-right font-numeric">{fmt(currency, convert(row.totalMinor))}</td>
-                        <td className="px-4 py-3 text-right font-numeric text-success">{fmt(currency, convert(row.paidMinor))}</td>
-                        <td className="px-4 py-3 text-right font-numeric text-warning">{fmt(currency, convert(row.outstandingMinor))}</td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="h-1.5 w-16 rounded-full bg-surface-muted overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-success transition-all"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                            <span className="font-numeric text-xs text-foreground-muted w-8 text-right">{pct}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
+      <Card className="overflow-hidden">
+        <DataTable
+          columns={columns}
+          data={rows}
+          getRowId={(r) => r.employeeId}
+          total={rows.length}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          isLoading={isLoading}
+          onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
+          detailTitle={(r) => r.name}
+          emptyMessage="Nobody is mapped yet. Link an organization under Payroll Mapping first."
+        />
       </Card>
     </div>
+  );
+}
+
+function Stat({ label, value, strong }: { label: string; value: React.ReactNode; strong?: boolean }) {
+  return (
+    <Card className="p-4">
+      <div className={strong ? "text-lg font-semibold" : "text-lg"}>{value}</div>
+      <div className="mt-0.5 text-xs text-foreground-muted">{label}</div>
+    </Card>
   );
 }

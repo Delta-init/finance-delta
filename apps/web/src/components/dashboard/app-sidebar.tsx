@@ -96,8 +96,6 @@ const NAV: NavGroup[] = [
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
       { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read" },
-      { href: "/payroll/people", label: "Payroll People", icon: Users2, enabled: true, permission: "payroll:read" },
-      { href: "/payroll/departments", label: "Payroll Depts", icon: Building2, enabled: true, permission: "payroll:read" },
       { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
     ],
   },

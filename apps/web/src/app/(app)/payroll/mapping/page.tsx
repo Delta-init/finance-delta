@@ -114,6 +114,14 @@ export default function PayrollMappingPage() {
       empImport: employees.filter((d) => d.action !== "deactivate" && !alreadyMapped.has(d.hrmsId)).length,
       empRefresh: employees.filter((d) => d.action !== "deactivate" && alreadyMapped.has(d.hrmsId)).length,
       empWithLogin: employees.filter((d) => d.action === "link" && d.targetUserId).length,
+      // Accounts about to be minted. Importing somebody with an email gives
+      // them a salesperson login, and creating a hundred of those is worth
+      // saying out loud before the button is pressed.
+      empNewLogins: employees.filter((d) => {
+        if (d.action === "skip" || d.action === "deactivate" || d.targetUserId) return false;
+        const row = (preview.data?.employees ?? []).find((e) => e.hrmsEmployeeId === d.hrmsId);
+        return Boolean(row && !row.userId && row.email);
+      }).length,
       empDeactivate: employees.filter((d) => d.action === "deactivate").length,
     };
   }, [decisions, preview.data]);
@@ -319,7 +327,8 @@ export default function PayrollMappingPage() {
                             pending.deptLink && `map ${pending.deptLink} department(s)`,
                             pending.empImport && `import ${pending.empImport} person(s)`,
                             pending.empRefresh && `refresh ${pending.empRefresh} already mapped`,
-                            pending.empWithLogin && `${pending.empWithLogin} with a finance login`,
+                            pending.empWithLogin && `${pending.empWithLogin} linked to an existing login`,
+                            pending.empNewLogins && `create ${pending.empNewLogins} salesperson login(s)`,
                             pending.empDeactivate && `deactivate ${pending.empDeactivate}`,
                           ].filter(Boolean).join(" · ")}
                     </p>

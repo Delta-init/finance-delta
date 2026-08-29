@@ -25,13 +25,21 @@ const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
  * and with no login to attach was both wrong statements at once.
  */
 function actionLabel(action: SyncDecision["action"], row: EmpRow, hasLogin: boolean): string {
+  // Importing somebody with an email always gives them a salesperson login —
+  // that is what makes them selectable on an invoice — so the label says so.
+  // It used to read a bare "Import" whenever no *existing* login had been
+  // matched, which is exactly the case where one is about to be created.
+  const willCreateLogin = !hasLogin && Boolean(row.email);
   switch (action) {
     case "skip": return "Leave alone";
     case "deactivate": return "Deactivate here";
-    case "create": return row.state === "linked" ? "Refresh from HRMS" : "Import";
+    case "create":
+      if (row.state === "linked") return "Refresh from HRMS";
+      return willCreateLogin ? "Import + create login" : "Import (no login)";
     case "link":
       if (row.state === "linked") return hasLogin ? "Refresh + keep login" : "Refresh from HRMS";
-      return hasLogin ? "Import + link login" : "Import";
+      if (hasLogin) return "Import + link login";
+      return willCreateLogin ? "Import + create login" : "Import (no login)";
   }
 }
 
@@ -204,7 +212,16 @@ export function EmployeeReview({
                       </Select>
                     ) : (
                       <span className="text-xs text-foreground-muted">
-                        {row.userName ?? (row.userId ? "Already linked" : "—")}
+                        {/* "—" read as "nothing will happen here", when in fact
+                            a login is about to be created. Say which. */}
+                        {row.userName
+                          ?? (row.userId
+                            ? "Already linked"
+                            : decision?.action === "skip" || decision?.action === "deactivate"
+                              ? "—"
+                              : row.email
+                                ? "Will be created"
+                                : "No email — cannot be a salesperson")}
                       </span>
                     )}
                   </td>

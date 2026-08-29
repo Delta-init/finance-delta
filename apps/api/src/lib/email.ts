@@ -38,6 +38,65 @@ function invoiceHtml(opts: {
 </div></body></html>`;
 }
 
+/**
+ * A plain notice to somebody inside the business, rather than to a customer.
+ *
+ * The invoice mail above is a document going out; this is a nudge going in —
+ * "a payroll is waiting", "a payment did not land". Same channel, different
+ * voice, so it gets its own shell rather than being squeezed into a template
+ * that opens with "Dear customer".
+ */
+function noticeHtml(opts: { title: string; lines: string[]; actionLabel?: string; actionUrl?: string }): string {
+  return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
+<div style="border:1px solid #e2e8f0;border-radius:12px;padding:28px">
+  <h2 style="margin:0 0 16px;font-size:18px">${opts.title}</h2>
+  ${opts.lines.map((l) => `<p style="margin:0 0 12px;color:#334155">${l}</p>`).join("")}
+  ${opts.actionUrl && opts.actionLabel
+    ? `<p style="margin:24px 0 0"><a href="${opts.actionUrl}" style="background:#1d4ed8;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block;font-weight:600">${opts.actionLabel}</a></p>`
+    : ""}
+</div></body></html>`;
+}
+
+/**
+ * Tell a group of colleagues something happened.
+ *
+ * Sent to each address separately rather than as one message with many
+ * recipients, so nobody learns who else is on the payroll distribution list.
+ */
+export async function sendNotice(opts: {
+  to: string[];
+  subject: string;
+  title: string;
+  lines: string[];
+  actionLabel?: string;
+  actionUrl?: string;
+}): Promise<{ sent: number; skipped?: string }> {
+  const resend = getClient();
+  if (!resend) {
+    logger.warn(`RESEND_API_KEY not set — notice "${opts.subject}" skipped`);
+    return { sent: 0, skipped: "not_configured" };
+  }
+  const recipients = [...new Set(opts.to.filter(Boolean))];
+  if (!recipients.length) return { sent: 0, skipped: "no_recipients" };
+
+  let sent = 0;
+  for (const to of recipients) {
+    try {
+      const { error } = await resend.emails.send({
+        from: `${env.FROM_NAME} <${env.FROM_EMAIL}>`,
+        to: [to],
+        subject: opts.subject,
+        html: noticeHtml(opts),
+      });
+      if (error) logger.warn({ error, to }, "Notice send failed");
+      else sent++;
+    } catch (err) {
+      logger.error({ err, to }, "Notice send threw");
+    }
+  }
+  return { sent };
+}
+
 export async function sendInvoiceEmail(opts: {
   to: string; orgName: string; invoiceNumber: string; customerName: string;
   totalFormatted: string; dueDate: string; footerText?: string; message?: string;

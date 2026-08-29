@@ -39,6 +39,7 @@ import payrollRoutes from "./modules/payroll/payroll.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
+import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
 
 async function bootstrap() {
   await connectDb();
@@ -99,6 +100,7 @@ async function bootstrap() {
   void startRecurringWorker();
   void startReminderWorker();
   void startRecurringExpenseWorker();
+  void startPayrollWaitingWorker();
 }
 
 bootstrap().catch((err) => {

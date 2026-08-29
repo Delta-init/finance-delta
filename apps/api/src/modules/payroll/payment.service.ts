@@ -11,6 +11,7 @@ import { formatMinor } from "./money";
 import { recalculate, type RecalcRun } from "./recalculate";
 import { selectPayableLines, isSettled, type PayableLine } from "./select-payable";
 import { postPayrollExpense, voidPayrollExpense } from "./posting.service";
+import { notifyPaymentNotSynced } from "./notify.service";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -240,6 +241,16 @@ async function syncPaymentToHrms(run: PayrollRunDoc, paymentId: string): Promise
     payment.syncedToHrms = false;
     payment.syncError = (err as Error).message.slice(0, 500);
     logger.error(`Payroll ${run.runNumber} payment ${paymentId} paid but not synced to HRMS: ${payment.syncError}`);
+    // Mailed as well as shown, because nobody has a reason to open this run
+    // again — the payment appeared to succeed.
+    void notifyPaymentNotSynced(String(run.organizationId), {
+      runId: String(run._id),
+      runNumber: run.runNumber,
+      paymentId,
+      amountMinor: payment.amountMinor,
+      currency: run.currency,
+      error: payment.syncError,
+    });
     return {
       ok: false,
       message:

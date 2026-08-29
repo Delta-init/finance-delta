@@ -303,3 +303,182 @@ export function fingerprint(input: {
     norm(input.reference ?? ""),
   ].join("|");
 }
+
+// ── Sheet shape ───────────────────────────────────────────────────────────────
+
+/**
+ * Words that appear in a statement's column headings.
+ *
+ * Used to find the heading row, not to name the columns — a bank that writes
+ * "Narration" instead of "Particulars" should still be recognisable as having
+ * a heading row there.
+ */
+const HEADER_WORDS = [
+  "date", "particular", "narration", "description", "detail", "remark",
+  "withdrawal", "deposit", "debit", "credit", "amount", "balance",
+  "reference", "cheque", "chq", "tran", "transaction", "value",
+];
+
+export interface SheetShape {
+  /** Index of the heading row within the rows given. `-1` when none was found. */
+  headerRow: number;
+  /** Rows above the heading — account number, opening balance and the like. */
+  metadataRows: number;
+}
+
+/**
+ * Find the heading row in a sheet that does not start with one.
+ *
+ * Bank exports open with a block of account details, so the headings are
+ * often twenty rows down. The heading row is the one matching the most known
+ * heading words; ties go to the earliest, and a row needs at least three
+ * matches to count, so a metadata line mentioning "Date of Issue" cannot win.
+ */
+export function detectHeaderRow(rows: string[][]): SheetShape {
+  let best = -1;
+  let bestScore = 2; // a row must beat this, so two stray matches are not enough
+
+  // Only the top of a sheet is worth searching: a heading row further down
+  // than this is a second statement in one file, which is not a shape to guess.
+  const limit = Math.min(rows.length, 40);
+  for (let i = 0; i < limit; i++) {
+    const cells = (rows[i] ?? []).map((c) => String(c ?? "").toLowerCase().trim());
+    const score = HEADER_WORDS.filter((w) => cells.some((c) => c.includes(w))).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return { headerRow: best, metadataRows: best < 0 ? 0 : best };
+}
+
+/**
+ * Column headings paired with the position they sit at.
+ *
+ * Position is what identifies a column, because heading text does not: a real
+ * statement had eighteen unnamed columns out of twenty-eight, and every one of
+ * them matched the first by name.
+ */
+export interface ColumnRef {
+  index: number;
+  /** Heading text, or a positional stand-in where the heading is blank. */
+  label: string;
+  /** True when the heading was blank and the label was made up. */
+  unnamed: boolean;
+}
+
+export function columnRefs(headerCells: string[]): ColumnRef[] {
+  return headerCells.map((raw, index) => {
+    const label = String(raw ?? "").trim();
+    return label
+      ? { index, label, unnamed: false }
+      : { index, label: `Column ${index + 1}`, unnamed: true };
+  });
+}
+
+/**
+ * Drop columns that hold nothing anywhere.
+ *
+ * Bank sheets pad heavily — a statement with ten real columns arrived as
+ * twenty-eight. Offering the empty ones in the mapping dropdowns buries the
+ * ones that matter.
+ */
+export function usefulColumns(refs: ColumnRef[], rows: string[][]): ColumnRef[] {
+  return refs.filter(
+    (c) => !c.unnamed || rows.some((r) => String(r[c.index] ?? "").trim() !== ""),
+  );
+}
+
+/**
+ * Rows that are a total or a note rather than a transaction.
+ *
+ * A statement ends with a totals line and a page of small print, and both sit
+ * in the same columns as the transactions above them.
+ */
+const NOT_A_TRANSACTION = /^(grand\s*total|total|opening\s*balance|closing\s*balance|carried\s*forward|brought\s*forward|b\/f|c\/f|\*+\s*end)/i;
+
+export function looksLikeTotalRow(cells: string[]): boolean {
+  return cells.some((c) => NOT_A_TRANSACTION.test(String(c ?? "").trim()));
+}
+
+// ── Statement metadata ────────────────────────────────────────────────────────
+
+/**
+ * Details a bank prints above the transactions.
+ *
+ * Read so the import can check it is going into the right account and that the
+ * arithmetic lands where the bank says it should. Everything is optional: this
+ * is a convenience read off an unstructured block, and nothing depends on it.
+ */
+export interface StatementMeta {
+  accountNumber?: string;
+  openingBalanceMinor?: number;
+  closingBalanceMinor?: number;
+}
+
+/**
+ * Pull what can be recognised from the block above the headings.
+ *
+ * Labels are matched loosely because banks pad them with spaces and colons,
+ * and the value is taken from the next non-empty cell on the same row — which
+ * is how these sheets are laid out.
+ */
+export function readStatementMeta(metaRows: string[][], style: DecimalStyle = "dot"): StatementMeta {
+  const meta: StatementMeta = {};
+
+  const valueAfter = (row: string[], from: number): string => {
+    for (let j = from + 1; j < row.length; j++) {
+      const v = String(row[j] ?? "").trim();
+      if (v) return v;
+    }
+    return "";
+  };
+
+  for (const row of metaRows) {
+    for (let i = 0; i < row.length; i++) {
+      const label = String(row[i] ?? "").toLowerCase().replace(/[\s:]+/g, " ").trim();
+      if (!label) continue;
+
+      if (!meta.accountNumber && /^account number\b/.test(label)) {
+        const v = valueAfter(row, i).replace(/\s/g, "");
+        if (/^\d{6,}$/.test(v)) meta.accountNumber = v;
+      }
+      if (meta.openingBalanceMinor === undefined && /^opening balance\b/.test(label)) {
+        const p = parseAmount(valueAfter(row, i), style);
+        if (p.ok) meta.openingBalanceMinor = p.minor;
+      }
+      // "Effective Available Balance" is the balance as at the statement date,
+      // which is the closing figure for what the file covers.
+      if (
+        meta.closingBalanceMinor === undefined &&
+        /^(closing balance|effective available balance)\b/.test(label)
+      ) {
+        const p = parseAmount(valueAfter(row, i), style);
+        if (p.ok) meta.closingBalanceMinor = p.minor;
+      }
+    }
+  }
+  return meta;
+}
+
+/**
+ * Check the arithmetic against the bank's own running balance.
+ *
+ * The strongest check available on an import: the bank states a balance after
+ * every line, so a mapping that reads the wrong column, or a missed row, shows
+ * up as a mismatch rather than as a plausible ledger.
+ */
+export function verifyBalances(
+  openingMinor: number,
+  lines: { amountMinor: number; statedBalanceMinor?: number }[],
+): { ok: boolean; firstMismatchAt: number; expectedMinor: number; statedMinor: number } {
+  let running = openingMinor;
+  for (let i = 0; i < lines.length; i++) {
+    running += lines[i]!.amountMinor;
+    const stated = lines[i]!.statedBalanceMinor;
+    if (stated !== undefined && stated !== running) {
+      return { ok: false, firstMismatchAt: i, expectedMinor: running, statedMinor: stated };
+    }
+  }
+  return { ok: true, firstMismatchAt: -1, expectedMinor: running, statedMinor: running };
+}

@@ -3,7 +3,7 @@
 import { use, useState, useRef, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Upload, FileText, X, CheckCircle2, AlertCircle, Copy } from "lucide-react";
+import { ArrowLeft, Upload, FileText, X, CheckCircle2, AlertCircle, Copy, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,24 +17,40 @@ import {
   detectDecimalStyle,
   parseDate,
   detectDateFormats,
+  detectHeaderRow,
+  columnRefs,
+  usefulColumns,
+  looksLikeTotalRow,
+  readStatementMeta,
+  verifyBalances,
   DATE_FORMAT_LABELS,
   type DateFormat,
   type DecimalStyle,
+  type ColumnRef,
+  type StatementMeta,
 } from "@delta/shared";
 import type { ImportedTransactionInput } from "@delta/shared";
 
-/**
- * Radix refuses an empty string as a Select value, so "no column chosen" needs
- * a sentinel that is not one. It never leaves this screen.
- */
+/** Radix treats an empty string as "no value", so "not chosen" needs a sentinel. */
 const NONE = "__none__";
 
+/** Columns are addressed by position; heading text does not identify them. */
+const asIndex = (v: string) => (v === NONE || v === "" ? -1 : Number(v));
+
 type ParsedRow = {
+  /**
+   * True when the row holds nothing in any mapped column — a note or a spacer
+   * from the bottom of the sheet, not a transaction that failed to parse.
+   * Reporting these as unreadable buries the rows that genuinely are.
+   */
+  blank: boolean;
   isoDate: string;
   description: string;
   amountMinor: number;
   reference: string;
-  /** Why this row cannot be imported. Empty when it is fine. */
+  externalId: string;
+  /** The balance the bank states after this line, when a column was mapped. */
+  statedBalanceMinor?: number;
   problems: string[];
 };
 
@@ -43,33 +59,42 @@ type ColumnMapping = {
   description: string;
   amount: string;
   reference: string;
+  externalId: string;
+  balance: string;
   amountType: "signed" | "separate";
   creditColumn: string;
   debitColumn: string;
 };
 
+const EMPTY_MAPPING: ColumnMapping = {
+  date: NONE, description: NONE, amount: NONE, reference: NONE, externalId: NONE,
+  balance: NONE, amountType: "signed", creditColumn: NONE, debitColumn: NONE,
+};
+
 function mapRows(
   rows: string[][],
-  headers: string[],
   mapping: ColumnMapping,
   dateFormat: DateFormat,
   decimalStyle: DecimalStyle,
+  columnCount: number,
 ): ParsedRow[] {
   return rows.map((row) => {
     const get = (col: string) => {
-      if (!col || col === NONE) return "";
-      const idx = headers.indexOf(col);
-      return idx >= 0 ? (row[idx] ?? "") : "";
+      const i = asIndex(col);
+      return i < 0 ? "" : String(row[i] ?? "");
     };
     const problems: string[] = [];
 
-    // A row with a different number of fields than the header means the file
-    // is not shaped the way it claims — usually an unquoted separator inside a
-    // description. Every column after it has shifted, so the amount would be
-    // read out of a neighbouring cell. That is exactly the failure worth
-    // refusing: it produces a plausible number rather than an error.
-    if (row.length !== headers.length) {
-      problems.push(`Row has ${row.length} fields, header has ${headers.length}`);
+    // Notes and disclaimers at the foot of a statement sit in their own
+    // columns, so they read as empty everywhere that matters.
+    const blank = [mapping.date, mapping.description, mapping.amount, mapping.creditColumn, mapping.debitColumn]
+      .every((c) => get(c).trim() === "");
+
+    // A row with more fields than the header means an unquoted separator has
+    // shifted every later column, so the amount would come out of the wrong
+    // cell — a plausible number rather than an error.
+    if (row.length > columnCount) {
+      problems.push(`Row has ${row.length} fields, header has ${columnCount}`);
     }
 
     const date = parseDate(get(mapping.date), dateFormat);
@@ -81,12 +106,12 @@ function mapRows(
       if (!amt.ok) problems.push(amt.reason ?? "Bad amount");
       amountMinor = amt.minor;
     } else {
-      // Money out is written as a positive number in a debit column, so its
-      // sign comes from the column it sits in, not from the value.
+      // Money out is written as a positive number in a withdrawals column, so
+      // the sign comes from which column it sits in, not from the value.
       const credit = parseAmount(get(mapping.creditColumn), decimalStyle);
       const debit = parseAmount(get(mapping.debitColumn), decimalStyle);
-      if (!credit.ok) problems.push(credit.reason ?? "Bad credit amount");
-      if (!debit.ok) problems.push(debit.reason ?? "Bad debit amount");
+      if (!credit.ok) problems.push(credit.reason ?? "Bad deposit amount");
+      if (!debit.ok) problems.push(debit.reason ?? "Bad withdrawal amount");
       amountMinor = credit.minor - Math.abs(debit.minor);
     }
 
@@ -96,11 +121,20 @@ function mapRows(
       problems.push("Amount is zero — check the column mapping");
     }
 
+    let statedBalanceMinor: number | undefined;
+    if (asIndex(mapping.balance) >= 0) {
+      const b = parseAmount(get(mapping.balance), decimalStyle);
+      if (b.ok) statedBalanceMinor = b.minor;
+    }
+
     return {
+      blank,
       isoDate: date.iso,
       description,
       amountMinor,
       reference: get(mapping.reference).trim(),
+      externalId: get(mapping.externalId).trim(),
+      statedBalanceMinor,
       problems,
     };
   });
@@ -114,112 +148,177 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
   const preview = usePreviewImport(id);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [rows, setRows] = useState<string[][]>([]);
+  const [sheet, setSheet] = useState<string[][]>([]);
+  const [headerRow, setHeaderRow] = useState(0);
   const [fileName, setFileName] = useState("");
   const [step, setStep] = useState<"upload" | "map" | "preview" | "done">("upload");
+  const [reading, setReading] = useState(false);
 
   const [dateFormat, setDateFormat] = useState<DateFormat>("dmy");
   const [decimalStyle, setDecimalStyle] = useState<DecimalStyle>("dot");
-  /** True when the file did not settle the layout and the choice is a guess. */
   const [dateAmbiguous, setDateAmbiguous] = useState(false);
+  const [meta, setMeta] = useState<StatementMeta>({});
 
   const [duplicates, setDuplicates] = useState<Set<number>>(new Set());
   const [onDuplicate, setOnDuplicate] = useState<"skip" | "import">("skip");
   const [result, setResult] = useState<{ count: number; skipped: number } | null>(null);
+  const [mapping, setMapping] = useState<ColumnMapping>(EMPTY_MAPPING);
 
-  const [mapping, setMapping] = useState<ColumnMapping>({
-    date: "", description: "", amount: "", reference: NONE,
-    amountType: "signed", creditColumn: "", debitColumn: "",
-  });
+  const headerCells = useMemo(
+    () => (sheet[headerRow] ?? []).map((c) => String(c ?? "")),
+    [sheet, headerRow],
+  );
+
+  /** Rows below the heading that are transactions, not totals or small print. */
+  const bodyRows = useMemo(
+    () => sheet.slice(headerRow + 1).filter((r) => !looksLikeTotalRow(r) && r.some((c) => String(c ?? "").trim())),
+    [sheet, headerRow],
+  );
+
+  const columns: ColumnRef[] = useMemo(
+    () => usefulColumns(columnRefs(headerCells), bodyRows),
+    [headerCells, bodyRows],
+  );
 
   const parsed = useMemo(
-    () => (headers.length ? mapRows(rows, headers, mapping, dateFormat, decimalStyle) : []),
-    [rows, headers, mapping, dateFormat, decimalStyle],
+    () => (headerCells.length ? mapRows(bodyRows, mapping, dateFormat, decimalStyle, headerCells.length) : []),
+    [bodyRows, headerCells, mapping, dateFormat, decimalStyle],
   );
-  const good = useMemo(() => parsed.filter((r) => r.problems.length === 0), [parsed]);
-  const bad = parsed.length - good.length;
+  const good = useMemo(() => parsed.filter((r) => !r.blank && r.problems.length === 0), [parsed]);
+  const bad = useMemo(() => parsed.filter((r) => !r.blank && r.problems.length > 0), [parsed]).length;
 
-  /** Indexes into `good`, which is what gets sent and what the server answers about. */
   const importable = useMemo(
     () => (onDuplicate === "skip" ? good.filter((_, i) => !duplicates.has(i)) : good),
     [good, duplicates, onDuplicate],
   );
 
-  function column(col: string) {
-    return rows.map((r) => {
-      const idx = headers.indexOf(col);
-      return idx >= 0 ? (r[idx] ?? "") : "";
-    });
+  /** The bank's own running balance, checked against the arithmetic. */
+  const balanceCheck = useMemo(() => {
+    if (asIndex(mapping.balance) < 0 || meta.openingBalanceMinor === undefined || good.length === 0) return null;
+    return verifyBalances(meta.openingBalanceMinor, good);
+  }, [mapping.balance, meta.openingBalanceMinor, good]);
+
+  /** True when the file names an account that is not the one being imported into. */
+  const wrongAccount = useMemo(() => {
+    if (!meta.accountNumber || !account?.accountNumber) return false;
+    const norm = (s: string) => s.replace(/\D/g, "");
+    return norm(meta.accountNumber) !== norm(account.accountNumber);
+  }, [meta.accountNumber, account?.accountNumber]);
+
+  function columnValues(col: string) {
+    const i = asIndex(col);
+    return i < 0 ? [] : bodyRows.map((r) => String(r[i] ?? ""));
   }
 
-  // Re-detect whenever the chosen column changes: the layout is a property of
-  // the column, and carrying the previous column's answer over is how a file
-  // gets read in a format that was never checked against it.
   useEffect(() => {
-    if (!mapping.date || !headers.length) return;
-    const formats = detectDateFormats(column(mapping.date));
+    if (asIndex(mapping.date) < 0 || !bodyRows.length) return;
+    const formats = detectDateFormats(columnValues(mapping.date));
     setDateAmbiguous(formats.length !== 1);
     if (formats.length >= 1) setDateFormat(formats[0]!);
-  }, [mapping.date, headers, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mapping.date, bodyRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const cols = mapping.amountType === "signed"
       ? [mapping.amount]
       : [mapping.creditColumn, mapping.debitColumn];
-    const samples = cols.filter((c) => c && c !== NONE).flatMap(column);
+    const samples = cols.flatMap(columnValues).filter(Boolean);
     if (!samples.length) return;
     const style = detectDecimalStyle(samples);
     if (style !== "ambiguous") setDecimalStyle(style);
-  }, [mapping.amount, mapping.creditColumn, mapping.debitColumn, mapping.amountType, headers, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mapping.amount, mapping.creditColumn, mapping.debitColumn, mapping.amountType, bodyRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  /** Guess a column by what its heading says. Position is what gets stored. */
+  function guessColumn(cells: string[], words: string[]): string {
+    const i = cells.findIndex((h) => {
+      const t = String(h ?? "").toLowerCase();
+      return t && words.some((w) => t.includes(w));
+    });
+    return i >= 0 ? String(i) : NONE;
+  }
+
+  function loadSheet(rows: string[][], name: string) {
+    if (rows.length < 2) {
+      toast.error("That file has no rows in it");
+      return;
+    }
+    const shape = detectHeaderRow(rows);
+    const hr = shape.headerRow >= 0 ? shape.headerRow : 0;
+    if (shape.headerRow < 0) {
+      toast.error("Could not find a heading row — pick it below");
+    }
+    setSheet(rows);
+    setHeaderRow(hr);
+    setFileName(name);
+    setMeta(readStatementMeta(rows.slice(0, hr)));
+
+    const cells = (rows[hr] ?? []).map((c) => String(c ?? ""));
+    const body = rows.slice(hr + 1);
+    const credit = guessColumn(cells, ["deposit", "credit"]);
+    const debit = guessColumn(cells, ["withdrawal", "debit"]);
+    setMapping({
+      date: guessColumn(cells, ["date"]),
+      description: guessColumn(cells, ["particular", "narration", "description", "detail", "remark"]),
+      amount: guessColumn(cells, ["amount", "value"]),
+      reference: guessColumn(cells, ["cheque", "chq", "reference"]),
+      externalId: guessColumn(cells, ["tran id", "transaction id", "txn id", "utr"]),
+      balance: guessColumn(cells, ["balance"]),
+      // A sheet with both a withdrawals and a deposits column is telling you
+      // which it is; a single signed column is the other convention.
+      amountType: credit !== NONE && debit !== NONE ? "separate" : "signed",
+      creditColumn: credit,
+      debitColumn: debit,
+    });
+    void body;
+    setStep("map");
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = (ev.target?.result as string) ?? "";
-      const all = parseDelimited(text, detectDelimiter(text));
-      if (all.length < 2) {
-        toast.error("That file has no rows under its header");
-        return;
+    setReading(true);
+    try {
+      const isSpreadsheet = /\.(xls|xlsx|xlsm|xlsb|ods)$/i.test(file.name);
+      if (isSpreadsheet) {
+        // Loaded on demand: the parser is large, and most of the app never
+        // touches it.
+        const XLSX = await import("xlsx");
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        const first = wb.Sheets[wb.SheetNames[0]!];
+        if (!first) {
+          toast.error("That workbook has no sheets");
+          return;
+        }
+        // `raw: false` keeps the bank's own formatting — a date the sheet shows
+        // as 17/08/2026 stays that way instead of becoming a serial number.
+        const rows = XLSX.utils.sheet_to_json<string[]>(first, { header: 1, raw: false, defval: "" });
+        loadSheet(rows.map((r) => (r ?? []).map((c) => String(c ?? ""))), file.name);
+      } else {
+        const text = await file.text();
+        loadSheet(parseDelimited(text, detectDelimiter(text)), file.name);
       }
-      const [head, ...body] = all;
-      setHeaders(head!);
-      setRows(body);
-      const guess = (words: string[]) =>
-        head!.find((h) => words.some((w) => h.toLowerCase().includes(w))) ?? "";
-      setMapping({
-        date: guess(["date"]),
-        description: guess(["description", "narration", "detail", "particular", "remark"]),
-        amount: guess(["amount", "value"]),
-        reference: guess(["reference", "ref", "cheque", "check"]) || NONE,
-        amountType: "signed",
-        creditColumn: guess(["credit", "deposit"]),
-        debitColumn: guess(["debit", "withdraw"]),
-      });
-      setStep("map");
-    };
-    reader.readAsText(file);
+    } catch {
+      toast.error("Could not read that file");
+    } finally {
+      setReading(false);
+      // Let the same file be chosen again after a failure.
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   async function goToPreview() {
-    const rowsToCheck = good;
-    if (rowsToCheck.length === 0) {
+    if (good.length === 0) {
       toast.error("No rows could be read with this mapping");
       return;
     }
     try {
       const res = await preview.mutateAsync({
-        transactions: rowsToCheck.map((r) => ({
-          date: r.isoDate, description: r.description,
-          amountMinor: r.amountMinor, reference: r.reference, notes: "",
+        transactions: good.map((r) => ({
+          date: r.isoDate, description: r.description, amountMinor: r.amountMinor,
+          reference: r.reference, externalId: r.externalId || undefined, notes: "",
         })),
       });
       setDuplicates(new Set(res.duplicates));
     } catch {
-      // Not fatal: the import itself checks again, and refuses to double up.
       setDuplicates(new Set());
       toast.error("Could not check for duplicates — the import will still skip them");
     }
@@ -229,13 +328,11 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
   async function handleImport() {
     try {
       const transactions: ImportedTransactionInput[] = good.map((r) => ({
-        date: r.isoDate, description: r.description,
-        amountMinor: r.amountMinor, reference: r.reference, notes: "",
+        date: r.isoDate, description: r.description, amountMinor: r.amountMinor,
+        reference: r.reference, externalId: r.externalId || undefined, notes: "",
       }));
       const res = await bulkImport.mutateAsync({
-        transactions,
-        importBatchId: `import-${Date.now()}`,
-        onDuplicate,
+        transactions, importBatchId: `import-${Date.now()}`, onDuplicate,
       });
       setResult({ count: res.count, skipped: res.skipped });
       setStep("done");
@@ -245,13 +342,36 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
   }
 
   function reset() {
-    setStep("upload"); setHeaders([]); setRows([]); setFileName("");
-    setDuplicates(new Set()); setResult(null);
+    setStep("upload"); setSheet([]); setHeaderRow(0); setFileName("");
+    setDuplicates(new Set()); setResult(null); setMeta({}); setMapping(EMPTY_MAPPING);
   }
 
   const mappingComplete =
-    mapping.date && mapping.description &&
-    (mapping.amountType === "signed" ? mapping.amount : mapping.creditColumn && mapping.debitColumn);
+    asIndex(mapping.date) >= 0 && asIndex(mapping.description) >= 0 &&
+    (mapping.amountType === "signed"
+      ? asIndex(mapping.amount) >= 0
+      : asIndex(mapping.creditColumn) >= 0 && asIndex(mapping.debitColumn) >= 0);
+
+  const money = (m: number) => `${m < 0 ? "−" : ""}${Math.abs(m / 100).toFixed(2)}`;
+
+  /** A dropdown over the columns that actually hold something. */
+  const ColumnSelect = ({
+    value, onChange, optional = false, placeholder = "Select column",
+  }: {
+    value: string; onChange: (v: string) => void; optional?: boolean; placeholder?: string;
+  }) => (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent>
+        {optional && <SelectItem value={NONE}>None</SelectItem>}
+        {columns.map((c) => (
+          <SelectItem key={c.index} value={String(c.index)}>
+            {c.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -297,65 +417,89 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
           <div>
             <h2 className="font-semibold text-foreground">Upload a statement</h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-foreground-muted">
-              A CSV export from your bank. Commas, semicolons and tabs are all read, and you
-              confirm the date and number format on the next step before anything is imported.
+              Excel (.xls, .xlsx) or CSV, straight from your bank. Account details above the
+              transactions are read and skipped, and you confirm the date and number format
+              before anything is imported.
             </p>
           </div>
-          <Button onClick={() => fileRef.current?.click()}>
-            <FileText className="h-4 w-4" /> Choose file
+          <Button onClick={() => fileRef.current?.click()} disabled={reading}>
+            <FileText className="h-4 w-4" /> {reading ? "Reading…" : "Choose file"}
           </Button>
-          <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFileChange} />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,.txt,.tsv,.xls,.xlsx,.xlsm,.xlsb,.ods"
+            className="hidden"
+            onChange={handleFileChange}
+          />
         </div>
       )}
 
       {step === "map" && (
         <div className="space-y-4">
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-4">
             <FileText className="h-5 w-5 shrink-0 text-foreground-muted" />
             <span className="text-sm font-medium">{fileName}</span>
             <span className="text-xs text-foreground-muted">
-              ({rows.length} rows, {headers.length} columns)
+              {bodyRows.length} rows · headings on row {headerRow + 1}
+              {meta.accountNumber ? ` · account ${meta.accountNumber}` : ""}
             </span>
             <button onClick={reset} className="ml-auto text-foreground-muted hover:text-foreground">
               <X className="h-4 w-4" />
             </button>
           </div>
 
+          {wrongAccount && (
+            <div className="flex items-start gap-3 rounded-lg border border-danger/40 bg-danger/5 p-4">
+              <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+              <div className="text-sm">
+                <p className="font-medium">This statement is for a different account</p>
+                <p className="mt-1 text-foreground-muted">
+                  The file says <span className="font-mono">{meta.accountNumber}</span>, but{" "}
+                  {account?.accountName} is <span className="font-mono">{account?.accountNumber}</span>.
+                  Importing it here would put one account&rsquo;s transactions on another.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-4 rounded-lg border border-border bg-surface p-6">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground-muted">
-              Map Columns
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground-muted">
+                Map Columns
+              </h2>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-foreground-muted">Heading row</Label>
+                <Select value={String(headerRow)} onValueChange={(v) => setHeaderRow(Number(v))}>
+                  <SelectTrigger className="h-8 w-[110px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {sheet.slice(0, 40).map((_, i) => (
+                      <SelectItem key={i} value={String(i)}>Row {i + 1}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <Label>Date column *</Label>
-                <Select value={mapping.date} onValueChange={(v) => setMapping((m) => ({ ...m, date: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                  <SelectContent>
-                    {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <ColumnSelect value={mapping.date} onChange={(v) => setMapping((m) => ({ ...m, date: v }))} />
               </div>
-
               <div className="space-y-1">
                 <Label>Description column *</Label>
-                <Select value={mapping.description} onValueChange={(v) => setMapping((m) => ({ ...m, description: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                  <SelectContent>
-                    {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <ColumnSelect value={mapping.description} onChange={(v) => setMapping((m) => ({ ...m, description: v }))} />
               </div>
-
               <div className="space-y-1">
-                <Label>Reference column (optional)</Label>
-                <Select value={mapping.reference} onValueChange={(v) => setMapping((m) => ({ ...m, reference: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>None</SelectItem>
-                    {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Label>Reference / cheque (optional)</Label>
+                <ColumnSelect optional value={mapping.reference} onChange={(v) => setMapping((m) => ({ ...m, reference: v }))} />
+              </div>
+              <div className="space-y-1">
+                <Label>Bank transaction ID (optional)</Label>
+                <ColumnSelect optional value={mapping.externalId} onChange={(v) => setMapping((m) => ({ ...m, externalId: v }))} />
+                <p className="text-xs text-foreground-muted">
+                  Unique per transaction, so a re-import is recognised exactly.
+                </p>
               </div>
 
               <div className="space-y-1">
@@ -367,48 +511,38 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="signed">Single column (+ credit, − debit)</SelectItem>
-                    <SelectItem value="separate">Separate credit/debit columns</SelectItem>
+                    <SelectItem value="separate">Separate withdrawals/deposits</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Balance column (optional)</Label>
+                <ColumnSelect optional value={mapping.balance} onChange={(v) => setMapping((m) => ({ ...m, balance: v }))} />
+                <p className="text-xs text-foreground-muted">
+                  Checks the import against the bank&rsquo;s own running balance.
+                </p>
               </div>
 
               {mapping.amountType === "signed" ? (
                 <div className="space-y-1">
                   <Label>Amount column *</Label>
-                  <Select value={mapping.amount} onValueChange={(v) => setMapping((m) => ({ ...m, amount: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                    <SelectContent>
-                      {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <ColumnSelect value={mapping.amount} onChange={(v) => setMapping((m) => ({ ...m, amount: v }))} />
                 </div>
               ) : (
                 <>
                   <div className="space-y-1">
-                    <Label>Credit (money in) *</Label>
-                    <Select value={mapping.creditColumn} onValueChange={(v) => setMapping((m) => ({ ...m, creditColumn: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                      <SelectContent>
-                        {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <Label>Deposits (money in) *</Label>
+                    <ColumnSelect value={mapping.creditColumn} onChange={(v) => setMapping((m) => ({ ...m, creditColumn: v }))} />
                   </div>
                   <div className="space-y-1">
-                    <Label>Debit (money out) *</Label>
-                    <Select value={mapping.debitColumn} onValueChange={(v) => setMapping((m) => ({ ...m, debitColumn: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                      <SelectContent>
-                        {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <Label>Withdrawals (money out) *</Label>
+                    <ColumnSelect value={mapping.debitColumn} onChange={(v) => setMapping((m) => ({ ...m, debitColumn: v }))} />
                   </div>
                 </>
               )}
             </div>
           </div>
 
-          {/* Date and number format. Separated out because getting either wrong
-              changes the numbers without looking like an error. */}
           <div className="space-y-4 rounded-lg border border-border bg-surface p-6">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground-muted">
               Date &amp; number format
@@ -424,15 +558,14 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
                     ))}
                   </SelectContent>
                 </Select>
-                {mapping.date && (
+                {asIndex(mapping.date) >= 0 && (
                   <p className={`text-xs ${dateAmbiguous ? "text-warning" : "text-foreground-muted"}`}>
                     {dateAmbiguous
-                      ? "Every day in this file is 12 or under, so the order cannot be told from the file. Check the first date below."
+                      ? "Every day in this file is 12 or under, so the order cannot be told from the file. Check the first row below."
                       : "Detected from the file."}
                   </p>
                 )}
               </div>
-
               <div className="space-y-1">
                 <Label>Number format</Label>
                 <Select value={decimalStyle} onValueChange={(v) => setDecimalStyle(v as DecimalStyle)}>
@@ -445,8 +578,6 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
               </div>
             </div>
 
-            {/* The first row as it will actually be stored. Cheaper to check
-                one line here than to unpick a month of wrong dates later. */}
             {mappingComplete && parsed[0] && (
               <div className="rounded-md border border-border bg-surface-muted/40 p-3 text-sm">
                 <p className="mb-1 text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -455,11 +586,10 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
                 {parsed[0].problems.length > 0 ? (
                   <p className="text-danger">{parsed[0].problems.join(" · ")}</p>
                 ) : (
-                  <p className="font-mono">
-                    {parsed[0].isoDate} · {parsed[0].description} ·{" "}
+                  <p className="font-mono text-xs">
+                    {parsed[0].isoDate} · {parsed[0].description.slice(0, 40)} ·{" "}
                     <span className={parsed[0].amountMinor >= 0 ? "text-success" : "text-danger"}>
-                      {parsed[0].amountMinor >= 0 ? "+" : "−"}
-                      {Math.abs(parsed[0].amountMinor / 100).toFixed(2)}
+                      {parsed[0].amountMinor >= 0 ? "+" : ""}{money(parsed[0].amountMinor)}
                     </span>
                   </p>
                 )}
@@ -495,23 +625,55 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
             )}
           </div>
 
+          {/* The strongest check available: the bank states a balance after
+              every line, so a misread column shows up here rather than in a
+              reconciliation three months from now. */}
+          {balanceCheck && (
+            <div
+              className={`rounded-lg border p-4 ${
+                balanceCheck.ok ? "border-success/40 bg-success/5" : "border-danger/40 bg-danger/5"
+              }`}
+            >
+              {balanceCheck.ok ? (
+                <p className="text-sm">
+                  <span className="font-medium">Balances agree.</span>{" "}
+                  <span className="text-foreground-muted">
+                    Every line matches the bank&rsquo;s own running balance, ending at{" "}
+                    {money(balanceCheck.expectedMinor)}.
+                  </span>
+                </p>
+              ) : (
+                <div className="text-sm">
+                  <p className="font-medium">
+                    The running balance stops matching at row {balanceCheck.firstMismatchAt + 1}
+                  </p>
+                  <p className="mt-1 text-foreground-muted">
+                    The arithmetic gives {money(balanceCheck.expectedMinor)}, the bank says{" "}
+                    {money(balanceCheck.statedMinor)}. Usually the withdrawals and deposits
+                    columns are the wrong way round, or a row was left out.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {duplicates.size > 0 && (
             <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4">
-              <p className="text-sm font-medium">
-                {duplicates.size} of these are already on the account
-              </p>
+              <p className="text-sm font-medium">{duplicates.size} of these are already on the account</p>
               <p className="text-xs text-foreground-muted">
-                Matched on date, amount, description and reference. Two genuinely separate
-                payments of the same amount on the same day look identical here, so if that is
-                what these are, import them.
+                {asIndex(mapping.externalId) >= 0
+                  ? "Matched on the bank's own transaction ID, so these are the same transactions, not merely similar ones. They will be left out."
+                  : "Matched on date, amount, description and reference. Two genuinely separate payments of the same amount on the same day look identical here, so if that is what these are, import them."}
               </p>
-              <Select value={onDuplicate} onValueChange={(v) => setOnDuplicate(v as "skip" | "import")}>
-                <SelectTrigger className="w-[280px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="skip">Leave the {duplicates.size} out</SelectItem>
-                  <SelectItem value="import">Import them, marked as duplicates</SelectItem>
-                </SelectContent>
-              </Select>
+              {asIndex(mapping.externalId) < 0 && (
+                <Select value={onDuplicate} onValueChange={(v) => setOnDuplicate(v as "skip" | "import")}>
+                  <SelectTrigger className="w-[280px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="skip">Leave the {duplicates.size} out</SelectItem>
+                    <SelectItem value="import">Import them, marked as duplicates</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           )}
 
@@ -521,21 +683,18 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
               <ul className="space-y-1 text-xs text-foreground-muted">
                 {parsed
                   .map((r, i) => ({ r, i }))
-                  .filter(({ r }) => r.problems.length > 0)
+                  .filter(({ r }) => !r.blank && r.problems.length > 0)
                   .slice(0, 5)
                   .map(({ r, i }) => (
-                    <li key={i}>Row {i + 2}: {r.problems.join(" · ")}</li>
+                    <li key={i}>Row {headerRow + i + 2}: {r.problems.join(" · ")}</li>
                   ))}
                 {bad > 5 && <li>…and {bad - 5} more</li>}
               </ul>
-              <p className="mt-2 text-xs text-foreground-muted">
-                Go back and check the date or number format if this is most of the file.
-              </p>
             </div>
           )}
 
           <div className="overflow-hidden rounded-lg border border-border bg-surface">
-            <div className="max-h-[480px] overflow-y-auto overflow-x-auto">
+            <div className="max-h-[480px] overflow-x-auto overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-surface-muted">
                   <tr>
@@ -564,14 +723,15 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-xs text-foreground-muted">{row.reference}</td>
+                        <td className="px-4 py-2.5 text-xs text-foreground-muted">
+                          {row.externalId || row.reference}
+                        </td>
                         <td
                           className={`px-4 py-2.5 text-right font-mono font-medium ${
                             row.amountMinor >= 0 ? "text-success" : "text-danger"
                           }`}
                         >
-                          {row.amountMinor >= 0 ? "+" : "−"}
-                          {Math.abs(row.amountMinor / 100).toFixed(2)}
+                          {row.amountMinor >= 0 ? "+" : ""}{money(row.amountMinor)}
                         </td>
                       </tr>
                     );

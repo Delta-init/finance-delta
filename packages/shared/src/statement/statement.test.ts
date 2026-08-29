@@ -7,6 +7,12 @@ import {
   parseDelimited,
   detectDelimiter,
   fingerprint,
+  detectHeaderRow,
+  columnRefs,
+  usefulColumns,
+  looksLikeTotalRow,
+  readStatementMeta,
+  verifyBalances,
 } from "./index";
 
 describe("parseAmount", () => {
@@ -214,5 +220,126 @@ describe("fingerprint", () => {
 
   it("does not confuse a credit with a debit of the same size", () => {
     expect(fingerprint(base)).not.toBe(fingerprint({ ...base, amountMinor: 50000 }));
+  });
+});
+
+// The shape of a real Federal Bank export: a block of account details, then
+// headings twenty rows down, then transactions, then a totals line and notes.
+const REAL_HEADER = [
+  "", "", "", "Date", "", "Value Date", "Particulars", "", "", "", "Tran Type",
+  "Tran ID", "Cheque Details", "", "", "Withdrawals", "", "", "Deposits", "",
+  "", "Balance", "Balance Type", "", "", "", "", "",
+];
+
+describe("detectHeaderRow", () => {
+  it("finds headings that are not on the first row", () => {
+    const rows = [
+      ["", "", "", "", "Name", "", "", "", "EDUFINTRA PRIVATE LIMITED"],
+      ["", "", "", "", "Account Number       :", "", "", "", "21660200006498"],
+      ["", "", "", "", "Opening Balance      :", "", "", "", "3,16,775.07"],
+      REAL_HEADER,
+      ["", "", "", "17/08/2026", "", "17/08/2026", "TO ATM"],
+    ];
+    expect(detectHeaderRow(rows).headerRow).toBe(3);
+    expect(detectHeaderRow(rows).metadataRows).toBe(3);
+  });
+
+  it("finds a heading row that is already first", () => {
+    expect(detectHeaderRow([["Date", "Description", "Amount", "Balance"], ["a", "b", "c", "d"]]).headerRow).toBe(0);
+  });
+
+  it("is not fooled by a metadata line mentioning a date", () => {
+    // "Date of Issue" and "Account Open Date" are not a heading row.
+    const rows = [
+      ["Date of Issue :", "24/08/2026"],
+      ["Account Open Date :", "15/04/2026"],
+      ["Date", "Particulars", "Withdrawals", "Deposits", "Balance"],
+    ];
+    expect(detectHeaderRow(rows).headerRow).toBe(2);
+  });
+
+  it("reports nothing rather than guessing when there is no heading row", () => {
+    expect(detectHeaderRow([["a", "b"], ["c", "d"]]).headerRow).toBe(-1);
+  });
+});
+
+describe("columnRefs and usefulColumns", () => {
+  it("identifies columns by position, not by heading text", () => {
+    const refs = columnRefs(REAL_HEADER);
+    expect(refs[15]).toEqual({ index: 15, label: "Withdrawals", unnamed: false });
+    expect(refs[18]).toEqual({ index: 18, label: "Deposits", unnamed: false });
+    // Eighteen columns share the same blank heading; by name they would all
+    // resolve to the first one.
+    expect(refs.filter((c) => c.unnamed)).toHaveLength(18);
+    expect(refs[0]!.label).not.toBe(refs[1]!.label);
+  });
+
+  it("drops padding columns that are empty everywhere", () => {
+    const rows = [["", "", "", "17/08/2026", "", "", "TO ATM", "", "", "", "", "", "", "", "", "10,000.00"]];
+    const kept = usefulColumns(columnRefs(REAL_HEADER), rows);
+    expect(kept.some((c) => c.index === 3)).toBe(true);   // Date, named
+    expect(kept.some((c) => c.index === 15)).toBe(true);  // Withdrawals, named
+    expect(kept.some((c) => c.index === 24)).toBe(false); // unnamed and always empty
+  });
+});
+
+describe("looksLikeTotalRow", () => {
+  it("recognises the lines that are not transactions", () => {
+    expect(looksLikeTotalRow(["", "GRAND TOTAL", "1,47,327.62"])).toBe(true);
+    expect(looksLikeTotalRow(["Closing Balance", "3,04,487.45"])).toBe(true);
+    expect(looksLikeTotalRow(["****END OF STATEMENT****"])).toBe(true);
+    expect(looksLikeTotalRow(["Brought Forward", "100.00"])).toBe(true);
+  });
+
+  it("leaves real transactions alone", () => {
+    expect(looksLikeTotalRow(["17/08/2026", "UPI IN/328607988207", "2,000.00"])).toBe(false);
+    // "TOTAL" inside a merchant name is not a totals row.
+    expect(looksLikeTotalRow(["17/08/2026", "TO ECM/TOTAL FITNESS LTD", "500.00"])).toBe(false);
+  });
+});
+
+describe("readStatementMeta", () => {
+  const metaRows = [
+    ["", "", "", "", "Name", "", "", "", "EDUFINTRA PRIVATE LIMITED"],
+    ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "Account Number       :", "", "", "", "", "", "21660200006498"],
+    ["", "", "", "", "Opening Balance                 :", "", "", "", "3,16,775.07"],
+    ["", "", "", "", "Effective Available Balance :", "", "", "", "304487.45"],
+  ];
+
+  it("reads the account number and the balances", () => {
+    const meta = readStatementMeta(metaRows);
+    expect(meta.accountNumber).toBe("21660200006498");
+    expect(meta.openingBalanceMinor).toBe(31677507);
+    expect(meta.closingBalanceMinor).toBe(30448745);
+  });
+
+  it("returns nothing rather than guessing when the block has none of it", () => {
+    expect(readStatementMeta([["just", "some", "text"]])).toEqual({});
+  });
+});
+
+describe("verifyBalances", () => {
+  it("accepts a run that lands where the bank says", () => {
+    const r = verifyBalances(31677507, [
+      { amountMinor: -1000000, statedBalanceMinor: 30677507 },
+      { amountMinor: 200000, statedBalanceMinor: 30877507 },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("points at the first line that disagrees", () => {
+    const r = verifyBalances(31677507, [
+      { amountMinor: -1000000, statedBalanceMinor: 30677507 },
+      // Read as a credit when it was a debit — the classic mapping mistake.
+      { amountMinor: 200000, statedBalanceMinor: 30477507 },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.firstMismatchAt).toBe(1);
+    expect(r.expectedMinor).toBe(30877507);
+    expect(r.statedMinor).toBe(30477507);
+  });
+
+  it("passes over lines with no stated balance", () => {
+    expect(verifyBalances(0, [{ amountMinor: 100 }, { amountMinor: 200 }]).ok).toBe(true);
   });
 });

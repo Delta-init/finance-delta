@@ -106,6 +106,13 @@ export const importedTransactionSchema = createBankTransactionSchema.extend({
   // Minor units are indivisible. A fraction here means somebody multiplied by
   // 100 in floating point and kept the error.
   amountMinor: z.number().int("Amount must be in whole minor units"),
+  /**
+   * The bank's own reference for the line, where the statement has one.
+   *
+   * When present it identifies the transaction outright, so a re-import is
+   * recognised even if the bank has since reworded the description.
+   */
+  externalId: z.string().trim().max(120).optional(),
 });
 export type ImportedTransactionInput = z.infer<typeof importedTransactionSchema>;
 
@@ -145,6 +152,8 @@ export const bankTransactionSchema = z.object({
   runningBalanceMinor: z.number(),
   source: z.enum(["manual", "import"]),
   importBatchId: z.string().optional(),
+  /** The bank's own reference, on rows imported from a statement that had one. */
+  externalId: z.string().optional(),
   status: bankTransactionStatusSchema,
   matches: z.array(bankTransactionMatchSchema),
   isReconciled: z.boolean(),

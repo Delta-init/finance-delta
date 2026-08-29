@@ -28,6 +28,15 @@ const bankTransactionSchema = new Schema(
     runningBalanceMinor: { type: Number, required: true },
     source: { type: String, enum: ["manual", "import"], required: true, default: "manual" },
     importBatchId: { type: String },
+    /**
+     * The bank's own reference for this transaction, where the statement
+     * carries one (Federal Bank prints it as "Tran ID").
+     *
+     * A far better identity than date-plus-amount-plus-description: it is
+     * unique per transaction, so two genuinely separate payments of the same
+     * amount on the same day stop being indistinguishable.
+     */
+    externalId: { type: String },
     status: {
       type: String,
       enum: ["unmatched", "matched", "excluded", "duplicate"],
@@ -45,6 +54,13 @@ bankTransactionSchema.index({ organizationId: 1, accountId: 1, date: -1 });
 bankTransactionSchema.index({ organizationId: 1, accountId: 1, status: 1 });
 bankTransactionSchema.index({ organizationId: 1, accountId: 1, isReconciled: 1 });
 bankTransactionSchema.index({ organizationId: 1, importBatchId: 1 });
+// Enforced rather than merely checked: two imports racing each other would
+// both pass a read-then-write test and both insert. Partial, because only
+// imported rows carry a bank reference and nulls must not collide.
+bankTransactionSchema.index(
+  { organizationId: 1, accountId: 1, externalId: 1 },
+  { unique: true, partialFilterExpression: { externalId: { $type: "string" } } },
+);
 
 export type BankTransactionDoc = InferSchemaType<typeof bankTransactionSchema> & {
   _id: Types.ObjectId;

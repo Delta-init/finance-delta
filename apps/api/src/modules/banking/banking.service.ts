@@ -80,6 +80,7 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     runningBalanceMinor: doc.runningBalanceMinor,
     source: doc.source as BankTransactionDTO["source"],
     importBatchId: (doc.importBatchId as string | undefined) ?? undefined,
+    externalId: (doc.externalId as string | undefined) ?? undefined,
     status: doc.status as BankTransactionDTO["status"],
     matches,
     isReconciled: (doc.isReconciled as boolean) ?? false,
@@ -383,35 +384,67 @@ export async function addTransaction(
  * statement covers a month, and a year of history is not worth scanning to
  * check it.
  */
-async function existingFingerprints(
+async function existingKeys(
   orgId: string,
   accountId: Types.ObjectId,
   isoDates: string[],
+  externalIds: string[],
 ): Promise<Set<string>> {
   const sorted = [...isoDates].sort();
   const from = new Date(`${sorted[0]}T00:00:00.000Z`);
   const to = new Date(`${sorted[sorted.length - 1]}T23:59:59.999Z`);
 
-  const rows = await BankTransaction.find({
-    organizationId: new Types.ObjectId(orgId),
-    accountId,
-    date: { $gte: from, $lte: to },
-  }).select("date amountMinor description reference");
+  // Two reads with different reach. The date window covers the statement
+  // period, which is what a fingerprint needs. A bank reference identifies a
+  // transaction wherever it sits, and a bank re-issuing a statement with
+  // corrected dates would slip past a window — so those are looked up by id.
+  const [inWindow, byRef] = await Promise.all([
+    BankTransaction.find({
+      organizationId: new Types.ObjectId(orgId),
+      accountId,
+      date: { $gte: from, $lte: to },
+    }).select("date amountMinor description reference externalId"),
+    externalIds.length
+      ? BankTransaction.find({
+          organizationId: new Types.ObjectId(orgId),
+          accountId,
+          externalId: { $in: externalIds },
+        }).select("date amountMinor description reference externalId")
+      : Promise.resolve([]),
+  ]);
 
-  return new Set(
-    rows.map((r) =>
+  const keys = new Set<string>();
+  for (const r of [...inWindow, ...byRef]) {
+    keys.add(
       fingerprint({
         isoDate: (r.date as Date).toISOString().slice(0, 10),
         amountMinor: r.amountMinor as number,
         description: r.description as string,
         reference: (r.reference as string) ?? "",
       }),
-    ),
-  );
+    );
+    const ext = r.externalId as string | undefined;
+    if (ext) keys.add(`ext|${ext}`);
+  }
+  return keys;
 }
 
-/** Fingerprint of one incoming line. Its date is already `YYYY-MM-DD`. */
-function lineFingerprint(tx: { date: string; amountMinor: number; description: string; reference?: string }) {
+/**
+ * How one incoming line is recognised.
+ *
+ * The bank's own reference when there is one, because it identifies the
+ * transaction outright — two separate payments of the same amount on the same
+ * day are otherwise indistinguishable. Everything else falls back to the
+ * fingerprint.
+ */
+function lineKey(tx: {
+  date: string;
+  amountMinor: number;
+  description: string;
+  reference?: string;
+  externalId?: string;
+}) {
+  if (tx.externalId) return `ext|${tx.externalId}`;
   return fingerprint({
     isoDate: tx.date,
     amountMinor: tx.amountMinor,
@@ -437,10 +470,11 @@ export async function previewImport(
   });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
-  const seen = await existingFingerprints(
+  const seen = await existingKeys(
     orgId,
     account._id,
     input.transactions.map((t) => t.date),
+    input.transactions.map((t) => t.externalId).filter((v): v is string => Boolean(v)),
   );
 
   // Repeats inside the file itself count too — a statement pasted together
@@ -448,7 +482,7 @@ export async function previewImport(
   const withinBatch = new Set<string>();
   const duplicates: number[] = [];
   input.transactions.forEach((tx, i) => {
-    const fp = lineFingerprint(tx);
+    const fp = lineKey(tx);
     if (seen.has(fp) || withinBatch.has(fp)) duplicates.push(i);
     withinBatch.add(fp);
   });
@@ -471,20 +505,28 @@ export async function bulkImportTransactions(
   });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
-  const seen = await existingFingerprints(
+  const seen = await existingKeys(
     orgId,
     account._id,
     input.transactions.map((t) => t.date),
+    input.transactions.map((t) => t.externalId).filter((v): v is string => Boolean(v)),
   );
   const withinBatch = new Set<string>();
 
   const toInsert: typeof input.transactions = [];
   let skipped = 0;
   for (const tx of input.transactions) {
-    const fp = lineFingerprint(tx);
+    const fp = lineKey(tx);
     const duplicate = seen.has(fp) || withinBatch.has(fp);
     withinBatch.add(fp);
-    if (duplicate && input.onDuplicate === "skip") {
+
+    // A matching bank reference is not a resemblance, it is the same
+    // transaction — the bank issues one per transaction. "Import anyway" is
+    // offered for lines that merely look alike, and does not apply here.
+    // Letting it through would also collide with the unique index.
+    const definite = duplicate && Boolean(tx.externalId);
+
+    if (duplicate && (definite || input.onDuplicate === "skip")) {
       skipped++;
       continue;
     }
@@ -508,6 +550,7 @@ export async function bulkImportTransactions(
     date: new Date(`${tx.date}T12:00:00.000Z`),
     description: tx.description,
     reference: tx.reference ?? "",
+    externalId: tx.externalId || undefined,
     amountMinor: tx.amountMinor,
     type: tx.amountMinor >= 0 ? ("credit" as const) : ("debit" as const),
     // Restated below across the whole account; a placeholder until then.
@@ -522,16 +565,32 @@ export async function bulkImportTransactions(
     notes: tx.notes ?? "",
   }));
 
-  const inserted = await BankTransaction.insertMany(docs);
+  // Unordered, so a row losing a race against a concurrent import of the same
+  // statement does not abort the rest. The unique index is the authority on
+  // what got in; anything it rejected was already there.
+  let inserted: BankTransactionDoc[];
+  try {
+    inserted = (await BankTransaction.insertMany(docs, {
+      ordered: false,
+    })) as unknown as BankTransactionDoc[];
+  } catch (err) {
+    const bulk = err as { insertedDocs?: BankTransactionDoc[]; code?: number; writeErrors?: unknown[] };
+    // Duplicate-key rejections are the expected outcome of that race and are
+    // counted as skipped. Anything else is a real failure.
+    const onlyDuplicates =
+      Array.isArray(bulk.writeErrors) &&
+      bulk.writeErrors.every((e) => (e as { err?: { code?: number } })?.err?.code === 11000);
+    if (!bulk.insertedDocs || !onlyDuplicates) throw err;
+    inserted = bulk.insertedDocs;
+    skipped += docs.length - inserted.length;
+  }
 
   // The running balance is a property of the account in date order, not of this
   // batch. A statement that overlaps existing entries needs the whole column
   // restated, so it is always recomputed rather than continued from the end.
   await recalculateRunningBalances(orgId, account._id);
 
-  const fresh = await BankTransaction.find({
-    _id: { $in: (inserted as unknown as BankTransactionDoc[]).map((d) => d._id) },
-  });
+  const fresh = await BankTransaction.find({ _id: { $in: inserted.map((d) => d._id) } });
 
   return {
     count: inserted.length,

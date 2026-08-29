@@ -75,6 +75,8 @@ export interface RunLine {
   name: string;
   designation: string;
   departmentName: string;
+  /** What this person is paid in. Need not match the run's own currency. */
+  currency: string;
   earnings: Array<{ label: string; amountMinor: number }>;
   deductions: Array<{ label: string; amountMinor: number }>;
   grossMinor: number;
@@ -108,12 +110,29 @@ export interface RunDetail {
     balanceMinor: number;
     heldCount: number;
   };
+  /**
+   * The totals split by what each person is paid in.
+   *
+   * One entry means the run is single-currency and `totals` above is a real
+   * figure. More than one means `totals` adds unlike things together, and the
+   * page shows this instead.
+   */
+  byCurrency: RunCurrencyTotals[];
   lines: RunLine[];
   adjustments: RunAdjustment[];
   payments: RunPayment[];
   importedAt: string | null;
   importedByName: string;
   notes: string;
+}
+
+export interface RunCurrencyTotals {
+  currency: string;
+  employeeCount: number;
+  grossMinor: number;
+  deductionsMinor: number;
+  payableMinor: number;
+  amountPaidMinor: number;
 }
 
 export interface RunAdjustment {

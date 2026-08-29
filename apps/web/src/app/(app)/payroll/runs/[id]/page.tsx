@@ -83,6 +83,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // pay, and choosing who an addition or deduction applies to. Which one the
   // selection means is decided by the stage, so it is cleared when that changes.
   const selectable = canPay || openForAdjustment;
+  /** More than one currency among the people on this run. */
+  const mixed = (run.byCurrency?.length ?? 0) > 1;
   /**
    * Whether this row can be ticked.
    *
@@ -117,9 +119,38 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         action={<Badge tone={RUN_TONE[run.status]}>{RUN_STATUS_LABELS[run.status]}</Badge>}
       />
 
-      {/* Six tiles wrapped to a second row with one lonely card on it.
-          Outstanding only differs from payable once something has been paid, so
-          it earns its place then and not before. */}
+      {/* A month can hold salaries in more than one currency. Adding those
+          together gives a figure that is not an amount of anything, so where
+          that happens the headline tiles are replaced by one row per currency
+          rather than quietly summing them. */}
+      {mixed ? (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+            <p className="font-medium">This month is paid in {run.byCurrency.length} currencies</p>
+            <p className="mt-0.5 text-foreground-muted">
+              Totalled separately, because {run.byCurrency.map((c) => c.currency).join(" and ")} cannot be
+              added together. Each person&rsquo;s own currency is shown against their row.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {run.byCurrency.map((c) => (
+              <Card key={c.currency} className="space-y-2 p-4">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm font-semibold">{c.currency}</span>
+                  <span className="text-xs text-foreground-muted">
+                    {c.employeeCount} {c.employeeCount === 1 ? "person" : "people"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <Figure label="Gross" minor={c.grossMinor} currency={c.currency} />
+                  <Figure label="Deductions" minor={c.deductionsMinor} currency={c.currency} />
+                  <Figure label="Payable" minor={c.payableMinor} currency={c.currency} strong />
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="People" value={String(run.totals.employeeCount)} />
         <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} showConverted />} />
@@ -132,6 +163,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} showConverted />} />
         )}
       </div>
+      )}
 
       {unsynced.length > 0 && (
         <Card className="space-y-2 border-danger/20 bg-danger/5 p-4 text-sm">
@@ -411,9 +443,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                       </div>
                     </td>
                     <td className="px-5 py-3 text-foreground-muted">{l.departmentName || "—"}</td>
-                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={run.currency} /></td>
-                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.deductionsMinor} currency={run.currency} /></td>
-                    <td className="px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={run.currency} /></td>
+                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={l.currency || run.currency} /></td>
+                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.deductionsMinor} currency={l.currency || run.currency} /></td>
+                    <td className="px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={l.currency || run.currency} /></td>
                     <td className="px-5 py-3">
                       <Badge tone={LINE_TONE[l.status]}>{LINE_LABEL[l.status]}</Badge>
                       {l.holdReason && <div className="mt-1 text-xs text-danger">{l.holdReason}</div>}
@@ -552,6 +584,20 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           })
         }
       />
+    </div>
+  );
+}
+
+/** One labelled amount inside a per-currency card. */
+function Figure({
+  label, minor, currency, strong,
+}: { label: string; minor: number; currency: string; strong?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs text-foreground-muted">{label}</p>
+      <p className={strong ? "font-semibold" : ""}>
+        <MoneyDisplay minor={minor} currency={currency} showConverted={strong} />
+      </p>
     </div>
   );
 }

@@ -160,6 +160,8 @@ export interface HrmsHandoverLine {
   departmentId: string | null;
   departmentName: string;
   designation: string;
+  /** What this person is paid in. Need not match the batch's own currency. */
+  currency?: string;
   grossPay: number;
   totalDeductions: number;
   netPay: number;

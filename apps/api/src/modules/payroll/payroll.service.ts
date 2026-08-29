@@ -168,8 +168,24 @@ export async function previewImport(orgId: string, hrmsOrgId: string, period: st
   }
 
   const existing = await PayrollRun.findOne({ organizationId: oid(orgId), hrmsOrgId, period }).lean();
-  if (existing) {
+  if (existing && existing.status !== "returned") {
     blockers.push(`This month has already been imported as ${existing.runNumber}.`);
+  }
+  if (existing && existing.status === "returned") {
+    // Sending a month back is an instruction to HR to change it, so the point
+    // of doing so is to import it again afterwards. Treating the returned run
+    // as "already imported" blocked exactly the thing it was sent back for,
+    // and left accounts looking at the figures they had rejected.
+    //
+    // The run is refreshed rather than duplicated: same number, same month,
+    // new figures. HRMS is the source, and any adjustment written through to
+    // a payslip is already in the numbers coming back — so the lines are
+    // replaced wholesale rather than merged, which is also what stops an
+    // adjustment being counted twice.
+    warnings.push(
+      `${existing.runNumber} was sent back to HR and will be refreshed with what HRMS has now. ` +
+        `Anything accounts added last time is already on the HRMS payslips and comes back in these figures.`,
+    );
   }
 
   if (batch.currency !== link.hrmsCurrency) {
@@ -219,7 +235,19 @@ export async function importRun(
   const { lines, sum } = convert(batch);
   const known = await resolveEmployees(orgId, hrmsOrgId, batch);
 
-  const runNumber = await nextNumber(orgId, "payroll_run", `PAY-${period.replace("-", "")}-`, 3);
+  // A month sent back to HR keeps its run when it comes again: same number,
+  // same record, new figures. A second run for the same month would leave two
+  // records claiming the same payroll, and nothing to say which one was paid.
+  const returned = await PayrollRun.findOne({
+    organizationId: oid(orgId),
+    hrmsOrgId,
+    period,
+    status: "returned",
+  });
+
+  const runNumber =
+    returned?.runNumber ??
+    (await nextNumber(orgId, "payroll_run", `PAY-${period.replace("-", "")}-`, 3));
   const user = await User.findById(oid(actor.userId)).select("name").lean();
 
   const docLines = lines.map(({ source, grossMinor, deductionsMinor, netFromHrmsMinor }) => {
@@ -235,6 +263,8 @@ export async function importRun(
       // department id, which means nothing on this side.
       departmentId: employee.departmentId ?? null,
       departmentName: source.departmentName,
+      // The payslip's own currency, which need not be the batch's.
+      currency: source.currency || batch.currency,
       earnings: source.earnings.map((e) => ({ label: e.label, amountMinor: toMinor(e.amount) })),
       deductions: source.deductions.map((d) => ({ label: d.label, amountMinor: toMinor(d.amount) })),
       grossMinor,
@@ -252,14 +282,9 @@ export async function importRun(
     };
   });
 
-  const run = await PayrollRun.create({
-    organizationId: oid(orgId),
-    hrmsOrgId,
-    hrmsOrgName: link.hrmsOrgName,
-    runNumber,
-    period,
+  const figures = {
     currency: batch.currency,
-    status: "imported",
+    status: "imported" as const,
     lines: docLines,
     hrmsGrossMinor: sum.gross,
     hrmsDeductionsMinor: sum.deductions,
@@ -271,7 +296,26 @@ export async function importRun(
     importedById: oid(actor.userId),
     importedByName: user?.name ?? "",
     importedAt: new Date(),
-  });
+  };
+
+  let run;
+  if (returned) {
+    // Every figure replaced, including the lines. The reason it was sent back
+    // goes too — it has been acted on, and leaving it would read as a standing
+    // complaint about numbers that have since changed.
+    returned.set({ ...figures, returnedReason: "" });
+    await returned.save();
+    run = returned;
+  } else {
+    run = await PayrollRun.create({
+      organizationId: oid(orgId),
+      hrmsOrgId,
+      hrmsOrgName: link.hrmsOrgName,
+      runNumber,
+      period,
+      ...figures,
+    });
+  }
 
   let claimWarning: string | null = null;
   try {
@@ -336,6 +380,32 @@ export async function listRuns(
   };
 }
 
+/**
+ * Totals per currency, so a mixed month is reported as what it is.
+ *
+ * Sorted by size so the currency most of the payroll is in leads, which is
+ * almost always the one somebody is looking for.
+ */
+export function summariseByCurrency(
+  lines: { currency?: string | null; grossMinor: number; deductionsMinor: number; payableMinor: number; amountPaidMinor: number }[],
+  runCurrency: string,
+) {
+  const acc = new Map<string, { currency: string; employeeCount: number; grossMinor: number; deductionsMinor: number; payableMinor: number; amountPaidMinor: number }>();
+  for (const l of lines) {
+    const cur = l.currency || runCurrency;
+    const row = acc.get(cur) ?? {
+      currency: cur, employeeCount: 0, grossMinor: 0, deductionsMinor: 0, payableMinor: 0, amountPaidMinor: 0,
+    };
+    row.employeeCount += 1;
+    row.grossMinor += l.grossMinor;
+    row.deductionsMinor += l.deductionsMinor;
+    row.payableMinor += l.payableMinor;
+    row.amountPaidMinor += l.amountPaidMinor;
+    acc.set(cur, row);
+  }
+  return [...acc.values()].sort((a, b) => b.payableMinor - a.payableMinor);
+}
+
 export async function getRun(orgId: string, id: string) {
   const run = await PayrollRun.findOne({ _id: oid(id), organizationId: oid(orgId) }).lean();
   if (!run) throw new AppError("NOT_FOUND", "Payroll run not found");
@@ -359,6 +429,19 @@ export async function getRun(orgId: string, id: string) {
       balanceMinor: run.balanceMinor,
       heldCount: run.lines.filter((l) => l.status === "on_hold").length,
     },
+    /**
+     * The same totals split by what each person is actually paid in.
+     *
+     * The single figures above add every line together, which is only a real
+     * number when everybody shares a currency. They often do not — a month can
+     * carry salaries in dirhams and salaries in rupees, and adding those gives
+     * a total that is not an amount of anything.
+     *
+     * One entry means the run is single-currency and the figures above are
+     * sound. More than one means they are not, and the interface says so
+     * rather than presenting a sum of unlike things.
+     */
+    byCurrency: summariseByCurrency(run.lines, run.currency),
     lines: run.lines.map((l) => ({
       id: String(l._id),
       hrmsEmployeeId: l.hrmsEmployeeId,
@@ -367,6 +450,8 @@ export async function getRun(orgId: string, id: string) {
       name: l.name,
       designation: l.designation,
       departmentName: l.departmentName,
+      // Falls back to the run's for lines imported before this was carried.
+      currency: l.currency || run.currency,
       earnings: l.earnings,
       deductions: l.deductions,
       grossMinor: l.grossMinor,

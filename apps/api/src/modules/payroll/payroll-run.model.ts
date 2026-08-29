@@ -32,6 +32,14 @@ const payrollLineSchema = new Schema(
     employeeCode: { type: String, required: true },
     name: { type: String, required: true },
     designation: { type: String, default: "" },
+    /**
+     * What this person is paid in.
+     *
+     * Held per line because a month can mix them — the run's own currency is
+     * the batch heading, not a promise that everybody shares it. Absent on
+     * lines imported before this existed, where the run's currency is meant.
+     */
+    currency: { type: String },
     departmentId: { type: Schema.Types.ObjectId, ref: "Department", default: null },
     departmentName: { type: String, default: "" },
 

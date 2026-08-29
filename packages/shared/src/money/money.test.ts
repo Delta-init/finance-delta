@@ -175,3 +175,44 @@ describe("sumInvoiceTotals", () => {
     expect(gst.subtotalMinor - gst.discountTotalMinor + gst.taxTotalMinor).toBe(gst.totalMinor);
   });
 });
+
+describe("toMinor", () => {
+  it("converts ordinary amounts", () => {
+    expect(toMinor("10.50")).toBe(1050);
+    expect(toMinor(10.5)).toBe(1050);
+    expect(toMinor("100")).toBe(10000);
+    expect(toMinor("0.07")).toBe(7);
+  });
+
+  it("does not lose a fil to binary floating point", () => {
+    // 1.005 * 100 is 100.49999999999999, so the old multiply-and-round gave
+    // 100. Every amount typed into the application comes through here.
+    expect(toMinor("1.005")).toBe(101);
+    expect(toMinor("8.29")).toBe(829);
+    expect(toMinor("1234.15")).toBe(123415);
+    expect(toMinor("2.675")).toBe(268);
+  });
+
+  it("rounds a third decimal place half away from zero", () => {
+    expect(toMinor("1.994")).toBe(199);
+    expect(toMinor("1.995")).toBe(200);
+    expect(toMinor("1.999")).toBe(200);
+  });
+
+  it("keeps the sign", () => {
+    expect(toMinor("-10.50")).toBe(-1050);
+    expect(toMinor("-1.005")).toBe(-101);
+    expect(toMinor(-0.07)).toBe(-7);
+  });
+
+  it("treats nothing as zero rather than NaN", () => {
+    expect(toMinor("")).toBe(0);
+    expect(toMinor("   ")).toBe(0);
+    expect(toMinor("abc")).toBe(0);
+    expect(toMinor(NaN)).toBe(0);
+  });
+
+  it("still handles exponential notation", () => {
+    expect(toMinor("1e3")).toBe(100000);
+  });
+});

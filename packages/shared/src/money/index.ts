@@ -64,10 +64,38 @@ export function formatMoney(minor: number, currency = "AED"): string {
   })}`;
 }
 
-/** Parse a major-unit string/number (e.g. "10.50") into minor units (1050). */
+/**
+ * Parse a major-unit string/number (e.g. "10.50") into minor units (1050).
+ *
+ * Built from the digits rather than by multiplying: `1.005 * 100` is
+ * 100.49999999999999 in binary floating point, so rounding it gives 100 where
+ * the answer is 101. Every amount anybody types into this application comes
+ * through here, so that fil went missing in invoices, bills, expenses and
+ * payroll adjustments alike.
+ *
+ * More than two decimal places is rounded, half away from zero — the same
+ * direction `Math.round` takes for positives, and the direction the arithmetic
+ * above was reaching for.
+ */
 export function toMinor(major: number | string): number {
-  const n = typeof major === "string" ? parseFloat(major) : major;
-  return Math.round((Number.isFinite(n) ? n : 0) * 100);
+  const raw = typeof major === "string" ? major.trim() : String(major);
+  const m = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(raw);
+
+  // Exponential notation, blank, or anything else non-numeric: fall back to
+  // the float path so the old behaviour is kept rather than returning nothing.
+  if (!m) {
+    const n = typeof major === "string" ? parseFloat(major) : major;
+    return Math.round((Number.isFinite(n) ? n : 0) * 100);
+  }
+
+  const [, sign, whole = "", frac = ""] = m;
+  if (!whole && !frac) return 0;
+
+  const cents = Number(frac.slice(0, 2).padEnd(2, "0") || "0");
+  // A third decimal place decides whether the second rounds up.
+  const carry = frac.length > 2 && Number(frac[2]) >= 5 ? 1 : 0;
+  const minor = Number(whole || "0") * 100 + cents + carry;
+  return sign === "-" ? -minor : minor;
 }
 
 // ── Multi-tax invoice line computation ──────────────────────────────────────

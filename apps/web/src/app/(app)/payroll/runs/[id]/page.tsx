@@ -40,7 +40,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const { data: run, isLoading } = usePayrollRun(id);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [adjusting, setAdjusting] = useState<RunLine | null>(null);
+  // Who the adjust dialog is about. One line is the per-person case; several
+  // is a bulk apply. Empty means closed.
+  const [adjusting, setAdjusting] = useState<RunLine[]>([]);
   const [paying, setPaying] = useState(false);
   const [sendingBack, setSendingBack] = useState(false);
   const [reversing, setReversing] = useState<string | null>(null);
@@ -77,6 +79,22 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const openForAdjustment = run.status === "imported" || run.status === "additions";
   const canApprove = openForAdjustment && run.lines.length > 0;
   const canPay = run.status === "approved" || run.status === "partially_paid";
+  // Rows are tickable in both stages, for two different jobs: choosing who to
+  // pay, and choosing who an addition or deduction applies to. Which one the
+  // selection means is decided by the stage, so it is cleared when that changes.
+  const selectable = canPay || openForAdjustment;
+  /**
+   * Whether this row can be ticked.
+   *
+   * Paying excludes anybody held or already paid — there is nothing to send.
+   * Adjusting excludes nobody: an addition goes on the payslip whether or not
+   * there is an account to send the money to, and somebody held for a missing
+   * IBAN still needs their bonus recorded.
+   */
+  const isTickable = (l: RunLine) =>
+    canPay ? l.status !== "on_hold" && l.status !== "paid" : true;
+  /** The rows on screen that can actually be ticked — what "all" means. */
+  const tickable = lines.filter(isTickable);
   // A payment the money left the bank for but HRMS never acknowledged. The one
   // disagreement between the two systems that must never be quiet.
   const unsynced = run.payments.filter((p) => !p.syncedToHrms);
@@ -196,10 +214,31 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           <div className="min-w-0 flex-1 text-sm">
             <p className="font-medium">Additions and deductions</p>
             <p className="text-foreground-muted">
-              Everything added here is written to the payslip in HRMS, so the employee sees the same
-              figure that is paid.
+              {selected.size > 0
+                ? `${selected.size} selected — the same item will go on each of their payslips.`
+                : "Everything added here is written to the payslip in HRMS, so the employee sees the same figure that is paid. Tick people below to apply one item to several at once."}
             </p>
           </div>
+          {/* Only once somebody is ticked. An always-present button that needs
+              a selection first is a button that mostly does nothing. */}
+          {selected.size > 0 && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelected(new Set())}
+              >
+                Clear
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setAdjusting(run.lines.filter((l) => selected.has(l.id)))}
+              >
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add or deduct for {selected.size}
+              </Button>
+            </>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -301,7 +340,32 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           <table className="w-full text-sm">
             <thead className="border-b border-border text-left text-xs uppercase tracking-wide text-foreground-muted">
               <tr>
-                {canPay && <th className="w-10 px-5 py-3" />}
+                {selectable && (
+                  <th className="w-10 px-5 py-3">
+                    {/* Over the filtered rows, not the whole run: ticking
+                        "all" while a search is active should mean what is on
+                        screen, not the ninety people hidden by it. */}
+                    <Checkbox
+                      checked={tickable.length > 0 && tickable.every((l) => selected.has(l.id))}
+                      onChange={() =>
+                        setSelected((prev) => {
+                          const all = tickable.every((l) => prev.has(l.id));
+                          const next = new Set(prev);
+                          for (const l of tickable) {
+                            if (all) next.delete(l.id);
+                            else next.add(l.id);
+                          }
+                          return next;
+                        })
+                      }
+                      aria-label={
+                        tickable.length > 0 && tickable.every((l) => selected.has(l.id))
+                          ? "Clear selection"
+                          : `Select all ${tickable.length} shown`
+                      }
+                    />
+                  </th>
+                )}
                 <th className="px-5 py-3 font-medium">Employee</th>
                 <th className="px-5 py-3 font-medium">Department</th>
                 <th className="px-5 py-3 text-right font-medium">Gross</th>
@@ -319,11 +383,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                     className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-muted"
                     onClick={() => setExpanded(expanded === l.id ? null : l.id)}
                   >
-                    {canPay && (
+                    {selectable && (
                       <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
                         {/* Nothing to tick for somebody who cannot be paid.
                             A disabled box invites clicking it and wondering. */}
-                        {l.status === "on_hold" || l.status === "paid" ? (
+                        {!isTickable(l) ? (
                           <span className="block h-4 w-4" aria-hidden />
                         ) : (
                           <Checkbox
@@ -357,7 +421,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                   </tr>
                   {expanded === l.id && (
                     <tr className="border-b border-border bg-surface-muted/50">
-                      <td colSpan={canPay ? 7 : 6} className="px-5 py-4">
+                      <td colSpan={selectable ? 7 : 6} className="px-5 py-4">
                         <div className="grid gap-6 sm:grid-cols-2">
                           <Breakdown title="Earnings" items={l.earnings} currency={run.currency} />
                           <Breakdown title="Deductions" items={l.deductions} currency={run.currency} />
@@ -407,7 +471,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                             variant="secondary"
                             size="sm"
                             className="mt-4"
-                            onClick={(e) => { e.stopPropagation(); setAdjusting(l); }}
+                            onClick={(e) => { e.stopPropagation(); setAdjusting([l]); }}
                           >
                             <Plus className="mr-1.5 h-3.5 w-3.5" />Add or deduct
                           </Button>
@@ -472,13 +536,20 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
       />
 
       <AdjustDialog
-        line={adjusting}
+        lines={adjusting}
         currency={run.currency}
-        open={Boolean(adjusting)}
-        onOpenChange={(o) => { if (!o) setAdjusting(null); }}
+        open={adjusting.length > 0}
+        onOpenChange={(o) => { if (!o) setAdjusting([]); }}
         pending={addAdjustments.isPending}
-        onSubmit={(item) =>
-          addAdjustments.mutate([item], { onSuccess: () => setAdjusting(null) })
+        onSubmit={(items) =>
+          addAdjustments.mutate(items, {
+            onSuccess: () => {
+              setAdjusting([]);
+              // The selection has been acted on. Leaving it ticked invites
+              // applying a second adjustment to the same people by accident.
+              setSelected(new Set());
+            },
+          })
         }
       />
     </div>

@@ -10,6 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useExpenses } from "@/features/expenses/api";
 import { useInvoices } from "@/features/invoices/api";
 import { useCan } from "@/lib/use-can";
+import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -69,6 +70,10 @@ export function MyWorkspace({ name }: { name: string }) {
           )}
         </div>
       </div>
+
+      {/* An approver on a narrow role lands here too, and the queue is the
+          reason they have an account. */}
+      <PendingApprovals />
 
       {/* Where their claims have got to. Only the states that mean something
           to the claimant — a count of drafts they have forgotten to send is

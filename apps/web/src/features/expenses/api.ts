@@ -11,11 +11,15 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["expenses"] as const;
 
-export function useExpenses(params: QueryParams = {}) {
+export function useExpenses(params: QueryParams = {}, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],
     queryFn: () => api.getList<Expense>("expenses", params),
     placeholderData: (prev) => prev,
+    // Off by default is not the behaviour — `enabled` is only honoured when
+    // given, so every existing caller is unaffected. It exists so a component
+    // that is about to render nothing does not fetch first.
+    ...(options?.enabled === undefined ? {} : { enabled: options.enabled }),
   });
 }
 

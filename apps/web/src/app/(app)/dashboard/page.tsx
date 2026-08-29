@@ -7,6 +7,7 @@ import { TopCustomers } from "@/components/dashboard/top-customers";
 import { ExpenseChart } from "@/components/dashboard/expense-chart";
 import { AgingSummary } from "@/components/dashboard/aging-summary";
 import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
+import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -44,6 +45,11 @@ export default async function DashboardPage() {
           {currentMonth} {currentYear}
         </div>
       </div>
+
+      {/* Above the numbers: something waiting on a decision outranks a chart
+          of what already happened. Renders nothing when the queue is empty,
+          and nothing at all for somebody who cannot approve. */}
+      <PendingApprovals />
 
       <SectionCards />
 

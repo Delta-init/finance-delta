@@ -11,6 +11,11 @@ import { EXPENSE_CATEGORY_LABELS } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import type { ParsedFile } from "../../middleware/upload";
+import {
+  notifyApproversOfSubmission,
+  notifyExpenseApproved,
+  notifyExpenseRejected,
+} from "./expense-notify.service";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
@@ -291,6 +296,9 @@ export async function submitExpense(orgId: string, id: string, scope: Scope): Pr
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
   doc.status = "submitted";
   await doc.save();
+  // Not awaited: the claim is submitted either way, and a mail outage must not
+  // hold up the response or turn into a failure to submit.
+  void notifyApproversOfSubmission(doc as unknown as ExpenseDoc);
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
@@ -311,6 +319,7 @@ export async function approveExpense(
   d.approvedAt = new Date();
   d.rejectedReason = undefined;
   await doc.save();
+  void notifyExpenseApproved(doc as unknown as ExpenseDoc, approverName);
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
@@ -332,6 +341,7 @@ export async function rejectExpense(
   d.approvedAt = new Date();
   d.rejectedReason = input.reason;
   await doc.save();
+  void notifyExpenseRejected(doc as unknown as ExpenseDoc, approverName, input.reason);
   return toDTO(doc as unknown as ExpenseDoc);
 }
 

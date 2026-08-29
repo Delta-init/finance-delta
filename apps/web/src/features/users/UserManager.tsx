@@ -57,6 +57,11 @@ export function UserManager() {
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     tagIds: tagIds.length ? tagIds : undefined,
+    // This screen is the staff list. Accounts that exist only so a payroll
+    // employee can be named as a salesperson hold no permissions and cannot be
+    // signed into; listing them here buries the real users under the roster.
+    // They appear in the salesperson pickers, and on the salesperson report.
+    excludePayrollOnly: "true",
   });
   const { data: roles } = useRoles({ pageSize: 100 });
   const { data: departments } = useAllDepartments();
@@ -113,6 +118,9 @@ export function UserManager() {
                 ...t.baseParams,
                 status: status === "all" ? undefined : status,
                 tagIds: tagIds.length ? tagIds : undefined,
+                // Must match the table's own query, or the export hands back a
+                // roster of payroll accounts the screen never showed.
+                excludePayrollOnly: "true",
               }}
               columns={USERS_EXPORT_COLUMNS}
               filename="users"

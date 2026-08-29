@@ -64,6 +64,28 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
   if (or) filter.$or = or;
   if (query.status) filter.status = query.status;
 
+  // Accounts minted so a payroll employee can be named as a salesperson. They
+  // hold no permissions and cannot be signed into, so listing them among the
+  // staff buries the real users under a roster — a hundred and fifty of them on
+  // a normal payroll. They are still returned to the salesperson pickers, which
+  // is the only reason they exist.
+  if (query.excludePayrollOnly) {
+    const payrollRole = await Role.findOne({
+      organizationId: new Types.ObjectId(orgId),
+      key: "payroll-employee",
+    })
+      .select("_id")
+      .lean();
+    if (payrollRole) {
+      filter.memberships = {
+        $elemMatch: {
+          organizationId: new Types.ObjectId(orgId),
+          roleId: { $ne: payrollRole._id },
+        },
+      };
+    }
+  }
+
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
     User.find(filter)

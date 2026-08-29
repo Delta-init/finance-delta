@@ -44,6 +44,16 @@ export type CustomerQuery = z.infer<typeof customerQuerySchema>;
 
 export const userQuerySchema = listQuerySchema.extend({
   status: z.enum(["active", "suspended"]).optional(),
+  /**
+   * Leave out accounts that exist only so a payroll employee can be named as a
+   * salesperson.
+   *
+   * Opt-in, and used by the Users admin screen alone. Every other caller — the
+   * salesperson pickers on invoices, quotations and commission structures, and
+   * the mapping screen — needs those accounts and would break without them,
+   * which is why this is not the default.
+   */
+  excludePayrollOnly: queryBool,
 });
 export type UserQuery = z.infer<typeof userQuerySchema>;
 

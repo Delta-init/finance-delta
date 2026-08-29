@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Delta">
+  <!--
+    The tab icon.
+
+    The wordmark is four times wider than it is tall, so it reduces to an
+    illegible smear at 16px. This is the mark's own gradient circle instead —
+    the one distinctive shape in it — on the navy the letterforms are drawn in.
+    Both colours are sampled from the wordmark file rather than guessed.
+  -->
+  <defs>
+    <linearGradient id="d" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#59f2ff" />
+      <stop offset="1" stop-color="#7bf1b7" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#00294f" />
+  <circle cx="32" cy="32" r="15" fill="url(#d)" />
+</svg>

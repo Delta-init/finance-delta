@@ -422,6 +422,9 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
     if (!customer?.email) return;
     const orgName = org?.name ?? "Delta Finance";
     const footerText = (org?.branding as { footerText?: string })?.footerText ?? "";
+    // The organization's own logo where it has set one; the email template
+    // falls back to Delta's otherwise.
+    const logoUrl = (org?.branding as { logoUrl?: string })?.logoUrl ?? "";
     const totalFormatted = formatMoney(doc.totalMinor ?? 0, doc.currency ?? "AED");
     const { id: emailId } = await sendInvoiceEmail({
       to: customer.email,
@@ -431,6 +434,7 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       totalFormatted,
       dueDate: dateOnly(doc.dueDate),
       footerText,
+      logoUrl,
       message,
     });
     if (emailId) {

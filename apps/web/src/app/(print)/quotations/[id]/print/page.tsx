@@ -5,6 +5,7 @@ import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useQuotation } from "@/features/quotations/api";
 import { QUOTE_STATUS_TONE } from "@/features/quotations/status";
 import { useOrganization } from "@/features/organization/api";
+import { PrintBrandMark } from "@/components/print/brand-mark";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -63,12 +64,7 @@ export default function PrintQuotationPage({
       <div style={{ maxWidth: 740, margin: "0 auto", padding: "40px 32px" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid #e2e8f0" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 8, background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>Δ</div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 18 }}>Delta Finance</div>
-            </div>
-          </div>
+          <PrintBrandMark />
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{L.quotation}</div>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#2563eb" }}>{q.quoteNumber}</div>

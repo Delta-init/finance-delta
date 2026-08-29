@@ -3,6 +3,7 @@
 import { use, useEffect } from "react";
 import { formatMoney } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
+import { PrintBrandMark } from "@/components/print/brand-mark";
 
 export default function PaymentReceiptPage({
   params,
@@ -51,13 +52,7 @@ export default function PaymentReceiptPage({
       <div style={{ maxWidth: 520, margin: "40px auto", padding: "40px 32px", border: "1px solid #e2e8f0", borderRadius: 12 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 8, background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>Δ</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>Delta Finance</div>
-            {invoice.branding?.footerText && (
-              <div style={{ fontSize: 12, color: "#64748b" }}>{invoice.branding.footerText}</div>
-            )}
-          </div>
+          <PrintBrandMark branding={invoice.branding} footerText={invoice.branding?.footerText} />
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.5 }}>RECEIPT</div>
             <div style={{ fontSize: 12, color: "#64748b" }}>Ref: {invoice.invoiceNumber}</div>

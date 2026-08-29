@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { DELTA_LOGO_EMAIL } from "@delta/shared";
 import { env } from "../config/env";
 import { logger } from "./logger";
 
@@ -11,17 +12,38 @@ function getClient(): Resend | null {
 
 interface SendResult { id?: string; error?: string }
 
+/**
+ * The masthead every message carries.
+ *
+ * On a white band, because the wordmark is navy and the previous banner was
+ * a solid blue that would have swallowed it. The logo is an absolute URL to
+ * object storage and a PNG rather than the webp used on the web — a mail
+ * client cannot resolve a relative path, and Outlook renders no webp at all.
+ *
+ * `logoUrl` is the organization's own where it has set one, so a client
+ * billing under their own brand keeps it in the email as well as on the
+ * invoice. Alt text carries the name, because a good share of recipients
+ * have images turned off and would otherwise see an empty box.
+ */
+function brandHeader(opts: { orgName?: string; logoUrl?: string }): string {
+  const src = opts.logoUrl?.trim() || DELTA_LOGO_EMAIL;
+  const name = opts.orgName ?? "Delta Finance";
+  return `<div style="padding:20px 28px;border:1px solid #e2e8f0;border-bottom:none;border-radius:12px 12px 0 0;background:#fff">
+  <img src="${src}" alt="${name}" width="150" style="height:auto;max-width:150px;display:block;border:0" />
+</div>`;
+}
+
 function invoiceHtml(opts: {
   orgName: string; invoiceNumber: string; customerName: string;
   totalFormatted: string; dueDate: string; footerText?: string; isReminder?: boolean; message?: string;
+  /** The organization's own logo, where it has one. */
+  logoUrl?: string;
 }): string {
   const heading = opts.isReminder
     ? `Payment Reminder: Invoice ${opts.invoiceNumber}`
     : `Invoice ${opts.invoiceNumber} from ${opts.orgName}`;
   return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
-<div style="background:#1d4ed8;border-radius:12px 12px 0 0;padding:24px 28px">
-  <span style="color:#fff;font-size:20px;font-weight:700">Δ ${opts.orgName}</span>
-</div>
+${brandHeader({ orgName: opts.orgName, logoUrl: opts.logoUrl })}
 <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
   <h2 style="margin:0 0 8px;font-size:18px">${heading}</h2>
   <p style="color:#64748b;margin:0 0 24px">Dear ${opts.customerName},</p>
@@ -48,7 +70,8 @@ function invoiceHtml(opts: {
  */
 function noticeHtml(opts: { title: string; lines: string[]; actionLabel?: string; actionUrl?: string }): string {
   return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
-<div style="border:1px solid #e2e8f0;border-radius:12px;padding:28px">
+${brandHeader({})}
+<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
   <h2 style="margin:0 0 16px;font-size:18px">${opts.title}</h2>
   ${opts.lines.map((l) => `<p style="margin:0 0 12px;color:#334155">${l}</p>`).join("")}
   ${opts.actionUrl && opts.actionLabel
@@ -100,6 +123,8 @@ export async function sendNotice(opts: {
 export async function sendInvoiceEmail(opts: {
   to: string; orgName: string; invoiceNumber: string; customerName: string;
   totalFormatted: string; dueDate: string; footerText?: string; message?: string;
+  /** The organization's own logo, where it has one. */
+  logoUrl?: string;
 }): Promise<SendResult> {
   const resend = getClient();
   if (!resend) { logger.warn("RESEND_API_KEY not set — invoice email skipped"); return {}; }
@@ -121,6 +146,8 @@ export async function sendInvoiceEmail(opts: {
 export async function sendReminderEmail(opts: {
   to: string; orgName: string; invoiceNumber: string; customerName: string;
   totalFormatted: string; dueDate: string; footerText?: string; intervalDays: number;
+  /** The organization's own logo, where it has one. */
+  logoUrl?: string;
 }): Promise<SendResult> {
   const resend = getClient();
   if (!resend) return {};

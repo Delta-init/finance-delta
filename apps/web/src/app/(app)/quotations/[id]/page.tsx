@@ -146,11 +146,9 @@ export default function QuotationDetailPage() {
       <div className="mx-auto w-full max-w-3xl rounded-xl border border-border bg-surface p-8 shadow-sm">
         <div className="flex items-start justify-between gap-4 border-b border-border pb-6">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground font-display text-base font-bold">
-              Δ
-            </span>
+            {/* Matches the printed quotation, which is the point of a preview. */}
+            <img src="/delta-wordmark.webp" alt="Delta Finance" className="h-8 w-auto" />
             <div>
-              <p className="font-display text-lg font-semibold tracking-tight">Delta Finance</p>
               <p className="text-xs text-foreground-subtle">Quotation</p>
             </div>
           </div>

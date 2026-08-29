@@ -7,14 +7,8 @@ export default function LoginPage() {
     <div className="grid w-full max-w-full overflow-hidden  bg-surface h-screen lg:grid-cols-2">
       {/* Left — form */}
       <div className="relative flex flex-col px-6 py-8 sm:px-10 lg:px-12">
-        <div className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-display text-sm font-bold">
-            Δ
-          </span>
-          <span className="font-display text-sm font-semibold tracking-tight">
-            Delta Finance
-          </span>
-        </div>
+        {/* The wordmark already reads "delta", so no text beside it. */}
+        <img src="/delta-wordmark.webp" alt="Delta Finance" className="h-7 w-auto self-start" />
 
         <div className="flex flex-1 items-center justify-center py-10">
           <Suspense fallback={null}>

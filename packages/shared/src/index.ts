@@ -1,6 +1,7 @@
 export * from "./constants/permissions";
 export * from "./constants/roles";
 export * from "./money";
+export * from "./brand";
 export * from "./statement";
 export * from "./schemas/auth.schema";
 export * from "./schemas/role.schema";

@@ -5,6 +5,7 @@ import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
+import { PrintBrandMark } from "@/components/print/brand-mark";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -65,15 +66,7 @@ export default function PrintInvoicePage({
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid #e2e8f0" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 8, background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>Δ</div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 18 }}>Delta Finance</div>
-                {invoice.branding?.footerText && (
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{invoice.branding.footerText}</div>
-                )}
-              </div>
-            </div>
+            <PrintBrandMark branding={invoice.branding} footerText={invoice.branding?.footerText} />
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{L.invoice}</div>

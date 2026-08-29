@@ -22,6 +22,8 @@ export interface AvailableBatch {
   employeeCount: number;
   netTotal: number;
   imported: boolean;
+  /** The state of the run that owns this month, when there is one. */
+  runStatus?: string | null;
   runNumber: string | null;
 }
 

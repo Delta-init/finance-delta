@@ -71,20 +71,29 @@ export default function PayrollRunsPage() {
           <CardHeader>
             <CardTitle>Waiting from HR</CardTitle>
             <CardDescription>
-              These months have been submitted and are not yet in this book.
+              These months have been submitted and are not yet in this book. A month you sent back
+              appears here again once HR has corrected it.
             </CardDescription>
           </CardHeader>
           <div className="divide-y divide-border">
             {waiting.map((b) => (
               <div key={`${b.hrmsOrgId}:${b.period}`} className="flex flex-wrap items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{b.period} · {b.hrmsOrgName}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{b.period} · {b.hrmsOrgName}</span>
+                    {/* Said plainly, so a month coming back is not mistaken for
+                        a second copy of one already held. */}
+                    {b.runStatus === "returned" && (
+                      <Badge tone="warning">Back from HR · {b.runNumber}</Badge>
+                    )}
+                  </div>
                   <div className="text-xs text-foreground-muted">
                     {b.employeeCount} people · {b.currency} {b.netTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} net
                   </div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => setCandidate(b)}>
-                  <Download className="mr-1.5 h-3.5 w-3.5" />Review &amp; import
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  {b.runStatus === "returned" ? "Review & re-import" : "Review & import"}
                 </Button>
               </div>
             ))}

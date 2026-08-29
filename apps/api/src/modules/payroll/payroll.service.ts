@@ -509,14 +509,16 @@ export async function listAvailable(orgId: string) {
   const out: Array<{
     hrmsOrgId: string; hrmsOrgName: string; period: string; status: string;
     currency: string; employeeCount: number; netTotal: number; imported: boolean; runNumber: string | null;
+    /** The state of the run that owns this month, when there is one. */
+    runStatus: string | null;
   }> = [];
 
   for (const link of links) {
     const batches = await hrmsClient.payrollBatches(link.hrmsOrgId).catch(() => []);
     const runs = await PayrollRun.find({ organizationId: oid(orgId), hrmsOrgId: link.hrmsOrgId })
-      .select("period runNumber")
+      .select("period runNumber status")
       .lean();
-    const runByPeriod = new Map(runs.map((r) => [r.period, r.runNumber]));
+    const runByPeriod = new Map(runs.map((r) => [r.period, r]));
 
     for (const b of batches) {
       out.push({
@@ -527,8 +529,16 @@ export async function listAvailable(orgId: string) {
         currency: b.currency,
         employeeCount: b.employeeCount,
         netTotal: b.netTotal,
-        imported: runByPeriod.has(b.month),
-        runNumber: runByPeriod.get(b.month) ?? null,
+        // "Imported" means accounts hold this month, not merely that a run
+        // record exists. A returned run has handed it back to HR, so the month
+        // is waiting to come again — and the screen that lists what is waiting
+        // filters on this flag, so treating a returned run as imported hid the
+        // month for good and left no way to re-import it.
+        imported: Boolean(
+          runByPeriod.get(b.month) && runByPeriod.get(b.month)!.status !== "returned",
+        ),
+        runNumber: runByPeriod.get(b.month)?.runNumber ?? null,
+        runStatus: runByPeriod.get(b.month)?.status ?? null,
       });
     }
   }

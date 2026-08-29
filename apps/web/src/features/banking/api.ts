@@ -181,6 +181,9 @@ export const useExcludeTransaction = (accountId: string, txId: string) =>
   useTxAction("exclude", accountId, txId);
 export const useMarkDuplicate = (accountId: string, txId: string) =>
   useTxAction("duplicate", accountId, txId);
+/** The way back from excluded or duplicate — both were one-way. */
+export const useRestoreTransaction = (accountId: string, txId: string) =>
+  useTxAction("restore", accountId, txId);
 
 // ── Reconciliation ────────────────────────────────────────────────────────────
 

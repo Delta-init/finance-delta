@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Plus, Upload, BarChart3, Search, X, TrendingUp, TrendingDown,
-  CheckCircle2, CircleDot, Ban, Copy, Pencil, Trash2, AlertTriangle,
+  CheckCircle2, CircleDot, Ban, Copy, Pencil, Trash2, AlertTriangle, RotateCcw,
 } from "lucide-react";
 import {
   type BankTransaction,
@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useTableQuery } from "@/lib/use-table-query";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
@@ -30,6 +31,7 @@ import {
   useBankTransactions,
   useExcludeTransaction,
   useMarkDuplicate,
+  useRestoreTransaction,
   useUnmatchTransaction,
   useDeactivateBankAccount,
   useUpdateBankTransaction,
@@ -152,6 +154,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
     {
       key: "actions",
       header: "",
+      hideInDetail: true,
       cell: (tx) => (
         <TxActions
           tx={tx}
@@ -418,6 +421,7 @@ function TxActions({
 }) {
   const exclude = useExcludeTransaction(accountId, tx.id);
   const markDup = useMarkDuplicate(accountId, tx.id);
+  const restore = useRestoreTransaction(accountId, tx.id);
   const unmatch = useUnmatchTransaction(accountId, tx.id);
 
   // Reconciled rows are evidence and matched rows belong to the document they
@@ -426,51 +430,109 @@ function TxActions({
   const frozen = tx.isReconciled || (tx.matches?.length ?? 0) > 0;
 
   return (
-    <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+    // Always visible. These were revealed on row hover, against a `group` class
+    // the row never had — so they were invisible on every row, all the time,
+    // and unreachable entirely without a mouse.
+    <div className="flex items-center gap-1 justify-end">
       {!frozen && (
         <>
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit(tx); }}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-            title="Edit"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete(tx); }}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-danger"
-            title="Delete"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label="Edit this entry">
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(tx); }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+              aria-label="Edit this entry"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip label="Delete this entry">
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(tx); }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-danger"
+              aria-label="Delete this entry"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </>
       )}
+      {/* The way back from excluded or duplicate. Both were one-way, so a row
+          flagged by mistake stayed flagged with nothing offering an undo. */}
+      {(tx.status === "excluded" || tx.status === "duplicate") && (
+        <Tooltip label={tx.status === "excluded" ? "Include again" : "Not a duplicate"}>
+
+          <button
+
+            onClick={(e) => { e.stopPropagation(); onAction(() => restore.mutateAsync(undefined), "Restored"); }}
+
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+
+            aria-label={tx.status === "excluded" ? "Include again" : "Not a duplicate"}
+
+          >
+
+            <RotateCcw className="h-3.5 w-3.5" />
+
+          </button>
+
+        </Tooltip>
+      )}
       {tx.status === "matched" && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onAction(() => unmatch.mutateAsync(undefined), "Unmatched"); }}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-          title="Unmatch"
-        >
-          <CircleDot className="h-3.5 w-3.5" />
-        </button>
+        <Tooltip label="Unmatch">
+
+          <button
+
+            onClick={(e) => { e.stopPropagation(); onAction(() => unmatch.mutateAsync(undefined), "Unmatched"); }}
+
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+
+            aria-label="Unmatch"
+
+          >
+
+            <CircleDot className="h-3.5 w-3.5" />
+
+          </button>
+
+        </Tooltip>
       )}
       {(tx.status === "unmatched" || tx.status === "matched") && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onAction(() => exclude.mutateAsync(undefined), "Excluded"); }}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-          title="Exclude"
-        >
-          <Ban className="h-3.5 w-3.5" />
-        </button>
+        <Tooltip label="Exclude">
+
+          <button
+
+            onClick={(e) => { e.stopPropagation(); onAction(() => exclude.mutateAsync(undefined), "Excluded"); }}
+
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+
+            aria-label="Exclude"
+
+          >
+
+            <Ban className="h-3.5 w-3.5" />
+
+          </button>
+
+        </Tooltip>
       )}
       {tx.status === "unmatched" && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onAction(() => markDup.mutateAsync(undefined), "Marked as duplicate"); }}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-          title="Mark duplicate"
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </button>
+        <Tooltip label="Mark duplicate">
+
+          <button
+
+            onClick={(e) => { e.stopPropagation(); onAction(() => markDup.mutateAsync(undefined), "Marked as duplicate"); }}
+
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+
+            aria-label="Mark duplicate"
+
+          >
+
+            <Copy className="h-3.5 w-3.5" />
+
+          </button>
+
+        </Tooltip>
       )}
     </div>
   );

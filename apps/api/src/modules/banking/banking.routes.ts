@@ -37,6 +37,9 @@ router.post("/:id/transactions/:txId/match", requirePermission("banking:write"),
 router.post("/:id/transactions/:txId/unmatch", requirePermission("banking:write"), c.unmatchTransaction);
 router.post("/:id/transactions/:txId/exclude", requirePermission("banking:write"), c.excludeTransaction);
 router.post("/:id/transactions/:txId/duplicate", requirePermission("banking:write"), c.markDuplicate);
+// The way back from either. Excluding and flagging a duplicate were both
+// one-way, so a row marked in error stayed marked.
+router.post("/:id/transactions/:txId/restore", requirePermission("banking:write"), c.restoreTransaction);
 
 // Reconciliation
 router.get("/:id/reconciliations", requirePermission("banking:read"), c.listReconciliations);

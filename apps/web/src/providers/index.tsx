@@ -1,6 +1,7 @@
 "use client";
 
 import { SessionProvider, signOut } from "next-auth/react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   QueryClient,
   QueryClientProvider,
@@ -57,8 +58,12 @@ export function Providers({ children }: { children: ReactNode }) {
     <SessionProvider>
       <QueryClientProvider client={queryClient}>
         <CurrencyProvider>
-          {children}
-          <GoeyToaster />
+          {/* One provider for the whole app, so moving between neighbouring
+              icon buttons shows the next label without re-waiting the delay. */}
+          <TooltipProvider>
+            {children}
+            <GoeyToaster />
+          </TooltipProvider>
         </CurrencyProvider>
       </QueryClientProvider>
     </SessionProvider>

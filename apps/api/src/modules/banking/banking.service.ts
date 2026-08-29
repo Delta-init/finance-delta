@@ -525,6 +525,31 @@ export async function excludeTransaction(
   return txToDTO(doc);
 }
 
+/**
+ * Undo an exclusion or a duplicate flag.
+ *
+ * Both were one-way: a row marked in error stayed marked, with nothing on the
+ * screen offering a way back. The status returns to what it would have been —
+ * matched if the transaction still points at a document, unmatched otherwise —
+ * rather than to a fixed value, so restoring a matched row does not quietly
+ * disown the invoice it was matched to.
+ */
+export async function restoreTransaction(orgId: string, id: string): Promise<BankTransactionDTO> {
+  const tx = await BankTransaction.findOne({
+    _id: new Types.ObjectId(id),
+    organizationId: new Types.ObjectId(orgId),
+  });
+  if (!tx) throw new AppError("NOT_FOUND", "Transaction not found");
+
+  if (tx.status !== "excluded" && tx.status !== "duplicate") {
+    throw new AppError("CONFLICT", "Only an excluded or duplicate transaction can be restored");
+  }
+
+  tx.status = tx.matches?.length ? "matched" : "unmatched";
+  await tx.save();
+  return txToDTO(tx);
+}
+
 export async function markDuplicate(orgId: string, id: string): Promise<BankTransactionDTO> {
   const doc = await BankTransaction.findOneAndUpdate(
     { _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) },

@@ -76,6 +76,10 @@ export const excludeTransaction = asyncHandler(async (req, res) => {
   ok(res, await svc.excludeTransaction(org(req), req.params.txId!));
 });
 
+export const restoreTransaction = asyncHandler(async (req, res) => {
+  ok(res, await svc.restoreTransaction(org(req), req.params.txId!));
+});
+
 export const markDuplicate = asyncHandler(async (req, res) => {
   ok(res, await svc.markDuplicate(org(req), req.params.txId!));
 });

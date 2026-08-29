@@ -25,7 +25,7 @@ const formSchema = z.object({
   accountName: z.string().min(1, "Account name is required"),
   accountNumber: z.string().optional(),
   bankName: z.string().optional(),
-  accountType: z.enum(["checking", "savings", "petty_cash", "internal"]),
+  accountType: z.enum(["current", "savings", "petty_cash", "internal"]),
   currency: z.string().min(3).max(3),
   openingBalanceDisplay: z.string().default("0"),
   openingDate: z.string().min(1, "Opening date is required"),
@@ -53,7 +53,7 @@ export default function NewBankAccountPage() {
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      accountType: "checking",
+      accountType: "current",
       currency: orgCurrency,
       openingBalanceDisplay: "0",
       openingDate: today,

@@ -8,7 +8,7 @@ const bankAccountSchema = new Schema(
     bankName: { type: String, default: "" },
     accountType: {
       type: String,
-      enum: ["checking", "savings", "petty_cash", "internal"],
+      enum: ["current", "savings", "petty_cash", "internal"],
       required: true,
     },
     currency: { type: String, required: true },

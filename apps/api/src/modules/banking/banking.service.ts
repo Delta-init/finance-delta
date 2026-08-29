@@ -11,10 +11,12 @@ import type {
   CreateBankTransactionInput,
   UpdateBankTransactionInput,
   BulkImportTransactionsInput,
+  PreviewImportInput,
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
 } from "@delta/shared";
+import { fingerprint } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { BankAccount, type BankAccountDoc } from "./bank-account.model";
@@ -374,48 +376,157 @@ export async function addTransaction(
   return txToDTO(fresh!);
 }
 
-export async function bulkImportTransactions(
+/**
+ * Statement lines already sitting on this account, keyed by fingerprint.
+ *
+ * Scoped to the date range being imported rather than the whole account: a
+ * statement covers a month, and a year of history is not worth scanning to
+ * check it.
+ */
+async function existingFingerprints(
+  orgId: string,
+  accountId: Types.ObjectId,
+  isoDates: string[],
+): Promise<Set<string>> {
+  const sorted = [...isoDates].sort();
+  const from = new Date(`${sorted[0]}T00:00:00.000Z`);
+  const to = new Date(`${sorted[sorted.length - 1]}T23:59:59.999Z`);
+
+  const rows = await BankTransaction.find({
+    organizationId: new Types.ObjectId(orgId),
+    accountId,
+    date: { $gte: from, $lte: to },
+  }).select("date amountMinor description reference");
+
+  return new Set(
+    rows.map((r) =>
+      fingerprint({
+        isoDate: (r.date as Date).toISOString().slice(0, 10),
+        amountMinor: r.amountMinor as number,
+        description: r.description as string,
+        reference: (r.reference as string) ?? "",
+      }),
+    ),
+  );
+}
+
+/** Fingerprint of one incoming line. Its date is already `YYYY-MM-DD`. */
+function lineFingerprint(tx: { date: string; amountMinor: number; description: string; reference?: string }) {
+  return fingerprint({
+    isoDate: tx.date,
+    amountMinor: tx.amountMinor,
+    description: tx.description,
+    reference: tx.reference ?? "",
+  });
+}
+
+/**
+ * Which lines are already on the account, without writing anything.
+ *
+ * Lets the wizard say "12 of these 40 are already here" while the import can
+ * still be called off, rather than reporting it once it is too late.
+ */
+export async function previewImport(
   orgId: string,
   accountId: string,
-  input: BulkImportTransactionsInput,
-): Promise<{ count: number; transactions: BankTransactionDTO[] }> {
+  input: PreviewImportInput,
+): Promise<{ total: number; duplicates: number[]; newCount: number }> {
   const account = await BankAccount.findOne({
     _id: new Types.ObjectId(accountId),
     organizationId: new Types.ObjectId(orgId),
   });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
-  const sorted = [...input.transactions].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+  const seen = await existingFingerprints(
+    orgId,
+    account._id,
+    input.transactions.map((t) => t.date),
   );
 
-  let runningBalance = (account.currentBalanceMinor as number) ?? 0;
+  // Repeats inside the file itself count too — a statement pasted together
+  // from two exports has them, and they are duplicates just the same.
+  const withinBatch = new Set<string>();
+  const duplicates: number[] = [];
+  input.transactions.forEach((tx, i) => {
+    const fp = lineFingerprint(tx);
+    if (seen.has(fp) || withinBatch.has(fp)) duplicates.push(i);
+    withinBatch.add(fp);
+  });
+
+  return {
+    total: input.transactions.length,
+    duplicates,
+    newCount: input.transactions.length - duplicates.length,
+  };
+}
+
+export async function bulkImportTransactions(
+  orgId: string,
+  accountId: string,
+  input: BulkImportTransactionsInput,
+): Promise<{ count: number; skipped: number; transactions: BankTransactionDTO[] }> {
+  const account = await BankAccount.findOne({
+    _id: new Types.ObjectId(accountId),
+    organizationId: new Types.ObjectId(orgId),
+  });
+  if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
+
+  const seen = await existingFingerprints(
+    orgId,
+    account._id,
+    input.transactions.map((t) => t.date),
+  );
+  const withinBatch = new Set<string>();
+
+  const toInsert: typeof input.transactions = [];
+  let skipped = 0;
+  for (const tx of input.transactions) {
+    const fp = lineFingerprint(tx);
+    const duplicate = seen.has(fp) || withinBatch.has(fp);
+    withinBatch.add(fp);
+    if (duplicate && input.onDuplicate === "skip") {
+      skipped++;
+      continue;
+    }
+    toInsert.push({ ...tx, __duplicate: duplicate } as typeof tx & { __duplicate: boolean });
+  }
+
+  if (toInsert.length === 0) {
+    return { count: 0, skipped, transactions: [] };
+  }
+
+  const sorted = [...toInsert].sort((a, b) => a.date.localeCompare(b.date));
   const batchId = input.importBatchId ?? new Types.ObjectId().toString();
 
-  const docs = sorted.map((tx) => {
-    runningBalance = runningBalance + tx.amountMinor;
-    return {
-      organizationId: new Types.ObjectId(orgId),
-      accountId: new Types.ObjectId(accountId),
-      accountName: account.accountName as string,
-      currency: account.currency as string,
-      date: new Date(tx.date),
-      description: tx.description,
-      reference: tx.reference ?? "",
-      amountMinor: tx.amountMinor,
-      type: tx.amountMinor >= 0 ? ("credit" as const) : ("debit" as const),
-      runningBalanceMinor: runningBalance,
-      source: "import" as const,
-      importBatchId: batchId,
-      notes: tx.notes ?? "",
-    };
-  });
+  const docs = sorted.map((tx) => ({
+    organizationId: new Types.ObjectId(orgId),
+    accountId: new Types.ObjectId(accountId),
+    accountName: account.accountName as string,
+    currency: account.currency as string,
+    // Midday UTC, so the calendar day the statement shows survives being
+    // rendered in a timezone either side of UTC. Midnight does not.
+    date: new Date(`${tx.date}T12:00:00.000Z`),
+    description: tx.description,
+    reference: tx.reference ?? "",
+    amountMinor: tx.amountMinor,
+    type: tx.amountMinor >= 0 ? ("credit" as const) : ("debit" as const),
+    // Restated below across the whole account; a placeholder until then.
+    runningBalanceMinor: 0,
+    source: "import" as const,
+    importBatchId: batchId,
+    // Brought in knowingly over a match, so it is marked rather than left to
+    // look like an ordinary unreconciled line.
+    status: (tx as { __duplicate?: boolean }).__duplicate
+      ? ("duplicate" as const)
+      : ("unmatched" as const),
+    notes: tx.notes ?? "",
+  }));
 
   const inserted = await BankTransaction.insertMany(docs);
 
-  // The batch was sorted and numbered on its own, which is right only when it
-  // lands entirely after everything already on the account. Importing a
-  // statement that overlaps existing entries needs the whole column restated.
+  // The running balance is a property of the account in date order, not of this
+  // batch. A statement that overlaps existing entries needs the whole column
+  // restated, so it is always recomputed rather than continued from the end.
   await recalculateRunningBalances(orgId, account._id);
 
   const fresh = await BankTransaction.find({
@@ -424,6 +535,7 @@ export async function bulkImportTransactions(
 
   return {
     count: inserted.length,
+    skipped,
     transactions: fresh.map(txToDTO),
   };
 }

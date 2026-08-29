@@ -51,6 +51,10 @@ export const bulkImport = asyncHandler(async (req, res) => {
   created(res, result);
 });
 
+export const previewImport = asyncHandler(async (req, res) => {
+  ok(res, await svc.previewImport(org(req), req.params.id!, req.body));
+});
+
 export const getTransaction = asyncHandler(async (req, res) => {
   ok(res, await svc.getTransaction(org(req), req.params.txId!));
 });

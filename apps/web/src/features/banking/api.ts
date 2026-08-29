@@ -10,6 +10,7 @@ import type {
   CreateBankTransactionInput,
   UpdateBankTransactionInput,
   BulkImportTransactionsInput,
+  PreviewImportInput,
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
@@ -130,12 +131,27 @@ export function useDeleteBankTransaction(accountId: string) {
   });
 }
 
+/**
+ * Asks the server which of these lines it already has, before anything is
+ * written. Not cached — the answer depends on what was imported a moment ago.
+ */
+export function usePreviewImport(accountId: string) {
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: PreviewImportInput) =>
+      api.post<{ total: number; duplicates: number[]; newCount: number }>(
+        `bank-accounts/${accountId}/transactions/import-preview`,
+        input,
+      ),
+  });
+}
+
 export function useBulkImportTransactions(accountId: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (input: BulkImportTransactionsInput) =>
-      api.post<{ count: number; transactions: BankTransaction[] }>(
+      api.post<{ count: number; skipped: number; transactions: BankTransaction[] }>(
         `bank-accounts/${accountId}/transactions/bulk`,
         input,
       ),

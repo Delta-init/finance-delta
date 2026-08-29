@@ -87,7 +87,7 @@ async function main() {
   });
 
   const bank = await BankAccount.create({
-    organizationId: org._id, accountName: "Main AED Current", accountType: "checking",
+    organizationId: org._id, accountName: "Main AED Current", accountType: "current",
     currency: "AED", currentBalanceMinor: 500_000_00, openingBalanceMinor: 500_000_00,
     openingDate: new Date("2024-01-01"),
   });

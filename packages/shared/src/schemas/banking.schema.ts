@@ -2,11 +2,11 @@ import { z } from "zod";
 
 // ── Bank Account ──────────────────────────────────────────────────────────────
 
-export const bankAccountTypeSchema = z.enum(["checking", "savings", "petty_cash", "internal"]);
+export const bankAccountTypeSchema = z.enum(["current", "savings", "petty_cash", "internal"]);
 export type BankAccountType = z.infer<typeof bankAccountTypeSchema>;
 
 export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
-  checking: "Checking",
+  current: "Current",
   savings: "Savings",
   petty_cash: "Petty Cash",
   internal: "Internal Fund",
@@ -87,11 +87,47 @@ export const updateBankTransactionSchema = z
   .refine((v) => Object.keys(v).length > 0, "Nothing to change");
 export type UpdateBankTransactionInput = z.infer<typeof updateBankTransactionSchema>;
 
+/**
+ * One line of a bank statement being imported.
+ *
+ * Stricter than a hand-typed transaction on purpose. The wizard parses dates
+ * and amounts before sending them, so anything arriving here has already been
+ * through that — and if it has not, it came from somewhere that skipped the
+ * parsing, which is exactly the case worth refusing.
+ */
+export const importedTransactionSchema = createBankTransactionSchema.extend({
+  // `new Date("15/01/2026")` is Invalid Date and `new Date("01/02/2026")` is
+  // the wrong month in half the world. Only an unambiguous calendar day is
+  // accepted; working out which layout a bank used is the wizard's job.
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
+    .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)), "Not a real date"),
+  // Minor units are indivisible. A fraction here means somebody multiplied by
+  // 100 in floating point and kept the error.
+  amountMinor: z.number().int("Amount must be in whole minor units"),
+});
+export type ImportedTransactionInput = z.infer<typeof importedTransactionSchema>;
+
 export const bulkImportTransactionsSchema = z.object({
-  transactions: z.array(createBankTransactionSchema).min(1, "At least one transaction required"),
+  transactions: z.array(importedTransactionSchema).min(1, "At least one transaction required"),
   importBatchId: z.string().optional(),
+  /**
+   * What to do with a line already on the account.
+   *
+   * Defaults to leaving it out: re-importing an overlapping statement is the
+   * ordinary case — most people export a whole month every month — and silently
+   * doubling every shared line is the failure people notice last.
+   */
+  onDuplicate: z.enum(["skip", "import"]).optional().default("skip"),
 });
 export type BulkImportTransactionsInput = z.infer<typeof bulkImportTransactionsSchema>;
+
+/** Asks which lines are already on the account, without writing anything. */
+export const previewImportSchema = z.object({
+  transactions: z.array(importedTransactionSchema).min(1, "At least one transaction required"),
+});
+export type PreviewImportInput = z.infer<typeof previewImportSchema>;
 
 export const matchTransactionSchema = bankTransactionMatchSchema;
 export type MatchTransactionInput = z.infer<typeof matchTransactionSchema>;

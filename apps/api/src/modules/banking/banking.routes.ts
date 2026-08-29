@@ -5,6 +5,7 @@ import {
   createBankTransactionSchema,
   updateBankTransactionSchema,
   bulkImportTransactionsSchema,
+  previewImportSchema,
   matchTransactionSchema,
   startReconciliationSchema,
   updateReconciliationSchema,
@@ -28,6 +29,9 @@ router.post("/:id/deactivate", requirePermission("banking:write"), c.deactivateA
 router.get("/:id/transactions", requirePermission("banking:read"), c.listTransactions);
 router.post("/:id/transactions", requirePermission("banking:write"), validateBody(createBankTransactionSchema), c.createTransaction);
 router.post("/:id/transactions/bulk", requirePermission("banking:write"), validateBody(bulkImportTransactionsSchema), c.bulkImport);
+// Reads only — it reports which lines are already on the account and writes
+// nothing, so it needs no more than the write permission the import itself has.
+router.post("/:id/transactions/import-preview", requirePermission("banking:write"), validateBody(previewImportSchema), c.previewImport);
 router.get("/:id/transactions/:txId", requirePermission("banking:read"), c.getTransaction);
 // Correcting or removing an entry. Refused once it has been reconciled or
 // matched to a document — see assertEditable in the service.

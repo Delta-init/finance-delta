@@ -2,29 +2,38 @@ import type { Request, Response } from "express";
 import { invoiceQuerySchema } from "@delta/shared";
 import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
+import { resolveScope } from "../../lib/ownership";
 import * as invoiceService from "./invoice.service";
 import { autoCalculate } from "../commission/commission.service";
 
 const orgId = (req: Request) => req.auth!.organizationId;
 
+/**
+ * Whose invoices this caller may touch. `invoice:write` is org-wide and also
+ * covers deleting, voiding and recording payments; `invoice:write:own` covers
+ * raising and sending your own and nothing else.
+ */
+const readScope = (req: Request) => resolveScope(req.auth!, "invoice:read", "invoice:read:own");
+const writeScope = (req: Request) => resolveScope(req.auth!, "invoice:write", "invoice:write:own");
+
 export const list = asyncHandler(async (req, res) => {
   const query = parseQuery(invoiceQuerySchema, req.query);
-  const result = await invoiceService.listInvoices(orgId(req), query);
+  const result = await invoiceService.listInvoices(orgId(req), query, readScope(req));
   ok(res, result.data, result.meta);
 });
 
 export const get = asyncHandler(async (req, res) => {
-  ok(res, await invoiceService.getInvoice(orgId(req), req.params.id!));
+  ok(res, await invoiceService.getInvoice(orgId(req), req.params.id!, readScope(req)));
 });
 
 export const create = asyncHandler(async (req, res) => {
-  const invoice = await invoiceService.createInvoice(orgId(req), req.body);
+  const invoice = await invoiceService.createInvoice(orgId(req), req.body, writeScope(req));
   void autoCalculate(orgId(req), invoice.id, "invoice_raised").catch(() => undefined);
   created(res, invoice);
 });
 
 export const update = asyncHandler(async (req, res) => {
-  ok(res, await invoiceService.updateInvoice(orgId(req), req.params.id!, req.body));
+  ok(res, await invoiceService.updateInvoice(orgId(req), req.params.id!, req.body, writeScope(req)));
 });
 
 export const remove = asyncHandler(async (req: Request, res: Response) => {
@@ -33,7 +42,7 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const send = asyncHandler(async (req, res) => {
-  ok(res, await invoiceService.sendInvoice(orgId(req), req.params.id!));
+  ok(res, await invoiceService.sendInvoice(orgId(req), req.params.id!, writeScope(req)));
 });
 
 export const voidInvoice = asyncHandler(async (req, res) => {
@@ -53,6 +62,6 @@ export const updatePayment = asyncHandler(async (req, res) => {
 });
 
 export const resend = asyncHandler(async (req, res) => {
-  await invoiceService.resendInvoice(orgId(req), req.params.id!, req.body?.message);
+  await invoiceService.resendInvoice(orgId(req), req.params.id!, writeScope(req), req.body?.message);
   ok(res, { queued: true });
 });

@@ -9,6 +9,7 @@ import type {
 } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS } from "@delta/shared";
 import { AppError } from "../../lib/http";
+import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
@@ -88,7 +89,11 @@ const SORT = {
   createdAt: "createdAt",
 } as const;
 
-export async function listExpenses(orgId: string, query: ExpenseQuery): Promise<Paginated<ExpenseDTO>> {
+export async function listExpenses(
+  orgId: string,
+  query: ExpenseQuery,
+  scope: Scope,
+): Promise<Paginated<ExpenseDTO>> {
   const and: Record<string, unknown>[] = [];
   const or = searchOr(query.q, ["expenseNumber", "description", "submittedByName"]);
   if (or) and.push({ $or: or });
@@ -101,7 +106,13 @@ export async function listExpenses(orgId: string, query: ExpenseQuery): Promise<
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
 
-  const filter: Record<string, unknown> = { organizationId: orgId };
+  // Applied after the caller's own filters, and not from `query`, so asking
+  // for somebody else's expenses narrows the result to nothing instead of
+  // widening it.
+  const filter: Record<string, unknown> = {
+    organizationId: orgId,
+    ...scopeFilter(scope, "submittedById"),
+  };
   if (and.length) filter.$and = and;
 
   const sort = buildSort(SORT, query.sort, query.dir);
@@ -112,9 +123,10 @@ export async function listExpenses(orgId: string, query: ExpenseQuery): Promise<
   return { data: rows.map((r) => toDTO(r as unknown as ExpenseDoc)), meta: pageMeta(total, query.page, query.pageSize) };
 }
 
-export async function getExpense(orgId: string, id: string): Promise<ExpenseDTO> {
+export async function getExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  assertOwned(scope, doc.submittedById, "Expense");
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
@@ -185,11 +197,19 @@ export async function updateExpense(
   orgId: string,
   id: string,
   input: UpdateExpenseInput,
+  scope: Scope,
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  assertOwned(scope, doc.submittedById, "Expense");
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "A voided expense can't be edited");
+  // Someone editing their own claim may do so until it is with an approver.
+  // Afterwards the amount has been approved, and changing it would mean the
+  // approval was given to something else.
+  if (!scope.all && !["draft", "rejected"].includes(doc.status as string)) {
+    throw new AppError("CONFLICT", "A submitted expense can't be edited");
+  }
 
   const d = doc as unknown as Record<string, unknown>;
 
@@ -247,9 +267,10 @@ export async function updateExpense(
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
-export async function submitExpense(orgId: string, id: string): Promise<ExpenseDTO> {
+export async function submitExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
   doc.status = "submitted";

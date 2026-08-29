@@ -51,6 +51,15 @@ export const PERMISSIONS = [
   // Sales (placeholders for later phases)
   "invoice:read",
   "invoice:write",
+  /**
+   * Raise and send your own invoices, and read only those.
+   *
+   * Deliberately narrower than `invoice:write`, which also covers deleting,
+   * voiding and recording payments against anybody's invoice. Someone billing
+   * their own work needs none of that.
+   */
+  "invoice:read:own",
+  "invoice:write:own",
 
   // Vendors & payables
   "vendor:read",
@@ -73,6 +82,15 @@ export const PERMISSIONS = [
   "expense:update",
   "expense:delete",
   "expense:approve",
+  /**
+   * Submit expenses and read back only your own.
+   *
+   * `expense:read` is org-wide, so it cannot be given to somebody who should
+   * see nothing but their own claims. These are additive: no existing role
+   * changes behaviour by their being introduced.
+   */
+  "expense:read:own",
+  "expense:write:own",
 
   // Banking
   "banking:read",

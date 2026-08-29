@@ -11,6 +11,7 @@ import {
   type UpdateInvoiceInput,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
+import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
@@ -169,6 +170,7 @@ const SORT = {
 export async function listInvoices(
   orgId: string,
   query: InvoiceQuery,
+  scope: Scope,
 ): Promise<Paginated<InvoiceDTO>> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
@@ -188,7 +190,12 @@ export async function listInvoices(
   if (query.dueTo) and.push({ dueDate: { $lte: new Date(query.dueTo) } });
   if (query.tagIds?.length) and.push({ tagIds: { $in: query.tagIds } });
 
-  const filter: Record<string, unknown> = { organizationId: orgId };
+  // Not taken from `query`: asking for another salesperson's invoices must
+  // narrow the result to nothing, never widen it.
+  const filter: Record<string, unknown> = {
+    organizationId: orgId,
+    ...scopeFilter(scope, "salespersonId"),
+  };
   if (and.length) filter.$and = and;
 
   const sort = buildSort(SORT, query.sort, query.dir);
@@ -206,22 +213,29 @@ export async function listInvoices(
   };
 }
 
-export async function getInvoice(orgId: string, id: string): Promise<InvoiceDTO> {
+export async function getInvoice(orgId: string, id: string, scope: Scope): Promise<InvoiceDTO> {
   const doc = await Invoice.findOne({ _id: id, organizationId: orgId }).populate(
     "tagIds",
     "name color",
   );
   if (!doc) throw new AppError("NOT_FOUND", "Invoice not found");
+  assertOwned(scope, doc.salespersonId, "Invoice");
   return toDTO(doc as unknown as InvoiceDoc);
 }
 
 export async function createInvoice(
   orgId: string,
   input: CreateInvoiceInput,
+  scope: Scope,
 ): Promise<InvoiceDTO> {
+  // The salesperson arrives in the body, so somebody raising their own
+  // invoices could otherwise put another name on one — and then not even see
+  // it afterwards, since it would not be theirs.
+  const salespersonId = scope.all ? input.salespersonId : scope.userId;
+
   const [customer, salesperson, org] = await Promise.all([
     Customer.findOne({ _id: input.customerId, organizationId: orgId }),
-    User.findOne({ _id: input.salespersonId, "memberships.organizationId": orgId }),
+    User.findOne({ _id: salespersonId, "memberships.organizationId": orgId }),
     Organization.findById(orgId),
   ]);
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
@@ -287,8 +301,10 @@ export async function updateInvoice(
   orgId: string,
   id: string,
   input: UpdateInvoiceInput,
+  scope: Scope,
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
   if (effectiveStatus(doc) !== "draft") {
     throw new AppError("CONFLICT", "Only draft invoices can be edited");
   }
@@ -355,8 +371,9 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   await doc.deleteOne();
 }
 
-export async function sendInvoice(orgId: string, id: string): Promise<InvoiceDTO> {
+export async function sendInvoice(orgId: string, id: string, scope: Scope): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
   const eff = effectiveStatus(doc);
   if (eff !== "draft") throw new AppError("CONFLICT", `Cannot send a ${eff} invoice`);
 
@@ -385,8 +402,14 @@ async function _deductInventory(orgId: string, doc: InvoiceDoc) {
   }
 }
 
-export async function resendInvoice(orgId: string, id: string, message?: string): Promise<void> {
+export async function resendInvoice(
+  orgId: string,
+  id: string,
+  scope: Scope,
+  message?: string,
+): Promise<void> {
   const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
   void _dispatchInvoiceEmail(orgId, doc, message);
 }
 

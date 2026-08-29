@@ -1,18 +1,18 @@
 import { Router } from "express";
 import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
-import { requirePermission } from "../../middleware/rbac";
+import { requireAnyPermission, requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import * as c from "./expense.controller";
 
 const router = Router();
 router.use(authenticate);
 
-router.get("/", requirePermission("expense:read"), c.list);
-router.get("/:id", requirePermission("expense:read"), c.get);
-router.post("/", requirePermission("expense:create"), validateBody(createExpenseSchema), c.create);
-router.patch("/:id", requirePermission("expense:update"), validateBody(updateExpenseSchema), c.update);
-router.post("/:id/submit", requirePermission("expense:create"), c.submit);
+router.get("/", requireAnyPermission("expense:read", "expense:read:own"), c.list);
+router.get("/:id", requireAnyPermission("expense:read", "expense:read:own"), c.get);
+router.post("/", requireAnyPermission("expense:create", "expense:write:own"), validateBody(createExpenseSchema), c.create);
+router.patch("/:id", requireAnyPermission("expense:update", "expense:write:own"), validateBody(updateExpenseSchema), c.update);
+router.post("/:id/submit", requireAnyPermission("expense:create", "expense:write:own"), c.submit);
 router.post("/:id/approve", requirePermission("expense:approve"), c.approve);
 router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectExpenseSchema), c.reject);
 router.post("/:id/void", requirePermission("expense:delete"), c.voidExpense);

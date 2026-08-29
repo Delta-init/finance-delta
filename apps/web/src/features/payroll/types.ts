@@ -34,7 +34,10 @@ export interface ImportPreview {
   blockers: string[];
   warnings: string[];
   totals: { employeeCount: number; grossMinor: number; deductionsMinor: number; netMinor: number };
+  /** On the payroll but not yet mapped in finance — a sync fixes these. */
   unmapped: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
+  /** Payslips whose employee was deleted in HRMS — a sync cannot fix these. */
+  orphaned: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
   unpayable: Array<{ employeeCode: string; name: string }>;
   alreadyImported: { runNumber: string; status: string } | null;
 }

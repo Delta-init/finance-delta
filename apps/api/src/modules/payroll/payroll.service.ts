@@ -30,7 +30,10 @@ export interface ImportPreview {
   blockers: string[];
   warnings: string[];
   totals: { employeeCount: number; grossMinor: number; deductionsMinor: number; netMinor: number };
+  /** On this payroll but not yet mapped in finance. A sync fixes these. */
   unmapped: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
+  /** Payslips whose employee record no longer exists in HRMS. A sync cannot. */
+  orphaned: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
   unpayable: Array<{ employeeCode: string; name: string }>;
   alreadyImported: { runNumber: string; status: string } | null;
 }
@@ -120,12 +123,40 @@ export async function previewImport(orgId: string, hrmsOrgId: string, period: st
   }
 
   const known = await resolveEmployees(orgId, hrmsOrgId, batch);
-  const unmapped = batch.lines
+  const missing = batch.lines
     .filter((l) => !known.has(l.employeeId))
-    .map((l) => ({ hrmsEmployeeId: l.employeeId, employeeCode: l.employeeCode, name: l.name }));
+    .map((l) => ({
+      hrmsEmployeeId: l.employeeId,
+      employeeCode: l.employeeCode,
+      name: l.name,
+      // The flag when HRMS sends it; otherwise inferred. A line with neither a
+      // code nor a name is one HRMS could not resolve to an employee — it
+      // builds both from the employee record and falls back to empty strings.
+      // Inferring it here means this works against an HRMS that predates the
+      // flag, rather than waiting on a deploy to stop giving wrong advice.
+      employeeMissing: l.employeeMissing === true || (!l.employeeCode && !l.name),
+    }));
+
+  // Two different problems that used to read as one.
+  //
+  // Somebody not yet mapped is fixed by running a sync. Somebody whose HRMS
+  // record has been deleted cannot be — there is nobody left to map, and a
+  // payslip is all that remains of them. Telling accounts to run a sync in
+  // that case sends them round a loop that cannot terminate, which is what
+  // happened here: two deleted employees left payslips behind, and the import
+  // was blocked with the only suggested remedy being one that does nothing.
+  const unmapped = missing.filter((m) => !m.employeeMissing);
+  const orphaned = missing.filter((m) => m.employeeMissing);
+
   if (unmapped.length) {
     blockers.push(
       `${unmapped.length} person(s) on this payroll are not mapped in finance. Run a mapping sync first.`,
+    );
+  }
+  if (orphaned.length) {
+    blockers.push(
+      `${orphaned.length} payslip(s) belong to employees who have been deleted in HRMS. ` +
+        `A mapping sync cannot fix this — HR needs to remove those payslips or restore the employee records.`,
     );
   }
 
@@ -157,6 +188,7 @@ export async function previewImport(orgId: string, hrmsOrgId: string, period: st
     warnings,
     totals,
     unmapped,
+    orphaned,
     unpayable,
     alreadyImported: existing ? { runNumber: existing.runNumber, status: existing.status } : null,
   };

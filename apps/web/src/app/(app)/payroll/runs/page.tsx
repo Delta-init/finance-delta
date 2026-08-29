@@ -198,17 +198,21 @@ export default function PayrollRunsPage() {
                 ))}
 
                 {preview.data.unmapped.length > 0 && (
-                  <div className="rounded-lg border border-danger/20 bg-danger/5 p-3">
-                    <p className="font-medium text-danger">Not mapped in finance</p>
-                    <ul className="mt-1 space-y-0.5 text-xs">
-                      {preview.data.unmapped.slice(0, 8).map((u) => (
-                        <li key={u.hrmsEmployeeId}>{u.employeeCode} · {u.name}</li>
-                      ))}
-                      {preview.data.unmapped.length > 8 && (
-                        <li className="text-foreground-muted">…and {preview.data.unmapped.length - 8} more</li>
-                      )}
-                    </ul>
-                  </div>
+                  <PeopleBox
+                    title="Not mapped in finance"
+                    hint="Run a mapping sync and these will be picked up."
+                    rows={preview.data.unmapped}
+                  />
+                )}
+
+                {/* Kept apart from the above: the remedy is different, and
+                    running a sync for these achieves nothing. */}
+                {(preview.data.orphaned?.length ?? 0) > 0 && (
+                  <PeopleBox
+                    title="Employee deleted in HRMS"
+                    hint="Only the payslip is left. HR needs to remove it, or restore the employee."
+                    rows={preview.data.orphaned}
+                  />
                 )}
 
                 {preview.data.canImport && preview.data.warnings.length === 0 && (
@@ -261,6 +265,44 @@ function Row({ label, value, strong }: { label: string; value: React.ReactNode; 
     <div className="flex items-center justify-between py-0.5">
       <span className="text-foreground-muted">{label}</span>
       <span className={strong ? "font-semibold" : "font-medium"}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * A short list of people a payroll cannot proceed with.
+ *
+ * Falls back to the payslip's employee id when the line carries neither a code
+ * nor a name — which happens when the employee record is gone. Rendering
+ * "code · name" from two empty strings produced a bullet reading "·", which
+ * told nobody anything.
+ */
+function PeopleBox({
+  title,
+  hint,
+  rows,
+}: {
+  title: string;
+  hint: string;
+  rows: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
+}) {
+  return (
+    <div className="rounded-lg border border-danger/20 bg-danger/5 p-3">
+      <p className="font-medium text-danger">{title}</p>
+      <ul className="mt-1 space-y-0.5 text-xs">
+        {rows.slice(0, 8).map((u) => {
+          const label = [u.employeeCode, u.name].filter(Boolean).join(" · ");
+          return (
+            <li key={u.hrmsEmployeeId}>
+              {label || <span className="font-mono text-foreground-muted">{u.hrmsEmployeeId}</span>}
+            </li>
+          );
+        })}
+        {rows.length > 8 && (
+          <li className="text-foreground-muted">…and {rows.length - 8} more</li>
+        )}
+      </ul>
+      <p className="mt-1.5 text-xs text-foreground-muted">{hint}</p>
     </div>
   );
 }

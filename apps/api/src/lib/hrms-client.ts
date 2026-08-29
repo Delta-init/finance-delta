@@ -169,6 +169,13 @@ export interface HrmsHandoverLine {
   paidAt: string | null;
   bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string };
   payable: boolean;
+  /**
+   * The payslip's employee record has been deleted in HRMS.
+   *
+   * Optional because an older HRMS does not send it; absent is read as false,
+   * which is the behaviour there was before.
+   */
+  employeeMissing?: boolean;
 }
 
 export interface HrmsBatchSummary {

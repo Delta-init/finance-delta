@@ -41,10 +41,12 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
+import { useCan } from "@/lib/use-can";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
   const { data: invoice, isLoading } = useInvoice(id);
+  const { can } = useCan();
   const send = useSendInvoice();
   const voidInv = useVoidInvoice();
   const resend = useResendInvoice();
@@ -57,8 +59,19 @@ export function InvoiceDetail({ id }: { id: string }) {
   if (!invoice) return <div className="p-6 text-foreground-muted text-sm">Invoice not found.</div>;
 
   const isDraft = invoice.status === "draft";
-  const canVoid = invoice.status !== "paid" && invoice.status !== "void";
-  const canPay = invoice.status !== "paid" && invoice.status !== "void" && invoice.balanceMinor > 0;
+
+  // Raising and sending your own invoices is `invoice:write:own`. Voiding one,
+  // recording money against it and raising a credit note are all the broad
+  // `invoice:write`, and the server refuses them without it — so somebody
+  // billing their own work was being shown three buttons that only ever
+  // returned an error.
+  const canManage = can("invoice:write");
+
+  const canVoid = canManage && invoice.status !== "paid" && invoice.status !== "void";
+  const canPay =
+    canManage && invoice.status !== "paid" && invoice.status !== "void" && invoice.balanceMinor > 0;
+  const canCreditNote =
+    canManage && ["sent", "paid", "partial"].includes(invoice.status);
 
   return (
     <div className="space-y-6 p-6">
@@ -121,7 +134,7 @@ export function InvoiceDetail({ id }: { id: string }) {
               <RotateCcw className="h-3.5 w-3.5" /> Resend
             </Button>
           )}
-          {(invoice.status === "sent" || invoice.status === "paid" || invoice.status === "partial") && (
+          {canCreditNote && (
             <Button
               variant="outline"
               size="sm"
@@ -349,7 +362,7 @@ export function InvoiceDetail({ id }: { id: string }) {
                           <Paperclip className="h-3.5 w-3.5" />
                         </a>
                       )}
-                      {invoice.status !== "void" && (
+                      {canManage && invoice.status !== "void" && (
                         <button
                           onClick={() => { setEditingPayment(p); setPayOpen(true); }}
                           className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"

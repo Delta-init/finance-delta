@@ -21,6 +21,7 @@ import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { useInvoices } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
+import { useCan } from "@/lib/use-can";
 
 const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
   { header: "Invoice #", value: (inv) => inv.invoiceNumber },
@@ -58,7 +59,15 @@ export function InvoiceManager() {
     tagIds: tagIds.length ? tagIds : undefined,
   });
 
-  const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
+  // Somebody who only sees their own invoices has one salesperson to choose
+  // from — themselves — and cannot read the user list to build the picker.
+  const { ownOnly } = useCan();
+  const mineOnly = ownOnly("invoice:read", "invoice:read:own");
+
+  const { data: users } = useUsers(
+    { pageSize: 100, sort: "name", dir: "asc" },
+    { enabled: !mineOnly },
+  );
 
   const hasFilters =
     status !== "all" || salespersonId || issueFrom || issueTo || dueFrom || dueTo || tagIds.length > 0;
@@ -85,7 +94,18 @@ export function InvoiceManager() {
       ),
     },
     { key: "customer", header: "Customer", sortable: true, cell: (inv) => inv.customerName },
-    { key: "salesperson", header: "Salesperson", sortable: true, cell: (inv) => <span className="text-foreground-muted">{inv.salespersonName}</span> },
+    // A column naming whose invoice it is says nothing when they are all
+    // yours.
+    ...(mineOnly
+      ? []
+      : [
+          {
+            key: "salesperson",
+            header: "Salesperson",
+            sortable: true,
+            cell: (inv: Invoice) => <span className="text-foreground-muted">{inv.salespersonName}</span>,
+          },
+        ]),
     { key: "tags", header: "Tags", cell: (inv) => <TagList tags={inv.tags} /> },
     { key: "issue", header: "Issue", sortable: true, cell: (inv) => <span className="text-foreground-muted">{inv.issueDate}</span> },
     { key: "due", header: "Due", sortable: true, cell: (inv) => <span className="text-foreground-muted">{inv.dueDate}</span> },
@@ -174,6 +194,7 @@ export function InvoiceManager() {
           </Select>
         </Field>
 
+        {!mineOnly && (
         <Field label="Salesperson">
           <Select value={salespersonId || "all"} onValueChange={(v) => setSalespersonId(v === "all" ? "" : v)}>
             <SelectTrigger className="w-[150px]">
@@ -187,6 +208,7 @@ export function InvoiceManager() {
             </SelectContent>
           </Select>
         </Field>
+        )}
 
         <Field label="Issue from"><DatePicker value={issueFrom} onChange={setIssueFrom} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Issue to"><DatePicker value={issueTo} onChange={setIssueTo} clearable placeholder="Any" className="w-[140px]" /></Field>

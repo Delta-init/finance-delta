@@ -10,11 +10,15 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["users"] as const;
 
-export function useUsers(params: QueryParams) {
+export function useUsers(params: QueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],
     queryFn: () => api.getList<User>("users", params),
     placeholderData: (prev) => prev,
+    // Only honoured when given, so existing callers are unaffected. Reading
+    // users needs user:read, which somebody scoped to their own records does
+    // not have — without this they fire a request that can only be refused.
+    ...(options?.enabled === undefined ? {} : { enabled: options.enabled }),
   });
 }
 

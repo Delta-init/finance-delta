@@ -52,6 +52,8 @@ import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespe
 import { useUsers } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
+import { useCan } from "@/lib/use-can";
+import { useSession } from "next-auth/react";
 
 // ── Form schema ──────────────────────────────────────────────────────────────
 
@@ -189,11 +191,32 @@ export function InvoiceForm({
   const { currency: orgCurrency, baseCurrency } = useCurrency();
   const isINROrg = baseCurrency === "INR";
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
-  const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
+  // Somebody raising their own invoices has one salesperson available —
+  // themselves — and cannot read the user list to populate a picker. The
+  // server pins it to them regardless, so the field is filled in rather than
+  // asked about, and the value below only has to satisfy the form.
+  const { ownOnly } = useCan();
+  const { data: session } = useSession();
+  const mineOnly = ownOnly("invoice:read", "invoice:read:own");
+
+  const { data: users } = useUsers(
+    { pageSize: 100, sort: "name", dir: "asc" },
+    { enabled: !mineOnly },
+  );
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [salespersonModalOpen, setSalespersonModalOpen] = useState(false);
+
+  // The field is hidden for somebody raising their own invoices, but the form
+  // still validates it. Filled with themselves, which is what the server pins
+  // it to anyway — so the value the form carries and the value that gets
+  // stored are the same thing rather than two answers that happen to agree.
+  useEffect(() => {
+    if (mineOnly && session?.user?.id && !watch("salespersonId")) {
+      setValue("salespersonId", session.user.id, { shouldValidate: true });
+    }
+  }, [mineOnly, session?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Org-configured rates; INR orgs additionally fall back to the tax-system
   // presets when none are applied yet (GST org → CGST/SGST/IGST).
@@ -363,33 +386,35 @@ export function InvoiceForm({
             {errors.customerId && <p className="text-xs text-danger">{errors.customerId.message}</p>}
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label>Salesperson *</Label>
-              <button
-                type="button"
-                onClick={() => setSalespersonModalOpen(true)}
-                className="text-xs text-primary hover:underline flex items-center gap-0.5"
-              >
-                <Plus className="h-3 w-3" /> New
-              </button>
+          {!mineOnly && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Salesperson *</Label>
+                <button
+                  type="button"
+                  onClick={() => setSalespersonModalOpen(true)}
+                  className="text-xs text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="h-3 w-3" /> New
+                </button>
+              </div>
+              <Controller
+                control={control}
+                name="salespersonId"
+                render={({ field }) => (
+                  <Select key={field.value} value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger><SelectValue placeholder="Select a salesperson…" /></SelectTrigger>
+                    <SelectContent>
+                      {users?.data.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {errors.salespersonId && <p className="text-xs text-danger">{errors.salespersonId.message}</p>}
             </div>
-            <Controller
-              control={control}
-              name="salespersonId"
-              render={({ field }) => (
-                <Select key={field.value} value={field.value} onValueChange={field.onChange}>
-                  <SelectTrigger><SelectValue placeholder="Select a salesperson…" /></SelectTrigger>
-                  <SelectContent>
-                    {users?.data.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            {errors.salespersonId && <p className="text-xs text-danger">{errors.salespersonId.message}</p>}
-          </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Reference / PO#</Label>

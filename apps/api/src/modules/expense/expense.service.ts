@@ -10,6 +10,7 @@ import type {
 import { EXPENSE_CATEGORY_LABELS } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
+import type { ParsedFile } from "../../middleware/upload";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
@@ -33,7 +34,15 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
   const d = doc as unknown as Record<string, unknown>;
   const rec = d.recurrence as { frequency: string; nextDate: Date; endDate?: Date; isActive?: boolean } | undefined;
   const mil = d.mileage as { distanceKm: number; ratePerKmMinor: number; totalMinor: number } | undefined;
-  const atts = (d.attachments as { name: string; url: string }[]) ?? [];
+  const atts =
+    (d.attachments as {
+      name: string;
+      url: string;
+      key?: string;
+      size?: number;
+      mimeType?: string;
+      uploadedAt?: Date;
+    }[]) ?? [];
 
   return {
     id: doc._id.toString(),
@@ -70,7 +79,14 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     mileage: mil
       ? { distanceKm: mil.distanceKm, ratePerKmMinor: mil.ratePerKmMinor, totalMinor: mil.totalMinor }
       : undefined,
-    attachments: atts.map((a) => ({ name: a.name, url: a.url })),
+    attachments: atts.map((a) => ({
+      name: a.name,
+      url: a.url,
+      key: a.key ?? undefined,
+      size: a.size ?? undefined,
+      mimeType: a.mimeType ?? undefined,
+      uploadedAt: a.uploadedAt ? new Date(a.uploadedAt).toISOString() : undefined,
+    })),
     projectName: (doc.projectName as string) ?? "",
     costCentre: (doc.costCentre as string) ?? "",
     notes: (doc.notes as string) ?? "",
@@ -358,5 +374,98 @@ export async function stopRecurrence(orgId: string, id: string): Promise<Expense
     throw new AppError("CONFLICT", "This expense is not a recurring template");
   doc.isRecurring = false;
   await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
+
+/**
+ * How many receipts one claim may carry.
+ *
+ * A claim needs a receipt, sometimes a few. It does not need hundreds, and
+ * without a ceiling an account with `expense:write:own` is an unmetered place
+ * to put files.
+ */
+const MAX_ATTACHMENTS = 10;
+
+/**
+ * A claim only takes receipts while it is still the claimant's.
+ *
+ * Once submitted it is with an approver, and once approved the amount has been
+ * agreed against the evidence attached at the time. Adding to or removing from
+ * it afterwards changes what was approved.
+ */
+function assertAttachable(status: string, scope: Scope): void {
+  if (scope.all) return;
+  if (!["draft", "rejected"].includes(status)) {
+    throw new AppError("CONFLICT", "Receipts can only be changed while the claim is a draft");
+  }
+}
+
+export async function addAttachment(
+  orgId: string,
+  id: string,
+  file: ParsedFile,
+  scope: Scope,
+): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  assertOwned(scope, doc.submittedById, "Expense");
+  assertAttachable(doc.status as string, scope);
+
+  const existing = (doc.attachments as unknown as unknown[]) ?? [];
+  if (existing.length >= MAX_ATTACHMENTS) {
+    throw new AppError("CONFLICT", `A claim can hold at most ${MAX_ATTACHMENTS} receipts`);
+  }
+
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+
+  // The uploader's filename never becomes the key. It is theirs to choose, and
+  // a key built from it could otherwise reach outside this expense's prefix.
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const key = `expenses/${orgId}/${id}/${Date.now()}-${safe}`;
+  const uploaded = await uploadFile({
+    key,
+    buffer: file.buffer,
+    mimeType: file.mimeType,
+    originalName: file.originalName,
+  });
+
+  (doc.attachments as unknown as Record<string, unknown>[]).push({
+    name: file.originalName.slice(0, 200),
+    url: uploaded.url,
+    key: uploaded.key,
+    size: uploaded.size,
+    mimeType: uploaded.mimeType,
+    uploadedAt: new Date(),
+  });
+  await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
+export async function removeAttachment(
+  orgId: string,
+  id: string,
+  key: string,
+  scope: Scope,
+): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  assertOwned(scope, doc.submittedById, "Expense");
+  assertAttachable(doc.status as string, scope);
+
+  const list = doc.attachments as unknown as { key?: string }[];
+  const idx = list.findIndex((a) => a.key === key);
+  if (idx === -1) throw new AppError("NOT_FOUND", "Receipt not found");
+
+  list.splice(idx, 1);
+  await doc.save();
+
+  // After the record, so a storage failure cannot leave the row pointing at an
+  // object that is gone. An orphaned object costs storage; a row pointing at
+  // nothing is a broken link in front of somebody.
+  const { deleteFile } = await import("../../lib/storage");
+  await deleteFile(key).catch(() => undefined);
+
   return toDTO(doc as unknown as ExpenseDoc);
 }

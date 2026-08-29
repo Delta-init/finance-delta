@@ -138,7 +138,16 @@ export const expenseSchema = z.object({
       totalMinor: z.number(),
     })
     .optional(),
-  attachments: z.array(z.object({ name: z.string(), url: z.string() })),
+  attachments: z.array(
+    z.object({
+      name: z.string(),
+      url: z.string(),
+      key: z.string().optional(),
+      size: z.number().optional(),
+      mimeType: z.string().optional(),
+      uploadedAt: z.string().optional(),
+    }),
+  ),
   projectName: z.string(),
   costCentre: z.string(),
   notes: z.string(),

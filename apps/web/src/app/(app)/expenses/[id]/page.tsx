@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, Paperclip, User,
+  ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, User,
   Repeat, Pause, Play, CircleStop, Pencil,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
@@ -29,6 +29,7 @@ import {
   useResumeRecurrence,
   useStopRecurrence,
 } from "@/features/expenses/api";
+import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -249,31 +250,12 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             </div>
           )}
 
-          {/* Attachments */}
-          {expense.attachments.length > 0 && (
-            <div className="rounded-lg border border-border bg-surface p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Paperclip className="h-4 w-4 text-foreground-muted" />
-                <h2 className="text-sm font-semibold">Attachments</h2>
-              </div>
-              <ul className="divide-y divide-border">
-                {expense.attachments.map((att, i) => (
-                  <li key={i} className="flex items-center gap-3 py-2.5 text-sm">
-                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
-                    <span className="flex-1 truncate font-medium">{att.name}</span>
-                    <a
-                      href={att.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary hover:underline shrink-0"
-                    >
-                      Open →
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* Receipts. Editable only while the claim is still the
+              claimant's — the server refuses once it is with an approver. */}
+          <ExpenseReceipts
+            expense={expense}
+            editable={expense.status === "draft" || expense.status === "rejected"}
+          />
 
           {/* Notes */}
           {expense.notes && (

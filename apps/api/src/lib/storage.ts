@@ -32,6 +32,24 @@ export interface UploadedFile {
   originalName: string;
 }
 
+/**
+ * Make a client-supplied filename safe to put in a header.
+ *
+ * It reaches us as whatever the browser sent, and goes into
+ * `Content-Disposition`. A quote closes the field early and a line break ends
+ * the header outright, so anything the uploader chose to call the file could
+ * otherwise decide what other headers the response carries.
+ */
+export function headerSafeName(name: string): string {
+  const cleaned = (name || "file")
+    // Quotes, backslashes and anything below space — CR and LF among them.
+    .replace(/["\\]/g, "_")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, "_")
+    .trim();
+  return (cleaned || "file").slice(0, 120);
+}
+
 /** Upload a buffer to R2. Returns the public URL and key. */
 export async function uploadFile(opts: {
   key: string;
@@ -47,8 +65,8 @@ export async function uploadFile(opts: {
       Key: opts.key,
       Body: opts.buffer,
       ContentType: opts.mimeType,
-      ContentDisposition: `inline; filename="${opts.originalName}"`,
-      Metadata: { originalName: opts.originalName },
+      ContentDisposition: `inline; filename="${headerSafeName(opts.originalName)}"`,
+      Metadata: { originalName: headerSafeName(opts.originalName) },
     }),
   );
 

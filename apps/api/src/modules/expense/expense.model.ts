@@ -27,6 +27,17 @@ const expenseAttachmentSchema = new Schema(
   {
     name: { type: String, required: true },
     url: { type: String, required: true },
+    /**
+     * Where it lives in object storage.
+     *
+     * Needed to delete the object when the attachment is removed — without it
+     * the row goes and the file stays, and nothing afterwards knows it is
+     * there. Absent on rows that predate this.
+     */
+    key: { type: String },
+    size: { type: Number },
+    mimeType: { type: String },
+    uploadedAt: { type: Date, default: Date.now },
   },
   { _id: false },
 );

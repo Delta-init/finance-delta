@@ -1,0 +1,5 @@
+[test]
+# `bun test` runs from the repo root and walks every workspace, so the preload
+# has to live here — a bunfig inside apps/api is never read. It only fills in
+# values config/env.ts insists on, and never overrides one already set.
+preload = ["./apps/api/src/test-setup.ts"]

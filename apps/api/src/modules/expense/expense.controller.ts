@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { expenseQuerySchema } from "@delta/shared";
-import { asyncHandler, created, ok } from "../../lib/http";
+import { AppError, asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import { resolveScope } from "../../lib/ownership";
 import * as svc from "./expense.service";
@@ -67,4 +67,19 @@ export const resumeRecurrence = asyncHandler(async (req, res) => {
 
 export const stopRecurrence = asyncHandler(async (req, res) => {
   ok(res, await svc.stopRecurrence(org(req), req.params.id!));
+});
+
+export const addAttachment = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await svc.addAttachment(org(req), req.params.id!, req.file, writeScope(req)));
+});
+
+export const removeAttachment = asyncHandler(async (req: Request, res: Response) => {
+  // The key arrives as a path segment, so it is encoded on the way in.
+  ok(res, await svc.removeAttachment(
+    org(req),
+    req.params.id!,
+    decodeURIComponent(req.params.key!),
+    writeScope(req),
+  ));
 });

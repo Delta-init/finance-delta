@@ -82,3 +82,34 @@ export function useRejectExpense(id: string) {
     },
   });
 }
+
+export function useAddExpenseAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.postForm<Expense>(`expenses/${id}/attachments`, form);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useRemoveExpenseAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    // The key is a storage path with slashes in it, so it has to survive being
+    // put in the URL.
+    mutationFn: (key: string) =>
+      api.del<Expense>(`expenses/${id}/attachments/${encodeURIComponent(key)}`),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}

@@ -96,6 +96,23 @@
   .animate-float {
     animation: delta-float 6s ease-in-out infinite;
   }
+
+  /*
+   * Circular orbit.
+   *
+   * The ring carries the icon around; the icon spins the other way at the same
+   * rate so it stays upright rather than tumbling as it travels. Both must
+   * share a duration, or the icon slowly rotates relative to the path.
+   *
+   * A negative animation-delay on the ring sets where on the circle an icon
+   * starts — the animation begins partway through rather than waiting.
+   */
+  .animate-orbit {
+    animation: delta-spin var(--orbit-duration, 40s) linear infinite;
+  }
+  .animate-orbit-upright {
+    animation: delta-spin var(--orbit-duration, 40s) linear infinite reverse;
+  }
 }
 
 @keyframes delta-spin {
@@ -116,7 +133,9 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-spin-slow,
   .animate-spin-slow-rev,
-  .animate-float {
+  .animate-float,
+  .animate-orbit,
+  .animate-orbit-upright {
     animation: none;
   }
 }

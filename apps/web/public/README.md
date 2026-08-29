@@ -13,6 +13,11 @@ To replace it after changing the logo:
 
     bun apps/api/src/scripts/upload-brand-logo.ts
 
-Both are the navy wordmark, which needs a light background. The one place it
-is wrong is the decorative mark on the login showcase panel, which sits on
-blue and still uses a placeholder — that needs the white variant of the logo.
+`delta-mark-white.png` is the "d" on its own, lifted out of the wordmark and
+recoloured white for dark grounds — the login showcase chip and the app icons.
+The gradient circle is left as it is, being the one piece of colour the mark
+has. It was produced by cropping the wordmark to its first glyph and replacing
+navy with white; nothing was redrawn.
+
+The wordmark is navy and needs a light background. Anything on a dark ground
+uses the white "d" instead.

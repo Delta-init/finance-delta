@@ -126,6 +126,25 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     isSystem: true,
   },
   {
+    key: "employee",
+    name: "Employee",
+    description:
+      "Submit expenses and raise invoices of their own. Sees nothing belonging to anybody else.",
+    permissions: [
+      // Their own claims and their own invoices — the `:own` variants, which
+      // are enforced on the rows rather than on the route. The unscoped
+      // `expense:read` and `invoice:read` would return the whole company.
+      "expense:read:own",
+      "expense:write:own",
+      "invoice:read:own",
+      "invoice:write:own",
+      // Needed to name a client on an invoice. Read-only, but organization
+      // wide: there is no per-salesperson customer ownership to scope to.
+      "customer:read",
+    ] satisfies Permission[],
+    isSystem: true,
+  },
+  {
     key: "viewer",
     name: "Viewer",
     description: "Read-only access to records and reports.",

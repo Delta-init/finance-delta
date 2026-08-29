@@ -74,3 +74,27 @@ export const inviteMemberSchema = z.object({
   password: z.string().min(6).optional(),
 });
 export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+/**
+ * "I forgot my password".
+ *
+ * The response never varies, so this schema is the only place an unknown
+ * address is treated differently from a known one — and it is not, it just
+ * has to be an address.
+ */
+export const forgotPasswordSchema = z.object({
+  email: z.string().email("Enter a valid email"),
+});
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+
+/** Spending a one-time link to set a password. */
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, "Missing token"),
+  // Same floor as creating an account, so a link cannot be used to set a
+  // weaker password than the account could have been given in the first place.
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128),
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

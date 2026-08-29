@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
@@ -173,12 +174,12 @@ export function LoginForm() {
             />
             Remember me
           </label>
-          <button
-            type="button"
+          <Link
+            href="/forgot-password"
             className="text-sm font-medium text-primary hover:text-primary/80"
           >
             Forgot Password?
-          </button>
+          </Link>
         </div>
 
         {/* Server / root error */}

@@ -16,6 +16,10 @@ router.post(
   validateBody(createUserSchema),
   userController.create,
 );
+// Granting somebody a way in is a change to their access, so it sits behind
+// the same permission as editing them.
+router.post("/:id/invite", requirePermission("user:update"), userController.invite);
+
 router.patch(
   "/:id",
   requirePermission("user:update"),

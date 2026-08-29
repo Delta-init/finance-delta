@@ -86,7 +86,8 @@ export interface SyncPreview {
 export interface SyncDecision {
   kind: "department" | "employee";
   hrmsId: string;
-  action: "link" | "create" | "deactivate" | "skip";
+  /** "create" also makes a salesperson login; "import_only" deliberately does not. */
+  action: "link" | "create" | "import_only" | "deactivate" | "skip";
   targetDepartmentId?: string;
   targetUserId?: string;
 }

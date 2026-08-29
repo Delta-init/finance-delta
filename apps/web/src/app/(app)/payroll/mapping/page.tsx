@@ -118,7 +118,7 @@ export default function PayrollMappingPage() {
       // them a salesperson login, and creating a hundred of those is worth
       // saying out loud before the button is pressed.
       empNewLogins: employees.filter((d) => {
-        if (d.action === "skip" || d.action === "deactivate" || d.targetUserId) return false;
+        if (d.action === "skip" || d.action === "deactivate" || d.action === "import_only" || d.targetUserId) return false;
         const row = (preview.data?.employees ?? []).find((e) => e.hrmsEmployeeId === d.hrmsId);
         return Boolean(row && !row.userId && row.email);
       }).length,

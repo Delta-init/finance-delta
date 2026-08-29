@@ -466,7 +466,12 @@ export async function previewSync(orgId: string, hrmsOrgId: string) {
 export interface SyncDecision {
   kind: "department" | "employee";
   hrmsId: string;
-  action: "link" | "create" | "deactivate" | "skip";
+  /**
+   * "create" imports and gives them a salesperson login; "import_only" imports
+   * without one, for somebody who should be on the payroll but never named on
+   * an invoice.
+   */
+  action: "link" | "create" | "import_only" | "deactivate" | "skip";
   /** For a department `link`: the finance department to point at. */
   targetDepartmentId?: string;
   /** For an employee `link`: the finance login to attach. */
@@ -583,7 +588,9 @@ export async function applySync(
        * reason is reported so somebody can fix the email in HRMS and re-sync.
        */
       let userId = d.targetUserId ? oid(d.targetUserId) : (existed?.userId ?? null);
-      if (!userId) {
+      // "import_only" declines the login. An existing one is left alone rather
+      // than stripped — declining to create is not the same as taking away.
+      if (!userId && d.action !== "import_only") {
         const login = await ensureSalespersonLogin(orgId, {
           name: remote.name, email: remote.email, employeeCode: remote.employeeCode,
         });

@@ -16,7 +16,7 @@ export const createOrgLinkSchema = z.object({
 export const syncDecisionSchema = z.object({
   kind: z.enum(["department", "employee"]),
   hrmsId: objectId,
-  action: z.enum(["link", "create", "deactivate", "skip"]),
+  action: z.enum(["link", "create", "import_only", "deactivate", "skip"]),
   targetDepartmentId: objectId.optional(),
   targetUserId: objectId.optional(),
 });

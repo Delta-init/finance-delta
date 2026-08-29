@@ -11,9 +11,9 @@ import type { EmpRow, SyncDecision } from "./types";
 
 const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
   linked: ["link", "skip"],
-  proposed: ["link", "create", "skip"],
-  new: ["create", "link", "skip"],
-  conflict: ["skip", "link", "create"],
+  proposed: ["link", "create", "import_only", "skip"],
+  new: ["create", "link", "import_only", "skip"],
+  conflict: ["skip", "link", "create", "import_only"],
   orphaned: ["skip", "deactivate"],
 };
 
@@ -21,21 +21,14 @@ const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
  * What an action will do to one particular row.
  *
  * Not a flat lookup, because the same action means different things depending
- * on where the row started. "Import + link login" on somebody already mapped
- * and with no login to attach was both wrong statements at once.
- */
-/**
- * What an action will do to one particular row.
+ * on where the row started — "Import + link login" on somebody already mapped
+ * with no login to attach was two wrong statements at once.
  *
- * The two import options are genuinely different and must not read alike:
- * `create` lets the sync make a salesperson login automatically, while `link`
- * is the one that opens the picker so somebody can attach an existing finance
- * account instead. Labelling both "Import + create login" made the dropdown
- * look like it was offering the same thing twice.
- *
- * Importing somebody with an email always ends with them holding a login —
- * that is what makes them selectable on an invoice — so no option here reads
- * as a bare "Import" unless HRMS genuinely has no address for them.
+ * The import options are genuinely distinct and must not read alike. `create`
+ * makes a salesperson login automatically, `link` opens the picker so an
+ * existing account can be attached, and `import_only` declines a login
+ * altogether — for somebody who belongs on the payroll but should never be
+ * named on an invoice.
  */
 function actionLabel(action: SyncDecision["action"], row: EmpRow, hasLogin: boolean): string {
   const canHaveLogin = Boolean(row.email);
@@ -47,6 +40,9 @@ function actionLabel(action: SyncDecision["action"], row: EmpRow, hasLogin: bool
     case "create":
       if (row.state === "linked") return "Refresh from HRMS";
       return canHaveLogin ? "Import + create login" : "Import (no email, no login)";
+    case "import_only":
+      // On the payroll, but never to be named on an invoice.
+      return "Import only, no login";
     case "link":
       if (row.state === "linked") return hasLogin ? "Refresh + keep login" : "Refresh from HRMS";
       // Whether a match was already found or not, this is the option that lets
@@ -233,6 +229,8 @@ export function EmployeeReview({
                             ? "Already linked"
                             : decision?.action === "skip" || decision?.action === "deactivate"
                               ? "—"
+                              : decision?.action === "import_only"
+                                ? "None — payroll only"
                               : row.email
                                 ? "Will be created"
                                 : "No email — cannot be a salesperson")}

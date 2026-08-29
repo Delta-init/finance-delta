@@ -122,14 +122,14 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           it earns its place then and not before. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="People" value={String(run.totals.employeeCount)} />
-        <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} />} />
-        <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={run.currency} />} />
+        <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} showConverted />} />
+        <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={run.currency} showConverted />} />
         {run.totals.adjustmentsMinor !== 0 && (
-          <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} />} />
+          <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} showConverted />} />
         )}
-        <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={run.currency} />} strong />
+        <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={run.currency} showConverted />} strong />
         {run.totals.amountPaidMinor > 0 && (
-          <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} />} />
+          <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} showConverted />} />
         )}
       </div>
 

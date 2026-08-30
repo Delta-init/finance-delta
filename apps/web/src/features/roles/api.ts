@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { CreateRoleInput, Role } from "@delta/shared";
+import type { CreateRoleInput, UpdateRoleInput, Role } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["roles"] as const;
@@ -32,6 +32,16 @@ export function useDeleteRole() {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`roles/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useUpdateRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ id, input }: { id: string; input: UpdateRoleInput }) =>
+      api.patch<Role>(`roles/${id}`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

@@ -1,4 +1,5 @@
 export * from "./constants/permissions";
+export * from "./constants/permission-catalog";
 export * from "./constants/roles";
 export * from "./money";
 export * from "./brand";

@@ -1,4 +1,5 @@
 export * from "./constants/permissions";
+export * from "./date/overdue";
 export * from "./constants/permission-catalog";
 export * from "./constants/roles";
 export * from "./money";

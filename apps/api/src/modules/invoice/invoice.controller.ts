@@ -76,6 +76,10 @@ async function actorOf(req: Request) {
   return { userId: req.auth!.userId, name: u?.name ?? "Unknown" };
 }
 
+export const summary = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.invoiceSummary(orgId(req), readScope(req)));
+});
+
 export const approveInvoice = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await invoiceService.approveInvoice(orgId(req), req.params.id!, await actorOf(req)));
 });

@@ -297,6 +297,40 @@ export const invoiceSchema = z.object({
 });
 export type Invoice = z.infer<typeof invoiceSchema>;
 
+
+/**
+ * What somebody is owed and what is waiting on them, for the screen they land
+ * on when they sign in.
+ *
+ * Broken out per currency rather than added up. An organization can bill in
+ * more than one, and a single figure summing dirhams to rupees is not a smaller
+ * truth — it is a wrong number, which is exactly the mistake that put a payroll
+ * run's rupees under an AED heading.
+ */
+export const moneyByCurrencySchema = z.object({
+  currency: z.string(),
+  minor: z.number(),
+  count: z.number(),
+});
+export type MoneyByCurrency = z.infer<typeof moneyByCurrencySchema>;
+
+export const invoiceSummarySchema = z.object({
+  /** Sent and still owed, whether or not it is late. */
+  outstanding: z.array(moneyByCurrencySchema),
+  /** The subset of the above that is past its due date. */
+  overdue: z.array(moneyByCurrencySchema),
+  /**
+   * Taken by the counsellor but not yet recorded against the invoice. Somebody
+   * else acts on this — it is here so they stop chasing a client who has paid.
+   */
+  collectedNotRecorded: z.array(moneyByCurrencySchema),
+  /** Their own submissions that have not been decided yet. */
+  awaitingApproval: z.number(),
+  /** Sent back to them, which is the one that needs them today. */
+  returned: z.number(),
+});
+export type InvoiceSummary = z.infer<typeof invoiceSummarySchema>;
+
 /** Sending an invoice back needs a reason whoever raised it can act on. */
 export const returnInvoiceSchema = z.object({
   reason: z.string().trim().min(1, "Say what needs correcting").max(300),

@@ -8,6 +8,7 @@ import { ExpenseChart } from "@/components/dashboard/expense-chart";
 import { AgingSummary } from "@/components/dashboard/aging-summary";
 import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
+import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -49,6 +50,7 @@ export default async function DashboardPage() {
       {/* Above the numbers: something waiting on a decision outranks a chart
           of what already happened. Renders nothing when the queue is empty,
           and nothing at all for somebody who cannot approve. */}
+      <InvoiceApprovals />
       <PendingApprovals />
 
       <SectionCards />

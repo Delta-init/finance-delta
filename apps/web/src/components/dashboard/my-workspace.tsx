@@ -11,6 +11,8 @@ import { useExpenses } from "@/features/expenses/api";
 import { useInvoices } from "@/features/invoices/api";
 import { useCan } from "@/lib/use-can";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
+import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
+import { CoursePayments } from "@/components/dashboard/course-payments";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -33,13 +35,15 @@ export function MyWorkspace({ name }: { name: string }) {
   const { can } = useCan();
   const canExpense = can("expense:write:own") || can("expense:create");
   const canInvoice = can("invoice:write:own") || can("invoice:write");
+  // Somebody taking enrolments holds no expense permission at all, so the claim
+  // cards counted to zero forever and the panel offered a screen they could not
+  // use. Shown only to people who can actually claim.
+  const seesExpenses = canExpense || can("expense:read:own") || can("expense:read");
 
-  const { data: expenses, isLoading: loadingExpenses } = useExpenses({
-    page: 1,
-    pageSize: 5,
-    sort: "createdAt",
-    dir: "desc",
-  });
+  const { data: expenses, isLoading: loadingExpenses } = useExpenses(
+    { page: 1, pageSize: 5, sort: "createdAt", dir: "desc" },
+    { enabled: seesExpenses },
+  );
   const { data: invoices } = useInvoices({ page: 1, pageSize: 5, sort: "createdAt", dir: "desc" });
 
   const rows = expenses?.data ?? [];
@@ -54,7 +58,7 @@ export function MyWorkspace({ name }: { name: string }) {
         <div>
           <h1 className="text-2xl font-bold">Welcome back, {name} 👋</h1>
           <p className="mt-0.5 text-sm text-foreground-muted">
-            Your claims and your invoices. Nothing here is shared with anybody but an approver.
+            Your work and nobody else&apos;s. Nothing here is shared beyond an approver.
           </p>
         </div>
         <div className="flex gap-2">
@@ -72,12 +76,17 @@ export function MyWorkspace({ name }: { name: string }) {
       </div>
 
       {/* An approver on a narrow role lands here too, and the queue is the
-          reason they have an account. */}
+          reason they have an account. Both render nothing when empty. */}
+      <InvoiceApprovals />
       <PendingApprovals />
+
+      {/* What they are owed and what is stuck with them. */}
+      {canInvoice && <CoursePayments />}
 
       {/* Where their claims have got to. Only the states that mean something
           to the claimant — a count of drafts they have forgotten to send is
           the single most useful thing this page can tell them. */}
+      {seesExpenses && (
       <div className="grid gap-3 sm:grid-cols-3">
         {[
           { key: "draft", label: "Not yet sent", icon: Clock, tone: "text-foreground-muted" },
@@ -92,8 +101,10 @@ export function MyWorkspace({ name }: { name: string }) {
           </div>
         ))}
       </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
+        {seesExpenses && (
         <Panel
           title="Your recent claims"
           icon={ReceiptText}
@@ -118,6 +129,7 @@ export function MyWorkspace({ name }: { name: string }) {
             ),
           }))}
         />
+        )}
 
         {canInvoice && (
           <Panel

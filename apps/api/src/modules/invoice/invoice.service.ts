@@ -1,4 +1,4 @@
-import { Types } from "mongoose";
+import { Types, type PipelineStage } from "mongoose";
 import {
   computeInvoiceLine,
   sumInvoiceTotals,
@@ -7,6 +7,8 @@ import {
   type CreateInvoiceInput,
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
+  type InvoiceSummary,
+  type MoneyByCurrency,
   type InvoiceStatus,
   type Paginated,
   type RecordPaymentInput,
@@ -223,6 +225,68 @@ const SORT = {
   createdAt: "createdAt",
 } as const;
 
+/**
+ * What is owed to somebody and what is waiting on them.
+ *
+ * Aggregated in the database rather than counted from a page of results: a
+ * counsellor with two hundred enrolments is exactly the person who needs the
+ * figure, and summing one page would quietly under-report for them.
+ *
+ * Grouped by currency because an organization may bill in more than one, and a
+ * single total mixing dirhams with rupees is a wrong number rather than a
+ * rounded one.
+ */
+export async function invoiceSummary(orgId: string, scope: Scope): Promise<InvoiceSummary> {
+  const mine = { organizationId: new Types.ObjectId(orgId), ...scopeFilter(scope, "salespersonId") };
+  const now = new Date();
+  const owing = { status: { $in: ["sent", "viewed", "partial", "overdue"] }, balanceMinor: { $gt: 0 } };
+
+  const byCurrency = (field: string): PipelineStage[] => [
+    { $group: { _id: "$currency", minor: { $sum: field }, count: { $sum: 1 } } },
+    { $sort: { minor: -1 } },
+  ];
+  const shape = (rows: { _id: string | null; minor: number; count: number }[]): MoneyByCurrency[] =>
+    rows.map((r) => ({ currency: r._id ?? "AED", minor: r.minor, count: r.count }));
+
+  const [outstanding, overdue, collected, awaitingApproval, returned] = await Promise.all([
+    Invoice.aggregate([{ $match: { ...mine, ...owing } }, ...byCurrency("$balanceMinor")]),
+    Invoice.aggregate([
+      { $match: { ...mine, ...owing, dueDate: { $lt: now } } },
+      ...byCurrency("$balanceMinor"),
+    ]),
+    // Money the counsellor says they took that nobody has recorded yet. The
+    // difference, not the declared figure — a part-recorded payment still
+    // leaves the remainder outstanding with them.
+    Invoice.aggregate([
+      {
+        $match: {
+          ...mine,
+          "enrolment.declaredPaidMinor": { $gt: 0 },
+          $expr: { $gt: ["$enrolment.declaredPaidMinor", { $ifNull: ["$amountPaidMinor", 0] }] },
+        },
+      },
+      {
+        $group: {
+          _id: "$currency",
+          minor: { $sum: { $subtract: ["$enrolment.declaredPaidMinor", { $ifNull: ["$amountPaidMinor", 0] }] } },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { minor: -1 } } as PipelineStage,
+    ]),
+    Invoice.countDocuments({ ...mine, "approval.state": "pending" }),
+    Invoice.countDocuments({ ...mine, "approval.state": "returned" }),
+  ]);
+
+  return {
+    outstanding: shape(outstanding),
+    overdue: shape(overdue),
+    collectedNotRecorded: shape(collected),
+    awaitingApproval,
+    returned,
+  };
+}
+
 export async function listInvoices(
   orgId: string,
   query: InvoiceQuery,
@@ -237,6 +301,14 @@ export async function listInvoices(
     and.push({ status: { $in: ["sent", "viewed", "partial"] }, dueDate: { $lt: now } });
   } else if (query.status) {
     and.push({ status: query.status });
+  }
+
+  // An invoice raised before approval existed has no block at all, and reads
+  // as needing nobody — so asking for "not_required" must include it.
+  if (query.approval === "not_required") {
+    and.push({ $or: [{ "approval.state": "not_required" }, { approval: { $exists: false } }] });
+  } else if (query.approval) {
+    and.push({ "approval.state": query.approval });
   }
 
   if (query.salespersonId) and.push({ salespersonId: new Types.ObjectId(query.salespersonId) });

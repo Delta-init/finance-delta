@@ -15,6 +15,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requireAnyPermission("invoice:read", "invoice:read:own"), c.list);
+// Before "/:id", or "summary" is read as an invoice id.
+router.get("/summary", requireAnyPermission("invoice:read", "invoice:read:own"), c.summary);
 router.get("/:id", requireAnyPermission("invoice:read", "invoice:read:own"), c.get);
 router.post("/", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(createInvoiceSchema), c.create);
 router.patch("/:id", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(updateInvoiceSchema), c.update);

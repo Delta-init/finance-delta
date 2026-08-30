@@ -84,6 +84,8 @@ import { invoiceStatusSchema } from "./invoice.schema";
 
 export const invoiceQuerySchema = listQuerySchema.extend({
   status: invoiceStatusSchema.optional(),
+  /** Filter by where the invoice has got to in approval, for the queue. */
+  approval: z.enum(["not_required", "pending", "approved", "returned"]).optional(),
   salespersonId: z.string().optional(),
   issueFrom: z.string().optional(),
   issueTo: z.string().optional(),

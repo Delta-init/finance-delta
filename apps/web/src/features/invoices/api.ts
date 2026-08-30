@@ -1,16 +1,23 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CreateInvoiceInput, Invoice, RecordPaymentInput, UpdateInvoiceInput } from "@delta/shared";
+import type {
+  CreateInvoiceInput,
+  Invoice,
+  InvoiceSummary,
+  RecordPaymentInput,
+  UpdateInvoiceInput,
+} from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["invoices"] as const;
 
-export function useInvoices(params: QueryParams) {
+export function useInvoices(params: QueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],
     queryFn: () => api.getList<Invoice>("invoices", params),
     placeholderData: (prev) => prev,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -141,5 +148,14 @@ export function useResubmitInvoice(id: string) {
       qc.setQueryData(["invoice", id], d);
       qc.invalidateQueries({ queryKey: KEY });
     },
+  });
+}
+
+/** What this person is owed and what is waiting on them. Scoped by the server. */
+export function useInvoiceSummary(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: [...KEY, "summary"],
+    queryFn: () => api.get<InvoiceSummary>("invoices/summary"),
+    enabled: options?.enabled ?? true,
   });
 }

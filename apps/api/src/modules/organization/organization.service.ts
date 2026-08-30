@@ -35,6 +35,8 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
       numberPad: ((d.invoiceDefaults as Record<string, unknown>)?.numberPad as number) ?? 5,
       terms: (d.invoiceDefaults as Record<string, unknown>)?.terms as string ?? "",
       bankAccountId: (d.invoiceDefaults as Record<string, unknown>)?.bankAccountId as string ?? "",
+      roundTotals: Boolean((d.invoiceDefaults as Record<string, unknown>)?.roundTotals),
+      hsnSac: (d.invoiceDefaults as Record<string, unknown>)?.hsnSac as string ?? "",
     },
     reminderIntervals: (doc.reminderIntervals as number[] | undefined) ?? [-3, 1, 7],
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
@@ -107,7 +109,7 @@ export async function updateOrganization(
   if (input.website !== undefined) flat.website = input.website;
   if (input.taxRegistrationNumber !== undefined) flat.taxRegistrationNumber = input.taxRegistrationNumber;
   if (input.registrationNumber !== undefined) flat.registrationNumber = input.registrationNumber;
-  for (const k of ["title", "prefix", "numberPad", "terms", "bankAccountId"] as const) {
+  for (const k of ["title", "prefix", "numberPad", "terms", "bankAccountId", "roundTotals", "hsnSac"] as const) {
     if (input.invoiceDefaults?.[k] !== undefined) flat[`invoiceDefaults.${k}`] = input.invoiceDefaults[k];
   }
   if (input.reminderIntervals !== undefined) flat.reminderIntervals = input.reminderIntervals;
@@ -165,4 +167,24 @@ export async function invoiceNumberingFor(
   const prefix = ((d?.prefix as string) ?? "").trim();
   const pad = (d?.numberPad as number) ?? 5;
   return { prefix: prefix || "IN-", pad: pad >= 1 && pad <= 10 ? pad : 5 };
+}
+
+/**
+ * The invoice defaults that shape a document's figures rather than its wording.
+ *
+ * Read at the point an invoice's totals are built, for the same reason as the
+ * numbering: an organization that turns rounding on expects the next invoice to
+ * be rounded, not the ones it has already sent.
+ */
+export async function invoiceComputationDefaults(
+  orgId: string,
+): Promise<{ roundTotals: boolean; hsnSac: string }> {
+  const doc = await Organization.findById(orgId).select("invoiceDefaults").lean();
+  const d = (doc as Record<string, unknown> | null)?.invoiceDefaults as
+    | Record<string, unknown>
+    | undefined;
+  return {
+    roundTotals: Boolean(d?.roundTotals),
+    hsnSac: (d?.hsnSac as string) ?? "",
+  };
 }

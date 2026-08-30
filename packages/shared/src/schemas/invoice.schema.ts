@@ -47,6 +47,8 @@ export const invoiceLineInputSchema = z.object({
   taxes: z.array(taxInputSchema).optional().default([]),
   itemId: z.string().optional(),
   warehouseId: z.string().optional(),
+  /** HSN (goods) or SAC (services) code. Required on Indian tax invoices. */
+  hsnSac: z.string().max(20).optional().default(""),
 });
 export type InvoiceLineInput = z.infer<typeof invoiceLineInputSchema>;
 
@@ -193,6 +195,7 @@ export const invoiceLineSchema = z.object({
   discountPct: z.number(),
   itemId: z.string().optional(),
   warehouseId: z.string().optional(),
+  hsnSac: z.string().default(""),
   taxes: z.array(taxBreakdownSchema),
   lineSubtotalMinor: z.number(),
   discountMinor: z.number(),
@@ -220,6 +223,8 @@ export const invoiceSchema = z.object({
   discountTotalMinor: z.number(),
   taxBreakdown: z.array(z.object({ code: z.string(), amountMinor: z.number() })),
   taxTotalMinor: z.number(),
+  /** Adjustment folded into totalMinor to reach a whole unit of currency. */
+  roundOffMinor: z.number().default(0),
   totalMinor: z.number(),
   amountPaidMinor: z.number(),
   balanceMinor: z.number(),

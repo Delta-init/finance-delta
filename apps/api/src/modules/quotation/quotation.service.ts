@@ -11,12 +11,12 @@ import type {
   SalesOrder as SalesOrderDTO,
   UpdateQuotationInput,
 } from "@delta/shared";
-import { computeInvoiceLine, sumInvoiceTotals } from "@delta/shared";
+import { computeInvoiceLine, sumInvoiceTotals, roundingAdjustmentMinor } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
-import { invoiceNumberingFor } from "../organization/organization.service";
+import { invoiceNumberingFor, invoiceComputationDefaults } from "../organization/organization.service";
 import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -378,7 +378,7 @@ export async function convertToInvoice(
 
   const computedLines = rawLines.map((l) => {
     const b = computeInvoiceLine({ ...l, taxInclusive: invoiceInclusive });
-    return { ...l, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
+    return { ...l, hsnSac: defaultHsnSac, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
   });
   const totals = sumInvoiceTotals(rawLines.map((l) => ({ ...l, taxInclusive: invoiceInclusive })));
 
@@ -389,6 +389,13 @@ export async function convertToInvoice(
   if (totals.totalMinor <= 0) {
     throw new AppError("VALIDATION_ERROR", "The amount to invoice must be greater than 0");
   }
+
+  // An invoice converted from a quote is still an invoice: it rounds on the
+  // same terms as one raised directly, or the two would disagree on what the
+  // same figures are worth.
+  const { roundTotals, hsnSac: defaultHsnSac } = await invoiceComputationDefaults(orgId);
+  const roundOffMinor = roundTotals ? roundingAdjustmentMinor(totals.totalMinor) : 0;
+  const invoiceTotalMinor = totals.totalMinor + roundOffMinor;
 
   const numbering = await invoiceNumberingFor(orgId);
   const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
@@ -421,9 +428,10 @@ export async function convertToInvoice(
     discountTotalMinor: totals.discountTotalMinor,
     taxBreakdown: totals.taxBreakdown,
     taxTotalMinor: totals.taxTotalMinor,
-    totalMinor: totals.totalMinor,
+    roundOffMinor,
+    totalMinor: invoiceTotalMinor,
     amountPaidMinor: 0,
-    balanceMinor: totals.totalMinor,
+    balanceMinor: invoiceTotalMinor,
     notes: doc.notes ?? "",
     terms: doc.terms ?? "",
     tagIds: doc.tagIds ?? [],
@@ -435,6 +443,10 @@ export async function convertToInvoice(
     payments: [],
   });
 
+  // The unrounded figure on purpose. Rounding is a settlement convention on the
+  // invoice, not a change to what the quote was worth — recording the rounded
+  // one would drift the quote's remaining balance by up to half a unit each
+  // time it is invoiced in parts.
   (doc as unknown as { invoicedMinor: number }).invoicedMinor = alreadyInvoiced + totals.totalMinor;
   const prevIds = ((doc.convertedTo as unknown as { invoiceIds?: Types.ObjectId[] })?.invoiceIds) ?? [];
   doc.convertedTo = {

@@ -69,6 +69,7 @@ const lineSchema = z.object({
   unitPrice: z.coerce.number().min(0),
   discountPct: z.coerce.number().min(0).max(100),
   taxes: z.array(taxSchema).default([]),
+  hsnSac: z.string().optional().default(""),
   itemId: z.string().optional(),
 });
 
@@ -109,11 +110,17 @@ type FormValues = z.infer<typeof formSchema>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * The line-item columns. HSN/SAC belongs on an Indian tax invoice and nowhere
+ * else, so the column exists only where the organization's tax system asks for
+ * it rather than sitting empty on every dirham invoice.
+ */
 const GRID = "28px minmax(160px,1fr) 70px 120px 64px 80px 100px 36px";
+const GRID_HSN = "28px minmax(160px,1fr) 90px 70px 120px 64px 80px 100px 36px";
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-const emptyLine = (taxes: { code: string; rate: number }[] = []) => ({
-  description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxes,
+const emptyLine = (taxes: { code: string; rate: number }[] = [], hsnSac = "") => ({
+  description: "", quantity: 1, unitPrice: 0, discountPct: 0, taxes, hsnSac,
 });
 
 function fromInvoice(inv: Invoice): FormValues {
@@ -133,6 +140,7 @@ function fromInvoice(inv: Invoice): FormValues {
       unitPrice: l.unitPriceMinor / 100,
       discountPct: l.discountPct,
       taxes: l.taxes.map((t) => ({ code: t.code, rate: t.rate })),
+      hsnSac: l.hsnSac ?? "",
       itemId: l.itemId,
     })),
     hasProgress: !!inv.progress,
@@ -167,6 +175,7 @@ function toApiInput(v: FormValues): CreateInvoiceInput {
       unitPriceMinor: toMinor(l.unitPrice),
       discountPct: l.discountPct,
       taxes: l.taxes,
+      hsnSac: l.hsnSac ?? "",
       itemId: l.itemId || undefined,
     })),
     progress: v.hasProgress && v.progress ? v.progress : null,
@@ -206,6 +215,11 @@ export function InvoiceForm({
   );
   const { data: taxConfig } = useTaxConfig();
   const { data: org } = useOrganization();
+  // HSN/SAC is an Indian requirement; showing the column anywhere else is a box
+  // nobody can fill in. The organization's default drops into every new line.
+  const showHsn = (taxConfig?.taxSystem ?? org?.taxSystem) === "gst";
+  const defaultHsnSac = org?.invoiceDefaults?.hsnSac ?? "";
+  const lineGrid = showHsn ? GRID_HSN : GRID;
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [salespersonModalOpen, setSalespersonModalOpen] = useState(false);
@@ -477,13 +491,14 @@ export function InvoiceForm({
             </label>
           </div>
           <div className="overflow-x-auto rounded-lg border border-border">
-            <div className="min-w-[720px]">
+            <div className={showHsn ? "min-w-[810px]" : "min-w-[720px]"}>
               <div
                 className="grid items-center gap-2 border-b border-border bg-surface-muted px-3 py-2 text-xs font-medium uppercase tracking-wide text-foreground-subtle"
-                style={{ gridTemplateColumns: GRID }}
+                style={{ gridTemplateColumns: lineGrid }}
               >
                 <span />
                 <span>Description</span>
+                {showHsn && <span>HSN/SAC</span>}
                 <span>Qty</span>
                 <span>Unit price</span>
                 <span>Disc %</span>
@@ -503,6 +518,8 @@ export function InvoiceForm({
                     configuredRates={effectiveRates}
                     currency={currency}
                     taxInclusive={taxInclusive}
+                    showHsn={showHsn}
+                    gridTemplate={lineGrid}
                     canRemove={fields.length > 1}
                     onRemove={() => remove(i)}
                   />
@@ -511,7 +528,7 @@ export function InvoiceForm({
             </div>
           </div>
           {errors.lineItems && <p className="text-xs text-danger">{errors.lineItems.message}</p>}
-          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxes))}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine(defaultTaxes, defaultHsnSac))}>
             <Plus className="h-4 w-4" /> Add line
           </Button>
         </FadeIn>
@@ -668,6 +685,8 @@ function LineRow({
   configuredRates,
   currency,
   taxInclusive,
+  showHsn,
+  gridTemplate,
   canRemove,
   onRemove,
 }: {
@@ -679,6 +698,8 @@ function LineRow({
   configuredRates: TaxConfigItem[];
   currency: string;
   taxInclusive: boolean;
+  showHsn: boolean;
+  gridTemplate: string;
   canRemove: boolean;
   onRemove: () => void;
 }) {
@@ -690,7 +711,7 @@ function LineRow({
       dragControls={controls}
       as="div"
       className="grid items-center gap-2 border-b border-border bg-surface px-3 py-1.5 last:border-0"
-      style={{ gridTemplateColumns: GRID }}
+      style={{ gridTemplateColumns: gridTemplate }}
       whileDrag={{ scale: 1.01, boxShadow: "var(--shadow-md)" }}
     >
       <button
@@ -702,6 +723,9 @@ function LineRow({
         <GripVertical className="h-4 w-4" />
       </button>
       <ProductCell index={index} register={register} control={control} setValue={setValue} currency={currency} />
+      {showHsn && (
+        <Input className="h-8" placeholder="9992" {...register(`lineItems.${index}.hsnSac`)} />
+      )}
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.quantity`)} />
       <Input className="h-8" type="number" step="0.01" {...register(`lineItems.${index}.unitPrice`)} />
       <Input className="h-8" type="number" step="any" {...register(`lineItems.${index}.discountPct`)} />

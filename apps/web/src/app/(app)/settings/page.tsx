@@ -251,6 +251,26 @@ export default function SettingsPage() {
             </p>
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex items-start gap-2.5 rounded-md border border-border p-3">
+              <input type="checkbox" {...register("invoiceDefaults.roundTotals")} className="mt-0.5 h-4 w-4 accent-primary" />
+              <span>
+                <span className="block text-sm font-medium text-foreground">Round totals to whole {org?.baseCurrency ?? "units"}</span>
+                <span className="block text-xs text-foreground-muted">
+                  Shows the fraction as a Round Off line and settles on the rounded figure. Normal on
+                  an Indian invoice; leave off elsewhere.
+                </span>
+              </span>
+            </label>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Default HSN / SAC</label>
+              <input {...register("invoiceDefaults.hsnSac")} className={FIELD} placeholder="9992" />
+              <p className="text-xs text-foreground-muted">
+                Drops into every new line. The column itself appears only under a GST tax system.
+              </p>
+            </div>
+          </div>
+
           <div className="space-y-1">
             <label className="text-sm font-medium text-foreground">Default terms</label>
             <textarea

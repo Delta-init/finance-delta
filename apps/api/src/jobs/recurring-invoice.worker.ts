@@ -70,6 +70,10 @@ async function processRecurring() {
         discountTotalMinor: template.discountTotalMinor,
         taxBreakdown: template.taxBreakdown,
         taxTotalMinor: template.taxTotalMinor,
+        // Carried with the total it belongs to. Copying a rounded total without
+        // its adjustment would leave subtotal plus tax disagreeing with what
+        // the client is asked to pay, and no line saying why.
+        roundOffMinor: (template as unknown as { roundOffMinor?: number }).roundOffMinor ?? 0,
         totalMinor: template.totalMinor,
         balanceMinor: template.totalMinor,
         notes: template.notes,

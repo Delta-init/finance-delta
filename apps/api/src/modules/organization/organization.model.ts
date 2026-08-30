@@ -42,6 +42,8 @@ const organizationSchema = new Schema(
       numberPad:     { type: Number, default: 5 },
       terms:         { type: String, default: "" },
       bankAccountId: { type: String, default: "" },
+      roundTotals:   { type: Boolean, default: false },
+      hsnSac:        { type: String, default: "" },
     },
     reminderIntervals: { type: [Number], default: [-3, 1, 7] },
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },

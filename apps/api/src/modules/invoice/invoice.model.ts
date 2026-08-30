@@ -19,6 +19,7 @@ const lineItemSchema = new Schema(
     lineTotalMinor: { type: Number, required: true },
     itemId: { type: String },
     warehouseId: { type: String },
+    hsnSac: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -151,6 +152,9 @@ const invoiceSchema = new Schema(
       _id: false,
     },
     taxTotalMinor: { type: Number, default: 0 },
+    // Stored, not derived at render: a total that disagrees with what the
+    // client was asked to pay is a reconciliation problem, not a display one.
+    roundOffMinor: { type: Number, default: 0 },
     totalMinor: { type: Number, default: 0 },
     amountPaidMinor: { type: Number, default: 0 },
     balanceMinor: { type: Number, default: 0 },

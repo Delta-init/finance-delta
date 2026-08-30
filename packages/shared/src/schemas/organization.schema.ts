@@ -32,6 +32,13 @@ export const invoiceDefaultsSchema = z.object({
   terms: z.string().max(2000).optional().default(""),
   /** Which account clients are told to pay into. Empty means print no bank block. */
   bankAccountId: z.string().optional().default(""),
+  /**
+   * Settle in whole units of currency, showing the fraction as "Round Off".
+   * Normal on an Indian invoice, wrong on a dirham one, so it is a choice.
+   */
+  roundTotals: z.boolean().optional().default(false),
+  /** Falls into the HSN/SAC box on every new line. */
+  hsnSac: z.string().max(20).optional().default(""),
 });
 export type InvoiceDefaults = z.infer<typeof invoiceDefaultsSchema>;
 

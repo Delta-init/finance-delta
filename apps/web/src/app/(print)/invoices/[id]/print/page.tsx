@@ -68,6 +68,10 @@ export default function PrintInvoicePage({
     Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
   const docTitle = org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
 
+  // HSN/SAC is an Indian requirement, so the column appears only under GST —
+  // an empty column on a dirham invoice reads as something left unfilled.
+  const showHsn = org?.taxSystem === "gst";
+
   const billToLines = formatOrgAddress(
     customer
       ? {
@@ -136,7 +140,10 @@ export default function PrintInvoicePage({
         <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24, fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#1e3a8a", color: "#fff" }}>
-              {[L.description, L.qty, L.unitPrice, L.discount, L.tax, L.amount].map((h, i) => (
+              {(showHsn
+                ? [L.description, L.hsnSac, L.qty, L.unitPrice, L.discount, L.tax, L.amount]
+                : [L.description, L.qty, L.unitPrice, L.discount, L.tax, L.amount]
+              ).map((h, i) => (
                 <th key={h} style={{ padding: "8px 10px", textAlign: i === 0 ? "left" : "right", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
               ))}
             </tr>
@@ -145,6 +152,9 @@ export default function PrintInvoicePage({
             {invoice.lineItems.map((line, i) => (
               <tr key={i} style={{ borderBottom: "1px solid #e2e8f0", background: i % 2 === 1 ? "#f8fafc" : "#fff" }}>
                 <td style={{ padding: "8px 10px" }}>{line.description}</td>
+                {showHsn && (
+                  <td style={{ padding: "8px 10px", textAlign: "right" }}>{line.hsnSac || "—"}</td>
+                )}
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>{line.quantity}</td>
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>{formatMoney(line.unitPriceMinor, invoice.currency)}</td>
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>{line.discountPct > 0 ? `${line.discountPct}%` : "—"}</td>
@@ -167,6 +177,12 @@ export default function PrintInvoicePage({
             {invoice.taxBreakdown.map((t) => (
               <PrintTotalRow key={t.code} label={`${L.tax} (${t.code})`} value={formatMoney(t.amountMinor, invoice.currency)} />
             ))}
+            {invoice.roundOffMinor !== 0 && (
+              <PrintTotalRow
+                label={L.roundOff}
+                value={`${invoice.roundOffMinor < 0 ? "− " : "+ "}${formatMoney(Math.abs(invoice.roundOffMinor), invoice.currency)}`}
+              />
+            )}
             <PrintTotalRow label={L.total} value={formatMoney(invoice.totalMinor, invoice.currency)} strong />
             {invoice.amountPaidMinor > 0 && (
               <PrintTotalRow label={L.paid} value={`− ${formatMoney(invoice.amountPaidMinor, invoice.currency)}`} />

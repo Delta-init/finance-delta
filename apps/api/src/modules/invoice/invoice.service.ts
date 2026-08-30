@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import {
   computeInvoiceLine,
   sumInvoiceTotals,
+  roundingAdjustmentMinor,
   type CreateInvoiceInput,
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
@@ -19,7 +20,7 @@ import {
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
-import { invoiceNumberingFor } from "../organization/organization.service";
+import { invoiceNumberingFor, invoiceComputationDefaults } from "../organization/organization.service";
 import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -79,6 +80,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
     discountTotalMinor: doc.discountTotalMinor ?? 0,
     taxBreakdown: (doc.taxBreakdown as { code: string; amountMinor: number }[]) ?? [],
     taxTotalMinor: doc.taxTotalMinor ?? 0,
+    roundOffMinor: (doc as unknown as { roundOffMinor?: number }).roundOffMinor ?? 0,
     totalMinor: doc.totalMinor ?? 0,
     amountPaidMinor: doc.amountPaidMinor ?? 0,
     balanceMinor: doc.balanceMinor ?? 0,
@@ -149,7 +151,12 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
   };
 }
 
-function buildLines(raw: CreateInvoiceInput["lineItems"], taxInclusive = false) {
+function buildLines(
+  raw: CreateInvoiceInput["lineItems"],
+  taxInclusive = false,
+  opts: { roundTotals?: boolean; defaultHsnSac?: string } = {},
+) {
+  const { roundTotals = false, defaultHsnSac = "" } = opts;
   const lineItems = raw.map((l) => {
     const b = computeInvoiceLine({ ...l, taxInclusive });
     return {
@@ -159,6 +166,10 @@ function buildLines(raw: CreateInvoiceInput["lineItems"], taxInclusive = false) 
       discountPct: l.discountPct ?? 0,
       itemId: l.itemId,
       warehouseId: l.warehouseId,
+      // The organization's default stands in for a line nobody coded, so a
+      // single-service business types it once in Settings rather than on
+      // every line of every invoice.
+      hsnSac: l.hsnSac?.trim() || defaultHsnSac,
       taxes: b.taxes,
       lineSubtotalMinor: b.lineSubtotalMinor,
       discountMinor: b.discountMinor,
@@ -167,7 +178,17 @@ function buildLines(raw: CreateInvoiceInput["lineItems"], taxInclusive = false) 
       lineTotalMinor: b.lineTotalMinor,
     };
   });
-  const totals = sumInvoiceTotals(raw.map((l) => ({ ...l, taxInclusive })));
+  const summed = sumInvoiceTotals(raw.map((l) => ({ ...l, taxInclusive })));
+
+  // The adjustment is folded into the total rather than shown beside it, so
+  // that the figure the client is asked to pay is the one the invoice is worth.
+  // Subtotal, tax and round-off still reconcile to it exactly.
+  const roundOffMinor = roundTotals ? roundingAdjustmentMinor(summed.totalMinor) : 0;
+  const totals = {
+    ...summed,
+    roundOffMinor,
+    totalMinor: summed.totalMinor + roundOffMinor,
+  };
   return { lineItems, totals };
 }
 
@@ -269,7 +290,11 @@ export async function createInvoice(
     ? { ...input.enrolment, approval: "pending" as const, submittedAt: new Date() }
     : undefined;
 
-  const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false);
+  const computation = await invoiceComputationDefaults(orgId);
+  const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false, {
+    roundTotals: computation.roundTotals,
+    defaultHsnSac: computation.hsnSac,
+  });
   const numbering = await invoiceNumberingFor(orgId);
   const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
   const tagIds = await resolveTagIds(orgId, input.tagIds);
@@ -310,6 +335,7 @@ export async function createInvoice(
     discountTotalMinor: totals.discountTotalMinor,
     taxBreakdown: totals.taxBreakdown,
     taxTotalMinor: totals.taxTotalMinor,
+    roundOffMinor: totals.roundOffMinor,
     totalMinor: totals.totalMinor,
     amountPaidMinor: 0,
     balanceMinor: totals.totalMinor,
@@ -377,13 +403,18 @@ export async function updateInvoice(
   if (input.taxInclusive !== undefined) doc.set("taxInclusive", input.taxInclusive);
   if (input.lineItems) {
     const effectiveTaxInclusive = input.taxInclusive ?? (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false;
-    const { lineItems, totals } = buildLines(input.lineItems, effectiveTaxInclusive);
+    const computation = await invoiceComputationDefaults(orgId);
+    const { lineItems, totals } = buildLines(input.lineItems, effectiveTaxInclusive, {
+      roundTotals: computation.roundTotals,
+      defaultHsnSac: computation.hsnSac,
+    });
     doc.set({
       lineItems,
       subtotalMinor: totals.subtotalMinor,
       discountTotalMinor: totals.discountTotalMinor,
       taxBreakdown: totals.taxBreakdown,
       taxTotalMinor: totals.taxTotalMinor,
+      roundOffMinor: totals.roundOffMinor,
       totalMinor: totals.totalMinor,
       balanceMinor: totals.totalMinor - (doc.amountPaidMinor ?? 0),
     });

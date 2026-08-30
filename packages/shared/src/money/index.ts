@@ -226,3 +226,20 @@ export function sumInvoiceTotals(lines: InvoiceLineCalcInput[]): InvoiceTotals {
     totalMinor,
   };
 }
+
+/**
+ * The adjustment that takes a total to the nearest whole unit of currency.
+ *
+ * Indian invoices are settled in whole rupees, so the printed total is rounded
+ * and the fraction shown on its own line as "Round Off" — a client paying the
+ * rounded figure must not leave the invoice a few paise short forever. Returned
+ * as the adjustment rather than the rounded total so the invoice can store what
+ * it did and print it: a total that silently disagrees with subtotal plus tax
+ * is worse than no rounding at all.
+ *
+ * Whether to round at all is the organization's decision — a dirham invoice
+ * should not be — so this says nothing about when to call it.
+ */
+export function roundingAdjustmentMinor(totalMinor: number): number {
+  return Math.round(totalMinor / 100) * 100 - totalMinor;
+}

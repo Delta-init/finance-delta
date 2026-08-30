@@ -3,6 +3,7 @@ import { createConnection } from "net";
 import { logger } from "../lib/logger";
 import { Invoice } from "../modules/invoice/invoice.model";
 import { nextNumber } from "../modules/sequence/sequence.service";
+import { invoiceNumberingFor } from "../modules/organization/organization.service";
 import { env } from "../config/env";
 
 const QUEUE_NAME = "recurring-invoices";
@@ -48,7 +49,8 @@ async function processRecurring() {
     const expired = rec.endDate && nextRun > rec.endDate;
 
     try {
-      const invoiceNumber = await nextNumber(orgId, "invoice", "IN");
+      const numbering = await invoiceNumberingFor(orgId);
+      const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
       const dueDate = addFrequency(now, rec.frequency);
 
       await Invoice.create({

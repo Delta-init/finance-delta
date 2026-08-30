@@ -1,11 +1,15 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney, getPrintLabels } from "@delta/shared";
+import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
+import { PrintSellerBlock } from "@/components/print/seller-block";
+import { PrintBankBlock } from "@/components/print/bank-block";
+import { useCustomer } from "@/features/customers/api";
+import { useBankAccount } from "@/features/banking/api";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -23,6 +27,12 @@ export default function PrintInvoicePage({
   const { id } = use(params);
   const { data: invoice, isLoading } = useInvoice(id);
   const { data: org } = useOrganization();
+  // The client's address and registration: the invoice stores only their name.
+  // Read live, so editing a customer changes how an already-issued invoice
+  // reprints. Snapshotting it at issue would be more correct and is worth
+  // doing, but it is a change to the invoice record rather than to this page.
+  const { data: customer } = useCustomer(invoice?.customerId);
+  const { data: bankAccount } = useBankAccount(org?.invoiceDefaults?.bankAccountId || undefined);
 
   useEffect(() => {
     if (invoice) {
@@ -51,6 +61,25 @@ export default function PrintInvoicePage({
   const L = getPrintLabels(invoice.locale, org?.taxLabel);
   const isRtl = invoice.locale === "ar";
 
+  // "TAX INVOICE" is a claim about the seller: only an organization with a tax
+  // registration may head a document that way. An explicit title in Settings
+  // wins, for the organizations that word it differently.
+  const registered =
+    Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
+  const docTitle = org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
+
+  const billToLines = formatOrgAddress(
+    customer
+      ? {
+          line1: customer.billingAddress.street,
+          city: customer.billingAddress.city,
+          state: customer.billingAddress.state,
+          postcode: customer.billingAddress.zip,
+          country: customer.billingAddress.country,
+        }
+      : null,
+  );
+
   return (
     <>
       <style>{`
@@ -65,11 +94,12 @@ export default function PrintInvoicePage({
       <div dir={isRtl ? "rtl" : "ltr"} style={{ maxWidth: 740, margin: "0 auto", padding: "40px 32px" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid #e2e8f0" }}>
-          <div>
+          <div style={{ maxWidth: 380 }}>
             <PrintBrandMark branding={invoice.branding} footerText={invoice.branding?.footerText} />
+            <PrintSellerBlock org={org} />
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>
-            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{L.invoice}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{docTitle}</div>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#2563eb" }}>{invoice.invoiceNumber}</div>
             <div style={{ marginTop: 6, display: "inline-block", padding: "2px 10px", borderRadius: 99, fontSize: 11, fontWeight: 600, textTransform: "capitalize", background: statusColor + "20", color: statusColor }}>
               {invoice.status}
@@ -82,6 +112,17 @@ export default function PrintInvoicePage({
           <div>
             <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#64748b", marginBottom: 4 }}>{L.billTo}</div>
             <div style={{ fontWeight: 600, fontSize: 15 }}>{invoice.customerName}</div>
+            <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5, marginTop: 2 }}>
+              {billToLines.map((l) => (
+                <div key={l}>{l}</div>
+              ))}
+              {customer?.vatNumber ? (
+                <div style={{ marginTop: 2 }}>
+                  <span style={{ color: "#64748b" }}>{taxNumberLabel(org?.taxSystem)}: </span>
+                  <span style={{ fontWeight: 600, color: "#111" }}>{customer.vatNumber}</span>
+                </div>
+              ) : null}
+            </div>
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>
             <MetaLine label={L.salesperson} value={invoice.salespersonName} />
@@ -151,6 +192,8 @@ export default function PrintInvoicePage({
             ))}
           </div>
         )}
+
+        <PrintBankBlock account={bankAccount} labels={L} />
 
         {/* Notes / Terms */}
         {(invoice.notes || invoice.terms) && (

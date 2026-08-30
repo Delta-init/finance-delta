@@ -21,6 +21,28 @@ const organizationSchema = new Schema(
       primaryColor: { type: String, default: "" },
       footerText: { type: String, default: "" },
     },
+    address: {
+      line1:    { type: String, default: "" },
+      line2:    { type: String, default: "" },
+      city:     { type: String, default: "" },
+      state:    { type: String, default: "" },
+      postcode: { type: String, default: "" },
+      country:  { type: String, default: "" },
+    },
+    phone:   { type: String, default: "" },
+    email:   { type: String, default: "" },
+    website: { type: String, default: "" },
+    // One field for GSTIN / TRN / VAT number: an organization only ever holds
+    // one, and only the name for it changes with where it trades.
+    taxRegistrationNumber: { type: String, default: "" },
+    registrationNumber:    { type: String, default: "" },
+    invoiceDefaults: {
+      title:         { type: String, default: "" },
+      prefix:        { type: String, default: "" },
+      numberPad:     { type: Number, default: 5 },
+      terms:         { type: String, default: "" },
+      bankAccountId: { type: String, default: "" },
+    },
     reminderIntervals: { type: [Number], default: [-3, 1, 7] },
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },
     taxLabel:  { type: String, default: "VAT" },

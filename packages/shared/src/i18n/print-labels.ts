@@ -7,6 +7,9 @@ export interface PrintLabels {
   paymentHistory: string; salesperson: string; reference: string;
   currency: string; print: string; close: string; reason: string;
   creditApplied: string; account: string;
+  taxInvoice: string; bankDetails: string; accountName: string;
+  accountNumber: string; bankName: string; branch: string;
+  ifsc: string; swift: string; iban: string;
 }
 
 const en: PrintLabels = {
@@ -17,7 +20,9 @@ const en: PrintLabels = {
   balanceDue: "Balance Due", paid: "Paid", notes: "Notes", terms: "Terms",
   paymentHistory: "Payment History", salesperson: "Salesperson", reference: "Reference",
   currency: "Currency", print: "Print / Save as PDF", close: "Close",
-  reason: "Reason", creditApplied: "Credit Applied", account: "Account",
+  reason: "Reason", creditApplied: "Credit Applied", account: "Account",  taxInvoice: "TAX INVOICE", bankDetails: "Bank Details", accountName: "Account Name",
+  accountNumber: "Account No.", bankName: "Bank", branch: "Branch",
+  ifsc: "IFSC", swift: "SWIFT", iban: "IBAN",
 };
 
 const ar: PrintLabels = {
@@ -28,7 +33,9 @@ const ar: PrintLabels = {
   balanceDue: "الرصيد المستحق", paid: "المدفوع", notes: "ملاحظات", terms: "الشروط والأحكام",
   paymentHistory: "سجل المدفوعات", salesperson: "مندوب المبيعات", reference: "مرجع",
   currency: "العملة", print: "طباعة / حفظ PDF", close: "إغلاق",
-  reason: "السبب", creditApplied: "الرصيد المطبق", account: "الحساب",
+  reason: "السبب", creditApplied: "الرصيد المطبق", account: "الحساب",  taxInvoice: "فاتورة ضريبية", bankDetails: "التفاصيل البنكية", accountName: "اسم الحساب",
+  accountNumber: "رقم الحساب", bankName: "البنك", branch: "الفرع",
+  ifsc: "IFSC", swift: "SWIFT", iban: "IBAN",
 };
 
 const fr: PrintLabels = {
@@ -39,7 +46,9 @@ const fr: PrintLabels = {
   balanceDue: "Solde dû", paid: "Payé", notes: "Notes", terms: "Conditions",
   paymentHistory: "Historique des paiements", salesperson: "Commercial", reference: "Référence",
   currency: "Devise", print: "Imprimer / Enregistrer PDF", close: "Fermer",
-  reason: "Motif", creditApplied: "Crédit appliqué", account: "Compte",
+  reason: "Motif", creditApplied: "Crédit appliqué", account: "Compte",  taxInvoice: "FACTURE FISCALE", bankDetails: "Coordonnées bancaires", accountName: "Nom du compte",
+  accountNumber: "N° de compte", bankName: "Banque", branch: "Agence",
+  ifsc: "IFSC", swift: "SWIFT", iban: "IBAN",
 };
 
 const LABELS: Record<string, PrintLabels> = { en, ar, fr };

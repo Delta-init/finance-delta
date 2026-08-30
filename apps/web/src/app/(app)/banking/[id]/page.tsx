@@ -38,6 +38,7 @@ import {
   useDeleteBankTransaction,
 } from "@/features/banking/api";
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
+import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -258,6 +259,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           <p className="text-xs text-foreground-subtle mt-1">Opened {account.openingDate}</p>
         </div>
       </div>
+
+      <PaymentDetailsCard account={account} />
 
       {/* Transactions */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">

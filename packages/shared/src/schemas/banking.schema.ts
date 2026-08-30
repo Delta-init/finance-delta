@@ -16,6 +16,12 @@ export const createBankAccountSchema = z.object({
   accountName: z.string().min(1, "Account name is required"),
   accountNumber: z.string().optional().default(""),
   bankName: z.string().optional().default(""),
+  // Printed on invoices so a client can pay. Which of these applies depends on
+  // where the account is held, so all four are optional.
+  branch: z.string().max(120).optional().default(""),
+  ifsc: z.string().max(20).optional().default(""),
+  swift: z.string().max(20).optional().default(""),
+  iban: z.string().max(40).optional().default(""),
   accountType: bankAccountTypeSchema,
   currency: z.string().min(3).max(3),
   openingBalanceMinor: z.number().default(0),
@@ -32,6 +38,10 @@ export const bankAccountSchema = z.object({
   accountName: z.string(),
   accountNumber: z.string(),
   bankName: z.string(),
+  branch: z.string().default(""),
+  ifsc: z.string().default(""),
+  swift: z.string().default(""),
+  iban: z.string().default(""),
   accountType: bankAccountTypeSchema,
   currency: z.string(),
   currentBalanceMinor: z.number(),

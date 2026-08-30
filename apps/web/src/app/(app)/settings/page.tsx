@@ -4,12 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { updateOrganizationSchema, type UpdateOrganizationInput } from "@delta/shared";
+import {
+  updateOrganizationSchema,
+  taxNumberLabel,
+  defaultInvoiceTitle,
+  type UpdateOrganizationInput,
+} from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
 import { useOrganization, useUpdateOrganization, useTaxConfig } from "@/features/organization/api";
+import { useBankAccounts } from "@/features/banking/api";
 import { Plus, X, Receipt, ChevronRight } from "lucide-react";
+
+const FIELD = "h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -17,6 +25,9 @@ export default function SettingsPage() {
   const { data: org, isLoading } = useOrganization();
   const { data: taxConfig } = useTaxConfig();
   const update = useUpdateOrganization();
+  // Only active accounts: an invoice should not tell a client to pay into an
+  // account the organization has closed.
+  const { data: accounts } = useBankAccounts({ isActive: "true", pageSize: 100 });
 
   const [intervalInput, setIntervalInput] = useState("");
   const [intervals, setIntervals] = useState<number[]>([]);
@@ -42,6 +53,13 @@ export default function SettingsPage() {
           primaryColor: org.branding.primaryColor,
           footerText: org.branding.footerText,
         },
+        address: { ...org.address },
+        phone: org.phone,
+        email: org.email,
+        website: org.website,
+        taxRegistrationNumber: org.taxRegistrationNumber,
+        registrationNumber: org.registrationNumber,
+        invoiceDefaults: { ...org.invoiceDefaults },
         reminderIntervals: org.reminderIntervals ?? [-3, 1, 7],
       });
     }
@@ -72,12 +90,18 @@ export default function SettingsPage() {
     return <div className="p-6 text-sm text-foreground-muted">Loading…</div>;
   }
 
+  // The number is one field; only what it is called changes with where the
+  // organization trades, so the form asks for GSTIN in India and TRN in the UAE.
+  const taxSystem = taxConfig?.taxSystem ?? org?.taxSystem;
+  const regLabel = taxNumberLabel(taxSystem);
+  const titlePlaceholder = defaultInvoiceTitle(taxSystem, org?.taxRegistrationNumber);
+
   return (
-    <div className="mx-auto max-w-2xl space-y-8 p-6">
+    <div className="mx-auto max-w-3xl space-y-8 p-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Organization Settings</h1>
         <p className="mt-1 text-sm text-foreground-muted">
-          Manage your organization profile and branding used on invoices and quotations.
+          Your organization&apos;s own details, as they appear on the invoices and quotations you issue.
         </p>
       </div>
 
@@ -105,6 +129,18 @@ export default function SettingsPage() {
             />
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">{regLabel}</label>
+              <input {...register("taxRegistrationNumber")} className={FIELD} placeholder={regLabel === "GSTIN" ? "29ABCDE1234F1Z5" : "100123456700003"} />
+              <p className="text-xs text-foreground-muted">Printed on every invoice. Leave blank if not registered.</p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Company registration no.</label>
+              <input {...register("registrationNumber")} className={FIELD} placeholder="CIN / licence number" />
+            </div>
+          </div>
+
           <div className="space-y-1">
             <label className="text-sm font-medium text-foreground">Base currency</label>
             <select
@@ -115,6 +151,115 @@ export default function SettingsPage() {
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
+          </div>
+        </section>
+
+        {/* Address & contact */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Address &amp; contact</h2>
+            <p className="mt-1 text-xs text-foreground-muted">
+              Where the organization trades. This heads every invoice — without it an invoice is
+              a statement of what somebody owes rather than a document they can file.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Address line 1</label>
+            <input {...register("address.line1")} className={FIELD} placeholder="Building, street" />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Address line 2</label>
+            <input {...register("address.line2")} className={FIELD} placeholder="Area, landmark" />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">City</label>
+              <input {...register("address.city")} className={FIELD} placeholder="Dubai" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">State / Emirate</label>
+              <input {...register("address.state")} className={FIELD} placeholder="Kerala" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Postcode</label>
+              <input {...register("address.postcode")} className={FIELD} placeholder="673001" />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Country</label>
+              <input {...register("address.country")} className={FIELD} placeholder="United Arab Emirates" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Phone</label>
+              <input {...register("phone")} className={FIELD} placeholder="+971 4 000 0000" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Email</label>
+              <input {...register("email")} className={FIELD} placeholder="accounts@example.com" />
+              {errors.email && <p className="text-xs text-danger">{errors.email.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Website</label>
+              <input {...register("website")} className={FIELD} placeholder="www.example.com" />
+            </div>
+          </div>
+        </section>
+
+        {/* Invoice defaults */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Invoice defaults</h2>
+            <p className="mt-1 text-xs text-foreground-muted">
+              What a new invoice starts from. Changing these leaves invoices already issued
+              exactly as they went out.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Document title</label>
+              <input {...register("invoiceDefaults.title")} className={FIELD} placeholder={titlePlaceholder} />
+              <p className="text-xs text-foreground-muted">Blank uses “{titlePlaceholder}”.</p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Number prefix</label>
+              <input {...register("invoiceDefaults.prefix")} className={FIELD} placeholder="IN-" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Digits</label>
+              <input type="number" min={1} max={10} {...register("invoiceDefaults.numberPad")} className={FIELD} placeholder="5" />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Bank account to print</label>
+            <select {...register("invoiceDefaults.bankAccountId")} className={FIELD}>
+              <option value="">Do not print bank details</option>
+              {(accounts?.data ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.accountName}{a.bankName ? ` — ${a.bankName}` : ""} ({a.currency})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-foreground-muted">
+              The account clients are told to pay into. Its IFSC, SWIFT and IBAN are set on the
+              account itself, under Banking.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Default terms</label>
+            <textarea
+              {...register("invoiceDefaults.terms")}
+              rows={3}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              placeholder="Payment due on receipt. Goods once sold are not returnable."
+            />
+            <p className="text-xs text-foreground-muted">Pre-fills the terms box on a new invoice; each invoice can still say something else.</p>
           </div>
         </section>
 

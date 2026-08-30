@@ -16,6 +16,7 @@ import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
+import { invoiceNumberingFor } from "../organization/organization.service";
 import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -389,7 +390,8 @@ export async function convertToInvoice(
     throw new AppError("VALIDATION_ERROR", "The amount to invoice must be greater than 0");
   }
 
-  const invoiceNumber = await nextNumber(orgId, "invoice", "IN-");
+  const numbering = await invoiceNumberingFor(orgId);
+  const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
   const today = new Date();
   const dueDate = new Date(today);
   dueDate.setDate(dueDate.getDate() + 30);

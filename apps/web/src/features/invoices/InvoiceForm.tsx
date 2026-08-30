@@ -14,7 +14,7 @@ import {
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Reorder, useDragControls, motion } from "framer-motion";
+import { Reorder, useDragControls } from "framer-motion";
 import { Trash2, Plus, GripVertical, ArrowLeft, X } from "lucide-react";
 import {
   TAX_CODES,
@@ -31,6 +31,7 @@ import {
 } from "@delta/shared";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { SuggestInput } from "@/components/ui/suggest-input";
+import { TotalRow } from "@/components/ui/total-row";
 import { useRecentSuggestion } from "@/features/suggestions/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +51,7 @@ import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
 import { useUsers } from "@/features/users/api";
-import { useTaxConfig } from "@/features/organization/api";
+import { useTaxConfig, useOrganization } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 import { useCan } from "@/lib/use-can";
 import { useSession } from "next-auth/react";
@@ -204,6 +205,7 @@ export function InvoiceForm({
     { enabled: !mineOnly },
   );
   const { data: taxConfig } = useTaxConfig();
+  const { data: org } = useOrganization();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [salespersonModalOpen, setSalespersonModalOpen] = useState(false);
@@ -280,15 +282,20 @@ export function InvoiceForm({
   const isNew = !initial;
   const { data: recentNotes } = useRecentSuggestion("notes", "invoice", isNew);
   const { data: recentTerms } = useRecentSuggestion("terms", "invoice", isNew);
+  // Terms the organization has set in Settings win over the last-used ones:
+  // one is a decision somebody made on purpose, the other is a guess from
+  // history, and a guess should not quietly overrule a setting.
+  const defaultTerms = org?.invoiceDefaults?.terms ?? "";
   const appliedRecentText = useRef(false);
   useEffect(() => {
     if (!isNew || appliedRecentText.current) return;
-    if (recentNotes === undefined && recentTerms === undefined) return;
+    if (recentNotes === undefined && recentTerms === undefined && org === undefined) return;
     appliedRecentText.current = true;
     if (recentNotes && !getValues("notes")) setValue("notes", recentNotes);
-    if (recentTerms && !getValues("terms")) setValue("terms", recentTerms);
+    const terms = defaultTerms || recentTerms;
+    if (terms && !getValues("terms")) setValue("terms", terms);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recentNotes, recentTerms, isNew]);
+  }, [recentNotes, recentTerms, defaultTerms, org, isNew]);
 
   const currency = initial?.currency ?? orgCurrency;
   const hasProgress = watch("hasProgress");
@@ -893,29 +900,15 @@ function Totals({ control, currency, taxInclusive }: { control: Control<FormValu
     })),
   );
 
-  const Row = ({ label, value, strong }: { label: string; value: number; strong?: boolean }) => (
-    <div className={`flex justify-between gap-8 ${strong ? "border-t border-border pt-2 text-base font-semibold" : "text-sm text-foreground-muted"}`}>
-      <span>{label}</span>
-      <motion.span
-        key={value}
-        initial={{ opacity: 0.4 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.2 }}
-        className="font-numeric text-foreground"
-      >
-        {formatMoney(value, currency)}
-      </motion.span>
-    </div>
-  );
 
   return (
     <div className="w-full max-w-xs space-y-2 rounded-lg border border-border bg-surface p-4 lg:self-start">
-      <Row label="Subtotal" value={totals.subtotalMinor} />
-      {totals.discountTotalMinor > 0 && <Row label="Discount" value={totals.discountTotalMinor} />}
+      <TotalRow label="Subtotal" value={totals.subtotalMinor} currency={currency} />
+      {totals.discountTotalMinor > 0 && <TotalRow label="Discount" value={totals.discountTotalMinor} currency={currency} />}
       {totals.taxBreakdown.map((t) => (
-        <Row key={t.code} label={`Tax (${t.code})`} value={t.amountMinor} />
+        <TotalRow key={t.code} label={`Tax (${t.code})`} value={t.amountMinor} currency={currency} />
       ))}
-      <Row label="Total" value={totals.totalMinor} strong />
+      <TotalRow label="Total" value={totals.totalMinor} currency={currency} strong />
     </div>
   );
 }

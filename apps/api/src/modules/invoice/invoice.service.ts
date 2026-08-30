@@ -19,6 +19,7 @@ import {
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
+import { invoiceNumberingFor } from "../organization/organization.service";
 import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -269,7 +270,8 @@ export async function createInvoice(
     : undefined;
 
   const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false);
-  const invoiceNumber = await nextNumber(orgId, "invoice", "IN-");
+  const numbering = await invoiceNumberingFor(orgId);
+  const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
   const tagIds = await resolveTagIds(orgId, input.tagIds);
 
   const branding = org?.branding

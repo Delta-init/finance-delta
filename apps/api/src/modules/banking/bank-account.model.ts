@@ -6,6 +6,12 @@ const bankAccountSchema = new Schema(
     accountName: { type: String, required: true, trim: true },
     accountNumber: { type: String, default: "" },
     bankName: { type: String, default: "" },
+    // Printed on an invoice so a client can actually pay it. Which of these is
+    // needed depends on where the account is held, so none is required.
+    branch: { type: String, default: "" },
+    ifsc:   { type: String, default: "" },
+    swift:  { type: String, default: "" },
+    iban:   { type: String, default: "" },
     accountType: {
       type: String,
       enum: ["current", "savings", "petty_cash", "internal"],

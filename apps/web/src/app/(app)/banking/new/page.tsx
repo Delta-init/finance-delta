@@ -25,6 +25,10 @@ const formSchema = z.object({
   accountName: z.string().min(1, "Account name is required"),
   accountNumber: z.string().optional(),
   bankName: z.string().optional(),
+  branch: z.string().optional(),
+  ifsc: z.string().optional(),
+  swift: z.string().optional(),
+  iban: z.string().optional(),
   accountType: z.enum(["current", "savings", "petty_cash", "internal"]),
   currency: z.string().min(3).max(3),
   openingBalanceDisplay: z.string().default("0"),
@@ -70,6 +74,10 @@ export default function NewBankAccountPage() {
         accountName: values.accountName,
         accountNumber: values.accountNumber ?? "",
         bankName: values.bankName ?? "",
+        branch: values.branch ?? "",
+        ifsc: values.ifsc ?? "",
+        swift: values.swift ?? "",
+        iban: values.iban ?? "",
         accountType: values.accountType,
         currency: values.currency,
         openingBalanceMinor: toMinor(values.openingBalanceDisplay),
@@ -119,6 +127,28 @@ export default function NewBankAccountPage() {
             <div className="space-y-1">
               <Label htmlFor="accountNumber">Account Number</Label>
               <Input id="accountNumber" {...register("accountNumber")} placeholder="Optional" />
+            </div>
+          </div>
+
+          {/* What a client needs in order to actually pay this account. Which
+              of these applies depends on where it is held, so none is required
+              and the invoice prints only the ones filled in. */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="branch">Branch</Label>
+              <Input id="branch" {...register("branch")} placeholder="Optional" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ifsc">IFSC</Label>
+              <Input id="ifsc" {...register("ifsc")} placeholder="Indian accounts" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="swift">SWIFT / BIC</Label>
+              <Input id="swift" {...register("swift")} placeholder="International transfers" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="iban">IBAN</Label>
+              <Input id="iban" {...register("iban")} placeholder="UAE and European accounts" />
             </div>
           </div>
 

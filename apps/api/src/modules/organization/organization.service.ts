@@ -16,6 +16,26 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
       primaryColor: doc.branding?.primaryColor ?? "",
       footerText: doc.branding?.footerText ?? "",
     },
+    address: {
+      line1: (d.address as Record<string, string>)?.line1 ?? "",
+      line2: (d.address as Record<string, string>)?.line2 ?? "",
+      city: (d.address as Record<string, string>)?.city ?? "",
+      state: (d.address as Record<string, string>)?.state ?? "",
+      postcode: (d.address as Record<string, string>)?.postcode ?? "",
+      country: (d.address as Record<string, string>)?.country ?? "",
+    },
+    phone: (d.phone as string) ?? "",
+    email: (d.email as string) ?? "",
+    website: (d.website as string) ?? "",
+    taxRegistrationNumber: (d.taxRegistrationNumber as string) ?? "",
+    registrationNumber: (d.registrationNumber as string) ?? "",
+    invoiceDefaults: {
+      title: (d.invoiceDefaults as Record<string, unknown>)?.title as string ?? "",
+      prefix: (d.invoiceDefaults as Record<string, unknown>)?.prefix as string ?? "",
+      numberPad: ((d.invoiceDefaults as Record<string, unknown>)?.numberPad as number) ?? 5,
+      terms: (d.invoiceDefaults as Record<string, unknown>)?.terms as string ?? "",
+      bankAccountId: (d.invoiceDefaults as Record<string, unknown>)?.bankAccountId as string ?? "",
+    },
     reminderIntervals: (doc.reminderIntervals as number[] | undefined) ?? [-3, 1, 7],
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
     taxLabel: (d.taxLabel as string) ?? "VAT",
@@ -77,6 +97,19 @@ export async function updateOrganization(
   if (input.branding?.logoUrl !== undefined) flat["branding.logoUrl"] = input.branding.logoUrl;
   if (input.branding?.primaryColor !== undefined) flat["branding.primaryColor"] = input.branding.primaryColor;
   if (input.branding?.footerText !== undefined) flat["branding.footerText"] = input.branding.footerText;
+  // Dotted paths rather than whole sub-documents: a form that sends only the
+  // city must not blank out the rest of the address it never asked about.
+  for (const k of ["line1", "line2", "city", "state", "postcode", "country"] as const) {
+    if (input.address?.[k] !== undefined) flat[`address.${k}`] = input.address[k];
+  }
+  if (input.phone !== undefined) flat.phone = input.phone;
+  if (input.email !== undefined) flat.email = input.email;
+  if (input.website !== undefined) flat.website = input.website;
+  if (input.taxRegistrationNumber !== undefined) flat.taxRegistrationNumber = input.taxRegistrationNumber;
+  if (input.registrationNumber !== undefined) flat.registrationNumber = input.registrationNumber;
+  for (const k of ["title", "prefix", "numberPad", "terms", "bankAccountId"] as const) {
+    if (input.invoiceDefaults?.[k] !== undefined) flat[`invoiceDefaults.${k}`] = input.invoiceDefaults[k];
+  }
   if (input.reminderIntervals !== undefined) flat.reminderIntervals = input.reminderIntervals;
 
   const doc = await Organization.findByIdAndUpdate(orgId, { $set: flat }, { new: true, runValidators: true });
@@ -108,4 +141,28 @@ export async function upsertTaxConfig(orgId: string, input: UpsertTaxConfigInput
     taxLabel: (d.taxLabel as string) ?? "VAT",
     taxRates: ((d.taxRates as unknown[]) ?? []) as TaxConfig["taxRates"],
   };
+}
+
+/**
+ * How this organization numbers its invoices.
+ *
+ * Read when a number is allocated rather than stored on the sequence, because
+ * `nextNumber` only ever writes its prefix on insert: an organization that has
+ * already issued an invoice would otherwise keep its first prefix forever, with
+ * the setting quietly having no effect.
+ *
+ * Numbers already issued are left alone. An invoice is identified by the number
+ * on it — in a client's records as much as ours — so changing the setting
+ * applies to what comes next and never rewrites what has gone out.
+ */
+export async function invoiceNumberingFor(
+  orgId: string,
+): Promise<{ prefix: string; pad: number }> {
+  const doc = await Organization.findById(orgId).select("invoiceDefaults").lean();
+  const d = (doc as Record<string, unknown> | null)?.invoiceDefaults as
+    | Record<string, unknown>
+    | undefined;
+  const prefix = ((d?.prefix as string) ?? "").trim();
+  const pad = (d?.numberPad as number) ?? 5;
+  return { prefix: prefix || "IN-", pad: pad >= 1 && pad <= 10 ? pad : 5 };
 }

@@ -59,14 +59,20 @@ interface NavItem {
   permission?: Permission | Permission[];
   superAdminOnly?: boolean;
   /**
-   * Hidden from somebody whose access is limited to their own records.
+   * Hidden from somebody whose access is limited to their own records, unless
+   * they hold one of `unhideWith`.
    *
    * A counsellor needs `customer:read` to pick or add a client while taking an
    * enrolment, but has no business browsing the customer list as a page. The
    * permission is about what a form may do; this is about what belongs in a
    * navigation menu, and the two are not the same question.
+   *
+   * A salesperson is own-scoped on invoices too, but manages customers as part
+   * of the job — so the escape hatch is holding a permission the counsellor
+   * does not, rather than a second flag somebody has to remember to set.
    */
   hideWhenOwnScopedOnly?: boolean;
+  unhideWith?: Permission;
 }
 
 interface NavGroup {
@@ -95,7 +101,7 @@ const NAV: NavGroup[] = [
       { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
       { href: "/credit-notes", label: "Credit Notes", icon: FileX2, enabled: true, permission: "invoice:read" },
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
-      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true },
+      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
     ],
   },
   {
@@ -184,7 +190,13 @@ export function AppSidebar({
         {NAV.map((group, gi) => {
           const items = group.items.filter((item) => {
             if (item.superAdminOnly && !user.isSuperAdmin) return false;
-            if (item.hideWhenOwnScopedOnly && ownScopedOnly) return false;
+            if (
+              item.hideWhenOwnScopedOnly &&
+              ownScopedOnly &&
+              !(item.unhideWith && hasPermission(user.permissions, item.unhideWith))
+            ) {
+              return false;
+            }
             if (item.permission && !user.isSuperAdmin) {
               const needed = Array.isArray(item.permission) ? item.permission : [item.permission];
               if (!needed.some((p) => hasPermission(user.permissions, p))) return false;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { GraduationCap, CheckCircle2, Undo2, Send, Clock } from "lucide-react";
+import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock } from "lucide-react";
 import { formatMoney, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
-import { useApproveEnrolment, useReturnEnrolment, useResubmitEnrolment } from "@/features/invoices/api";
+import { useApproveInvoice, useReturnInvoice, useResubmitInvoice } from "@/features/invoices/api";
 
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
 const METHOD_LABELS: Record<string, string> = {
@@ -22,30 +22,35 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 /**
- * The enrolment behind an invoice, and the decision it is waiting on.
+ * The decision an invoice is waiting on, and the enrolment behind it where
+ * there is one.
  *
  * Shown to both sides but offering different things: an approver gets approve
- * and send back, the counsellor who raised it gets the reason it came back and
- * a way to submit it again. Neither sees a control the other's permission
- * would refuse.
+ * and send back, whoever raised it gets the reason it came back and a way to
+ * submit it again. Neither sees a control the other's permission would refuse.
+ *
+ * Absent entirely for an invoice that needs no approval, which is every invoice
+ * raised by somebody trusted with the whole ledger.
  */
-export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
+export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
   const e = invoice.enrolment;
+  const approval = invoice.approval;
   const { can } = useCan();
-  const approve = useApproveEnrolment(invoice.id);
-  const sendBack = useReturnEnrolment(invoice.id);
-  const resubmit = useResubmitEnrolment(invoice.id);
+  const approve = useApproveInvoice(invoice.id);
+  const sendBack = useReturnInvoice(invoice.id);
+  const resubmit = useResubmitInvoice(invoice.id);
   const [returning, setReturning] = useState(false);
   const [reason, setReason] = useState("");
 
-  if (!e) return null;
+  if (!approval || approval.state === "not_required") return null;
 
   const canDecide = can("invoice:write");
-  const pending = e.approval === "pending";
-  const returned = e.approval === "returned";
+  const pending = approval.state === "pending";
+  const returned = approval.state === "returned";
+  const approved = approval.state === "approved";
 
-  const tone = e.approval === "approved" ? "success" : returned ? "danger" : "warning";
-  const label = e.approval === "approved" ? "Approved" : returned ? "Sent back" : "Waiting for approval";
+  const tone = approved ? "success" : returned ? "danger" : "warning";
+  const label = approved ? "Approved" : returned ? "Sent back" : "Waiting for approval";
 
   async function run(what: string, fn: () => Promise<unknown>) {
     try {
@@ -59,35 +64,41 @@ export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
   return (
     <div className="space-y-3 rounded-lg border border-border bg-surface p-5">
       <div className="flex flex-wrap items-center gap-2">
-        <GraduationCap className="h-4 w-4 text-foreground-muted" />
-        <h2 className="text-sm font-semibold">Enrolment</h2>
+        {e ? (
+          <GraduationCap className="h-4 w-4 text-foreground-muted" />
+        ) : (
+          <ShieldCheck className="h-4 w-4 text-foreground-muted" />
+        )}
+        <h2 className="text-sm font-semibold">{e ? "Enrolment" : "Approval"}</h2>
         <Badge tone={tone}>{label}</Badge>
-        {e.approvedByName && (
+        {approval.byName && (
           <span className="text-xs text-foreground-muted">
-            {e.approval === "approved" ? "by" : "sent back by"} {e.approvedByName}
+            {approved ? "by" : "sent back by"} {approval.byName}
           </span>
         )}
       </div>
 
-      <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Detail label="Course" value={e.course} />
-        <Detail label="Mode of study" value={MODE_LABELS[e.modeOfStudy] ?? e.modeOfStudy} />
-        <Detail label="Language" value={e.language} />
-        <Detail label="Academic counsellor" value={invoice.salespersonName} />
-        {e.meetingBy ? <Detail label="Meeting done by" value={e.meetingBy} /> : null}
-        {e.declaredPaidMinor ? (
-          <Detail
-            label="Collected by counsellor"
-            value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
-              e.declaredPaymentMethod ? ` · ${METHOD_LABELS[e.declaredPaymentMethod] ?? e.declaredPaymentMethod}` : ""
-            }`}
-          />
-        ) : null}
-      </div>
+      {e && (
+        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Detail label="Course" value={e.course} />
+          <Detail label="Mode of study" value={MODE_LABELS[e.modeOfStudy] ?? e.modeOfStudy} />
+          <Detail label="Language" value={e.language} />
+          <Detail label="Academic counsellor" value={invoice.salespersonName} />
+          {e.meetingBy ? <Detail label="Meeting done by" value={e.meetingBy} /> : null}
+          {e.declaredPaidMinor ? (
+            <Detail
+              label="Collected by counsellor"
+              value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
+                e.declaredPaymentMethod ? ` · ${METHOD_LABELS[e.declaredPaymentMethod] ?? e.declaredPaymentMethod}` : ""
+              }`}
+            />
+          ) : null}
+        </div>
+      )}
 
-      {returned && e.returnedReason && (
+      {returned && approval.returnedReason && (
         <p className="rounded-lg border border-danger/30 bg-danger/5 p-2.5 text-sm">
-          <span className="font-medium">Sent back:</span> {e.returnedReason}
+          <span className="font-medium">Sent back:</span> {approval.returnedReason}
         </p>
       )}
 
@@ -99,7 +110,7 @@ export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
 
       {/* What the approver still has to do once they have approved it, said
           here so it does not look finished when it is not. */}
-      {e.approval === "approved" && canDecide && invoice.status === "draft" && (
+      {approved && canDecide && invoice.status === "draft" && (
         <p className="flex items-center gap-1.5 text-sm text-foreground-muted">
           <Send className="h-3.5 w-3.5" /> Approved. Send the invoice and record the payment.
         </p>
@@ -109,7 +120,7 @@ export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
         {canDecide && pending && (
           <>
             <Button size="sm" loading={approve.isPending}
-              onClick={() => run("Enrolment approved", () => approve.mutateAsync())}>
+              onClick={() => run("Invoice approved", () => approve.mutateAsync())}>
               <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setReturning(true)}>
@@ -128,7 +139,7 @@ export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
       <Dialog open={returning} onOpenChange={(o) => { if (!o) setReason(""); setReturning(o); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Send this enrolment back</DialogTitle>
+            <DialogTitle>Send this back</DialogTitle>
             <DialogDescription>
               {invoice.salespersonName} gets the reason and can correct it. Nothing reaches the client
               in the meantime.
@@ -138,7 +149,7 @@ export function EnrolmentPanel({ invoice }: { invoice: Invoice }) {
             <Label htmlFor="reason">What needs correcting?</Label>
             <Input id="reason" value={reason} maxLength={300}
               onChange={(ev) => setReason(ev.target.value)}
-              placeholder="The course amount does not match what was agreed" />
+              placeholder="The amount does not match what was agreed" />
           </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setReturning(false)}>Cancel</Button>

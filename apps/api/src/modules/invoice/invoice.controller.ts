@@ -76,16 +76,16 @@ async function actorOf(req: Request) {
   return { userId: req.auth!.userId, name: u?.name ?? "Unknown" };
 }
 
-export const approveEnrolment = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await invoiceService.approveEnrolment(orgId(req), req.params.id!, await actorOf(req)));
+export const approveInvoice = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.approveInvoice(orgId(req), req.params.id!, await actorOf(req)));
 });
 
-export const returnEnrolment = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await invoiceService.returnEnrolment(
+export const returnInvoice = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.returnInvoice(
     orgId(req), req.params.id!, req.body.reason, await actorOf(req),
   ));
 });
 
-export const resubmitEnrolment = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await invoiceService.resubmitEnrolment(orgId(req), req.params.id!, writeScope(req)));
+export const resubmitInvoice = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.resubmitInvoice(orgId(req), req.params.id!, writeScope(req)));
 });

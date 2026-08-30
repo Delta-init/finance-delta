@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   createInvoiceSchema,
   recordPaymentSchema,
-  returnEnrolmentSchema,
+  returnInvoiceSchema,
   updateInvoiceSchema,
 } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
@@ -25,19 +25,19 @@ router.post("/:id/resend", requireAnyPermission("invoice:write", "invoice:write:
 // Approving an enrolment is what lets its invoice be sent and paid, so it sits
 // behind the same permission as those — which the counsellor who raised it
 // does not have.
-router.post("/:id/enrolment/approve", requirePermission("invoice:write"), c.approveEnrolment);
+router.post("/:id/approval/approve", requirePermission("invoice:write"), c.approveInvoice);
 router.post(
-  "/:id/enrolment/return",
+  "/:id/approval/return",
   requirePermission("invoice:write"),
-  validateBody(returnEnrolmentSchema),
-  c.returnEnrolment,
+  validateBody(returnInvoiceSchema),
+  c.returnInvoice,
 );
-// The one transition the counsellor may make: putting a corrected enrolment
+// The one transition whoever raised it may make: putting a corrected invoice
 // back in front of an approver.
 router.post(
-  "/:id/enrolment/resubmit",
+  "/:id/approval/resubmit",
   requireAnyPermission("invoice:write", "invoice:write:own"),
-  c.resubmitEnrolment,
+  c.resubmitInvoice,
 );
 
 router.post("/:id/void", requirePermission("invoice:write"), c.voidInvoice);

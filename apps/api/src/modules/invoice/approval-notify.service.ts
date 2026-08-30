@@ -6,12 +6,12 @@ import { User } from "../user/user.model";
 import type { InvoiceDoc } from "./invoice.model";
 
 /**
- * Telling people an enrolment moved.
+ * Telling people an invoice awaiting approval moved.
  *
- * Without it an enrolment goes quiet the moment it is submitted: the
- * counsellor has no reason to open the application again, so an approval sits
- * unnoticed and a correction is never made. They are the one person who cannot
- * see the queue it went into.
+ * Without it the invoice goes quiet the moment it is submitted: whoever raised
+ * it has no reason to open the application again, so an approval sits unnoticed
+ * and a correction is never made. They are the one person who cannot see the
+ * queue it went into.
  *
  * Nothing here may fail the decision it reports. An approval that went through
  * but could not be emailed is still an approval, and throwing would turn a
@@ -32,8 +32,8 @@ async function emailFor(userId: unknown): Promise<{ email: string; name: string 
   }
 }
 
-/** Let the counsellor know their enrolment was approved, or sent back and why. */
-export async function notifyEnrolmentDecided(
+/** Let whoever raised it know it was approved, or sent back and why. */
+export async function notifyDecided(
   doc: InvoiceDoc,
   approverName: string,
   outcome: "approved" | "returned",
@@ -48,9 +48,9 @@ export async function notifyEnrolmentDecided(
     await sendNotice({
       to: [to.email],
       subject: approved
-        ? `Enrolment ${doc.invoiceNumber} approved`
-        : `Enrolment ${doc.invoiceNumber} sent back`,
-      title: approved ? "Your enrolment was approved" : "Your enrolment was sent back",
+        ? `${doc.invoiceNumber} approved`
+        : `${doc.invoiceNumber} sent back`,
+      title: approved ? "Your invoice was approved" : "Your invoice was sent back",
       lines: approved
         ? [
             `${doc.customerName}${course ? ` — ${course}` : ""}, ${money(doc.totalMinor ?? 0, doc.currency ?? "AED")}`,
@@ -63,7 +63,7 @@ export async function notifyEnrolmentDecided(
             `${approverName} sent it back: ${reason ?? "no reason given"}`,
             "Correct it and submit it again.",
           ],
-      actionLabel: approved ? "View the enrolment" : "Open and correct it",
+      actionLabel: approved ? "View it" : "Open and correct it",
       actionUrl: `${env.WEB_ORIGIN}/invoices/${doc._id}`,
     });
   } catch (err) {
@@ -78,7 +78,7 @@ export async function notifyEnrolmentDecided(
  * than by naming roles — a custom role granting it is included without anybody
  * having to remember to.
  */
-export async function notifyApproversOfEnrolment(doc: InvoiceDoc): Promise<void> {
+export async function notifyApprovers(doc: InvoiceDoc): Promise<void> {
   try {
     const { Role } = await import("../role/role.model");
     const orgId = doc.organizationId as unknown as Types.ObjectId;
@@ -105,7 +105,7 @@ export async function notifyApproversOfEnrolment(doc: InvoiceDoc): Promise<void>
       // sits pending forever with nothing to say why.
       logger.warn(
         { organizationId: String(orgId), invoiceId: String(doc._id) },
-        "Enrolment submitted but the organization has nobody who can approve it",
+        "Invoice submitted for approval but the organization has nobody who can approve it",
       );
       return;
     }
@@ -113,16 +113,18 @@ export async function notifyApproversOfEnrolment(doc: InvoiceDoc): Promise<void>
     const course = doc.enrolment?.course ?? "";
     await sendNotice({
       to,
-      subject: `Enrolment ${doc.invoiceNumber} needs approval`,
-      title: "An enrolment is waiting for you",
+      subject: `${doc.invoiceNumber} needs approval`,
+      title: "An invoice is waiting for you",
       lines: [
-        `${doc.salespersonName} enrolled ${doc.customerName}${course ? ` on ${course}` : ""}`,
+        course
+          ? `${doc.salespersonName} enrolled ${doc.customerName} on ${course}`
+          : `${doc.salespersonName} raised this for ${doc.customerName}`,
         money(doc.totalMinor ?? 0, doc.currency ?? "AED"),
       ],
       actionLabel: "Review it",
       actionUrl: `${env.WEB_ORIGIN}/invoices/${doc._id}`,
     });
   } catch (err) {
-    logger.error({ err, invoiceId: String(doc._id) }, "Could not notify enrolment approvers");
+    logger.error({ err, invoiceId: String(doc._id) }, "Could not notify approvers");
   }
 }

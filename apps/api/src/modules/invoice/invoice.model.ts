@@ -117,21 +117,27 @@ const invoiceSchema = new Schema(
             type: String,
             enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "tabby", "other"],
           },
-          approval: {
-            type: String,
-            enum: ["pending", "approved", "returned"],
-            required: true,
-            default: "pending",
-          },
-          approvedById: { type: Schema.Types.ObjectId, ref: "User" },
-          approvedByName: { type: String },
-          approvedAt: { type: Date },
-          returnedReason: { type: String },
-          submittedAt: { type: Date },
         },
         { _id: false },
       ),
       required: false,
+    },
+    // Whether this may go out, and who said so. On the invoice rather than
+    // inside the enrolment: the thing being approved is the invoice, and a
+    // plain one raised by somebody who only sees their own records needs the
+    // same check as an enrolment does.
+    approval: {
+      state: {
+        type: String,
+        enum: ["not_required", "pending", "approved", "returned"],
+        required: true,
+        default: "not_required",
+      },
+      byId: { type: Schema.Types.ObjectId, ref: "User" },
+      byName: { type: String },
+      at: { type: Date },
+      returnedReason: { type: String },
+      submittedAt: { type: Date },
     },
     reference: { type: String, default: "" },
     status: {

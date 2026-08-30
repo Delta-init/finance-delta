@@ -104,7 +104,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
   {
     key: "salesperson",
     name: "Salesperson",
-    description: "Manage customers, quotations and orders; no finance or admin access.",
+    description:
+      "Manage customers, quotations and orders, and raise their own invoices. Sees only the invoices they entered, and cannot send one until it is approved.",
     permissions: [
       "customer:read",
       "customer:write",
@@ -120,8 +121,14 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "tag:read",
       "tag:create",
       "tag:update",
-      "invoice:read",
-      "invoice:write",
+      // Their own invoices, not the organization's. A salesperson raising and
+      // chasing their own billing has no reason to read everybody else's, and
+      // the `:own` variants are enforced on the rows rather than the route —
+      // the unscoped `invoice:read` would return the whole company's ledger.
+      // Recording a payment and voiding stay behind the broad permission, so
+      // money is still only moved by somebody who can see all of it.
+      "invoice:read:own",
+      "invoice:write:own",
     ] satisfies Permission[],
     isSystem: true,
   },

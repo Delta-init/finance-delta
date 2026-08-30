@@ -12,8 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment,
-} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending,} from "@delta/shared";
 
 const paymentFormSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
@@ -42,7 +41,7 @@ import { toast } from "@/lib/toast";
 import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
-import { EnrolmentPanel } from "@/features/enrolments/EnrolmentPanel";
+import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -68,18 +67,18 @@ export function InvoiceDetail({ id }: { id: string }) {
   // returned an error.
   const canManage = can("invoice:write");
 
-  // An enrolment gates everything the invoice can do. The server refuses these
+  // An unapproved invoice gates everything it can do. The server refuses these
   // before approval, so offering them would only produce a refusal — and the
   // panel above already says what is waiting on whom.
-  const enrolmentBlocks = Boolean(invoice.enrolment && invoice.enrolment.approval !== "approved");
+  const awaitingApproval = approvalBlocksSending(invoice.approval?.state);
 
-  // Editing stays open while it is a draft — correcting a returned enrolment
-  // is exactly what should happen next — but it cannot go to the client.
-  const canSend = isDraft && !enrolmentBlocks;
+  // Editing stays open while it is a draft — correcting something that came
+  // back is exactly what should happen next — but it cannot go to the client.
+  const canSend = isDraft && !awaitingApproval;
 
   const canVoid = canManage && invoice.status !== "paid" && invoice.status !== "void";
   const canPay =
-    canManage && !enrolmentBlocks &&
+    canManage && !awaitingApproval &&
     invoice.status !== "paid" && invoice.status !== "void" && invoice.balanceMinor > 0;
   const canCreditNote =
     canManage && ["sent", "paid", "partial"].includes(invoice.status);
@@ -178,7 +177,7 @@ export function InvoiceDetail({ id }: { id: string }) {
 
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}
-      <EnrolmentPanel invoice={invoice} />
+      <ApprovalPanel invoice={invoice} />
 
       <PaymentDialog
         open={payOpen}

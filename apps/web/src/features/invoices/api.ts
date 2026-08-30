@@ -108,11 +108,11 @@ export function useUpdatePayment(invoiceId: string) {
   });
 }
 
-export function useApproveEnrolment(id: string) {
+export function useApproveInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: () => api.post<Invoice>(`invoices/${id}/enrolment/approve`, {}),
+    mutationFn: () => api.post<Invoice>(`invoices/${id}/approval/approve`, {}),
     onSuccess: (d) => {
       qc.setQueryData(["invoice", id], d);
       qc.invalidateQueries({ queryKey: KEY });
@@ -120,11 +120,11 @@ export function useApproveEnrolment(id: string) {
   });
 }
 
-export function useReturnEnrolment(id: string) {
+export function useReturnInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (reason: string) => api.post<Invoice>(`invoices/${id}/enrolment/return`, { reason }),
+    mutationFn: (reason: string) => api.post<Invoice>(`invoices/${id}/approval/return`, { reason }),
     onSuccess: (d) => {
       qc.setQueryData(["invoice", id], d);
       qc.invalidateQueries({ queryKey: KEY });
@@ -132,11 +132,11 @@ export function useReturnEnrolment(id: string) {
   });
 }
 
-export function useResubmitEnrolment(id: string) {
+export function useResubmitInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: () => api.post<Invoice>(`invoices/${id}/enrolment/resubmit`, {}),
+    mutationFn: () => api.post<Invoice>(`invoices/${id}/approval/resubmit`, {}),
     onSuccess: (d) => {
       qc.setQueryData(["invoice", id], d);
       qc.invalidateQueries({ queryKey: KEY });

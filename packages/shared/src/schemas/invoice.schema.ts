@@ -108,8 +108,40 @@ export type PrintLocale = (typeof PRINT_LOCALES)[number];
 export const MODES_OF_STUDY = ["online", "offline", "hybrid"] as const;
 export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
 
-export const ENROLMENT_APPROVALS = ["pending", "approved", "returned"] as const;
-export type EnrolmentApproval = (typeof ENROLMENT_APPROVALS)[number];
+/**
+ * Whether an invoice may go out.
+ *
+ * Held on the invoice rather than inside its enrolment, because the question is
+ * about the invoice: somebody who only sees their own records should not put a
+ * document in front of a client unchecked, and that is as true of a plain
+ * invoice a salesperson raised as of an enrolment.
+ *
+ * `not_required` is the ordinary case — an invoice raised by somebody trusted
+ * with the organization's whole ledger has nobody to be approved by.
+ */
+export const INVOICE_APPROVALS = ["not_required", "pending", "approved", "returned"] as const;
+export type InvoiceApproval = (typeof INVOICE_APPROVALS)[number];
+
+/**
+ * Whether this state stops the invoice reaching a client.
+ *
+ * One definition because three places ask it — the server refusing a send, the
+ * detail screen deciding what to offer, and the approval panel. Two of them
+ * disagreeing would mean offering a button that only ever produces a refusal.
+ */
+export function approvalBlocksSending(state: InvoiceApproval | undefined | null): boolean {
+  return state === "pending" || state === "returned";
+}
+
+export const invoiceApprovalSchema = z.object({
+  state: z.enum(INVOICE_APPROVALS).default("not_required"),
+  byId: z.string().optional(),
+  byName: z.string().optional(),
+  at: z.string().optional(),
+  returnedReason: z.string().optional(),
+  submittedAt: z.string().optional(),
+});
+export type InvoiceApprovalState = z.infer<typeof invoiceApprovalSchema>;
 
 export const enrolmentInputSchema = z.object({
   course: z.string().trim().min(1, "Course is required").max(120),
@@ -130,14 +162,11 @@ export const enrolmentInputSchema = z.object({
 });
 export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
 
-export const enrolmentSchema = enrolmentInputSchema.extend({
-  approval: z.enum(ENROLMENT_APPROVALS),
-  approvedById: z.string().optional(),
-  approvedByName: z.string().optional(),
-  approvedAt: z.string().optional(),
-  returnedReason: z.string().optional(),
-  submittedAt: z.string().optional(),
-});
+/**
+ * What an enrolment is, with no say in whether it may be sent — that moved to
+ * the invoice, which is the thing being approved.
+ */
+export const enrolmentSchema = enrolmentInputSchema;
 export type Enrolment = z.infer<typeof enrolmentSchema>;
 
 export const createInvoiceSchema = z.object({
@@ -212,6 +241,7 @@ export const invoiceSchema = z.object({
   customerName: z.string(),
   salespersonId: z.string(),
   enrolment: enrolmentSchema.optional(),
+  approval: invoiceApprovalSchema,
   salespersonName: z.string(),
   reference: z.string(),
   status: invoiceStatusSchema,
@@ -267,8 +297,8 @@ export const invoiceSchema = z.object({
 });
 export type Invoice = z.infer<typeof invoiceSchema>;
 
-/** Sending an enrolment back needs a reason the counsellor can act on. */
-export const returnEnrolmentSchema = z.object({
+/** Sending an invoice back needs a reason whoever raised it can act on. */
+export const returnInvoiceSchema = z.object({
   reason: z.string().trim().min(1, "Say what needs correcting").max(300),
 });
-export type ReturnEnrolmentInput = z.infer<typeof returnEnrolmentSchema>;
+export type ReturnInvoiceInput = z.infer<typeof returnInvoiceSchema>;

@@ -13,7 +13,7 @@ import {
 } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Reorder, useDragControls, motion } from "framer-motion";
+import { Reorder, useDragControls } from "framer-motion";
 import { Trash2, Plus, GripVertical, ArrowLeft, X } from "lucide-react";
 import {
   TAX_CODES,
@@ -28,6 +28,7 @@ import {
   type TaxConfigItem,
 } from "@delta/shared";
 import { Button } from "@/components/ui/button";
+import { TotalRow } from "@/components/ui/total-row";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -710,32 +711,14 @@ function Totals({ control, currency, taxInclusive }: { control: Control<FormValu
       taxes: (l?.taxes ?? []).map((t) => ({ code: t.code, rate: Number(t.rate) || 0 })),
     })),
   );
-  const Row = ({ label, value, strong }: { label: string; value: number; strong?: boolean }) => (
-    <div
-      className={`flex justify-between gap-8 ${
-        strong ? "border-t border-border pt-2 text-base font-semibold" : "text-sm text-foreground-muted"
-      }`}
-    >
-      <span>{label}</span>
-      <motion.span
-        key={value}
-        initial={{ opacity: 0.4 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.2 }}
-        className="font-numeric text-foreground"
-      >
-        {formatMoney(value, currency)}
-      </motion.span>
-    </div>
-  );
   return (
     <div className="w-full max-w-xs space-y-2 rounded-lg border border-border bg-surface p-4 lg:self-start">
-      <Row label="Subtotal" value={totals.subtotalMinor} />
-      {totals.discountTotalMinor > 0 && <Row label="Discount" value={totals.discountTotalMinor} />}
+      <TotalRow label="Subtotal" value={totals.subtotalMinor} currency={currency} />
+      {totals.discountTotalMinor > 0 && <TotalRow label="Discount" value={totals.discountTotalMinor} currency={currency} />}
       {totals.taxBreakdown.map((t) => (
-        <Row key={t.code} label={`${t.code}`} value={t.amountMinor} />
+        <TotalRow key={t.code} label={`${t.code}`} value={t.amountMinor} currency={currency} />
       ))}
-      <Row label="Total" value={totals.totalMinor} strong />
+      <TotalRow label="Total" value={totals.totalMinor} currency={currency} strong />
     </div>
   );
 }

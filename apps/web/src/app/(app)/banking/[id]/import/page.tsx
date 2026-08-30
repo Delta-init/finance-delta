@@ -34,6 +34,39 @@ import type { ImportedTransactionInput } from "@delta/shared";
 /** Radix treats an empty string as "no value", so "not chosen" needs a sentinel. */
 const NONE = "__none__";
 
+/**
+ * A dropdown over the columns that actually hold something.
+ *
+ * Declared at module scope, not inside the page: React tells components apart
+ * by function identity, so one built in a render body is a new component every
+ * render and its subtree is rebuilt rather than updated — which closes an open
+ * dropdown the moment anything else on the page changes.
+ */
+function ColumnSelect({
+  value, onChange, columns, optional = false, placeholder = "Select column",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  columns: ColumnRef[];
+  optional?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent>
+        {optional && <SelectItem value={NONE}>None</SelectItem>}
+        {columns.map((c) => (
+          <SelectItem key={c.index} value={String(c.index)}>
+            {c.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+
 /** Columns are addressed by position; heading text does not identify them. */
 const asIndex = (v: string) => (v === NONE || v === "" ? -1 : Number(v));
 
@@ -354,25 +387,6 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
 
   const money = (m: number) => `${m < 0 ? "−" : ""}${Math.abs(m / 100).toFixed(2)}`;
 
-  /** A dropdown over the columns that actually hold something. */
-  const ColumnSelect = ({
-    value, onChange, optional = false, placeholder = "Select column",
-  }: {
-    value: string; onChange: (v: string) => void; optional?: boolean; placeholder?: string;
-  }) => (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
-      <SelectContent>
-        {optional && <SelectItem value={NONE}>None</SelectItem>}
-        {columns.map((c) => (
-          <SelectItem key={c.index} value={String(c.index)}>
-            {c.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="flex items-center gap-3">
@@ -484,19 +498,19 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <Label>Date column *</Label>
-                <ColumnSelect value={mapping.date} onChange={(v) => setMapping((m) => ({ ...m, date: v }))} />
+                <ColumnSelect columns={columns} value={mapping.date} onChange={(v) => setMapping((m) => ({ ...m, date: v }))} />
               </div>
               <div className="space-y-1">
                 <Label>Description column *</Label>
-                <ColumnSelect value={mapping.description} onChange={(v) => setMapping((m) => ({ ...m, description: v }))} />
+                <ColumnSelect columns={columns} value={mapping.description} onChange={(v) => setMapping((m) => ({ ...m, description: v }))} />
               </div>
               <div className="space-y-1">
                 <Label>Reference / cheque (optional)</Label>
-                <ColumnSelect optional value={mapping.reference} onChange={(v) => setMapping((m) => ({ ...m, reference: v }))} />
+                <ColumnSelect optional columns={columns} value={mapping.reference} onChange={(v) => setMapping((m) => ({ ...m, reference: v }))} />
               </div>
               <div className="space-y-1">
                 <Label>Bank transaction ID (optional)</Label>
-                <ColumnSelect optional value={mapping.externalId} onChange={(v) => setMapping((m) => ({ ...m, externalId: v }))} />
+                <ColumnSelect optional columns={columns} value={mapping.externalId} onChange={(v) => setMapping((m) => ({ ...m, externalId: v }))} />
                 <p className="text-xs text-foreground-muted">
                   Unique per transaction, so a re-import is recognised exactly.
                 </p>
@@ -517,7 +531,7 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
               </div>
               <div className="space-y-1">
                 <Label>Balance column (optional)</Label>
-                <ColumnSelect optional value={mapping.balance} onChange={(v) => setMapping((m) => ({ ...m, balance: v }))} />
+                <ColumnSelect optional columns={columns} value={mapping.balance} onChange={(v) => setMapping((m) => ({ ...m, balance: v }))} />
                 <p className="text-xs text-foreground-muted">
                   Checks the import against the bank&rsquo;s own running balance.
                 </p>
@@ -526,17 +540,17 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
               {mapping.amountType === "signed" ? (
                 <div className="space-y-1">
                   <Label>Amount column *</Label>
-                  <ColumnSelect value={mapping.amount} onChange={(v) => setMapping((m) => ({ ...m, amount: v }))} />
+                  <ColumnSelect columns={columns} value={mapping.amount} onChange={(v) => setMapping((m) => ({ ...m, amount: v }))} />
                 </div>
               ) : (
                 <>
                   <div className="space-y-1">
                     <Label>Deposits (money in) *</Label>
-                    <ColumnSelect value={mapping.creditColumn} onChange={(v) => setMapping((m) => ({ ...m, creditColumn: v }))} />
+                    <ColumnSelect columns={columns} value={mapping.creditColumn} onChange={(v) => setMapping((m) => ({ ...m, creditColumn: v }))} />
                   </div>
                   <div className="space-y-1">
                     <Label>Withdrawals (money out) *</Label>
-                    <ColumnSelect value={mapping.debitColumn} onChange={(v) => setMapping((m) => ({ ...m, debitColumn: v }))} />
+                    <ColumnSelect columns={columns} value={mapping.debitColumn} onChange={(v) => setMapping((m) => ({ ...m, debitColumn: v }))} />
                   </div>
                 </>
               )}

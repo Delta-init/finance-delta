@@ -12,6 +12,39 @@ import { useConvertToInvoice } from "./api";
 type Mode = "full" | "custom" | "per_line";
 type CustomKind = "percentage" | "amount";
 
+/**
+ * One of the three ways to invoice a quote, with its own controls underneath.
+ *
+ * Declared here rather than inside the modal on purpose. React tells components
+ * apart by function identity, so one defined in a render body is a different
+ * component on every render: the subtree is torn down and rebuilt instead of
+ * updated, and the amount fields inside lose focus after a single character.
+ */
+function Radio({
+  value,
+  label,
+  selected,
+  onSelect,
+  children,
+}: {
+  value: Mode;
+  label: string;
+  selected: Mode;
+  onSelect: (value: Mode) => void;
+  children?: React.ReactNode;
+}) {
+  const active = selected === value;
+  return (
+    <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${active ? "border-primary bg-primary/5" : "border-border hover:bg-surface-muted"}`}>
+      <div className="flex items-center gap-2">
+        <input type="radio" name="convert-mode" checked={active} onChange={() => onSelect(value)} className="h-4 w-4 accent-primary" />
+        <span className="text-sm font-medium">{label}</span>
+      </div>
+      {active && children && <div className="mt-3 pl-6">{children}</div>}
+    </label>
+  );
+}
+
 export function ConvertToInvoiceModal({
   quote,
   open,
@@ -76,16 +109,6 @@ export function ConvertToInvoiceModal({
     }
   }
 
-  const Radio = ({ value, label, children }: { value: Mode; label: string; children?: React.ReactNode }) => (
-    <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${mode === value ? "border-primary bg-primary/5" : "border-border hover:bg-surface-muted"}`}>
-      <div className="flex items-center gap-2">
-        <input type="radio" name="convert-mode" checked={mode === value} onChange={() => setMode(value)} className="h-4 w-4 accent-primary" />
-        <span className="text-sm font-medium">{label}</span>
-      </div>
-      {mode === value && children && <div className="mt-3 pl-6">{children}</div>}
-    </label>
-  );
-
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg">
@@ -101,9 +124,9 @@ export function ConvertToInvoiceModal({
 
         <p className="text-sm text-foreground-muted">Choose how you want to invoice</p>
         <div className="space-y-2">
-          <Radio value="full" label="Invoice the entire remaining amount" />
+          <Radio value="full" label="Invoice the entire remaining amount" selected={mode} onSelect={setMode} />
 
-          <Radio value="custom" label="Invoice a custom amount or percentage">
+          <Radio value="custom" label="Invoice a custom amount or percentage" selected={mode} onSelect={setMode}>
             <div className="flex items-center gap-2">
               <Input
                 type="number"
@@ -126,7 +149,7 @@ export function ConvertToInvoiceModal({
             </div>
           </Radio>
 
-          <Radio value="per_line" label="Invoice a custom amount for each line item">
+          <Radio value="per_line" label="Invoice a custom amount for each line item" selected={mode} onSelect={setMode}>
             <div className="space-y-2">
               {quote.lineItems.map((l, i) => (
                 <div key={i} className="grid grid-cols-[1fr_120px] items-center gap-2">

@@ -61,7 +61,9 @@ const paymentSubSchema = new Schema(
   {
     method: {
       type: String,
-      enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "other"],
+      // Kept in step with PAYMENT_METHODS in the shared schema; a method the
+      // form offers but the model rejects fails only at save time.
+      enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "tabby", "other"],
       required: true,
     },
     amountMinor: { type: Number, required: true, min: 0 },
@@ -94,6 +96,42 @@ const invoiceSchema = new Schema(
     customerName: { type: String, required: true },
     salespersonId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     salespersonName: { type: String, required: true },
+    /**
+     * What was enrolled in, when this invoice bills an enrolment.
+     *
+     * Absent on invoices accounts raise themselves, and its absence is what
+     * exempts those from the approval gate — so adding this feature does not
+     * put a backlog of existing drafts in front of an approver.
+     */
+    enrolment: {
+      type: new Schema(
+        {
+          course: { type: String, required: true, trim: true },
+          modeOfStudy: { type: String, enum: ["online", "offline", "hybrid"], required: true },
+          language: { type: String, required: true, trim: true },
+          meetingBy: { type: String, default: "" },
+          /** What the counsellor says was collected. An approver records it. */
+          declaredPaidMinor: { type: Number, default: 0 },
+          declaredPaymentMethod: {
+            type: String,
+            enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "tabby", "other"],
+          },
+          approval: {
+            type: String,
+            enum: ["pending", "approved", "returned"],
+            required: true,
+            default: "pending",
+          },
+          approvedById: { type: Schema.Types.ObjectId, ref: "User" },
+          approvedByName: { type: String },
+          approvedAt: { type: Date },
+          returnedReason: { type: String },
+          submittedAt: { type: Date },
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
     reference: { type: String, default: "" },
     status: {
       type: String,

@@ -12,6 +12,10 @@ import {
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
+import {
+  notifyApproversOfEnrolment,
+  notifyEnrolmentDecided,
+} from "./enrolment-notify.service";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
@@ -48,6 +52,22 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
     customerName: doc.customerName,
     salespersonId: doc.salespersonId.toString(),
     salespersonName: doc.salespersonName,
+    enrolment: doc.enrolment
+      ? {
+          course: doc.enrolment.course,
+          modeOfStudy: doc.enrolment.modeOfStudy,
+          language: doc.enrolment.language,
+          meetingBy: doc.enrolment.meetingBy ?? "",
+          declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
+          declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
+          approval: doc.enrolment.approval,
+          approvedById: doc.enrolment.approvedById ? String(doc.enrolment.approvedById) : undefined,
+          approvedByName: doc.enrolment.approvedByName ?? undefined,
+          approvedAt: doc.enrolment.approvedAt ? new Date(doc.enrolment.approvedAt).toISOString() : undefined,
+          returnedReason: doc.enrolment.returnedReason ?? undefined,
+          submittedAt: doc.enrolment.submittedAt ? new Date(doc.enrolment.submittedAt).toISOString() : undefined,
+        }
+      : undefined,
     reference: doc.reference ?? "",
     status: effectiveStatus(doc),
     issueDate: dateOnly(doc.issueDate),
@@ -241,6 +261,13 @@ export async function createInvoice(
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
   if (!salesperson) throw new AppError("VALIDATION_ERROR", "Invalid salesperson selected");
 
+  // An enrolment starts unapproved, whoever raised it. An administrator
+  // creating one still has it go through the same gate — the point is that the
+  // figures were checked, not who typed them.
+  const enrolment = input.enrolment
+    ? { ...input.enrolment, approval: "pending" as const, submittedAt: new Date() }
+    : undefined;
+
   const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false);
   const invoiceNumber = await nextNumber(orgId, "invoice", "IN-");
   const tagIds = await resolveTagIds(orgId, input.tagIds);
@@ -270,6 +297,7 @@ export async function createInvoice(
     customerName: customer.name,
     salespersonId: salesperson._id,
     salespersonName: salesperson.name,
+    ...(enrolment ? { enrolment } : {}),
     reference: input.reference ?? "",
     status: "draft",
     issueDate: new Date(input.issueDate),
@@ -294,6 +322,9 @@ export async function createInvoice(
     taxInclusive: input.taxInclusive ?? false,
   });
   await doc.populate("tagIds", "name color");
+  // An enrolment goes straight into the approval queue. Not awaited: the
+  // invoice exists either way, and a mail outage must not fail the creation.
+  if (enrolment) void notifyApproversOfEnrolment(doc as unknown as InvoiceDoc);
   return toDTO(doc);
 }
 
@@ -371,11 +402,116 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   await doc.deleteOne();
 }
 
+/**
+ * An enrolment cannot reach the client, or be paid, until somebody has checked it.
+ *
+ * Only applies where there is an enrolment. An invoice raised by accounts has
+ * none and passes straight through, which is what keeps this from landing a
+ * backlog of existing drafts in front of an approver.
+ */
+
+/**
+ * Approve an enrolment, which is what lets its invoice be sent and paid.
+ *
+ * Recorded against a name and a time. The counsellor who raised it cannot do
+ * this — the route is behind `invoice:write`, which they do not have.
+ */
+export async function approveEnrolment(
+  orgId: string,
+  id: string,
+  actor: { userId: string; name: string },
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  if (!doc.enrolment) throw new AppError("CONFLICT", "This invoice is not an enrolment");
+  if (doc.enrolment.approval === "approved") {
+    throw new AppError("CONFLICT", "This enrolment is already approved");
+  }
+
+  const e = doc.enrolment as unknown as Record<string, unknown>;
+  e.approval = "approved";
+  e.approvedById = new Types.ObjectId(actor.userId);
+  e.approvedByName = actor.name;
+  e.approvedAt = new Date();
+  // Cleared, because it has been acted on. Leaving it would read as a standing
+  // objection to something that has since been approved.
+  e.returnedReason = undefined;
+  await doc.save();
+
+  void notifyEnrolmentDecided(doc, actor.name, "approved");
+  return toDTO(doc as unknown as InvoiceDoc);
+}
+
+/** Send an enrolment back to whoever raised it, with a reason they can act on. */
+export async function returnEnrolment(
+  orgId: string,
+  id: string,
+  reason: string,
+  actor: { userId: string; name: string },
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  if (!doc.enrolment) throw new AppError("CONFLICT", "This invoice is not an enrolment");
+  if (effectiveStatus(doc) !== "draft") {
+    throw new AppError("CONFLICT", "Only an unsent enrolment can be sent back");
+  }
+
+  const e = doc.enrolment as unknown as Record<string, unknown>;
+  e.approval = "returned";
+  e.returnedReason = reason;
+  e.approvedById = new Types.ObjectId(actor.userId);
+  e.approvedByName = actor.name;
+  e.approvedAt = new Date();
+  await doc.save();
+
+  void notifyEnrolmentDecided(doc, actor.name, "returned", reason);
+  return toDTO(doc as unknown as InvoiceDoc);
+}
+
+/**
+ * Put a corrected enrolment back in front of an approver.
+ *
+ * The counsellor's own action, so it is the one transition they may make.
+ */
+export async function resubmitEnrolment(
+  orgId: string,
+  id: string,
+  scope: Scope,
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
+  if (!doc.enrolment) throw new AppError("CONFLICT", "This invoice is not an enrolment");
+  if (doc.enrolment.approval !== "returned") {
+    throw new AppError("CONFLICT", "Only an enrolment that was sent back can be submitted again");
+  }
+
+  const e = doc.enrolment as unknown as Record<string, unknown>;
+  e.approval = "pending";
+  e.submittedAt = new Date();
+  await doc.save();
+
+  void notifyApproversOfEnrolment(doc as unknown as InvoiceDoc);
+  return toDTO(doc as unknown as InvoiceDoc);
+}
+
+function assertEnrolmentApproved(doc: {
+  enrolment?: { approval?: string | null; returnedReason?: string | null } | null;
+}): void {
+  const e = doc.enrolment;
+  if (!e) return;
+  if (e.approval === "approved") return;
+  throw new AppError(
+    "CONFLICT",
+    e.approval === "returned"
+      ? `This enrolment was sent back and needs correcting first${e.returnedReason ? `: ${e.returnedReason}` : ""}.`
+      : "This enrolment is waiting for approval.",
+  );
+}
+
 export async function sendInvoice(orgId: string, id: string, scope: Scope): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
   const eff = effectiveStatus(doc);
   if (eff !== "draft") throw new AppError("CONFLICT", `Cannot send a ${eff} invoice`);
+  assertEnrolmentApproved(doc);
 
   // Reject the send up front if any tracked line would oversell (drive stock
   // negative). Done synchronously so the client gets a 409 and nothing changes.
@@ -560,6 +696,8 @@ export async function recordPayment(
   const eff = effectiveStatus(doc);
   if (eff === "void") throw new AppError("CONFLICT", "Cannot record payment on a voided invoice");
   if (eff === "paid") throw new AppError("CONFLICT", "Invoice is already fully paid");
+  // Money is not recorded against something nobody has checked.
+  assertEnrolmentApproved(doc);
 
   const currentBalance = doc.balanceMinor ?? 0;
   if (input.amountMinor > currentBalance) {

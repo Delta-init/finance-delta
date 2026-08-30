@@ -107,3 +107,39 @@ export function useUpdatePayment(invoiceId: string) {
     },
   });
 }
+
+export function useApproveEnrolment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: () => api.post<Invoice>(`invoices/${id}/enrolment/approve`, {}),
+    onSuccess: (d) => {
+      qc.setQueryData(["invoice", id], d);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useReturnEnrolment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (reason: string) => api.post<Invoice>(`invoices/${id}/enrolment/return`, { reason }),
+    onSuccess: (d) => {
+      qc.setQueryData(["invoice", id], d);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useResubmitEnrolment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: () => api.post<Invoice>(`invoices/${id}/enrolment/resubmit`, {}),
+    onSuccess: (d) => {
+      qc.setQueryData(["invoice", id], d);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}

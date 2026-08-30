@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
+  GraduationCap,
   LayoutDashboard,
   FileText,
   ClipboardList,
@@ -57,6 +58,15 @@ interface NavItem {
    */
   permission?: Permission | Permission[];
   superAdminOnly?: boolean;
+  /**
+   * Hidden from somebody whose access is limited to their own records.
+   *
+   * A counsellor needs `customer:read` to pick or add a client while taking an
+   * enrolment, but has no business browsing the customer list as a page. The
+   * permission is about what a form may do; this is about what belongs in a
+   * navigation menu, and the two are not the same question.
+   */
+  hideWhenOwnScopedOnly?: boolean;
 }
 
 interface NavGroup {
@@ -80,9 +90,12 @@ const NAV: NavGroup[] = [
       { href: "/quotations", label: "Quotations", icon: FileText, enabled: true, permission: "quotation:read" },
       { href: "/sales-orders", label: "Sales Orders", icon: ClipboardList, enabled: true, permission: "salesorder:read" },
       { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
+      // Taking an enrolment is the counsellor's whole job, so it is its own
+      // entry rather than something reached through the invoice list.
+      { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
       { href: "/credit-notes", label: "Credit Notes", icon: FileX2, enabled: true, permission: "invoice:read" },
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
-      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read" },
+      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true },
     ],
   },
   {
@@ -141,6 +154,14 @@ export function AppSidebar({
   };
 }) {
   const pathname = usePathname();
+  /**
+   * True when this person sees only their own records — they hold the narrow
+   * invoice permission and not the organization-wide one.
+   */
+  const ownScopedOnly =
+    !user.isSuperAdmin &&
+    hasPermission(user.permissions, "invoice:read:own") &&
+    !hasPermission(user.permissions, "invoice:read");
   const { collapsed, setOpenMobile, isMobile } = useSidebar();
   const closeOnMobile = () => isMobile && setOpenMobile(false);
 
@@ -163,6 +184,7 @@ export function AppSidebar({
         {NAV.map((group, gi) => {
           const items = group.items.filter((item) => {
             if (item.superAdminOnly && !user.isSuperAdmin) return false;
+            if (item.hideWhenOwnScopedOnly && ownScopedOnly) return false;
             if (item.permission && !user.isSuperAdmin) {
               const needed = Array.isArray(item.permission) ? item.permission : [item.permission];
               if (!needed.some((p) => hasPermission(user.permissions, p))) return false;
@@ -221,9 +243,14 @@ export function AppSidebar({
         </div>
         {!collapsed && (
           <div className="mt-1 flex items-center gap-1 px-1 text-primary-foreground/50">
-            <a href="/settings" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:text-primary-foreground">
-              <Settings className="h-3.5 w-3.5" /> Settings
-            </a>
+            {/* Gated like its entry in the menu above. This copy was not, so
+                somebody without organization:read was offered a link that only
+                ever refused them. */}
+            {(user.isSuperAdmin || hasPermission(user.permissions, "organization:read")) && (
+              <a href="/settings" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:text-primary-foreground">
+                <Settings className="h-3.5 w-3.5" /> Settings
+              </a>
+            )}
             <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:text-primary-foreground">
               <LifeBuoy className="h-3.5 w-3.5" /> Help
             </button>

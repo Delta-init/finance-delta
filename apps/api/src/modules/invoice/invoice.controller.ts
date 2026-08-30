@@ -65,3 +65,27 @@ export const resend = asyncHandler(async (req, res) => {
   await invoiceService.resendInvoice(orgId(req), req.params.id!, writeScope(req), req.body?.message);
   ok(res, { queued: true });
 });
+
+/** Who is acting, for the record an approval leaves behind. */
+async function actorOf(req: Request) {
+  const { User } = await import("../user/user.model");
+  const u = await User.findOne({
+    _id: req.auth!.userId,
+    "memberships.organizationId": orgId(req),
+  }).select("name");
+  return { userId: req.auth!.userId, name: u?.name ?? "Unknown" };
+}
+
+export const approveEnrolment = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.approveEnrolment(orgId(req), req.params.id!, await actorOf(req)));
+});
+
+export const returnEnrolment = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.returnEnrolment(
+    orgId(req), req.params.id!, req.body.reason, await actorOf(req),
+  ));
+});
+
+export const resubmitEnrolment = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await invoiceService.resubmitEnrolment(orgId(req), req.params.id!, writeScope(req)));
+});

@@ -11,6 +11,7 @@ export const PAYMENT_METHODS = [
   "cheque",
   "card",
   "easebuzz_emi",
+  "tabby",
   "other",
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -86,9 +87,62 @@ export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 export const PRINT_LOCALES = ["en", "ar", "fr"] as const;
 export type PrintLocale = (typeof PRINT_LOCALES)[number];
 
+
+/**
+ * What somebody enrolled in, on the invoice that bills it.
+ *
+ * These are the details a counsellor takes at the point of sale and the
+ * institute later counts by — how many enrolled on a course, in which
+ * language, run by whom. The notes field would hold them but nothing could
+ * count them, which is why they are fields.
+ *
+ * One enrolment to one invoice, so this sits on the invoice rather than on a
+ * line; a second course later is a second invoice. The academic counsellor is
+ * the invoice's salesperson, which is already pinned to whoever raised it.
+ *
+ * Its presence is also what marks an invoice as needing approval. Invoices
+ * accounts raise themselves are untouched by any of this.
+ */
+export const MODES_OF_STUDY = ["online", "offline", "hybrid"] as const;
+export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
+
+export const ENROLMENT_APPROVALS = ["pending", "approved", "returned"] as const;
+export type EnrolmentApproval = (typeof ENROLMENT_APPROVALS)[number];
+
+export const enrolmentInputSchema = z.object({
+  course: z.string().trim().min(1, "Course is required").max(120),
+  modeOfStudy: z.enum(MODES_OF_STUDY),
+  language: z.string().trim().min(1, "Language is required").max(60),
+  /** Who ran the meeting, where that is not the counsellor raising this. */
+  meetingBy: z.string().trim().max(120).optional().default(""),
+  /**
+   * What the counsellor says was collected, and how.
+   *
+   * Declared, not recorded: the counsellor took the money but does not mark
+   * the invoice paid — an approver does that after checking. Holding it here
+   * means the approver sees what to expect instead of being told separately,
+   * and the two figures can be compared.
+   */
+  declaredPaidMinor: z.number().int().min(0).optional().default(0),
+  declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
+});
+export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
+
+export const enrolmentSchema = enrolmentInputSchema.extend({
+  approval: z.enum(ENROLMENT_APPROVALS),
+  approvedById: z.string().optional(),
+  approvedByName: z.string().optional(),
+  approvedAt: z.string().optional(),
+  returnedReason: z.string().optional(),
+  submittedAt: z.string().optional(),
+});
+export type Enrolment = z.infer<typeof enrolmentSchema>;
+
 export const createInvoiceSchema = z.object({
   customerId: z.string().min(1, "Select a customer"),
   salespersonId: z.string().min(1, "Salesperson is required"),
+  /** Present when this invoice bills an enrolment. */
+  enrolment: enrolmentInputSchema.optional(),
   reference: z.string().max(200).optional().default(""),
   issueDate: z.string().min(1, "Issue date is required"),
   dueDate: z.string().min(1, "Due date is required"),
@@ -154,6 +208,7 @@ export const invoiceSchema = z.object({
   customerId: z.string(),
   customerName: z.string(),
   salespersonId: z.string(),
+  enrolment: enrolmentSchema.optional(),
   salespersonName: z.string(),
   reference: z.string(),
   status: invoiceStatusSchema,
@@ -206,3 +261,9 @@ export const invoiceSchema = z.object({
   createdAt: z.string(),
 });
 export type Invoice = z.infer<typeof invoiceSchema>;
+
+/** Sending an enrolment back needs a reason the counsellor can act on. */
+export const returnEnrolmentSchema = z.object({
+  reason: z.string().trim().min(1, "Say what needs correcting").max(300),
+});
+export type ReturnEnrolmentInput = z.infer<typeof returnEnrolmentSchema>;

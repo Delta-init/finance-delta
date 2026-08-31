@@ -42,6 +42,7 @@ import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdate
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
+import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -178,6 +179,8 @@ export function InvoiceDetail({ id }: { id: string }) {
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}
       <ApprovalPanel invoice={invoice} />
+
+      <InvoiceAttachments invoice={invoice} />
 
       <PaymentDialog
         open={payOpen}

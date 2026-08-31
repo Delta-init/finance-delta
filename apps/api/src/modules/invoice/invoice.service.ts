@@ -68,6 +68,17 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         }
       : undefined,
     approval: approvalDTO(doc),
+    attachments: ((doc as unknown as { attachments?: unknown[] }).attachments ?? []).map((a) => {
+      const r = a as Record<string, unknown>;
+      return {
+        name: r.name as string,
+        url: r.url as string,
+        key: r.key as string | undefined,
+        size: r.size as number | undefined,
+        mimeType: r.mimeType as string | undefined,
+        uploadedAt: r.uploadedAt ? new Date(r.uploadedAt as Date).toISOString() : undefined,
+      };
+    }),
     reference: doc.reference ?? "",
     status: effectiveStatus(doc),
     issueDate: dateOnly(doc.issueDate),
@@ -524,6 +535,98 @@ export async function updateInvoice(
   await doc.save();
   await doc.populate("tagIds", "name color");
   return toDTO(doc);
+}
+
+/** Ten is plenty for an ID, a form and a payment slip, and stops a runaway loop. */
+const MAX_ATTACHMENTS = 10;
+
+/**
+ * Whether the documents behind an invoice are still somebody's to change.
+ *
+ * Once it has gone to an approver the evidence it will be approved against is
+ * fixed — changing it afterwards changes what was approved. Somebody who can
+ * see the whole organization is not held to this: correcting a wrong document
+ * on a colleague's invoice is a normal thing for an administrator to do.
+ */
+function assertAttachable(doc: unknown, scope: Scope): void {
+  if (scope.all) return;
+  const state = approvalOf(doc).state;
+  if (state === "pending") {
+    throw new AppError("CONFLICT", "This is with an approver — it cannot be changed until it comes back");
+  }
+}
+
+export async function addAttachment(
+  orgId: string,
+  id: string,
+  file: { buffer: Buffer; originalName: string; mimeType: string },
+  scope: Scope,
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
+  assertAttachable(doc, scope);
+
+  const existing = (doc as unknown as { attachments?: unknown[] }).attachments ?? [];
+  if (existing.length >= MAX_ATTACHMENTS) {
+    throw new AppError("CONFLICT", `An invoice can hold at most ${MAX_ATTACHMENTS} documents`);
+  }
+
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+
+  // The uploader's filename never becomes the key. It is theirs to choose, and
+  // a key built from it could otherwise reach outside this invoice's prefix.
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const uploaded = await uploadFile({
+    key: `invoices/${orgId}/${id}/${Date.now()}-${safe}`,
+    buffer: file.buffer,
+    mimeType: file.mimeType,
+    originalName: file.originalName,
+  });
+
+  (existing as Record<string, unknown>[]).push({
+    name: file.originalName.slice(0, 200),
+    url: uploaded.url,
+    key: uploaded.key,
+    size: uploaded.size,
+    mimeType: uploaded.mimeType,
+    uploadedAt: new Date(),
+  });
+  doc.set("attachments", existing);
+  await doc.save();
+  return toDTO(doc as unknown as InvoiceDoc);
+}
+
+export async function removeAttachment(
+  orgId: string,
+  id: string,
+  key: string,
+  scope: Scope,
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  assertOwned(scope, doc.salespersonId, "Invoice");
+  assertAttachable(doc, scope);
+
+  const list = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []);
+  const idx = list.findIndex((a) => a.key === key);
+  if (idx === -1) throw new AppError("NOT_FOUND", "Document not found");
+
+  const [removed] = list.splice(idx, 1);
+  doc.set("attachments", list);
+  await doc.save();
+
+  // The row going is what the caller asked for; the object not going is a
+  // tidiness problem, not a reason to fail and leave the row behind.
+  if (removed?.key) {
+    try {
+      const { deleteFile } = await import("../../lib/storage");
+      await deleteFile(removed.key);
+    } catch (err) {
+      const { logger } = await import("../../lib/logger");
+      logger.error({ err, key: removed.key }, "Removed an invoice document but could not delete the object");
+    }
+  }
+  return toDTO(doc as unknown as InvoiceDoc);
 }
 
 export async function deleteInvoice(orgId: string, id: string): Promise<void> {

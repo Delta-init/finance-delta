@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { invoiceQuerySchema } from "@delta/shared";
-import { asyncHandler, created, ok } from "../../lib/http";
+import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import { resolveScope } from "../../lib/ownership";
 import * as invoiceService from "./invoice.service";
@@ -75,6 +75,21 @@ async function actorOf(req: Request) {
   }).select("name");
   return { userId: req.auth!.userId, name: u?.name ?? "Unknown" };
 }
+
+export const addAttachment = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await invoiceService.addAttachment(orgId(req), req.params.id!, req.file, writeScope(req)));
+});
+
+export const removeAttachment = asyncHandler(async (req: Request, res: Response) => {
+  // The key arrives as a path segment, so it is encoded on the way in.
+  ok(res, await invoiceService.removeAttachment(
+    orgId(req),
+    req.params.id!,
+    decodeURIComponent(req.params.key!),
+    writeScope(req),
+  ));
+});
 
 export const summary = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await invoiceService.invoiceSummary(orgId(req), readScope(req)));

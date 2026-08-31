@@ -234,6 +234,16 @@ export const invoiceLineSchema = z.object({
 });
 export type InvoiceLine = z.infer<typeof invoiceLineSchema>;
 
+export const invoiceAttachmentSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+  key: z.string().optional(),
+  size: z.number().optional(),
+  mimeType: z.string().optional(),
+  uploadedAt: z.string().optional(),
+});
+export type InvoiceAttachment = z.infer<typeof invoiceAttachmentSchema>;
+
 export const invoiceSchema = z.object({
   id: z.string(),
   invoiceNumber: z.string(),
@@ -242,6 +252,7 @@ export const invoiceSchema = z.object({
   salespersonId: z.string(),
   enrolment: enrolmentSchema.optional(),
   approval: invoiceApprovalSchema,
+  attachments: z.array(invoiceAttachmentSchema).default([]),
   salespersonName: z.string(),
   reference: z.string(),
   status: invoiceStatusSchema,

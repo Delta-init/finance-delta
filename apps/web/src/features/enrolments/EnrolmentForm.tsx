@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { GraduationCap, User, Wallet } from "lucide-react";
+import { GraduationCap, User, Wallet, Paperclip, X, FileText } from "lucide-react";
 import { MODES_OF_STUDY, PAYMENT_METHODS, toMinor, formatMoney } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCurrency } from "@/lib/currency-context";
 import { useCreateCustomer } from "@/features/customers/api";
@@ -65,6 +65,26 @@ const NONE = "__none__";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Ten is plenty for an ID, a signed form and a payment slip. Matches the server. */
+const MAX_FILES = 10;
+/** Matches what the upload middleware will accept before it refuses. */
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Attach one document to an invoice that has only just been created.
+ *
+ * Not the `useAddInvoiceAttachment` hook, which is keyed on an id at render
+ * time — here the id does not exist until the form is submitted.
+ */
+async function uploadTo(invoiceId: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  await api.postForm(`invoices/${invoiceId}/attachments`, form);
+}
+
+const prettySize = (bytes: number) =>
+  bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
 export function EnrolmentForm() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -72,6 +92,14 @@ export function EnrolmentForm() {
   const createCustomer = useCreateCustomer();
   const createInvoice = useCreateInvoice();
   const [busy, setBusy] = useState(false);
+  /*
+   * Documents are chosen before there is anything to attach them to — the
+   * invoice does not exist until this form is submitted. So they are held here
+   * and uploaded once it does, rather than making the counsellor come back to
+   * a saved enrolment to add the ID they have in their hand right now.
+   */
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploaded, setUploaded] = useState(0);
 
   const {
     register, handleSubmit, setValue, watch,
@@ -122,12 +150,33 @@ export function EnrolmentForm() {
         },
       } as never);
 
-      toast.success(`${invoice.invoiceNumber} sent for approval`);
+      // One at a time, so a rejected file names itself rather than failing the
+      // batch anonymously. The enrolment is already saved by this point: a
+      // document that will not upload is worth saying so about, not worth
+      // throwing the enrolment away over.
+      const failed: string[] = [];
+      for (const file of files) {
+        try {
+          await uploadTo(invoice.id, file);
+          setUploaded((n) => n + 1);
+        } catch {
+          failed.push(file.name);
+        }
+      }
+
+      if (failed.length > 0) {
+        toast.error(
+          `${invoice.invoiceNumber} saved, but ${failed.length === 1 ? "this document did" : "these documents did"} not upload: ${failed.join(", ")}. Add ${failed.length === 1 ? "it" : "them"} from the enrolment.`,
+        );
+      } else {
+        toast.success(`${invoice.invoiceNumber} sent for approval`);
+      }
       router.push(`/invoices/${invoice.id}`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not save the enrolment");
     } finally {
       setBusy(false);
+      setUploaded(0);
     }
   }
 
@@ -234,6 +283,83 @@ export function EnrolmentForm() {
           <p className="rounded-lg border border-danger/30 bg-danger/5 p-2.5 text-xs text-danger">
             That is more than the course costs. Check the two figures.
           </p>
+        )}
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Paperclip className="h-4 w-4 text-foreground-muted" /> Documents
+          <span className="font-normal text-foreground-muted">— optional</span>
+        </h2>
+        <p className="text-sm text-foreground-muted">
+          Anything supporting the enrolment: an ID, a signed form, a payment slip. Photos and
+          documents both. Up to {MAX_FILES}, {prettySize(MAX_FILE_BYTES)} each.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label
+            className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-surface-muted ${
+              files.length >= MAX_FILES ? "pointer-events-none opacity-50" : ""
+            }`}
+          >
+            <Paperclip className="h-4 w-4" />
+            Choose files
+            <input
+              type="file"
+              multiple
+              accept="image/*,application/pdf,.doc,.docx"
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                // Said now rather than after the enrolment is saved, when it is
+                // too late to pick a smaller one.
+                const tooBig = picked.filter((f) => f.size > MAX_FILE_BYTES);
+                if (tooBig.length > 0) {
+                  toast.error(
+                    `${tooBig.map((f) => f.name).join(", ")} — over ${prettySize(MAX_FILE_BYTES)}, so not added.`,
+                  );
+                }
+                const room = MAX_FILES - files.length;
+                const ok = picked.filter((f) => f.size <= MAX_FILE_BYTES).slice(0, room);
+                if (picked.length - tooBig.length > room) {
+                  toast.error(`Only ${MAX_FILES} documents in total, so the rest were not added.`);
+                }
+                setFiles((prev) => [...prev, ...ok]);
+                // Cleared so choosing the same file again still registers.
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {files.length > 0 && (
+            <span className="text-xs text-foreground-muted">
+              {files.length} of {MAX_FILES} chosen
+              {busy && files.length > 0 ? ` · uploading ${uploaded + 1} of ${files.length}` : ""}
+            </span>
+          )}
+        </div>
+
+        {files.length > 0 && (
+          <ul className="space-y-1.5">
+            {files.map((f, i) => (
+              <li
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
+              >
+                <FileText className="h-4 w-4 shrink-0 text-foreground-muted" />
+                <span className="min-w-0 flex-1 truncate text-sm">{f.name}</span>
+                <span className="shrink-0 text-xs text-foreground-muted">{prettySize(f.size)}</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                  className="shrink-0 text-foreground-subtle hover:text-danger disabled:opacity-50"
+                  aria-label={`Remove ${f.name}`}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 

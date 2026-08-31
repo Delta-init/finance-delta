@@ -56,6 +56,13 @@ export const createExpenseSchema = z.object({
   amountMinor: z.number().min(0, "Amount must be non-negative"),
   currency: z.string().min(3).max(3).optional(),
   taxPct: z.number().min(0).max(100).default(0),
+  /**
+   * Whether the amount above already contains the tax.
+   *
+   * A receipt shows one number; whether it includes VAT depends on the receipt.
+   * Either way the net is stored in amountMinor and the gross in totalMinor.
+   */
+  taxInclusive: z.boolean().optional().default(false),
   paymentAccount: z.string().optional().default(""),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string().optional().default(""),
@@ -108,6 +115,7 @@ export const expenseSchema = z.object({
   expenseDate: z.string(),
   amountMinor: z.number(),
   taxPct: z.number(),
+  taxInclusive: z.boolean().default(false),
   taxMinor: z.number(),
   totalMinor: z.number(),
   currency: z.string(),

@@ -62,6 +62,9 @@ const expenseSchema = new Schema(
     taxMinor: { type: Number, default: 0 },
     totalMinor: { type: Number, default: 0 },
     currency: { type: String, default: "AED" },
+    // How the claimed figure was read, kept so editing shows it back the way it
+    // was typed rather than silently switching to the other reading.
+    taxInclusive: { type: Boolean, default: false },
     paymentAccount: { type: String, default: "" },
     paymentMethod: {
       type: String,

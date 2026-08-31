@@ -41,9 +41,13 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     category: expense.category,
     description: expense.description,
     expenseDate: expense.expenseDate,
-    amountDisplay: (expense.amountMinor / 100).toString(),
+    // Shown back the way it was typed. amountMinor holds the net, so a claim
+    // entered tax-inclusive has to be reopened at its gross or the figure would
+    // drop by the tax every time somebody saved it.
+    amountDisplay: ((expense.taxInclusive ? expense.totalMinor : expense.amountMinor) / 100).toString(),
     currency: expense.currency,
     taxPct: expense.taxPct,
+    taxInclusive: expense.taxInclusive ?? false,
     paymentAccount: expense.paymentAccount || "",
     paymentMethod: expense.paymentMethod,
     reference: expense.reference || "",

@@ -24,6 +24,25 @@ const lineItemSchema = new Schema(
   { _id: false },
 );
 
+/**
+ * A document supporting an enrolment — an ID, a signed form, a payment slip.
+ *
+ * `key` is where it lives in object storage, needed to delete the object when
+ * the attachment is removed: without it the row goes and the file stays, and
+ * nothing afterwards knows it is there.
+ */
+const invoiceAttachmentSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    url: { type: String, required: true },
+    key: { type: String },
+    size: { type: Number },
+    mimeType: { type: String },
+    uploadedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const progressSchema = new Schema(
   {
     contractDescription: { type: String, default: "" },
@@ -139,6 +158,7 @@ const invoiceSchema = new Schema(
       returnedReason: { type: String },
       submittedAt: { type: Date },
     },
+    attachments: { type: [invoiceAttachmentSchema], default: [] },
     reference: { type: String, default: "" },
     status: {
       type: String,

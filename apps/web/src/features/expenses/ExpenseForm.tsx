@@ -15,7 +15,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
-import type { CreateExpenseInput } from "@delta/shared";
+import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 
 const PAYMENT_METHODS = [
@@ -40,6 +40,7 @@ const formSchema = z.object({
   amountDisplay: z.string().min(1, "Amount is required"),
   currency: z.string().default("AED"),
   taxPct: z.coerce.number().min(0).max(100).default(0),
+  taxInclusive: z.boolean().default(false),
   paymentAccount: z.string().optional(),
   paymentMethod: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]).optional(),
   reference: z.string().optional(),
@@ -57,11 +58,6 @@ const formSchema = z.object({
   attachments: z.array(z.object({ name: z.string(), url: z.string() })).default([]),
 });
 export type ExpenseFormValues = z.infer<typeof formSchema>;
-
-function toMinor(val: string): number {
-  const n = parseFloat(val);
-  return isNaN(n) ? 0 : Math.round(n * 100);
-}
 
 interface ExpenseFormProps {
   mode: "create" | "edit";
@@ -86,6 +82,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         expenseDate: today,
         currency: orgCurrency,
         taxPct: 0,
+        taxInclusive: false,
         requiresApproval: false,
         isRecurring: false,
         hasMileage: false,
@@ -103,6 +100,14 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   }, [orgCurrency, isEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currency = watch("currency");
+  // Shown back as it is entered, so nobody has to work out whether the figure
+  // they typed was the one on the receipt.
+  const taxInclusive = watch("taxInclusive");
+  const preview = computeExpenseTax(
+    toMinor(watch("amountDisplay") || "0"),
+    Number(watch("taxPct")) || 0,
+    taxInclusive,
+  );
   const [catWatch, isRecurring, hasMileage] = [
     watch("category"),
     watch("isRecurring"),
@@ -117,6 +122,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       amountMinor: toMinor(values.amountDisplay),
       currency: values.currency,
       taxPct: values.taxPct ?? 0,
+      taxInclusive: values.taxInclusive ?? false,
       paymentAccount: values.paymentAccount ?? "",
       paymentMethod: values.paymentMethod,
       reference: values.reference ?? "",
@@ -230,6 +236,36 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               {errors.taxPct && <p className="text-xs text-danger">{errors.taxPct.message}</p>}
             </div>
           </div>
+
+          {/* A receipt shows one number, and whether it already contains the tax
+              depends on the receipt. Asking is the only way to know. */}
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              {...register("taxInclusive")}
+              className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
+            />
+            <span>
+              <span className="block text-sm font-medium">Amount already includes tax</span>
+              <span className="block text-xs text-foreground-muted">
+                Tick this when the figure on the receipt is the total paid.
+              </span>
+            </span>
+          </label>
+
+          {preview.taxMinor > 0 && (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-surface-muted px-3 py-2 text-xs">
+              <span className="text-foreground-muted">
+                Net <span className="font-numeric font-medium text-foreground">{formatMoney(preview.netMinor, currency)}</span>
+              </span>
+              <span className="text-foreground-muted">
+                Tax <span className="font-numeric font-medium text-foreground">{formatMoney(preview.taxMinor, currency)}</span>
+              </span>
+              <span className="text-foreground-muted">
+                Total <span className="font-numeric font-semibold text-foreground">{formatMoney(preview.totalMinor, currency)}</span>
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Mileage (travel only) */}

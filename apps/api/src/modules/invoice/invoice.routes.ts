@@ -42,6 +42,22 @@ router.post(
   c.resubmitInvoice,
 );
 
+// Supporting documents for an enrolment — an ID, a signed form, a payment slip.
+// Same permission as editing the invoice; the service additionally refuses once
+// it is with an approver, since the evidence it is approved against should not
+// change underneath them.
+router.post(
+  "/:id/attachments",
+  requireAnyPermission("invoice:write", "invoice:write:own"),
+  parseUpload,
+  c.addAttachment,
+);
+router.delete(
+  "/:id/attachments/:key(*)",
+  requireAnyPermission("invoice:write", "invoice:write:own"),
+  c.removeAttachment,
+);
+
 router.post("/:id/void", requirePermission("invoice:write"), c.voidInvoice);
 router.post("/:id/payments", requirePermission("invoice:write"), parseUpload, validateBody(recordPaymentSchema), c.recordPayment);
 router.patch("/:id/payments/:paymentId", requirePermission("invoice:write"), validateBody(recordPaymentSchema), c.updatePayment);

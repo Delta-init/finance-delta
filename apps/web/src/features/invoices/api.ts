@@ -159,3 +159,34 @@ export function useInvoiceSummary(options?: { enabled?: boolean }) {
     enabled: options?.enabled ?? true,
   });
 }
+
+export function useAddInvoiceAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.postForm<Invoice>(`invoices/${id}/attachments`, form);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(["invoice", id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+export function useRemoveInvoiceAttachment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    // The key is a storage path with slashes in it, so it has to survive being
+    // put in the URL.
+    mutationFn: (key: string) =>
+      api.del<Invoice>(`invoices/${id}/attachments/${encodeURIComponent(key)}`),
+    onSuccess: (data) => {
+      qc.setQueryData(["invoice", id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}

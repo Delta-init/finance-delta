@@ -7,7 +7,7 @@ import type {
   Paginated,
   RejectExpenseInput,
 } from "@delta/shared";
-import { EXPENSE_CATEGORY_LABELS } from "@delta/shared";
+import { EXPENSE_CATEGORY_LABELS, computeExpenseTax } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import type { ParsedFile } from "../../middleware/upload";
@@ -58,6 +58,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     expenseDate: dateOnly(doc.expenseDate as unknown as Date),
     amountMinor: (doc.amountMinor as number) ?? 0,
     taxPct: (doc.taxPct as number) ?? 0,
+    taxInclusive: (doc.taxInclusive as boolean) ?? false,
     taxMinor: (doc.taxMinor as number) ?? 0,
     totalMinor: (doc.totalMinor as number) ?? 0,
     currency: (doc.currency as string) ?? "AED",
@@ -159,8 +160,15 @@ export async function createExpense(
   const user = await User.findOne({ _id: userId, "memberships.organizationId": orgId });
   if (!user) throw new AppError("NOT_FOUND", "User not found");
 
-  const taxMinor = Math.round(input.amountMinor * (input.taxPct ?? 0) / 100);
-  const totalMinor = input.amountMinor + taxMinor;
+  // The claimed figure is read as gross or net depending on the receipt; what
+  // gets stored is the same either way — net in amountMinor, gross in
+  // totalMinor — so nothing downstream has to know which was typed.
+  const taxInclusive = input.taxInclusive ?? false;
+  const { netMinor, taxMinor, totalMinor } = computeExpenseTax(
+    input.amountMinor,
+    input.taxPct ?? 0,
+    taxInclusive,
+  );
   const expenseNumber = await nextNumber(orgId, "expense", "EXP-");
 
   const mileage = input.mileage
@@ -184,8 +192,9 @@ export async function createExpense(
     categoryName: catName,
     description: input.description,
     expenseDate: new Date(input.expenseDate),
-    amountMinor: input.amountMinor,
+    amountMinor: netMinor,
     taxPct: input.taxPct ?? 0,
+    taxInclusive,
     taxMinor,
     totalMinor,
     currency: input.currency ?? "AED",
@@ -265,13 +274,26 @@ export async function updateExpense(
     d.attachments = input.attachments.map((a) => ({ name: a.name, url: a.url }));
   }
 
-  if (input.amountMinor !== undefined || input.taxPct !== undefined) {
-    const amount = input.amountMinor ?? (doc.amountMinor as number);
-    const tax = input.taxPct ?? (doc.taxPct as number ?? 0);
-    doc.amountMinor = amount;
+  if (
+    input.amountMinor !== undefined ||
+    input.taxPct !== undefined ||
+    input.taxInclusive !== undefined
+  ) {
+    const inclusive = input.taxInclusive ?? ((doc.taxInclusive as boolean | undefined) ?? false);
+    const tax = input.taxPct ?? ((doc.taxPct as number) ?? 0);
+    // What was typed, not what was stored: amountMinor holds the net, so an
+    // edit that only changes the rate has to start from the gross again when
+    // the claim was entered tax-inclusive, or the figure would shrink each time.
+    const typed =
+      input.amountMinor ??
+      (inclusive ? ((doc.totalMinor as number) ?? 0) : ((doc.amountMinor as number) ?? 0));
+
+    const r = computeExpenseTax(typed, tax, inclusive);
+    doc.amountMinor = r.netMinor;
     doc.taxPct = tax;
-    doc.taxMinor = Math.round(amount * tax / 100);
-    doc.totalMinor = amount + doc.taxMinor;
+    doc.set("taxInclusive", inclusive);
+    doc.taxMinor = r.taxMinor;
+    doc.totalMinor = r.totalMinor;
   }
 
   if (input.mileage !== undefined) {

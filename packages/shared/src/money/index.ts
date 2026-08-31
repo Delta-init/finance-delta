@@ -243,3 +243,41 @@ export function sumInvoiceTotals(lines: InvoiceLineCalcInput[]): InvoiceTotals {
 export function roundingAdjustmentMinor(totalMinor: number): number {
   return Math.round(totalMinor / 100) * 100 - totalMinor;
 }
+
+export interface ExpenseTaxBreakdown {
+  /** Net of tax. Always what `amountMinor` stores, whichever way it was typed. */
+  netMinor: number;
+  taxMinor: number;
+  /** Gross. Always what `totalMinor` stores. */
+  totalMinor: number;
+}
+
+/**
+ * Split a claimed amount into net and tax.
+ *
+ * `taxInclusive` says how to read the figure somebody typed, not what gets
+ * stored: a receipt shows one number, and whether that number already contains
+ * the VAT depends on the receipt, not on us. Either way the net lands in
+ * `netMinor` and the gross in `totalMinor`, so every report that sums those
+ * keeps meaning the same thing.
+ *
+ * The tax is taken as the difference rather than computed a second time, so
+ * net + tax is exactly the total and a claim can never be a fil out from
+ * itself.
+ */
+export function computeExpenseTax(
+  amountMinor: number,
+  taxPct: number,
+  taxInclusive = false,
+): ExpenseTaxBreakdown {
+  const amount = Math.round(amountMinor);
+  const pct = taxPct > 0 ? taxPct : 0;
+  if (pct === 0) return { netMinor: amount, taxMinor: 0, totalMinor: amount };
+
+  if (taxInclusive) {
+    const netMinor = Math.round(amount / (1 + pct / 100));
+    return { netMinor, taxMinor: amount - netMinor, totalMinor: amount };
+  }
+  const taxMinor = Math.round((amount * pct) / 100);
+  return { netMinor: amount, taxMinor, totalMinor: amount + taxMinor };
+}

@@ -18,6 +18,10 @@ export const PAYMENT_METHODS = [
   // being typed as "other" and losing which one it was.
   "tamara",
   "billexpro",
+  // A rupee account an AED business also collects into. Its own method rather
+  // than a note on a bank transfer, because "which account did it land in" is
+  // the question somebody asks when the two are reconciled separately.
+  "inr_bank_account",
   "other",
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -38,6 +42,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   tabby: "Tabby",
   tamara: "Tamara",
   billexpro: "Smart Invoice / BillExPro",
+  inr_bank_account: "INR Bank Account",
   other: "Other",
 };
 

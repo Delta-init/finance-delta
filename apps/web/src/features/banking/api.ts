@@ -14,6 +14,7 @@ import type {
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
+  CashCountInput,
 } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
@@ -267,6 +268,21 @@ export function useCompleteReconciliation(accountId: string, sessionId: string) 
       qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
       qc.invalidateQueries({ queryKey: [...reconcileKey(accountId), sessionId] });
       qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+    },
+  });
+}
+
+/** Counting a tin: settles it in one go and posts any difference as an entry. */
+export function useRecordCashCount(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: CashCountInput) =>
+      api.post<ReconciliationSession>(`bank-accounts/${accountId}/cash-count`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
     },
   });
 }

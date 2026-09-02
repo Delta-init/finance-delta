@@ -281,3 +281,31 @@ export function computeExpenseTax(
   const taxMinor = Math.round((amount * pct) / 100);
   return { netMinor: amount, taxMinor, totalMinor: amount + taxMinor };
 }
+
+export interface CashCountResult {
+  /** Counted minus book. Positive means more cash than the book expected. */
+  differenceMinor: number;
+  /** The entry to post so the book agrees with the count. */
+  adjustmentMinor: number;
+  /** How to describe it: "over" when there is more cash than expected. */
+  verdict: "agrees" | "over" | "short";
+}
+
+/**
+ * Comparing a counted tin with what the book says.
+ *
+ * One definition because two places say it — the entry the server posts and the
+ * warning the dialog shows before it does — and a sign that disagreed with the
+ * word beside it would send the balance the wrong way while telling somebody it
+ * was going the right one.
+ *
+ * "Over" means more cash than the book expected, so the adjustment is a credit.
+ */
+export function compareCashCount(countedMinor: number, bookMinor: number): CashCountResult {
+  const differenceMinor = Math.round(countedMinor) - Math.round(bookMinor);
+  return {
+    differenceMinor,
+    adjustmentMinor: differenceMinor,
+    verdict: differenceMinor === 0 ? "agrees" : differenceMinor > 0 ? "over" : "short",
+  };
+}

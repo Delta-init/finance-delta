@@ -109,6 +109,20 @@ export const updateReconciliation = asyncHandler(async (req, res) => {
   ok(res, await svc.updateReconciliation(org(req), req.params.sessionId!, req.body));
 });
 
+/** Who counted it, which the session records against the count. */
+async function counterName(req: Request): Promise<string> {
+  const { User } = await import("../user/user.model");
+  const u = await User.findOne({
+    _id: uid(req),
+    "memberships.organizationId": org(req),
+  }).select("name");
+  return u?.name ?? "Unknown";
+}
+
+export const recordCashCount = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await svc.recordCashCount(org(req), req.params.id!, req.body, await counterName(req)));
+});
+
 export const completeReconciliation = asyncHandler(async (req: Request, res: Response) => {
   const user = await import("../user/user.model").then(({ User }) =>
     User.findOne({ _id: uid(req), "memberships.organizationId": org(req) }),

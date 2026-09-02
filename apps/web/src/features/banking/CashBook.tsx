@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Wallet } from "lucide-react";
+import { Calculator, Link2, Plus, Trash2, Wallet } from "lucide-react";
 import { formatMoney, toMinor, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
+import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
+import { CashCountDialog } from "@/features/banking/CashCountDialog";
 import {
   useBankTransactions,
   useCreateBankTransaction,
@@ -63,6 +65,8 @@ export function CashBook({ account }: { account: BankAccount }) {
   const [description, setDescription] = useState("");
   const [inAmount, setInAmount] = useState("");
   const [outAmount, setOutAmount] = useState("");
+  const [linking, setLinking] = useState<BankTransaction | null>(null);
+  const [counting, setCounting] = useState(false);
 
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
@@ -106,6 +110,11 @@ export function CashBook({ account }: { account: BankAccount }) {
         <span className="ml-auto text-xs text-foreground-muted">
           {total} {total === 1 ? "entry" : "entries"}
         </span>
+        {can("banking:reconcile") && (
+          <Button size="sm" variant="outline" onClick={() => setCounting(true)}>
+            <Calculator className="mr-1.5 h-3.5 w-3.5" /> Count cash
+          </Button>
+        )}
       </div>
 
       <div className="overflow-x-auto">
@@ -117,7 +126,7 @@ export function CashBook({ account }: { account: BankAccount }) {
               <th className="px-4 py-2 text-right font-medium">In</th>
               <th className="px-4 py-2 text-right font-medium">Out</th>
               <th className="px-4 py-2 text-right font-medium">Balance</th>
-              <th className="w-10 px-4 py-2" />
+              <th className="w-20 px-4 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -159,7 +168,15 @@ export function CashBook({ account }: { account: BankAccount }) {
                   <td className="whitespace-nowrap px-4 py-2 text-foreground-muted">
                     {tx.date.slice(0, 10)}
                   </td>
-                  <td className="px-4 py-2">{tx.description}</td>
+                  <td className="px-4 py-2">
+                    {tx.description}
+                    {tx.matches.length > 0 && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">
+                        <Link2 className="h-3 w-3" />
+                        {tx.matches.map((m) => m.referenceNumber).join(", ")}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-right font-numeric text-success">
                     {isIn ? formatMoney(tx.amountMinor, account.currency) : ""}
                   </td>
@@ -169,7 +186,17 @@ export function CashBook({ account }: { account: BankAccount }) {
                   <td className="px-4 py-2 text-right font-numeric font-medium">
                     {formatMoney(tx.runningBalanceMinor, account.currency)}
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="whitespace-nowrap px-4 py-2 text-right">
+                    {canWrite && tx.matches.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setLinking(tx)}
+                        className="mr-2 text-foreground-subtle hover:text-primary"
+                        aria-label={`Link ${tx.description} to a document`}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {canWrite && !tx.isReconciled && (
                       <button
                         type="button"
@@ -266,6 +293,18 @@ export function CashBook({ account }: { account: BankAccount }) {
           )}
         </table>
       </div>
+
+      <CashCountDialog account={account} open={counting} onClose={() => setCounting(false)} />
+
+      {linking && (
+        <LinkRowDialog
+          accountId={account.id}
+          tx={linking}
+          currency={account.currency}
+          open
+          onClose={() => setLinking(null)}
+        />
+      )}
 
       {total > PAGE_SIZE && (
         <div className="flex items-center gap-3 border-t border-border px-5 py-2 text-xs text-foreground-muted">

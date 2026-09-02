@@ -146,6 +146,21 @@ export const previewImportSchema = z.object({
 });
 export type PreviewImportInput = z.infer<typeof previewImportSchema>;
 
+/**
+ * Counting a tin.
+ *
+ * The same question a bank reconciliation asks — does the book agree with
+ * reality — with the counted cash standing in for a statement balance. The
+ * difference is posted as an entry of its own, or the count records a
+ * disagreement and then leaves it in place.
+ */
+export const cashCountSchema = z.object({
+  countedOn: z.string().min(1, "Date is required"),
+  countedMinor: z.number().int().min(0),
+  notes: z.string().max(300).optional().default(""),
+});
+export type CashCountInput = z.infer<typeof cashCountSchema>;
+
 export const matchTransactionSchema = bankTransactionMatchSchema;
 export type MatchTransactionInput = z.infer<typeof matchTransactionSchema>;
 

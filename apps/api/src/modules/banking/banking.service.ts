@@ -15,8 +15,9 @@ import type {
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
+  CashCountInput,
 } from "@delta/shared";
-import { fingerprint } from "@delta/shared";
+import { fingerprint, compareCashCount } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { BankAccount, type BankAccountDoc } from "./bank-account.model";
@@ -856,6 +857,87 @@ export async function completeReconciliation(
   );
   if (!updated) throw new AppError("NOT_FOUND", "Reconciliation session not found");
   return sessionToDTO(updated);
+}
+
+/**
+ * Count the tin, and make the book agree with what was counted.
+ *
+ * A count that records a disagreement and leaves it in place is not a count —
+ * the next one starts from the same wrong figure. So the difference is posted
+ * as an entry of its own, dated the day of the count, and the book balance ends
+ * up equal to the cash.
+ *
+ * The session records what was found *before* that entry, because the whole
+ * point of counting is knowing whether it agreed, and an adjustment that
+ * happened after the fact must not erase the answer.
+ *
+ * Everything up to the day of the count is marked reconciled: a count settles
+ * the whole tin, not a chosen subset of it, which is what makes it different
+ * from ticking off a bank statement line by line.
+ */
+export async function recordCashCount(
+  orgId: string,
+  accountId: string,
+  input: CashCountInput,
+  countedByName: string,
+): Promise<ReconciliationSessionDTO> {
+  const oid = new Types.ObjectId(orgId);
+  const account = await BankAccount.findOne({ _id: new Types.ObjectId(accountId), organizationId: oid });
+  if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
+
+  const countedOn = new Date(input.countedOn);
+  if (Number.isNaN(countedOn.getTime())) {
+    throw new AppError("VALIDATION_ERROR", "That is not a date");
+  }
+
+  const bookBalanceMinor = (account.currentBalanceMinor as number) ?? 0;
+  const { differenceMinor, adjustmentMinor, verdict } = compareCashCount(
+    input.countedMinor,
+    bookBalanceMinor,
+  );
+
+  const session = await ReconciliationSession.create({
+    organizationId: oid,
+    accountId: account._id,
+    accountName: account.accountName,
+    currency: account.currency,
+    statementDate: countedOn,
+    statementBalanceMinor: input.countedMinor,
+    openingBookBalanceMinor:
+      (account.lastReconciledStatementBalanceMinor as number | undefined) ??
+      (account.openingBalanceMinor as number) ??
+      0,
+    closingBookBalanceMinor: bookBalanceMinor,
+    differenceMinor,
+    notes: input.notes ?? "",
+    status: "completed",
+    completedAt: new Date(),
+    completedByName: countedByName,
+  });
+
+  // Named so it is obvious in the book why the balance moved, and over or short
+  // so nobody has to work out which from the sign.
+  if (adjustmentMinor !== 0) {
+    await addTransaction(orgId, accountId, {
+      date: input.countedOn,
+      description: `Cash count adjustment (${verdict})`,
+      reference: "",
+      amountMinor: adjustmentMinor,
+      notes: `Counted ${(input.countedMinor / 100).toFixed(2)} against a book balance of ${(bookBalanceMinor / 100).toFixed(2)}.`,
+    });
+  }
+
+  await BankTransaction.updateMany(
+    { organizationId: oid, accountId: account._id, date: { $lte: countedOn }, isReconciled: { $ne: true } },
+    { $set: { isReconciled: true, reconciledSessionId: String(session._id) } },
+  );
+
+  await BankAccount.updateOne(
+    { _id: account._id, organizationId: oid },
+    { $set: { lastReconciledAt: new Date(), lastReconciledStatementBalanceMinor: input.countedMinor } },
+  );
+
+  return sessionToDTO(session);
 }
 
 export async function getReconciliation(

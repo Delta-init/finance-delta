@@ -6,11 +6,14 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["bills"] as const;
 
-export function useBills(params: QueryParams = {}) {
+export function useBills(params: QueryParams = {}, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],
     queryFn: () => api.getList<Bill>("bills", params),
     placeholderData: (prev) => prev,
+    // Honoured only when given, so every existing caller is unaffected. It
+    // exists so a dialog can hold the hook without fetching until it is open.
+    enabled: options?.enabled ?? true,
   });
 }
 

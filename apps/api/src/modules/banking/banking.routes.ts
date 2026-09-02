@@ -7,6 +7,7 @@ import {
   bulkImportTransactionsSchema,
   previewImportSchema,
   matchTransactionSchema,
+  cashCountSchema,
   startReconciliationSchema,
   updateReconciliationSchema,
 } from "@delta/shared";
@@ -51,5 +52,7 @@ router.post("/:id/reconciliations", requirePermission("banking:reconcile"), vali
 router.get("/:id/reconciliations/:sessionId", requirePermission("banking:read"), c.getReconciliation);
 router.patch("/:id/reconciliations/:sessionId", requirePermission("banking:reconcile"), validateBody(updateReconciliationSchema), c.updateReconciliation);
 router.post("/:id/reconciliations/:sessionId/complete", requirePermission("banking:reconcile"), c.completeReconciliation);
+// Counting a tin, which settles it in one go rather than line by line.
+router.post("/:id/cash-count", requirePermission("banking:reconcile"), validateBody(cashCountSchema), c.recordCashCount);
 
 export default router;

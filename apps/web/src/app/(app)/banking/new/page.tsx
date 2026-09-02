@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -18,6 +18,7 @@ import { BANK_ACCOUNT_TYPE_LABELS, type BankAccountType } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 
 const ACCOUNT_TYPES = Object.keys(BANK_ACCOUNT_TYPE_LABELS) as BankAccountType[];
+const PRESET_TYPES: string[] = ACCOUNT_TYPES;
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -43,6 +44,7 @@ function toMinor(val: string): number {
 }
 
 export default function NewBankAccountPage() {
+  const presetType = useSearchParams().get("type") ?? "";
   const router = useRouter();
   const createAccount = useCreateBankAccount();
   const { currency: orgCurrency } = useCurrency();
@@ -57,7 +59,10 @@ export default function NewBankAccountPage() {
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      accountType: "current",
+      // Prefilled when arriving from a screen that already knows what is being
+      // set up — the petty cash page sends ?type=petty_cash — so nobody has to
+      // pick the one thing the link was about.
+      accountType: PRESET_TYPES.includes(presetType) ? (presetType as BankAccountType) : "current",
       currency: orgCurrency,
       openingBalanceDisplay: "0",
       openingDate: today,

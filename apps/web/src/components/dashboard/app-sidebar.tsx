@@ -124,6 +124,9 @@ const NAV: NavGroup[] = [
       { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"] },
       { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
       { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
+      // A tin is a bank account underneath, and finding it meant knowing that.
+      // The people who keep one do not think of it as a bank account.
+      { href: "/petty-cash", label: "Petty Cash", icon: Wallet, enabled: true, permission: "banking:read" },
       { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
       { href: "/reports", label: "Reports", icon: BarChart3, enabled: true, permission: "report:read" },
       { href: "/reports/daily", label: "Daily Report", icon: BarChart3, enabled: true, permission: "report:read" },

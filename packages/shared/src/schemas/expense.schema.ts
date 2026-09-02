@@ -55,6 +55,15 @@ export const createExpenseSchema = z.object({
   expenseDate: z.string().min(1, "Expense date is required"),
   amountMinor: z.number().min(0, "Amount must be non-negative"),
   currency: z.string().min(3).max(3).optional(),
+  /**
+   * What "Other" actually was.
+   *
+   * Only read when the category is `other`, which is the escape hatch for a
+   * spend nothing else describes — and an escape hatch nobody can label just
+   * produces a column of claims all saying "Other". Reports still group on the
+   * slug, so naming one does not fragment them.
+   */
+  categoryOther: z.string().max(60).optional().default(""),
   taxPct: z.number().min(0).max(100).default(0),
   /**
    * Whether the amount above already contains the tax.
@@ -162,3 +171,17 @@ export const expenseSchema = z.object({
   createdAt: z.string(),
 });
 export type Expense = z.infer<typeof expenseSchema>;
+
+/**
+ * What to store as a claim's category name.
+ *
+ * The typed name wins for "Other" and nowhere else. Letting it override a real
+ * category would allow a claim filed under Rent to call itself Coffee, and the
+ * name is what every screen shows — so the slug and the label would disagree
+ * about the same claim.
+ */
+export function resolveCategoryName(category: string, label: string, typed?: string): string {
+  if (category !== "other") return label;
+  const named = typed?.trim();
+  return named ? named.slice(0, 60) : label;
+}

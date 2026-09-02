@@ -39,6 +39,11 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
 
   const initialValues: Partial<ExpenseFormValues> = {
     category: expense.category,
+    // The typed name lives in categoryName. Left blank when it is just the
+    // category's own label, so an untouched claim does not reopen looking as
+    // though somebody had typed "Other" into the box.
+    categoryOther:
+      expense.category === "other" && expense.categoryName !== "Other" ? expense.categoryName : "",
     description: expense.description,
     expenseDate: expense.expenseDate,
     // Shown back the way it was typed. amountMinor holds the net, so a claim

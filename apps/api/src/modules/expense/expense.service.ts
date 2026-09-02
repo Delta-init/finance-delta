@@ -7,7 +7,7 @@ import type {
   Paginated,
   RejectExpenseInput,
 } from "@delta/shared";
-import { EXPENSE_CATEGORY_LABELS, computeExpenseTax } from "@delta/shared";
+import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import type { ParsedFile } from "../../middleware/upload";
@@ -184,12 +184,13 @@ export async function createExpense(
   const catMap = await categoryNameMap(orgId);
   const catName = catMap.get(input.category);
   if (!catName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
+  const displayName = resolveCategoryName(input.category, catName, input.categoryOther);
 
   const doc = await Expense.create({
     organizationId: new Types.ObjectId(orgId),
     expenseNumber,
     category: input.category,
-    categoryName: catName,
+    categoryName: displayName,
     description: input.description,
     expenseDate: new Date(input.expenseDate),
     amountMinor: netMinor,
@@ -243,12 +244,13 @@ export async function updateExpense(
 
   const d = doc as unknown as Record<string, unknown>;
 
-  if (input.category !== undefined) {
-    d.category = input.category;
+  if (input.category !== undefined || input.categoryOther !== undefined) {
+    const category = input.category ?? (d.category as string);
     const catMap = await categoryNameMap(orgId);
-    const nm = catMap.get(input.category);
-    if (!nm) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
-    d.categoryName = nm;
+    const nm = catMap.get(category);
+    if (!nm) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${category}"`);
+    d.category = category;
+    d.categoryName = resolveCategoryName(category, nm, input.categoryOther);
   }
   if (input.description !== undefined) doc.description = input.description;
   if (input.expenseDate !== undefined) d.expenseDate = new Date(input.expenseDate);

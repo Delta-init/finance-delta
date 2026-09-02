@@ -39,6 +39,7 @@ const formSchema = z.object({
   expenseDate: z.string().min(1, "Expense date is required"),
   amountDisplay: z.string().min(1, "Amount is required"),
   currency: z.string().default("AED"),
+  categoryOther: z.string().max(60).optional().default(""),
   taxPct: z.coerce.number().min(0).max(100).default(0),
   taxInclusive: z.boolean().default(false),
   paymentAccount: z.string().optional(),
@@ -81,6 +82,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         category: "other",
         expenseDate: today,
         currency: orgCurrency,
+        categoryOther: "",
         taxPct: 0,
         taxInclusive: false,
         requiresApproval: false,
@@ -121,6 +123,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       expenseDate: values.expenseDate,
       amountMinor: toMinor(values.amountDisplay),
       currency: values.currency,
+      categoryOther: values.categoryOther ?? "",
       taxPct: values.taxPct ?? 0,
       taxInclusive: values.taxInclusive ?? false,
       paymentAccount: values.paymentAccount ?? "",
@@ -194,6 +197,23 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
                 </SelectContent>
               </Select>
               {errors.category && <p className="text-xs text-danger">{errors.category.message}</p>}
+              {/* "Other" is the escape hatch for a spend nothing else describes,
+                  and one nobody can name just produces a column of claims all
+                  saying "Other". Reports still group on the category, so naming
+                  one does not split them up. */}
+              {catWatch === "other" && (
+                <div className="space-y-1.5 pt-1">
+                  <Label>Name it</Label>
+                  <Input
+                    {...register("categoryOther")}
+                    placeholder="e.g. Office plants"
+                    maxLength={60}
+                  />
+                  <p className="text-xs text-foreground-muted">
+                    Optional. Shown instead of &ldquo;Other&rdquo; on this claim.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Expense Date *</Label>

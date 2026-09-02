@@ -22,6 +22,23 @@ const ACCOUNTS_KEY = ["bank-accounts"] as const;
 const txKey = (accountId: string) => [...ACCOUNTS_KEY, accountId, "transactions"] as const;
 const reconcileKey = (accountId: string) => [...ACCOUNTS_KEY, accountId, "reconciliations"] as const;
 
+/**
+ * Refetch everything a change to an account can touch.
+ *
+ * Invalidating ["bank-accounts", id] looks like it covers the lot, and misses
+ * the one query that matters most: the account *list* is keyed
+ * ["bank-accounts", params], which that prefix cannot match. So the balance in
+ * a page header went on showing a figure from before the change while the rows
+ * underneath it were right.
+ *
+ * Invalidating the root covers the list, the account, its transactions and its
+ * counts in one go. A handful of extra refetches is a cheap price for never
+ * showing two figures that disagree about the same tin.
+ */
+function refreshAccount(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+}
+
 // ── Accounts ──────────────────────────────────────────────────────────────────
 
 export function useBankAccounts(params: QueryParams = {}) {
@@ -46,7 +63,7 @@ export function useCreateBankAccount() {
     meta: { skipToast: true },
     mutationFn: (input: CreateBankAccountInput) =>
       api.post<BankAccount>("bank-accounts", input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ACCOUNTS_KEY }),
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -56,10 +73,7 @@ export function useUpdateBankAccount(id: string) {
     meta: { skipToast: true },
     mutationFn: (input: UpdateBankAccountInput) =>
       api.patch<BankAccount>(`bank-accounts/${id}`, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, id] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -68,10 +82,7 @@ export function useDeactivateBankAccount(id: string) {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: () => api.post<BankAccount>(`bank-accounts/${id}/deactivate`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, id] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -92,10 +103,7 @@ export function useCreateBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (input: CreateBankTransactionInput) =>
       api.post<BankTransaction>(`bank-accounts/${accountId}/transactions`, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -112,10 +120,7 @@ export function useUpdateBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: ({ txId, input }: { txId: string; input: UpdateBankTransactionInput }) =>
       api.patch<BankTransaction>(`bank-accounts/${accountId}/transactions/${txId}`, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -125,10 +130,7 @@ export function useDeleteBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (txId: string) =>
       api.del<void>(`bank-accounts/${accountId}/transactions/${txId}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -156,10 +158,7 @@ export function useBulkImportTransactions(accountId: string) {
         `bank-accounts/${accountId}/transactions/bulk`,
         input,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -176,7 +175,7 @@ function useTxAction(action: string, accountId: string, txId: string) {
         : api.post<BankTransaction>(
             `bank-accounts/${accountId}/transactions/${txId}/${action}`,
           ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: txKey(accountId) }),
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -189,7 +188,7 @@ export const useMatchTransaction = (accountId: string, txId: string) => {
         `bank-accounts/${accountId}/transactions/${txId}/match`,
         input,
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: txKey(accountId) }),
+    onSuccess: () => refreshAccount(qc),
   });
 };
 export const useUnmatchTransaction = (accountId: string, txId: string) =>
@@ -236,7 +235,7 @@ export function useStartReconciliation(accountId: string) {
         `bank-accounts/${accountId}/reconciliations`,
         input,
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: reconcileKey(accountId) }),
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -249,10 +248,7 @@ export function useUpdateReconciliation(accountId: string, sessionId: string) {
         `bank-accounts/${accountId}/reconciliations/${sessionId}`,
         input,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...reconcileKey(accountId), sessionId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -264,11 +260,7 @@ export function useCompleteReconciliation(accountId: string, sessionId: string) 
       api.post<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations/${sessionId}/complete`,
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...reconcileKey(accountId), sessionId] });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -279,11 +271,7 @@ export function useRecordCashCount(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (input: CashCountInput) =>
       api.post<ReconciliationSession>(`bank-accounts/${accountId}/cash-count`, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -293,11 +281,7 @@ export function useUpdateCashCount(accountId: string) {
     meta: { skipToast: true },
     mutationFn: ({ sessionId, input }: { sessionId: string; input: CashCountInput }) =>
       api.patch<ReconciliationSession>(`bank-accounts/${accountId}/cash-count/${sessionId}`, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }
 
@@ -308,10 +292,6 @@ export function useDeleteCashCount(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (sessionId: string) =>
       api.del<void>(`bank-accounts/${accountId}/cash-count/${sessionId}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: txKey(accountId) });
-      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
-      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
-    },
+    onSuccess: () => refreshAccount(qc),
   });
 }

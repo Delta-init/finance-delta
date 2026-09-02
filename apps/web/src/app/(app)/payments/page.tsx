@@ -1,5 +1,7 @@
 "use client";
 
+import { PAYMENT_METHODS, paymentMethodLabel } from "@delta/shared";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -16,14 +18,15 @@ import { useTableQuery } from "@/lib/use-table-query";
 import type { ExportColumn } from "@/lib/export";
 import { CreditCard, Search, X, Printer } from "lucide-react";
 
-const METHODS = ["bank_transfer", "cash", "cheque", "card", "online", "easebuzz_emi"] as const;
-const METHOD_LABEL = (m: string) => (m === "easebuzz_emi" ? "Easebuzz EMI" : m.replace("_", " "));
+// The list an invoice payment can actually use, so the filter cannot offer a
+// method no payment will ever have.
+const METHODS = PAYMENT_METHODS;
 
 const PAYMENTS_EXPORT_COLUMNS: ExportColumn<PaymentDTO>[] = [
   { header: "Date", value: (p) => p.paidOn },
   { header: "Invoice", value: (p) => p.invoiceNumber },
   { header: "Customer", value: (p) => p.customerName },
-  { header: "Method", value: (p) => METHOD_LABEL(p.method) },
+  { header: "Method", value: (p) => paymentMethodLabel(p.method) },
   { header: "Account", value: (p) => p.accountName || "" },
   { header: "Reference", value: (p) => p.reference || "" },
   { header: "Amount", value: (p) => p.amountMinor / 100 },
@@ -86,7 +89,7 @@ export default function PaymentsPage() {
       key: "method",
       header: "Method",
       sortable: true,
-      cell: (p) => <span className="capitalize text-foreground-muted">{METHOD_LABEL(p.method)}</span>,
+      cell: (p) => <span className="capitalize text-foreground-muted">{paymentMethodLabel(p.method)}</span>,
     },
     {
       key: "account",
@@ -154,7 +157,7 @@ export default function PaymentsPage() {
               <SelectItem value="all">All methods</SelectItem>
               {METHODS.map((m) => (
                 <SelectItem key={m} value={m} className="capitalize">
-                  {METHOD_LABEL(m)}
+                  {paymentMethodLabel(m)}
                 </SelectItem>
               ))}
             </SelectContent>

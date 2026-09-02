@@ -22,6 +22,34 @@ export const PAYMENT_METHODS = [
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/**
+ * What each payment method is called on screen.
+ *
+ * Here rather than in each screen that shows one: four copies had drifted, and
+ * a method missing from a copy renders as a raw slug like "easebuzz_emi" in
+ * front of a client.
+ */
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: "Cash",
+  bank_transfer: "Bank transfer",
+  cheque: "Cheque",
+  card: "Card",
+  easebuzz_emi: "Easebuzz EMI",
+  tabby: "Tabby",
+  tamara: "Tamara",
+  billexpro: "Smart Invoice / BillExPro",
+  other: "Other",
+};
+
+/** The label, or the slug tidied up, for a method stored before this list grew. */
+export function paymentMethodLabel(method: string | undefined | null): string {
+  if (!method) return "";
+  return (
+    PAYMENT_METHOD_LABELS[method as PaymentMethod] ??
+    method.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
 export const INVOICE_STATUSES = [
   "draft",
   "sent",

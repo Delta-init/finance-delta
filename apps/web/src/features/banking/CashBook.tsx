@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Download, Link2, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
-import { formatMoney, toCsv, type BankAccount, type BankTransaction } from "@delta/shared";
+import { Calculator, Link2, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, ApiError } from "@/lib/api";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
+import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { downloadTextFile } from "@/lib/download";
 import { useCan } from "@/lib/use-can";
 import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
 import { CashCountDialog } from "@/features/banking/CashCountDialog";
@@ -36,6 +37,26 @@ import {
  * after it moves — which is the thing a spreadsheet gets wrong.
  */
 
+/**
+ * What a cash book exports.
+ *
+ * In and Out as separate numeric columns, the way the book reads — one signed
+ * column would need a minus sign to tell them apart in a spreadsheet too.
+ * Numbers stay numbers so Excel can total them.
+ */
+const EXPORT_COLUMNS = (account: BankAccount): ExportColumn<BankTransaction>[] => [
+  { header: "Date", value: (t) => t.date.slice(0, 10) },
+  { header: "Description", value: (t) => t.description },
+  { header: "Reference", value: (t) => t.reference ?? "" },
+  { header: `In (${account.currency})`, value: (t) => (t.amountMinor >= 0 ? t.amountMinor / 100 : "") },
+  { header: `Out (${account.currency})`, value: (t) => (t.amountMinor < 0 ? -t.amountMinor / 100 : "") },
+  { header: `Balance (${account.currency})`, value: (t) => t.runningBalanceMinor / 100 },
+  { header: "Linked to", value: (t) => t.matches.map((m) => m.referenceNumber).join(" ") },
+  { header: "Receipts", value: (t) => t.attachments.length },
+  { header: "Counted", value: (t) => (t.isReconciled ? "yes" : "") },
+  { header: "Notes", value: (t) => t.notes ?? "" },
+];
+
 /** The server caps a page at 100. */
 const PAGE_SIZE = 100;
 
@@ -57,7 +78,6 @@ export function CashBook({ account }: { account: BankAccount }) {
   // A tin is read a month at a time, and exported the same way.
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [exporting, setExporting] = useState(false);
   const [receipts, setReceipts] = useState<BankTransaction | null>(null);
   const filters = {
     sort: "date",
@@ -80,49 +100,6 @@ export function CashBook({ account }: { account: BankAccount }) {
   const rows = data?.data ?? [];
   const filtered = Boolean(dateFrom || dateTo);
 
-  /*
-   * Every row the filter covers, not the page on screen.
-   *
-   * An export that quietly stops at a hundred rows is worse than none: the file
-   * opens, the columns look right, and the total is wrong by however much was
-   * left behind.
-   */
-  async function exportCsv() {
-    setExporting(true);
-    try {
-      const all: BankTransaction[] = [];
-      for (let p = 1; ; p++) {
-        const res = await api.getList<BankTransaction>(
-          `bank-accounts/${account.id}/transactions`,
-          { ...filters, page: p, pageSize: PAGE_SIZE },
-        );
-        all.push(...res.data);
-        if (all.length >= res.meta.total || res.data.length === 0) break;
-      }
-
-      const money = (minor: number) => (minor / 100).toFixed(2);
-      const csv = toCsv(all, [
-        { header: "Date", value: (t) => t.date.slice(0, 10) },
-        { header: "Description", value: (t) => t.description },
-        { header: "Reference", value: (t) => t.reference ?? "" },
-        { header: `In (${account.currency})`, value: (t) => (t.amountMinor >= 0 ? money(t.amountMinor) : "") },
-        { header: `Out (${account.currency})`, value: (t) => (t.amountMinor < 0 ? money(-t.amountMinor) : "") },
-        { header: `Balance (${account.currency})`, value: (t) => money(t.runningBalanceMinor) },
-        { header: "Linked to", value: (t) => t.matches.map((m) => m.referenceNumber).join(" ") },
-        { header: "Counted", value: (t) => (t.isReconciled ? "yes" : "") },
-        { header: "Notes", value: (t) => t.notes ?? "" },
-      ]);
-
-      const span = filtered ? `-${dateFrom || "start"}-to-${dateTo || "today"}` : "";
-      const safeName = account.accountName.replace(/[^a-zA-Z0-9._-]/g, "-");
-      downloadTextFile(`cash-book-${safeName}${span}.csv`, csv);
-      toast.success(`Exported ${all.length} ${all.length === 1 ? "entry" : "entries"}`);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not export the cash book");
-    } finally {
-      setExporting(false);
-    }
-  }
   const total = data?.meta.total ?? 0;
 
   return (
@@ -178,16 +155,19 @@ export function CashBook({ account }: { account: BankAccount }) {
             <X className="mr-1 h-3.5 w-3.5" /> Clear
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="outline"
-          className="ml-auto"
-          loading={exporting}
-          disabled={total === 0}
-          onClick={exportCsv}
-        >
-          <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
-        </Button>
+        <div className="ml-auto">
+          {/* The app's own export control: Excel or PDF, the full filtered set
+              rather than the page on screen, and the same button everywhere
+              else in the product. */}
+          <ExportButton<BankTransaction>
+            resource={`bank-accounts/${account.id}/transactions`}
+            params={filters}
+            columns={EXPORT_COLUMNS(account)}
+            filename={`cash-book-${account.accountName.replace(/[^a-zA-Z0-9._-]/g, "-")}`}
+            title={`Cash book — ${account.accountName}`}
+            disabled={total === 0}
+          />
+        </div>
       </div>
 
       <div className="overflow-x-auto">

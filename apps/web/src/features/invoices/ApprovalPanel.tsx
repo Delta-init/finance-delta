@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock } from "lucide-react";
-import { formatMoney, type Invoice } from "@delta/shared";
+import { formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -16,11 +16,6 @@ import { useCan } from "@/lib/use-can";
 import { useApproveInvoice, useReturnInvoice, useResubmitInvoice } from "@/features/invoices/api";
 
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
-const METHOD_LABELS: Record<string, string> = {
-  cash: "Cash", bank_transfer: "Bank transfer", cheque: "Cheque", card: "Card",
-  easebuzz_emi: "Easebuzz EMI", tabby: "Tabby", tamara: "Tamara",
-  billexpro: "Smart Invoice / BillexPro", other: "Other",
-};
 
 /**
  * The decision an invoice is waiting on, and the enrolment behind it where
@@ -90,7 +85,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
             <Detail
               label="Collected by counsellor"
               value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
-                e.declaredPaymentMethod ? ` · ${METHOD_LABELS[e.declaredPaymentMethod] ?? e.declaredPaymentMethod}` : ""
+                e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
               }`}
             />
           ) : null}

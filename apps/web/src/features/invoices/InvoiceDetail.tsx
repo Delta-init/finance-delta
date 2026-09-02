@@ -12,7 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing,} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel,} from "@delta/shared";
 
 const paymentFormSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
@@ -360,7 +360,7 @@ export function InvoiceDetail({ id }: { id: string }) {
                 <tr key={p.id} className="border-t border-border">
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.paidOn}</td>
                   <td className="px-4 py-2.5 align-top">
-                    <span className="capitalize">{p.method === "easebuzz_emi" ? "Easebuzz EMI" : p.method.replace("_", " ")}</span>
+                    <span className="capitalize">{paymentMethodLabel(p.method)}</span>
                     {p.emi && (
                       <span className="mt-0.5 block text-xs text-foreground-muted">
                         {p.emi.tenureMonths} mo{p.emi.interestPct ? ` · ${p.emi.interestPct}%` : ""}{p.emi.bank ? ` · ${p.emi.bank}` : ""}
@@ -531,18 +531,6 @@ function PaymentDialog({
     }
   }
 
-  const METHOD_LABELS: Record<string, string> = {
-    cash: "Cash",
-    bank_transfer: "Bank Transfer",
-    cheque: "Cheque",
-    card: "Card",
-    easebuzz_emi: "Easebuzz EMI",
-    tabby: "Tabby",
-    tamara: "Tamara",
-    billexpro: "Smart Invoice / BillexPro",
-    other: "Other",
-  };
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
       <DialogContent className="sm:max-w-md">
@@ -559,7 +547,7 @@ function PaymentDialog({
                 </SelectTrigger>
                 <SelectContent>
                   {PAYMENT_METHODS.map((m) => (
-                    <SelectItem key={m} value={m}>{METHOD_LABELS[m]}</SelectItem>
+                    <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

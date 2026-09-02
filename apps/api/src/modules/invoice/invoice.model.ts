@@ -1,4 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
+import { PAYMENT_METHODS } from "@delta/shared";
 
 const taxRateSchema = new Schema(
   { code: { type: String, required: true }, rate: { type: Number, required: true }, amountMinor: { type: Number, required: true } },
@@ -83,7 +84,10 @@ const paymentSubSchema = new Schema(
       type: String,
       // Kept in step with PAYMENT_METHODS in the shared schema; a method the
       // form offers but the model rejects fails only at save time.
-      enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "tabby", "other"],
+      // Taken from the shared list rather than written out again. Spelling it
+      // twice is how "tabby" came to be accepted by the form and refused by the
+      // database, and tamara and billexpro had quietly gone the same way.
+      enum: [...PAYMENT_METHODS],
       required: true,
     },
     amountMinor: { type: Number, required: true, min: 0 },
@@ -134,7 +138,7 @@ const invoiceSchema = new Schema(
           declaredPaidMinor: { type: Number, default: 0 },
           declaredPaymentMethod: {
             type: String,
-            enum: ["cash", "bank_transfer", "cheque", "card", "easebuzz_emi", "tabby", "other"],
+            enum: [...PAYMENT_METHODS],
           },
         },
         { _id: false },

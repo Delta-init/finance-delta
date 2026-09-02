@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { GraduationCap, User, Wallet, Paperclip, X, FileText } from "lucide-react";
-import { MODES_OF_STUDY, PAYMENT_METHODS, toMinor, formatMoney } from "@delta/shared";
+import { MODES_OF_STUDY, PAYMENT_METHODS, paymentMethodLabel, toMinor, formatMoney } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -54,17 +54,6 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
-const METHOD_LABELS: Record<string, string> = {
-  cash: "Cash",
-  bank_transfer: "Bank transfer",
-  cheque: "Cheque",
-  card: "Card",
-  easebuzz_emi: "Easebuzz EMI",
-  tabby: "Tabby",
-  tamara: "Tamara",
-  billexpro: "Smart Invoice / BillexPro",
-  other: "Other",
-};
 const MODE_LABELS: Record<string, string> = {
   online: "Online",
   offline: "Offline",
@@ -324,7 +313,7 @@ export function EnrolmentForm() {
               <SelectContent>
                 <SelectItem value={NONE}>Not taken yet</SelectItem>
                 {PAYMENT_METHODS.map((m) => (
-                  <SelectItem key={m} value={m}>{METHOD_LABELS[m] ?? m}</SelectItem>
+                  <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

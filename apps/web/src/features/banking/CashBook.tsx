@@ -161,6 +161,17 @@ export function CashBook({ account }: { account: BankAccount }) {
                     {formatMoney(tx.runningBalanceMinor, account.currency)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right">
+                    {/* A counted row is evidence, so it cannot be changed while
+                        the count stands. Said rather than left as an empty cell
+                        somebody reads as a bug. */}
+                    {canWrite && tx.isReconciled && (
+                      <span
+                        className="text-[11px] text-foreground-subtle"
+                        title="Signed off by a cash count. Withdraw the count below to change it."
+                      >
+                        counted
+                      </span>
+                    )}
                     {canWrite && !tx.isReconciled && (
                       <button
                         type="button"

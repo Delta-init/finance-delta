@@ -8,6 +8,7 @@ import {
   previewImportSchema,
   matchTransactionSchema,
   cashCountSchema,
+  updateCashCountSchema,
   startReconciliationSchema,
   updateReconciliationSchema,
 } from "@delta/shared";
@@ -54,5 +55,9 @@ router.patch("/:id/reconciliations/:sessionId", requirePermission("banking:recon
 router.post("/:id/reconciliations/:sessionId/complete", requirePermission("banking:reconcile"), c.completeReconciliation);
 // Counting a tin, which settles it in one go rather than line by line.
 router.post("/:id/cash-count", requirePermission("banking:reconcile"), validateBody(cashCountSchema), c.recordCashCount);
+// Correcting or withdrawing one. A count locks the entries it covered, so
+// withdrawing it is the only way back to a row that needs fixing.
+router.patch("/:id/cash-count/:sessionId", requirePermission("banking:reconcile"), validateBody(updateCashCountSchema), c.updateCashCount);
+router.delete("/:id/cash-count/:sessionId", requirePermission("banking:reconcile"), c.deleteCashCount);
 
 export default router;

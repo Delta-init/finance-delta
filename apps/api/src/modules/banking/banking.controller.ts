@@ -119,6 +119,21 @@ async function counterName(req: Request): Promise<string> {
   return u?.name ?? "Unknown";
 }
 
+export const updateCashCount = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await svc.updateCashCount(
+    org(req),
+    req.params.id!,
+    req.params.sessionId!,
+    req.body,
+    await counterName(req),
+  ));
+});
+
+export const deleteCashCount = asyncHandler(async (req: Request, res: Response) => {
+  await svc.deleteCashCount(org(req), req.params.id!, req.params.sessionId!);
+  res.status(204).end();
+});
+
 export const recordCashCount = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await svc.recordCashCount(org(req), req.params.id!, req.body, await counterName(req)));
 });

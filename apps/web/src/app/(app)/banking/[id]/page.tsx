@@ -40,6 +40,7 @@ import {
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 import { CashBook } from "@/features/banking/CashBook";
+import { CashCounts } from "@/features/banking/CashCounts";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -265,6 +266,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           first, money in and out in their own columns, balance carried down.
           The generic list stays below it for searching and reconciling. */}
       {account.accountType === "petty_cash" && <CashBook account={account} />}
+
+      {account.accountType === "petty_cash" && <CashCounts account={account} />}
 
       {account.accountType !== "petty_cash" && <PaymentDetailsCard account={account} />}
 

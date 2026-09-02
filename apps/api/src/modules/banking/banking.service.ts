@@ -107,6 +107,8 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
     closingBookBalanceMinor: doc.closingBookBalanceMinor,
     differenceMinor: doc.differenceMinor,
     status: doc.status as ReconciliationSessionDTO["status"],
+    adjustmentTransactionId:
+      (doc as unknown as { adjustmentTransactionId?: string }).adjustmentTransactionId ?? undefined,
     reconciledTransactionIds: (doc.reconciledTransactionIds as unknown as Types.ObjectId[]).map(
       (id) => id.toString(),
     ),
@@ -918,13 +920,19 @@ export async function recordCashCount(
   // Named so it is obvious in the book why the balance moved, and over or short
   // so nobody has to work out which from the sign.
   if (adjustmentMinor !== 0) {
-    await addTransaction(orgId, accountId, {
+    const adjustment = await addTransaction(orgId, accountId, {
       date: input.countedOn,
       description: `Cash count adjustment (${verdict})`,
       reference: "",
       amountMinor: adjustmentMinor,
       notes: `Counted ${(input.countedMinor / 100).toFixed(2)} against a book balance of ${(bookBalanceMinor / 100).toFixed(2)}.`,
     });
+    // So undoing the count can take it back out again.
+    await ReconciliationSession.updateOne(
+      { _id: session._id },
+      { $set: { adjustmentTransactionId: adjustment.id } },
+    );
+    session.set("adjustmentTransactionId", adjustment.id);
   }
 
   await BankTransaction.updateMany(
@@ -938,6 +946,86 @@ export async function recordCashCount(
   );
 
   return sessionToDTO(session);
+}
+
+/**
+ * Undo a cash count.
+ *
+ * Counting locks every entry up to its date, which is right — they were signed
+ * off against a figure somebody counted. But it also means a mistyped entry
+ * becomes uncorrectable, and the only honest way back is to withdraw the count
+ * that signed it off rather than to quietly edit underneath one.
+ *
+ * Takes back the adjustment it posted, releases the entries it locked, and
+ * hands the account back to whichever count came before it — so the next count
+ * measures from where the last real one left off, not from nothing.
+ */
+export async function deleteCashCount(
+  orgId: string,
+  accountId: string,
+  sessionId: string,
+): Promise<void> {
+  const oid = new Types.ObjectId(orgId);
+  const session = await ReconciliationSession.findOne({
+    _id: new Types.ObjectId(sessionId),
+    accountId: new Types.ObjectId(accountId),
+    organizationId: oid,
+  });
+  if (!session) throw new AppError("NOT_FOUND", "Count not found");
+
+  const adjustmentId = (session as unknown as { adjustmentTransactionId?: string })
+    .adjustmentTransactionId;
+  if (adjustmentId) {
+    await BankTransaction.deleteOne({ _id: new Types.ObjectId(adjustmentId), organizationId: oid });
+  }
+
+  await BankTransaction.updateMany(
+    { organizationId: oid, accountId: session.accountId, reconciledSessionId: sessionId },
+    { $unset: { isReconciled: "", reconciledSessionId: "" } },
+  );
+
+  await ReconciliationSession.deleteOne({ _id: session._id });
+
+  // Whatever count now stands as the most recent one for this account.
+  const previous = await ReconciliationSession.findOne({
+    organizationId: oid,
+    accountId: session.accountId,
+    status: "completed",
+  }).sort({ statementDate: -1, completedAt: -1 });
+
+  await BankAccount.updateOne(
+    { _id: session.accountId, organizationId: oid },
+    previous
+      ? {
+          $set: {
+            lastReconciledAt: previous.completedAt ?? new Date(),
+            lastReconciledStatementBalanceMinor: previous.statementBalanceMinor,
+          },
+        }
+      : { $unset: { lastReconciledAt: "", lastReconciledStatementBalanceMinor: "" } },
+  );
+
+  // The adjustment may have gone, so every balance after it has moved.
+  await recalculateRunningBalances(orgId, session.accountId as unknown as Types.ObjectId);
+}
+
+/**
+ * Correct a count that was already recorded.
+ *
+ * Withdrawn and taken again rather than edited in place. A count owns an
+ * adjustment entry, a set of locked rows and the account's last-counted mark;
+ * editing the figure alone would leave those three disagreeing with it, and
+ * with each other.
+ */
+export async function updateCashCount(
+  orgId: string,
+  accountId: string,
+  sessionId: string,
+  input: CashCountInput,
+  countedByName: string,
+): Promise<ReconciliationSessionDTO> {
+  await deleteCashCount(orgId, accountId, sessionId);
+  return recordCashCount(orgId, accountId, input, countedByName);
 }
 
 export async function getReconciliation(

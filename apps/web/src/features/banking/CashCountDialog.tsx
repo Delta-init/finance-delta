@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Calculator } from "lucide-react";
-import { compareCashCount, formatMoney, toMinor, type BankAccount } from "@delta/shared";
+import { compareCashCount, formatMoney, toMinor, type BankAccount, type ReconciliationSession } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useRecordCashCount } from "@/features/banking/api";
+import { useRecordCashCount, useUpdateCashCount } from "@/features/banking/api";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -24,19 +24,36 @@ const today = () => new Date().toISOString().slice(0, 10);
  */
 export function CashCountDialog({
   account,
+  session,
   open,
   onClose,
 }: {
   account: BankAccount;
+  /** The count being corrected, or nothing when taking a new one. */
+  session?: ReconciliationSession | null;
   open: boolean;
   onClose: () => void;
 }) {
   const count = useRecordCashCount(account.id);
+  const amend = useUpdateCashCount(account.id);
+  const correcting = Boolean(session);
   const [countedOn, setCountedOn] = useState(today);
   const [counted, setCounted] = useState("");
   const [notes, setNotes] = useState("");
 
-  const book = account.currentBalanceMinor;
+  useEffect(() => {
+    if (!open) return;
+    setCountedOn(session ? session.statementDate.slice(0, 10) : today());
+    setCounted(session ? (session.statementBalanceMinor / 100).toFixed(2) : "");
+    setNotes(session?.notes ?? "");
+  }, [open, session]);
+
+  /*
+   * Correcting a count compares against the book as it was before that count
+   * touched it — its own adjustment is about to be withdrawn, so counting it
+   * would measure the tin against a figure the count itself created.
+   */
+  const book = correcting ? session!.closingBookBalanceMinor : account.currentBalanceMinor;
   const entered = counted.trim().length > 0;
   const countedMinor = toMinor(counted || "0");
   const { differenceMinor: difference, verdict } = compareCashCount(countedMinor, book);
@@ -44,7 +61,9 @@ export function CashCountDialog({
   async function submit() {
     if (!entered) return;
     try {
-      await count.mutateAsync({ countedOn, countedMinor, notes: notes.trim() });
+      const body = { countedOn, countedMinor, notes: notes.trim() };
+      if (correcting) await amend.mutateAsync({ sessionId: session!.id, input: body });
+      else await count.mutateAsync(body);
       toast.success(
         difference === 0
           ? "Counted, and the tin agrees"
@@ -63,10 +82,13 @@ export function CashCountDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Calculator className="h-4 w-4 text-foreground-muted" /> Count the cash
+            <Calculator className="h-4 w-4 text-foreground-muted" />
+            {correcting ? "Correct this count" : "Count the cash"}
           </DialogTitle>
           <DialogDescription>
-            Count what is actually in the tin. Everything up to this date is settled in one go.
+            {correcting
+              ? "The count is taken again with these figures, and its previous adjustment withdrawn."
+              : "Count what is actually in the tin. Everything up to this date is settled in one go."}
           </DialogDescription>
         </DialogHeader>
 
@@ -139,8 +161,8 @@ export function CashCountDialog({
 
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button loading={count.isPending} disabled={!entered} onClick={submit}>
-            Record count
+          <Button loading={count.isPending || amend.isPending} disabled={!entered} onClick={submit}>
+            {correcting ? "Save count" : "Record count"}
           </Button>
         </DialogFooter>
       </DialogContent>

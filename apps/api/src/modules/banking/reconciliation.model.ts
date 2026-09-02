@@ -15,6 +15,15 @@ const reconciliationSessionSchema = new Schema(
     reconciledTransactionIds: { type: [Types.ObjectId], default: [] },
     completedAt: { type: Date },
     completedByName: { type: String },
+    /**
+     * The entry a cash count posted to make the book agree with what was
+     * counted, where there was a difference.
+     *
+     * Held so undoing the count can take it back out. Without it the entry
+     * would be indistinguishable from one somebody typed, and undoing would
+     * leave the book adjusted for a count that no longer exists.
+     */
+    adjustmentTransactionId: { type: String },
     notes: { type: String, default: "" },
   },
   { timestamps: true },

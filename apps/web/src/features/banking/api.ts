@@ -286,3 +286,32 @@ export function useRecordCashCount(accountId: string) {
     },
   });
 }
+
+export function useUpdateCashCount(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ sessionId, input }: { sessionId: string; input: CashCountInput }) =>
+      api.patch<ReconciliationSession>(`bank-accounts/${accountId}/cash-count/${sessionId}`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
+    },
+  });
+}
+
+/** Withdraws a count: takes back its adjustment and releases the rows it locked. */
+export function useDeleteCashCount(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (sessionId: string) =>
+      api.del<void>(`bank-accounts/${accountId}/cash-count/${sessionId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: txKey(accountId) });
+      qc.invalidateQueries({ queryKey: [...ACCOUNTS_KEY, accountId] });
+      qc.invalidateQueries({ queryKey: reconcileKey(accountId) });
+    },
+  });
+}

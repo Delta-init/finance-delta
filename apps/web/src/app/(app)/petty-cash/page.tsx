@@ -11,6 +11,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useCan } from "@/lib/use-can";
 import { useBankAccounts } from "@/features/banking/api";
 import { CashBook } from "@/features/banking/CashBook";
+import { CashCounts } from "@/features/banking/CashCounts";
 
 /**
  * The tin, reachable without knowing it lives inside Banking.
@@ -128,6 +129,8 @@ function SingleTin({ account }: { account: BankAccount }) {
       </div>
 
       <CashBook account={account} />
+
+      <CashCounts account={account} />
     </div>
   );
 }

@@ -161,6 +161,10 @@ export const cashCountSchema = z.object({
 });
 export type CashCountInput = z.infer<typeof cashCountSchema>;
 
+/** Correcting a count that was already recorded. Applied by undoing and redoing it. */
+export const updateCashCountSchema = cashCountSchema;
+export type UpdateCashCountInput = z.infer<typeof updateCashCountSchema>;
+
 export const matchTransactionSchema = bankTransactionMatchSchema;
 export type MatchTransactionInput = z.infer<typeof matchTransactionSchema>;
 
@@ -217,6 +221,8 @@ export const reconciliationSessionSchema = z.object({
   reconciledTransactionIds: z.array(z.string()),
   completedAt: z.string().optional(),
   completedByName: z.string().optional(),
+  /** Set when the count posted an entry to bring the book to the counted figure. */
+  adjustmentTransactionId: z.string().optional(),
   notes: z.string(),
   createdAt: z.string(),
 });

@@ -30,6 +30,22 @@ function categoryDisplay(slug: string, denorm?: string): string {
   return slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Maps a (possibly populated) departmentId to the DTO ref. */
+function toDepartmentRef(raw: unknown): { id: string; name: string } | null {
+  if (!raw) return null;
+  const d = raw as { _id?: Types.ObjectId; name?: string };
+  if (d._id && typeof d.name === "string") return { id: d._id.toString(), name: d.name };
+  return null;
+}
+
+/** A department has to belong to this organization, or it is not one. */
+async function requireOrgDepartment(orgId: string, departmentId: string) {
+  const { Department } = await import("../department/department.model");
+  const dept = await Department.findOne({ _id: departmentId, organizationId: orgId });
+  if (!dept) throw new AppError("VALIDATION_ERROR", "Invalid department selected");
+  return dept;
+}
+
 function dateOnly(d: Date | undefined): string {
   if (!d) return "";
   return d.toISOString().slice(0, 10);
@@ -94,6 +110,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
       uploadedAt: a.uploadedAt ? new Date(a.uploadedAt).toISOString() : undefined,
     })),
     projectName: (doc.projectName as string) ?? "",
+    department: toDepartmentRef((doc as unknown as { departmentId?: unknown }).departmentId),
     costCentre: (doc.costCentre as string) ?? "",
     notes: (doc.notes as string) ?? "",
     createdAt: doc.createdAt.toISOString(),
@@ -126,6 +143,7 @@ export async function listExpenses(
   if (query.dateTo) and.push({ expenseDate: { $lte: new Date(query.dateTo) } });
   if (query.projectName) and.push({ projectName: { $regex: query.projectName, $options: "i" } });
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
+  if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
 
   // Applied after the caller's own filters, and not from `query`, so asking
@@ -139,14 +157,15 @@ export async function listExpenses(
 
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
-    Expense.find(filter).sort(sort).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize),
+    Expense.find(filter).sort(sort).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize)
+      .populate("departmentId", "name"),
     Expense.countDocuments(filter),
   ]);
   return { data: rows.map((r) => toDTO(r as unknown as ExpenseDoc)), meta: pageMeta(total, query.page, query.pageSize) };
 }
 
 export async function getExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
   return toDTO(doc as unknown as ExpenseDoc);
@@ -186,6 +205,8 @@ export async function createExpense(
   if (!catName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
   const displayName = resolveCategoryName(input.category, catName, input.categoryOther);
 
+  if (input.departmentId) await requireOrgDepartment(orgId, input.departmentId);
+
   const doc = await Expense.create({
     organizationId: new Types.ObjectId(orgId),
     expenseNumber,
@@ -217,10 +238,14 @@ export async function createExpense(
     mileage,
     attachments: (input.attachments ?? []).map((a) => ({ name: a.name, url: a.url })),
     projectName: input.projectName ?? "",
+    departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
     costCentre: input.costCentre ?? "",
     notes: input.notes ?? "",
   });
 
+  // A freshly created document holds the raw id, so the DTO would report no
+  // department on the one response that shows what was just saved.
+  if (doc.departmentId) await doc.populate("departmentId", "name");
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
@@ -230,7 +255,7 @@ export async function updateExpense(
   input: UpdateExpenseInput,
   scope: Scope,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
   if (doc.status === "voided")
@@ -260,6 +285,14 @@ export async function updateExpense(
   if (input.reference !== undefined) d.reference = input.reference;
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.projectName !== undefined) d.projectName = input.projectName;
+  if (input.departmentId !== undefined) {
+    if (input.departmentId) {
+      await requireOrgDepartment(orgId, input.departmentId);
+      d.departmentId = new Types.ObjectId(input.departmentId);
+    } else {
+      d.departmentId = undefined;
+    }
+  }
   if (input.costCentre !== undefined) d.costCentre = input.costCentre;
   if (input.isRecurring !== undefined) d.isRecurring = input.isRecurring;
   if (input.recurrence !== undefined) {
@@ -309,11 +342,12 @@ export async function updateExpense(
   }
 
   await doc.save();
+  if (doc.departmentId) await doc.populate("departmentId", "name");
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
 export async function submitExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
@@ -332,7 +366,7 @@ export async function approveExpense(
   approverId: string,
   approverName: string,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (doc.status !== "submitted") throw new AppError("CONFLICT", "Only submitted expenses can be approved");
 
@@ -354,7 +388,7 @@ export async function rejectExpense(
   approverName: string,
   input: RejectExpenseInput,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (doc.status !== "submitted") throw new AppError("CONFLICT", "Only submitted expenses can be rejected");
 
@@ -370,7 +404,7 @@ export async function rejectExpense(
 }
 
 export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "Expense is already voided");
@@ -388,7 +422,7 @@ export async function setRecurrenceActive(
   id: string,
   isActive: boolean,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   const d = doc as unknown as Record<string, unknown>;
   if (!doc.isRecurring || !d.recurrence)
@@ -402,7 +436,7 @@ export async function setRecurrenceActive(
 /** Stop a recurring template for good — no further expenses will be generated.
  *  Past generated expenses are untouched. */
 export async function stopRecurrence(orgId: string, id: string): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (!doc.isRecurring)
     throw new AppError("CONFLICT", "This expense is not a recurring template");
@@ -441,7 +475,7 @@ export async function addAttachment(
   file: ParsedFile,
   scope: Scope,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
   assertAttachable(doc.status as string, scope);
@@ -483,7 +517,7 @@ export async function removeAttachment(
   key: string,
   scope: Scope,
 ): Promise<ExpenseDTO> {
-  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
   assertAttachable(doc.status as string, scope);

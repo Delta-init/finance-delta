@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -11,6 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAllDepartments } from "@/features/departments/api";
+import { QuickCreateDepartmentModal } from "@/features/departments/QuickCreateDepartmentModal";
+import { useCan } from "@/lib/use-can";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
@@ -54,11 +57,15 @@ const formSchema = z.object({
   mileageDistanceKm: z.coerce.number().optional(),
   mileageRateDisplay: z.string().optional(),
   projectName: z.string().optional(),
+  departmentId: z.string().optional(),
   costCentre: z.string().optional(),
   notes: z.string().optional(),
   attachments: z.array(z.object({ name: z.string(), url: z.string() })).default([]),
 });
 export type ExpenseFormValues = z.infer<typeof formSchema>;
+
+/** Radix reads "" as unset, so "no department" needs a value that is not it. */
+const NO_DEPARTMENT = "__none__";
 
 interface ExpenseFormProps {
   mode: "create" | "edit";
@@ -71,6 +78,13 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const createExpense = useCreateExpense();
   const updateExpense = useUpdateExpense(expenseId ?? "");
   const { data: categoryList } = useExpenseCategories();
+  const { data: departments } = useAllDepartments();
+  const { can } = useCan();
+  const canAddDepartment = can("department:create");
+  const [deptModalOpen, setDeptModalOpen] = useState(false);
+  // Shown only where a claim already carries one; there is no way to type a new
+  // one, which is the point of replacing it.
+  const legacyCostCentre = initialValues?.costCentre?.trim() || "";
   const { currency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
   const isEdit = mode === "edit";
@@ -83,6 +97,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         expenseDate: today,
         currency: orgCurrency,
         categoryOther: "",
+        departmentId: "",
         taxPct: 0,
         taxInclusive: false,
         requiresApproval: false,
@@ -149,6 +164,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
           : undefined,
       attachments: values.attachments ?? [],
       projectName: values.projectName ?? "",
+      departmentId: values.departmentId || undefined,
       costCentre: values.costCentre ?? "",
       notes: values.notes ?? "",
     };
@@ -353,15 +369,49 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
         {/* Project / Cost Centre */}
         <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
-          <h2 className="text-sm font-semibold">Project & Cost Centre</h2>
+          <h2 className="text-sm font-semibold">Project &amp; Department</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Project Name</Label>
               <Input {...register("projectName")} placeholder="e.g. Website Redesign" />
             </div>
             <div className="space-y-1.5">
-              <Label>Cost Centre</Label>
-              <Input {...register("costCentre")} placeholder="e.g. Marketing, Engineering" />
+              <div className="flex items-center justify-between gap-2">
+                <Label>Department</Label>
+                {canAddDepartment && (
+                  <button
+                    type="button"
+                    onClick={() => setDeptModalOpen(true)}
+                    className="text-xs font-medium text-primary hover:underline"
+                  >
+                    + New department
+                  </button>
+                )}
+              </div>
+              {/* Radix reads "" as unset, so "not chosen" needs a value of its
+                  own. It never leaves this form. */}
+              <Select
+                value={watch("departmentId") || NO_DEPARTMENT}
+                onValueChange={(v) =>
+                  setValue("departmentId", v === NO_DEPARTMENT ? "" : v, { shouldDirty: true })
+                }
+              >
+                <SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_DEPARTMENT}>No department</SelectItem>
+                  {(departments ?? []).map((d) => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Only for the claims that already carry one. It was free text,
+                  so it was a different spelling of the same department on every
+                  claim — shown so the value is not lost, not so it is typed. */}
+              {legacyCostCentre && (
+                <p className="text-xs text-foreground-muted">
+                  Previously filed under cost centre &ldquo;{legacyCostCentre}&rdquo;.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -483,6 +533,12 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
           <Button type="submit" loading={isSubmitting}>{isEdit ? "Save Changes" : "Create Expense"}</Button>
         </div>
       </form>
+
+      <QuickCreateDepartmentModal
+        open={deptModalOpen}
+        onClose={() => setDeptModalOpen(false)}
+        onCreated={(id) => setValue("departmentId", id, { shouldDirty: true })}
+      />
     </div>
   );
 }

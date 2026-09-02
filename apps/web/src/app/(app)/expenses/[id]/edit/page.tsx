@@ -64,6 +64,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     mileageDistanceKm: expense.mileage?.distanceKm,
     mileageRateDisplay: expense.mileage ? (expense.mileage.ratePerKmMinor / 100).toString() : undefined,
     projectName: expense.projectName || "",
+    departmentId: expense.department?.id ?? "",
     costCentre: expense.costCentre || "",
     notes: expense.notes || "",
     attachments: expense.attachments,

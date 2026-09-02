@@ -318,7 +318,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               </div>
             )}
 
-            {(expense.projectName || expense.costCentre) && (
+            {(expense.projectName || expense.department || expense.costCentre) && (
               <div className="border-t border-border pt-3 space-y-2">
                 {expense.projectName && (
                   <div>
@@ -326,9 +326,16 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
                     <p className="text-sm font-medium mt-0.5">{expense.projectName}</p>
                   </div>
                 )}
+                {expense.department && (
+                  <div>
+                    <p className="text-xs text-foreground-muted">Department</p>
+                    <p className="text-sm font-medium mt-0.5">{expense.department.name}</p>
+                  </div>
+                )}
+                {/* Only on claims filed before departments replaced it. */}
                 {expense.costCentre && (
                   <div>
-                    <p className="text-xs text-foreground-muted">Cost Centre</p>
+                    <p className="text-xs text-foreground-muted">Cost Centre (old)</p>
                     <p className="text-sm font-medium mt-0.5">{expense.costCentre}</p>
                   </div>
                 )}

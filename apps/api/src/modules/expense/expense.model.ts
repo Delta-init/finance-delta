@@ -88,6 +88,14 @@ const expenseSchema = new Schema(
     mileage: { type: expenseMileageSchema },
     attachments: { type: [expenseAttachmentSchema], default: [] },
     projectName: { type: String, default: "" },
+    departmentId: { type: Schema.Types.ObjectId, ref: "Department" },
+    /**
+     * The free-text cost centre this replaced.
+     *
+     * Kept for the claims that already carry one. It was a different spelling
+     * of the same department on every claim, which is why nothing could ever be
+     * grouped on it — but that is not a reason to throw away what was typed.
+     */
     costCentre: { type: String, default: "" },
     notes: { type: String, default: "" },
   },

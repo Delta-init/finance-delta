@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { departmentRefSchema } from "./department.schema";
 
 export const expenseCategorySchema = z.enum([
   "salaries_wages",
@@ -101,6 +102,14 @@ export const createExpenseSchema = z.object({
     .optional()
     .default([]),
   projectName: z.string().optional().default(""),
+  /**
+   * Which department the spend belongs to.
+   *
+   * Replaces the free-text cost centre, which was a different spelling of the
+   * same department on every claim and so could never be grouped on. The old
+   * field stays on records that already carry one rather than being thrown away.
+   */
+  departmentId: z.string().optional(),
   costCentre: z.string().optional().default(""),
   notes: z.string().optional().default(""),
 });
@@ -166,6 +175,7 @@ export const expenseSchema = z.object({
     }),
   ),
   projectName: z.string(),
+  department: departmentRefSchema.nullable().optional(),
   costCentre: z.string(),
   notes: z.string(),
   createdAt: z.string(),

@@ -130,6 +130,7 @@ export const expenseQuerySchema = listQuerySchema.extend({
   dateTo: z.string().optional(),
   projectName: z.string().optional(),
   costCentre: z.string().optional(),
+  departmentId: z.string().optional(),
   isRecurring: queryBool,
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;

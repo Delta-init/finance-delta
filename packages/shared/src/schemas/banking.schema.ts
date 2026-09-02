@@ -168,6 +168,16 @@ export type UpdateCashCountInput = z.infer<typeof updateCashCountSchema>;
 export const matchTransactionSchema = bankTransactionMatchSchema;
 export type MatchTransactionInput = z.infer<typeof matchTransactionSchema>;
 
+export const bankTransactionAttachmentSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+  key: z.string().optional(),
+  size: z.number().optional(),
+  mimeType: z.string().optional(),
+  uploadedAt: z.string().optional(),
+});
+export type BankTransactionAttachment = z.infer<typeof bankTransactionAttachmentSchema>;
+
 export const bankTransactionSchema = z.object({
   id: z.string(),
   accountId: z.string(),
@@ -187,6 +197,7 @@ export const bankTransactionSchema = z.object({
   matches: z.array(bankTransactionMatchSchema),
   isReconciled: z.boolean(),
   reconciledSessionId: z.string().optional(),
+  attachments: z.array(bankTransactionAttachmentSchema).default([]),
   notes: z.string(),
   createdAt: z.string(),
 });

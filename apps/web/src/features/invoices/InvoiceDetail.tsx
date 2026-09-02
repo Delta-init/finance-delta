@@ -537,6 +537,9 @@ function PaymentDialog({
     cheque: "Cheque",
     card: "Card",
     easebuzz_emi: "Easebuzz EMI",
+    tabby: "Tabby",
+    tamara: "Tamara",
+    billexpro: "Smart Invoice / BillexPro",
     other: "Other",
   };
 

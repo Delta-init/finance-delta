@@ -45,6 +45,29 @@ const bankTransactionSchema = new Schema(
     matches: { type: [transactionMatchSchema], default: [] },
     isReconciled: { type: Boolean, default: false },
     reconciledSessionId: { type: String },
+    /**
+     * The receipt behind the entry.
+     *
+     * A tin runs on paper: a voucher, a till slip, a photo of a signed chit.
+     * `key` is where the file lives in object storage, needed to delete it when
+     * the attachment is removed — without it the row goes and the file stays.
+     */
+    attachments: {
+      type: [
+        new Schema(
+          {
+            name: { type: String, required: true },
+            url: { type: String, required: true },
+            key: { type: String },
+            size: { type: Number },
+            mimeType: { type: String },
+            uploadedAt: { type: Date, default: Date.now },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
     notes: { type: String, default: "" },
   },
   { timestamps: true },

@@ -3,7 +3,7 @@ import {
   bankAccountQuerySchema,
   bankTransactionQuerySchema,
 } from "@delta/shared";
-import { asyncHandler, created, ok } from "../../lib/http";
+import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as svc from "./banking.service";
 
@@ -118,6 +118,21 @@ async function counterName(req: Request): Promise<string> {
   }).select("name");
   return u?.name ?? "Unknown";
 }
+
+export const addTransactionAttachment = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await svc.addTransactionAttachment(org(req), req.params.id!, req.params.txId!, req.file));
+});
+
+export const removeTransactionAttachment = asyncHandler(async (req: Request, res: Response) => {
+  // The key arrives as a path segment, so it is encoded on the way in.
+  ok(res, await svc.removeTransactionAttachment(
+    org(req),
+    req.params.id!,
+    req.params.txId!,
+    decodeURIComponent(req.params.key!),
+  ));
+});
 
 export const updateCashCount = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await svc.updateCashCount(

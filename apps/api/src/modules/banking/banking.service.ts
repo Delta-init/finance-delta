@@ -90,6 +90,17 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     matches,
     isReconciled: (doc.isReconciled as boolean) ?? false,
     reconciledSessionId: (doc.reconciledSessionId as string | undefined) ?? undefined,
+    attachments: (((doc as unknown as { attachments?: unknown[] }).attachments) ?? []).map((a) => {
+      const r = a as Record<string, unknown>;
+      return {
+        name: r.name as string,
+        url: r.url as string,
+        key: r.key as string | undefined,
+        size: r.size as number | undefined,
+        mimeType: r.mimeType as string | undefined,
+        uploadedAt: r.uploadedAt ? new Date(r.uploadedAt as Date).toISOString() : undefined,
+      };
+    }),
     notes: (doc.notes as string) ?? "",
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
   };
@@ -348,6 +359,84 @@ export async function updateTransaction(
 }
 
 /** Remove an entry that should never have been there. */
+/** A tin runs on paper, and ten slips is plenty for one entry. */
+const MAX_TX_ATTACHMENTS = 10;
+
+/**
+ * Attach the receipt behind an entry.
+ *
+ * Held to the same rule as changing one: whatever may be edited may have its
+ * paperwork corrected, and a matched entry belongs to the document it was
+ * matched to.
+ */
+export async function addTransactionAttachment(
+  orgId: string,
+  accountId: string,
+  txId: string,
+  file: { buffer: Buffer; originalName: string; mimeType: string },
+): Promise<BankTransactionDTO> {
+  const tx = await assertEditable(orgId, accountId, txId);
+
+  const existing = ((tx as unknown as { attachments?: unknown[] }).attachments ?? []);
+  if (existing.length >= MAX_TX_ATTACHMENTS) {
+    throw new AppError("CONFLICT", `An entry can hold at most ${MAX_TX_ATTACHMENTS} receipts`);
+  }
+
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+
+  // The uploader's filename never becomes the key: it is theirs to choose, and
+  // a key built from it could reach outside this entry's prefix.
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const uploaded = await uploadFile({
+    key: `bank-transactions/${orgId}/${txId}/${Date.now()}-${safe}`,
+    buffer: file.buffer,
+    mimeType: file.mimeType,
+    originalName: file.originalName,
+  });
+
+  (existing as Record<string, unknown>[]).push({
+    name: file.originalName.slice(0, 200),
+    url: uploaded.url,
+    key: uploaded.key,
+    size: uploaded.size,
+    mimeType: uploaded.mimeType,
+    uploadedAt: new Date(),
+  });
+  tx.set("attachments", existing);
+  await tx.save();
+  return txToDTO(tx as unknown as BankTransactionDoc);
+}
+
+export async function removeTransactionAttachment(
+  orgId: string,
+  accountId: string,
+  txId: string,
+  key: string,
+): Promise<BankTransactionDTO> {
+  const tx = await assertEditable(orgId, accountId, txId);
+  const list = ((tx as unknown as { attachments?: { key?: string }[] }).attachments ?? []);
+  const idx = list.findIndex((a) => a.key === key);
+  if (idx === -1) throw new AppError("NOT_FOUND", "Receipt not found");
+
+  const [removed] = list.splice(idx, 1);
+  tx.set("attachments", list);
+  await tx.save();
+
+  // The row going is what was asked for; the object staying is untidiness, not
+  // a reason to fail and leave the row behind.
+  if (removed?.key) {
+    try {
+      const { deleteFile } = await import("../../lib/storage");
+      await deleteFile(removed.key);
+    } catch (err) {
+      const { logger } = await import("../../lib/logger");
+      logger.error({ err, key: removed.key }, "Removed a receipt but could not delete the object");
+    }
+  }
+  return txToDTO(tx as unknown as BankTransactionDoc);
+}
+
 export async function deleteTransaction(
   orgId: string,
   accountId: string,

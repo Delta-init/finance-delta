@@ -18,7 +18,8 @@ import { useApproveInvoice, useReturnInvoice, useResubmitInvoice } from "@/featu
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
 const METHOD_LABELS: Record<string, string> = {
   cash: "Cash", bank_transfer: "Bank transfer", cheque: "Cheque", card: "Card",
-  easebuzz_emi: "Easebuzz EMI", tabby: "Tabby", other: "Other",
+  easebuzz_emi: "Easebuzz EMI", tabby: "Tabby", tamara: "Tamara",
+  billexpro: "Smart Invoice / BillexPro", other: "Other",
 };
 
 /**

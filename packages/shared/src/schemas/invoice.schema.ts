@@ -12,6 +12,12 @@ export const PAYMENT_METHODS = [
   "card",
   "easebuzz_emi",
   "tabby",
+  // Buy-now-pay-later and the instalment portal, beside Tabby: from the
+  // counsellor's side these are the same act — the client pays a third party
+  // and the enrolment is settled — so they belong in the same list rather than
+  // being typed as "other" and losing which one it was.
+  "tamara",
+  "billexpro",
   "other",
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];

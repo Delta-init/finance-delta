@@ -295,3 +295,32 @@ export function useDeleteCashCount(accountId: string) {
     onSuccess: () => refreshAccount(qc),
   });
 }
+
+export function useAddTransactionAttachment(accountId: string, txId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.postForm<BankTransaction>(
+        `bank-accounts/${accountId}/transactions/${txId}/attachments`,
+        form,
+      );
+    },
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+export function useRemoveTransactionAttachment(accountId: string, txId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    // The key is a storage path with slashes in it, so it has to survive the URL.
+    mutationFn: (key: string) =>
+      api.del<BankTransaction>(
+        `bank-accounts/${accountId}/transactions/${txId}/attachments/${encodeURIComponent(key)}`,
+      ),
+    onSuccess: () => refreshAccount(qc),
+  });
+}

@@ -14,6 +14,7 @@ import {
 } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
+import { parseUpload } from "../../middleware/upload";
 import { validateBody } from "../../middleware/validate";
 import * as c from "./banking.controller";
 
@@ -39,6 +40,18 @@ router.get("/:id/transactions/:txId", requirePermission("banking:read"), c.getTr
 // matched to a document — see assertEditable in the service.
 router.patch("/:id/transactions/:txId", requirePermission("banking:write"), validateBody(updateBankTransactionSchema), c.updateTransaction);
 router.delete("/:id/transactions/:txId", requirePermission("banking:write"), c.deleteTransaction);
+// The receipt behind an entry. Same permission as changing the entry itself.
+router.post(
+  "/:id/transactions/:txId/attachments",
+  requirePermission("banking:write"),
+  parseUpload,
+  c.addTransactionAttachment,
+);
+router.delete(
+  "/:id/transactions/:txId/attachments/:key(*)",
+  requirePermission("banking:write"),
+  c.removeTransactionAttachment,
+);
 router.post("/:id/transactions/:txId/match", requirePermission("banking:write"), validateBody(matchTransactionSchema), c.matchTransaction);
 router.post("/:id/transactions/:txId/unmatch", requirePermission("banking:write"), c.unmatchTransaction);
 router.post("/:id/transactions/:txId/exclude", requirePermission("banking:write"), c.excludeTransaction);

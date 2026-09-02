@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { GraduationCap, User, Wallet, Paperclip, X, FileText } from "lucide-react";
 import { MODES_OF_STUDY, PAYMENT_METHODS, toMinor, formatMoney } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
@@ -34,6 +35,14 @@ const schema = z.object({
   phone: z.string().trim().min(5, "Contact number is required").max(30),
 
   course: z.string().trim().min(1, "Course is required").max(120),
+  /**
+   * The catalogue item behind the course, when it came from there.
+   *
+   * Carried onto the invoice line so the sale is attributable to a course
+   * rather than to a description somebody typed — two counsellors spelling the
+   * same course differently is otherwise two products in every report.
+   */
+  itemId: z.string().optional(),
   courseAmount: z.string().trim().min(1, "Course amount is required"),
   modeOfStudy: z.enum(MODES_OF_STUDY),
   language: z.string().trim().min(1, "Language is required").max(60),
@@ -52,6 +61,8 @@ const METHOD_LABELS: Record<string, string> = {
   card: "Card",
   easebuzz_emi: "Easebuzz EMI",
   tabby: "Tabby",
+  tamara: "Tamara",
+  billexpro: "Smart Invoice / BillexPro",
   other: "Other",
 };
 const MODE_LABELS: Record<string, string> = {
@@ -100,6 +111,14 @@ export function EnrolmentForm() {
    */
   const [files, setFiles] = useState<File[]>([]);
   const [uploaded, setUploaded] = useState(0);
+  /**
+   * Which catalogue item was picked, for the hint under the field.
+   *
+   * Worth saying out loud: an amount that fills itself in is otherwise
+   * indistinguishable from one somebody typed and forgot, and the counsellor
+   * needs to know which of the two they are looking at before they change it.
+   */
+  const [pickedItem, setPickedItem] = useState<string | null>(null);
 
   const {
     register, handleSubmit, setValue, watch,
@@ -108,7 +127,7 @@ export function EnrolmentForm() {
     resolver: zodResolver(schema),
     defaultValues: {
       name: "", email: "", phone: "",
-      course: "", courseAmount: "", modeOfStudy: "online", language: "", meetingBy: "",
+      course: "", itemId: undefined, courseAmount: "", modeOfStudy: "online", language: "", meetingBy: "",
       paidAmount: "", enrolledOn: today(),
     },
   });
@@ -139,7 +158,17 @@ export function EnrolmentForm() {
         // day it is raised rather than on terms nobody agreed.
         dueDate: v.enrolledOn,
         currency,
-        lineItems: [{ description: v.course, quantity: 1, unitPriceMinor: courseMinor }],
+        lineItems: [
+          {
+            description: v.course,
+            quantity: 1,
+            unitPriceMinor: courseMinor,
+            // Only when it came from the catalogue. A typed course has no item
+            // to point at, and inventing one here would be a second source of
+            // products nobody curates.
+            ...(v.itemId ? { itemId: v.itemId } : {}),
+          },
+        ],
         enrolment: {
           course: v.course,
           modeOfStudy: v.modeOfStudy,
@@ -210,8 +239,36 @@ export function EnrolmentForm() {
           <GraduationCap className="h-4 w-4 text-foreground-muted" /> Course
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Course" error={errors.course?.message}>
-            <Input {...register("course")} placeholder="MBT" />
+          <Field
+            label="Course"
+            error={errors.course?.message}
+            hint={pickedItem ? `From the catalogue · ${pickedItem}` : undefined}
+          >
+            {/* The same picker the invoice line items use, so a course that is
+                in the catalogue brings its price with it and the two documents
+                cannot disagree about what it costs. Typing a course that is not
+                in there still works — a new course sells before somebody gets
+                round to adding it. */}
+            <ProductSearchInput
+              query={watch("course") ?? ""}
+              registerProps={register("course")}
+              onType={() => {
+                // Edited by hand: the link to the catalogue item is gone, and
+                // the price is now whatever the counsellor says it is.
+                setValue("itemId", undefined);
+                setPickedItem(null);
+              }}
+              onPick={(item) => {
+                setValue("course", item.name, { shouldDirty: true, shouldValidate: true });
+                setValue("courseAmount", String(item.unitPriceMinor / 100), {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+                setValue("itemId", item.id, { shouldDirty: true });
+                setPickedItem(item.sku || item.name);
+              }}
+              currency={currency}
+            />
           </Field>
           <Field label={`Course amount (${currency})`} error={errors.courseAmount?.message}>
             <Input type="number" min="0" step="0.01" {...register("courseAmount")} placeholder="0.00" />

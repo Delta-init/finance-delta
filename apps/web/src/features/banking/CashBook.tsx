@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Link2, Pencil, Plus, Trash2, Wallet } from "lucide-react";
-import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
+import { Calculator, Download, Link2, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { formatMoney, toCsv, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { downloadTextFile } from "@/lib/download";
 import { useCan } from "@/lib/use-can";
 import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
 import { CashCountDialog } from "@/features/banking/CashCountDialog";
 import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
+import { EntryReceipts } from "@/features/banking/EntryReceipts";
 import {
   useBankTransactions,
   useDeleteBankTransaction,
@@ -51,11 +54,21 @@ export function CashBook({ account }: { account: BankAccount }) {
    * discovered by a balance that does not tie.
    */
   const [page, setPage] = useState(1);
+  // A tin is read a month at a time, and exported the same way.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [receipts, setReceipts] = useState<BankTransaction | null>(null);
+  const filters = {
+    sort: "date",
+    dir: "asc" as const,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  };
   const { data, isLoading } = useBankTransactions(account.id, {
     page,
     pageSize: PAGE_SIZE,
-    sort: "date",
-    dir: "asc",
+    ...filters,
   });
 
   const [linking, setLinking] = useState<BankTransaction | null>(null);
@@ -65,6 +78,51 @@ export function CashBook({ account }: { account: BankAccount }) {
   const [entryOpen, setEntryOpen] = useState(false);
 
   const rows = data?.data ?? [];
+  const filtered = Boolean(dateFrom || dateTo);
+
+  /*
+   * Every row the filter covers, not the page on screen.
+   *
+   * An export that quietly stops at a hundred rows is worse than none: the file
+   * opens, the columns look right, and the total is wrong by however much was
+   * left behind.
+   */
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const all: BankTransaction[] = [];
+      for (let p = 1; ; p++) {
+        const res = await api.getList<BankTransaction>(
+          `bank-accounts/${account.id}/transactions`,
+          { ...filters, page: p, pageSize: PAGE_SIZE },
+        );
+        all.push(...res.data);
+        if (all.length >= res.meta.total || res.data.length === 0) break;
+      }
+
+      const money = (minor: number) => (minor / 100).toFixed(2);
+      const csv = toCsv(all, [
+        { header: "Date", value: (t) => t.date.slice(0, 10) },
+        { header: "Description", value: (t) => t.description },
+        { header: "Reference", value: (t) => t.reference ?? "" },
+        { header: `In (${account.currency})`, value: (t) => (t.amountMinor >= 0 ? money(t.amountMinor) : "") },
+        { header: `Out (${account.currency})`, value: (t) => (t.amountMinor < 0 ? money(-t.amountMinor) : "") },
+        { header: `Balance (${account.currency})`, value: (t) => money(t.runningBalanceMinor) },
+        { header: "Linked to", value: (t) => t.matches.map((m) => m.referenceNumber).join(" ") },
+        { header: "Counted", value: (t) => (t.isReconciled ? "yes" : "") },
+        { header: "Notes", value: (t) => t.notes ?? "" },
+      ]);
+
+      const span = filtered ? `-${dateFrom || "start"}-to-${dateTo || "today"}` : "";
+      const safeName = account.accountName.replace(/[^a-zA-Z0-9._-]/g, "-");
+      downloadTextFile(`cash-book-${safeName}${span}.csv`, csv);
+      toast.success(`Exported ${all.length} ${all.length === 1 ? "entry" : "entries"}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not export the cash book");
+    } finally {
+      setExporting(false);
+    }
+  }
   const total = data?.meta.total ?? 0;
 
   return (
@@ -78,6 +136,7 @@ export function CashBook({ account }: { account: BankAccount }) {
         </span>
         <span className="ml-auto text-xs text-foreground-muted">
           {total} {total === 1 ? "entry" : "entries"}
+          {filtered ? " in range" : ""}
         </span>
         {canWrite && (
           <Button size="sm" onClick={() => { setEntry(null); setEntryOpen(true); }}>
@@ -89,6 +148,46 @@ export function CashBook({ account }: { account: BankAccount }) {
             <Calculator className="mr-1.5 h-3.5 w-3.5" /> Count cash
           </Button>
         )}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3 border-b border-border px-5 py-2.5">
+        <div className="space-y-1">
+          <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">From</label>
+          <Input
+            type="date"
+            value={dateFrom}
+            className="h-8 w-[150px]"
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">To</label>
+          <Input
+            type="date"
+            value={dateTo}
+            className="h-8 w-[150px]"
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+          />
+        </div>
+        {filtered && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+          >
+            <X className="mr-1 h-3.5 w-3.5" /> Clear
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="ml-auto"
+          loading={exporting}
+          disabled={total === 0}
+          onClick={exportCsv}
+        >
+          <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+        </Button>
       </div>
 
       <div className="overflow-x-auto">
@@ -106,7 +205,7 @@ export function CashBook({ account }: { account: BankAccount }) {
           <tbody>
             {/* Stated as a row of its own, the way the sheet states it, so the
                 first balance in the column has something to follow from. */}
-            {page === 1 && (
+            {page === 1 && !filtered && (
             <tr className="border-b border-border bg-surface-muted/40">
               <td className="px-4 py-2 text-foreground-muted">{account.openingDate}</td>
               <td className="px-4 py-2 font-medium">Opening balance</td>
@@ -182,6 +281,21 @@ export function CashBook({ account }: { account: BankAccount }) {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setReceipts(tx)}
+                      className={`mr-2 ${
+                        tx.attachments.length > 0 ? "text-primary" : "text-foreground-subtle"
+                      } hover:text-primary`}
+                      aria-label={`Receipts for ${tx.description}`}
+                      title={
+                        tx.attachments.length > 0
+                          ? `${tx.attachments.length} receipt${tx.attachments.length === 1 ? "" : "s"}`
+                          : "Attach a receipt"
+                      }
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                    </button>
                     {canWrite && tx.matches.length === 0 && (
                       <button
                         type="button"
@@ -227,6 +341,15 @@ export function CashBook({ account }: { account: BankAccount }) {
       />
 
       <CashCountDialog account={account} open={counting} onClose={() => setCounting(false)} />
+
+      {receipts && (
+        <EntryReceipts
+          account={account}
+          tx={rows.find((r) => r.id === receipts.id) ?? receipts}
+          open
+          onClose={() => setReceipts(null)}
+        />
+      )}
 
       {linking && (
         <LinkRowDialog

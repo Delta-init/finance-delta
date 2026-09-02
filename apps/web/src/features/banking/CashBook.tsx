@@ -161,18 +161,18 @@ export function CashBook({ account }: { account: BankAccount }) {
                     {formatMoney(tx.runningBalanceMinor, account.currency)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right">
-                    {/* A counted row is evidence, so it cannot be changed while
-                        the count stands. Said rather than left as an empty cell
-                        somebody reads as a bug. */}
-                    {canWrite && tx.isReconciled && (
+                    {/* Marked, not locked. A counted entry stays correctable —
+                        the count above it is what has to be taken again, and
+                        whoever keeps the tin can do that themselves. */}
+                    {tx.isReconciled && (
                       <span
-                        className="text-[11px] text-foreground-subtle"
-                        title="Signed off by a cash count. Withdraw the count below to change it."
+                        className="mr-2 text-[11px] text-foreground-subtle"
+                        title="Covered by a cash count. Changing it means the count below no longer matches — take it again."
                       >
                         counted
                       </span>
                     )}
-                    {canWrite && !tx.isReconciled && (
+                    {canWrite && (
                       <button
                         type="button"
                         onClick={() => { setEntry(tx); setEntryOpen(true); }}
@@ -192,7 +192,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                         <Link2 className="h-3.5 w-3.5" />
                       </button>
                     )}
-                    {canWrite && !tx.isReconciled && (
+                    {canWrite && (
                       <button
                         type="button"
                         disabled={remove.isPending}

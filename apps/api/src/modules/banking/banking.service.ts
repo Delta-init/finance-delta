@@ -289,7 +289,23 @@ async function assertEditable(orgId: string, accountId: string, txId: string) {
   });
   if (!tx) throw new AppError("NOT_FOUND", "Transaction not found");
 
-  if (tx.isReconciled) {
+  /*
+   * A reconciled bank transaction is evidence: it was ticked off against a
+   * statement the bank issued, and changing it afterwards would contradict a
+   * document we do not control.
+   *
+   * A tin is not that. Its "statement" is a figure somebody counted, and the
+   * count can be withdrawn and taken again by the same person who keeps the
+   * cash — so a mistyped entry stays correctable, and the count above it is the
+   * thing that has to be redone rather than the reason it cannot be.
+   */
+  const account = await BankAccount.findOne({
+    _id: new Types.ObjectId(accountId),
+    organizationId: new Types.ObjectId(orgId),
+  }).select("accountType");
+  const isTin = account?.accountType === "petty_cash";
+
+  if (tx.isReconciled && !isTin) {
     throw new AppError(
       "CONFLICT",
       "This transaction has been reconciled and can no longer be changed. Add a correcting entry instead.",
@@ -615,6 +631,12 @@ export async function getTransaction(orgId: string, id: string): Promise<BankTra
   return txToDTO(doc);
 }
 
+/** Append creation order, and then id, so a sort is never ambiguous. */
+export function withTiebreak(sort: Record<string, 1 | -1>): Record<string, 1 | -1> {
+  const dir = Object.values(sort)[0] ?? 1;
+  return { ...sort, createdAt: sort.createdAt ?? dir, _id: sort._id ?? dir };
+}
+
 const TX_SORT: Record<string, string> = {
   date: "date",
   description: "description",
@@ -648,7 +670,17 @@ export async function listTransactions(
 
   const [docs, total] = await Promise.all([
     BankTransaction.find(filter)
-      .sort(buildSort(TX_SORT, sort, dir, { date: -1 }))
+      /*
+       * Ties broken by creation order, in the same direction.
+       *
+       * A cash book puts several entries on one day, and sorting by date alone
+       * left the database free to return them in any order it liked — while the
+       * running balance is worked out with creation order as the tiebreak. The
+       * two disagreed, so the balance column read as nonsense even though every
+       * figure in it was right. It also makes paging deterministic: without a
+       * tiebreak a row can appear on two pages, or on none.
+       */
+      .sort(withTiebreak(buildSort(TX_SORT, sort, dir, { date: -1 })))
       .skip(skipFor(page, pageSize))
       .limit(pageSize)
       .lean(),

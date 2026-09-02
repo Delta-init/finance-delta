@@ -27,4 +27,8 @@ router.patch(
   userController.update,
 );
 
+// Removing somebody, which the service refuses while their name is on a
+// document. Suspending is the ordinary answer and is a plain update.
+router.delete("/:id", requirePermission("user:delete"), userController.remove);
+
 export default router;

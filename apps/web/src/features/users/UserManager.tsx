@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Search, Users2 } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, UserCheck, UserX, Users2 } from "lucide-react";
 import { createUserSchema, type CreateUserInput, type User } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -33,9 +33,19 @@ import { toast } from "@/lib/toast";
 import { useTableQuery } from "@/lib/use-table-query";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
+import { Tooltip } from "@/components/ui/tooltip";
+import { EditUserDialog } from "@/features/users/EditUserDialog";
+import {
+  Dialog as ConfirmDialog,
+  DialogContent as ConfirmContent,
+  DialogHeader as ConfirmHeader,
+  DialogTitle as ConfirmTitle,
+  DialogDescription as ConfirmDescription,
+  DialogFooter as ConfirmFooter,
+} from "@/components/ui/dialog";
 import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
-import { useCreateUser, useUsers } from "./api";
+import { useCreateUser, useRemoveUser, useUpdateUser, useUsers } from "./api";
 
 const USERS_EXPORT_COLUMNS: ExportColumn<User>[] = [
   { header: "Name", value: (u) => u.name || "—" },
@@ -68,6 +78,10 @@ export function UserManager() {
   const createUser = useCreateUser();
 
   const [open, setOpen] = useState(false);
+  const update = useUpdateUser();
+  const remove = useRemoveUser();
+  const [editing, setEditing] = useState<User | null>(null);
+  const [removing, setRemoving] = useState<User | null>(null);
 
   const { register, handleSubmit, control, reset, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<CreateUserInput>({
@@ -87,7 +101,75 @@ export function UserManager() {
       sortable: true,
       cell: (u) => <Badge tone={u.status === "active" ? "success" : "warning"}>{u.status}</Badge>,
     },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      hideInDetail: true,
+      cell: (u) => (
+        <div className="flex items-center justify-end gap-2">
+          <Tooltip label="Edit">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setEditing(u); }}
+              className="text-foreground-subtle hover:text-primary"
+              aria-label={`Edit ${u.name}`}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+
+          {/* Suspending is what "remove access" usually means: they cannot sign
+              in, and everything with their name on it still says who did it. */}
+          <Tooltip label={u.status === "active" ? "Suspend" : "Reactivate"}>
+            <button
+              type="button"
+              disabled={update.isPending}
+              onClick={(e) => { e.stopPropagation(); void toggleStatus(u); }}
+              className="text-foreground-subtle hover:text-warning disabled:opacity-50"
+              aria-label={u.status === "active" ? `Suspend ${u.name}` : `Reactivate ${u.name}`}
+            >
+              {u.status === "active" ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+            </button>
+          </Tooltip>
+
+          <Tooltip label="Remove">
+            <button
+              type="button"
+              disabled={remove.isPending}
+              onClick={(e) => { e.stopPropagation(); setRemoving(u); }}
+              className="text-foreground-subtle hover:text-danger disabled:opacity-50"
+              aria-label={`Remove ${u.name}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+      ),
+    },
   ];
+
+  async function toggleStatus(u: User) {
+    const next = u.status === "active" ? "suspended" : "active";
+    try {
+      await update.mutateAsync({ id: u.id, input: { status: next } });
+      toast.success(next === "suspended" ? `${u.name} suspended` : `${u.name} reactivated`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not change their status");
+    }
+  }
+
+  async function confirmRemove(u: User) {
+    try {
+      await remove.mutateAsync(u.id);
+      toast.success(`${u.name} removed`);
+      setRemoving(null);
+    } catch (e) {
+      // The server refuses while their name is on a document, and says what it
+      // is on — worth showing in full rather than shortening to "failed".
+      toast.error(e instanceof ApiError ? e.message : "Could not remove them");
+    }
+  }
 
   function openModal() {
     reset({ name: "", email: "", password: "", roleId: "", tagIds: [] });
@@ -248,6 +330,35 @@ export function UserManager() {
         isLoading={isLoading}
         emptyMessage="No users match your filters."
       />
+      {editing && (
+        <EditUserDialog user={editing} open onClose={() => setEditing(null)} />
+      )}
+
+      {/* Said in full: removing somebody is not the same as suspending them,
+          and the difference is the part worth reading before clicking. */}
+      <ConfirmDialog open={Boolean(removing)} onOpenChange={(o) => { if (!o) setRemoving(null); }}>
+        <ConfirmContent className="max-w-md">
+          <ConfirmHeader>
+            <ConfirmTitle>Remove {removing?.name}?</ConfirmTitle>
+            <ConfirmDescription>
+              They lose their place in this organization entirely. If their name is on an invoice
+              or an expense claim this will be refused — suspend them instead, which takes away
+              their access and leaves the history intact.
+            </ConfirmDescription>
+          </ConfirmHeader>
+          <ConfirmFooter>
+            <Button variant="secondary" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={remove.isPending}
+              onClick={() => removing && confirmRemove(removing)}
+            >
+              Remove
+            </Button>
+          </ConfirmFooter>
+        </ConfirmContent>
+      </ConfirmDialog>
+
     </div>
   );
 }

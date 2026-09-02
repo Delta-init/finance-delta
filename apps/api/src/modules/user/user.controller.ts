@@ -41,3 +41,8 @@ export const invite = asyncHandler(async (req: Request, res: Response) => {
       : `Could not send to ${result.email} — check the mail configuration.`,
   });
 });
+
+export const remove = asyncHandler(async (req: Request, res: Response) => {
+  await userService.removeUser(req.auth!.organizationId, req.params.id!, req.auth!.userId);
+  res.status(204).end();
+});

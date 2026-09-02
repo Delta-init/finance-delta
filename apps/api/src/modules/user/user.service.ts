@@ -190,3 +190,52 @@ export async function updateUser(
 
   return toDTO(user as unknown as { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date }, finalRole as unknown as PopulatedRole, department);
 }
+
+/**
+ * Take somebody out of this organization.
+ *
+ * Refused while their name is on anything. An invoice records who sold it and
+ * an expense who claimed it, and removing the person those point at leaves a
+ * document that cannot say who was responsible for it — which is exactly what
+ * somebody looks for when they go back through a year's records. Suspending is
+ * the answer there: the access goes, the history stays.
+ *
+ * A person belonging to more than one organization keeps their account and
+ * loses this membership. Nobody in one organization should be able to delete
+ * somebody out of another.
+ */
+export async function removeUser(orgId: string, userId: string, actingUserId: string): Promise<void> {
+  if (userId === actingUserId) {
+    throw new AppError("CONFLICT", "You cannot remove yourself");
+  }
+
+  const oid = new Types.ObjectId(orgId);
+  const user = await User.findOne({ _id: userId, "memberships.organizationId": oid });
+  if (!user) throw new AppError("NOT_FOUND", "User not found");
+
+  const uid = new Types.ObjectId(userId);
+  const { Invoice } = await import("../invoice/invoice.model");
+  const { Expense } = await import("../expense/expense.model");
+
+  const [invoices, expenses] = await Promise.all([
+    Invoice.countDocuments({ organizationId: oid, salespersonId: uid }),
+    Expense.countDocuments({ organizationId: oid, submittedById: uid }),
+  ]);
+
+  if (invoices > 0 || expenses > 0) {
+    const parts = [
+      invoices > 0 ? `${invoices} invoice${invoices === 1 ? "" : "s"}` : "",
+      expenses > 0 ? `${expenses} expense claim${expenses === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    throw new AppError(
+      "CONFLICT",
+      `${user.name} is named on ${parts.join(" and ")}, so removing them would leave those records with nobody against them. Suspend them instead — they lose access and the history stays.`,
+    );
+  }
+
+  user.memberships = user.memberships.filter((m) => !m.organizationId.equals(oid)) as typeof user.memberships;
+
+  // Their account goes only when it belongs nowhere else.
+  if (user.memberships.length === 0) await user.deleteOne();
+  else await user.save();
+}

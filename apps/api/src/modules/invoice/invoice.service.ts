@@ -63,6 +63,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           course: doc.enrolment.course,
           modeOfStudy: doc.enrolment.modeOfStudy,
           language: doc.enrolment.language,
+          meetingById: doc.enrolment.meetingById ? String(doc.enrolment.meetingById) : undefined,
           meetingBy: doc.enrolment.meetingBy ?? "",
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
@@ -381,7 +382,23 @@ export async function createInvoice(
   if (!customer) throw new AppError("VALIDATION_ERROR", "Invalid customer selected");
   if (!salesperson) throw new AppError("VALIDATION_ERROR", "Invalid salesperson selected");
 
-  const enrolment = input.enrolment;
+  /*
+   * The name beside the id, resolved here rather than trusted from the form.
+   *
+   * A client could send any name it liked next to a real id, and the name is
+   * what every screen shows — so the one that gets stored is the one the
+   * database holds for that person, and only for somebody actually in this
+   * organization.
+   */
+  let enrolment = input.enrolment;
+  if (enrolment?.meetingById) {
+    const met = await User.findOne({
+      _id: enrolment.meetingById,
+      "memberships.organizationId": orgId,
+    }).select("name");
+    if (!met) throw new AppError("VALIDATION_ERROR", "Invalid person selected for the meeting");
+    enrolment = { ...enrolment, meetingBy: met.name };
+  }
 
   /*
    * Who has to check this before it can go out.

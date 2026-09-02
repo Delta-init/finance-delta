@@ -133,6 +133,9 @@ const invoiceSchema = new Schema(
           course: { type: String, required: true, trim: true },
           modeOfStudy: { type: String, enum: ["online", "offline", "hybrid"], required: true },
           language: { type: String, required: true, trim: true },
+          meetingById: { type: Schema.Types.ObjectId, ref: "User" },
+          // The name as it was when the enrolment was taken, so the record still
+          // reads properly once somebody has left and their account has gone.
           meetingBy: { type: String, default: "" },
           /** What the counsellor says was collected. An approver records it. */
           declaredPaidMinor: { type: Number, default: 0 },

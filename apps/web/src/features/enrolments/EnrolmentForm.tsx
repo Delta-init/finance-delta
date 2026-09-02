@@ -20,6 +20,7 @@ import { toast } from "@/lib/toast";
 import { useCurrency } from "@/lib/currency-context";
 import { useCreateCustomer } from "@/features/customers/api";
 import { useCreateInvoice } from "@/features/invoices/api";
+import { useColleagues } from "@/features/users/api";
 
 /**
  * Taking an enrolment: the client, what they enrolled on, and what they paid.
@@ -46,7 +47,7 @@ const schema = z.object({
   courseAmount: z.string().trim().min(1, "Course amount is required"),
   modeOfStudy: z.enum(MODES_OF_STUDY),
   language: z.string().trim().min(1, "Language is required").max(60),
-  meetingBy: z.string().trim().max(120).optional(),
+  meetingById: z.string().optional(),
 
   paidAmount: z.string().trim().optional(),
   paymentMethod: z.enum(PAYMENT_METHODS).optional(),
@@ -91,6 +92,7 @@ export function EnrolmentForm() {
   const { baseCurrency } = useCurrency();
   const createCustomer = useCreateCustomer();
   const createInvoice = useCreateInvoice();
+  const { data: colleagues } = useColleagues();
   const [busy, setBusy] = useState(false);
   /*
    * Documents are chosen before there is anything to attach them to — the
@@ -116,7 +118,7 @@ export function EnrolmentForm() {
     resolver: zodResolver(schema),
     defaultValues: {
       name: "", email: "", phone: "",
-      course: "", itemId: undefined, courseAmount: "", modeOfStudy: "online", language: "", meetingBy: "",
+      course: "", itemId: undefined, courseAmount: "", modeOfStudy: "online", language: "", meetingById: "",
       paidAmount: "", enrolledOn: today(),
     },
   });
@@ -162,7 +164,7 @@ export function EnrolmentForm() {
           course: v.course,
           modeOfStudy: v.modeOfStudy,
           language: v.language,
-          meetingBy: v.meetingBy ?? "",
+          meetingById: v.meetingById || undefined,
           declaredPaidMinor: paidMinor,
           declaredPaymentMethod: v.paymentMethod,
         },
@@ -277,8 +279,21 @@ export function EnrolmentForm() {
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Meeting done by" hint="Leave blank if that was you.">
-            <Input {...register("meetingBy")} placeholder="Yamini" />
+          <Field label="Meeting done by" hint="Leave it as “That was me” if you ran it.">
+            {/* Picked, not typed: "Yamini", "yamini" and "Yamini K" are three
+                people as far as any report is concerned. */}
+            <Select
+              value={watch("meetingById") || NONE}
+              onValueChange={(v) => setValue("meetingById", v === NONE ? "" : v, { shouldDirty: true })}
+            >
+              <SelectTrigger><SelectValue placeholder="That was me" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>That was me</SelectItem>
+                {(colleagues ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           <Field label="Enrolled on" error={errors.enrolledOn?.message}>
             <Input type="date" {...register("enrolledOn")} />

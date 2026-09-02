@@ -196,6 +196,15 @@ export const enrolmentInputSchema = z.object({
   modeOfStudy: z.enum(MODES_OF_STUDY),
   language: z.string().trim().min(1, "Language is required").max(60),
   /** Who ran the meeting, where that is not the counsellor raising this. */
+  /**
+   * Who ran the meeting, chosen from the organization rather than typed.
+   *
+   * A typed name cannot be counted: "Yamini", "yamini" and "Yamini K" are three
+   * people as far as any report is concerned. The id is what is picked and the
+   * name is kept beside it, so the record still reads properly after somebody
+   * leaves and their account goes.
+   */
+  meetingById: z.string().optional(),
   meetingBy: z.string().trim().max(120).optional().default(""),
   /**
    * What the counsellor says was collected, and how.

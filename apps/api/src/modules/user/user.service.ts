@@ -239,3 +239,28 @@ export async function removeUser(orgId: string, userId: string, actingUserId: st
   if (user.memberships.length === 0) await user.deleteOne();
   else await user.save();
 }
+
+/**
+ * Just the names of the people in this organization.
+ *
+ * A counsellor naming the colleague who ran the meeting needs a list to pick
+ * from, and holds none of the permissions that read the user list — reasonably,
+ * since that list carries email addresses, roles and status.
+ *
+ * This carries a name and an id and nothing else. Those are already on every
+ * invoice a counsellor can see, in `salespersonName` and on the approval, so
+ * there is nothing here they could not already read.
+ */
+export async function listColleagues(orgId: string): Promise<{ id: string; name: string }[]> {
+  const users = await User.find({
+    status: "active",
+    memberships: {
+      $elemMatch: { organizationId: new Types.ObjectId(orgId), status: "active" },
+    },
+  })
+    .select("name")
+    .sort({ name: 1 })
+    .lean();
+
+  return users.map((u) => ({ id: String(u._id), name: u.name as string }));
+}

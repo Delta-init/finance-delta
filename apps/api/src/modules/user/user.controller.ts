@@ -46,3 +46,7 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
   await userService.removeUser(req.auth!.organizationId, req.params.id!, req.auth!.userId);
   res.status(204).end();
 });
+
+export const colleagues = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await userService.listColleagues(req.auth!.organizationId));
+});

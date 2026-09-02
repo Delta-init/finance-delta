@@ -50,3 +50,18 @@ export function useRemoveUser() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
+
+/**
+ * Names of the people in this organization, for a picker.
+ *
+ * Separate from `useUsers` because that needs `user:read`, which a counsellor
+ * does not hold — this returns names and ids only, and is open to anybody who
+ * can raise an invoice.
+ */
+export function useColleagues() {
+  return useQuery({
+    queryKey: [...KEY, "colleagues"],
+    queryFn: () => api.get<{ id: string; name: string }[]>("users/colleagues"),
+    staleTime: 5 * 60_000,
+  });
+}

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { createUserSchema, updateUserSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
-import { requirePermission } from "../../middleware/rbac";
+import { requirePermission, requireAnyPermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import * as userController from "./user.controller";
 
@@ -10,6 +10,15 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requirePermission("user:read"), userController.list);
+// Names only, for anybody who can raise an invoice: a counsellor naming the
+// colleague who ran the meeting cannot read the user list, and should not have
+// to in order to pick a name that is already on every invoice they can see.
+// Before "/:id" would matter if one existed on GET; kept here for clarity.
+router.get(
+  "/colleagues",
+  requireAnyPermission("invoice:write", "invoice:write:own"),
+  userController.colleagues,
+);
 router.post(
   "/",
   requirePermission("user:create"),

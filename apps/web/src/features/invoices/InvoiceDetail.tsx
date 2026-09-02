@@ -12,7 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending,} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing,} from "@delta/shared";
 
 const paymentFormSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
@@ -77,6 +77,17 @@ export function InvoiceDetail({ id }: { id: string }) {
   // back is exactly what should happen next — but it cannot go to the client.
   const canSend = isDraft && !awaitingApproval;
 
+  /*
+   * Approval is worth nothing if the figures can move afterwards, so once an
+   * invoice is approved — or is part-way through being read by an approver —
+   * the person who raised it may no longer edit it. Accounts still can, and a
+   * correction goes through them.
+   *
+   * The server enforces this; hiding the button here spares somebody a click
+   * that only ever returns an error.
+   */
+  const canEdit = isDraft && (canManage || !approvalBlocksEditing(invoice.approval?.state));
+
   const canVoid = canManage && invoice.status !== "paid" && invoice.status !== "void";
   const canPay =
     canManage && !awaitingApproval &&
@@ -123,7 +134,7 @@ export function InvoiceDetail({ id }: { id: string }) {
           >
             <Printer className="h-3.5 w-3.5" /> PDF
           </Button>
-          {isDraft && (
+          {canEdit && (
             <Link href={`/invoices/${id}/edit`}>
               <Button variant="outline" size="sm"><Pencil className="h-3.5 w-3.5" /> Edit</Button>
             </Link>

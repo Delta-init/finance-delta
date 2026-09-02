@@ -4,6 +4,7 @@ import {
   sumInvoiceTotals,
   roundingAdjustmentMinor,
   approvalBlocksSending,
+  approvalBlocksEditing,
   type CreateInvoiceInput,
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
@@ -466,6 +467,36 @@ export async function createInvoice(
   return toDTO(doc);
 }
 
+/**
+ * Whether an invoice is still the person who raised it's to change.
+ *
+ * Approval is worth nothing if the figures can move afterwards. Once somebody
+ * has approved an invoice, what they approved is what it says — so a
+ * salesperson may no longer touch it, and a correction goes through accounts,
+ * who can see the whole picture the approval was given against.
+ *
+ * The same holds while it is *waiting*: editing then changes what an approver
+ * is part-way through reading.
+ *
+ * Sent back is the one state that stays open, because correcting it is exactly
+ * what should happen next. And somebody who can see the whole organization is
+ * never held to this — making the correction is their job.
+ */
+function assertEditable(doc: unknown, scope: Scope): void {
+  if (scope.all) return;
+  const state = approvalOf(doc).state;
+  if (!approvalBlocksEditing(state as never)) return;
+  if (state === "pending") {
+    throw new AppError("CONFLICT", "This is with an approver and cannot be changed until it comes back");
+  }
+  if (state === "approved") {
+    throw new AppError(
+      "CONFLICT",
+      "This has been approved, so it can no longer be changed. Ask accounts to make the correction.",
+    );
+  }
+}
+
 export async function updateInvoice(
   orgId: string,
   id: string,
@@ -474,6 +505,7 @@ export async function updateInvoice(
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
+  assertEditable(doc, scope);
   if (effectiveStatus(doc) !== "draft") {
     throw new AppError("CONFLICT", "Only draft invoices can be edited");
   }
@@ -540,22 +572,6 @@ export async function updateInvoice(
 /** Ten is plenty for an ID, a form and a payment slip, and stops a runaway loop. */
 const MAX_ATTACHMENTS = 10;
 
-/**
- * Whether the documents behind an invoice are still somebody's to change.
- *
- * Once it has gone to an approver the evidence it will be approved against is
- * fixed — changing it afterwards changes what was approved. Somebody who can
- * see the whole organization is not held to this: correcting a wrong document
- * on a colleague's invoice is a normal thing for an administrator to do.
- */
-function assertAttachable(doc: unknown, scope: Scope): void {
-  if (scope.all) return;
-  const state = approvalOf(doc).state;
-  if (state === "pending") {
-    throw new AppError("CONFLICT", "This is with an approver — it cannot be changed until it comes back");
-  }
-}
-
 export async function addAttachment(
   orgId: string,
   id: string,
@@ -564,7 +580,7 @@ export async function addAttachment(
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
-  assertAttachable(doc, scope);
+  assertEditable(doc, scope);
 
   const existing = (doc as unknown as { attachments?: unknown[] }).attachments ?? [];
   if (existing.length >= MAX_ATTACHMENTS) {
@@ -605,7 +621,7 @@ export async function removeAttachment(
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
-  assertAttachable(doc, scope);
+  assertEditable(doc, scope);
 
   const list = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []);
   const idx = list.findIndex((a) => a.key === key);

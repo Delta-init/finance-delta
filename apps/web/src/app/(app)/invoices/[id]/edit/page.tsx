@@ -2,9 +2,10 @@
 
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import type { UpdateInvoiceInput } from "@delta/shared";
+import { approvalBlocksEditing, type UpdateInvoiceInput } from "@delta/shared";
 import { InvoiceForm } from "@/features/invoices/InvoiceForm";
 import { useInvoice, useUpdateInvoice } from "@/features/invoices/api";
+import { useCan } from "@/lib/use-can";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -17,6 +18,7 @@ export default function EditInvoicePage({
   const router = useRouter();
   const { data: invoice, isLoading } = useInvoice(id);
   const update = useUpdateInvoice(id);
+  const { can } = useCan();
 
   if (isLoading) return <div className="p-6 text-sm text-foreground-muted">Loading…</div>;
   if (!invoice) return <div className="p-6 text-sm text-foreground-muted">Invoice not found.</div>;
@@ -24,6 +26,17 @@ export default function EditInvoicePage({
     return (
       <div className="p-6 text-sm text-foreground-muted">
         Only draft invoices can be edited.
+      </div>
+    );
+  }
+  // Reachable by typing the URL, and the server would refuse the save anyway —
+  // said here so it is refused before the work rather than after it.
+  if (!can("invoice:write") && approvalBlocksEditing(invoice.approval?.state)) {
+    return (
+      <div className="p-6 text-sm text-foreground-muted">
+        {invoice.approval?.state === "approved"
+          ? "This has been approved, so it can no longer be changed. Ask accounts to make the correction."
+          : "This is with an approver and cannot be changed until it comes back."}
       </div>
     );
   }

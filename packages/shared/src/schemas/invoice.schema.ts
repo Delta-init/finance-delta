@@ -133,6 +133,20 @@ export function approvalBlocksSending(state: InvoiceApproval | undefined | null)
   return state === "pending" || state === "returned";
 }
 
+/**
+ * Whether this state stops the person who raised the invoice from changing it.
+ *
+ * Approval is worth nothing if the figures can move afterwards: what an
+ * approver approved has to be what the invoice says. Waiting counts too, since
+ * editing then changes what somebody is part-way through reading.
+ *
+ * Sent back stays open — correcting it is exactly what should happen next — and
+ * this says nothing about accounts, who can always make a correction.
+ */
+export function approvalBlocksEditing(state: InvoiceApproval | undefined | null): boolean {
+  return state === "pending" || state === "approved";
+}
+
 export const invoiceApprovalSchema = z.object({
   state: z.enum(INVOICE_APPROVALS).default("not_required"),
   byId: z.string().optional(),

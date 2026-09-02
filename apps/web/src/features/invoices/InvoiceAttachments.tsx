@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Paperclip, FileText, ImageIcon, X, Download } from "lucide-react";
-import type { Invoice } from "@delta/shared";
+import { approvalBlocksEditing, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -37,8 +37,10 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
   const files = invoice.attachments ?? [];
   const canEdit = can("invoice:write") || can("invoice:write:own");
   // Matches the server's rule, so the control is absent rather than offering
-  // something that would only produce a refusal.
-  const locked = !can("invoice:write") && invoice.approval?.state === "pending";
+  // something that would only produce a refusal. Approved counts as locked too:
+  // the documents an invoice was approved against should not move afterwards.
+  const state = invoice.approval?.state;
+  const locked = !can("invoice:write") && approvalBlocksEditing(state);
   const canAdd = canEdit && !locked && files.length < MAX_FILES;
 
   if (files.length === 0 && !canAdd) return null;
@@ -103,7 +105,9 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
 
       {locked && files.length > 0 && (
         <p className="text-xs text-foreground-muted">
-          With an approver, so these cannot be changed until it comes back.
+          {state === "approved"
+            ? "Approved, so these can no longer be changed. Ask accounts for a correction."
+            : "With an approver, so these cannot be changed until it comes back."}
         </p>
       )}
 

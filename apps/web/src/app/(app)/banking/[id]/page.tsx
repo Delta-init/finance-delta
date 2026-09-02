@@ -39,6 +39,7 @@ import {
 } from "@/features/banking/api";
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
+import { CashBook } from "@/features/banking/CashBook";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -260,7 +261,12 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      <PaymentDetailsCard account={account} />
+      {/* A tin is kept as a cash book, not read as a bank statement: oldest
+          first, money in and out in their own columns, balance carried down.
+          The generic list stays below it for searching and reconciling. */}
+      {account.accountType === "petty_cash" && <CashBook account={account} />}
+
+      {account.accountType !== "petty_cash" && <PaymentDetailsCard account={account} />}
 
       {/* Transactions */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">

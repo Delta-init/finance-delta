@@ -189,6 +189,14 @@ const invoiceSchema = new Schema(
     // client was asked to pay is a reconciliation problem, not a display one.
     roundOffMinor: { type: Number, default: 0 },
     totalMinor: { type: Number, default: 0 },
+    /**
+     * The total in the organization's own currency.
+     *
+     * Stored rather than worked out on demand: a report across mixed currencies
+     * is then one sum, instead of every row having to be paired with the rate
+     * that applied the day it was raised.
+     */
+    baseTotalMinor: { type: Number, default: 0 },
     amountPaidMinor: { type: Number, default: 0 },
     balanceMinor: { type: Number, default: 0 },
     notes: { type: String, default: "" },

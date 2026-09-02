@@ -309,3 +309,25 @@ export function compareCashCount(countedMinor: number, bookMinor: number): CashC
     verdict: differenceMinor === 0 ? "agrees" : differenceMinor > 0 ? "over" : "short",
   };
 }
+
+/**
+ * The same money, in the organization's own currency.
+ *
+ * `rate` reads the way the form asks for it: **one unit of the base currency
+ * buys `rate` units of the document's currency**. So an AED-based organization
+ * invoicing in dollars at 1 AED = 0.2723 USD divides to get back to dirhams.
+ *
+ * Written down and tested because the direction is the whole thing. Multiplying
+ * where you should divide turns a 1,200 dollar invoice into 327 dirhams instead
+ * of 4,407, and both look like plausible money.
+ */
+export function toBaseMinor(amountMinor: number, rate: number): number {
+  if (!Number.isFinite(rate) || rate <= 0) return amountMinor;
+  return Math.round(amountMinor / rate);
+}
+
+/** The reverse: what a base-currency figure is worth in the document's currency. */
+export function fromBaseMinor(baseMinor: number, rate: number): number {
+  if (!Number.isFinite(rate) || rate <= 0) return baseMinor;
+  return Math.round(baseMinor * rate);
+}

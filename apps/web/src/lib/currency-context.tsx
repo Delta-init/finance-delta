@@ -46,6 +46,14 @@ interface CurrencyContextValue {
   convert: (minorAED: number) => number;
   /** Get the rate for any code (default 1 if unknown) */
   rateFor: (code: CurrencyCode) => number;
+  /**
+   * How many units of `to` one unit of `from` buys.
+   *
+   * The table is quoted against AED, so a rate between two other currencies is
+   * one divided by the other. An INR organization invoicing in dollars needs
+   * INR → USD, and neither side of that is AED.
+   */
+  rateBetween: (from: string, to: string) => number | null;
 }
 
 const CurrencyContext = createContext<CurrencyContextValue | null>(null);
@@ -114,6 +122,21 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
 
   const rateFor = (code: CurrencyCode) => rates[code] ?? 1;
 
+  /**
+   * How many units of `to` one unit of `from` buys.
+   *
+   * Null while the table has not loaded, or for a currency it does not carry —
+   * so a form can tell "no rate yet" apart from "the rate is 1", which are very
+   * different things to store on an invoice.
+   */
+  const rateBetween = (from: string, to: string): number | null => {
+    if (from === to) return 1;
+    const f = rates[from as CurrencyCode];
+    const t = rates[to as CurrencyCode];
+    if (!f || !t) return null;
+    return t / f;
+  };
+
   // Stored amounts are in the organization's base currency (not always AED).
   // Convert from base → the selected display currency. When display == base
   // (the common case) this is a no-op, which prevents the earlier bug where
@@ -136,6 +159,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
         isLoadingRates: isLoading,
         convert,
         rateFor,
+        rateBetween,
       }}
     >
       {children}

@@ -3,6 +3,7 @@ import {
   computeInvoiceLine,
   sumInvoiceTotals,
   roundingAdjustmentMinor,
+  toBaseMinor,
   approvalBlocksSending,
   approvalBlocksEditing,
   type CreateInvoiceInput,
@@ -157,6 +158,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
     sourceQuoteId: doc.sourceQuoteId?.toString(),
     locale: (doc as unknown as { locale?: string }).locale ?? "en",
     exchangeRate: (doc as unknown as { exchangeRate?: number }).exchangeRate ?? 1,
+    baseTotalMinor: (doc as unknown as { baseTotalMinor?: number }).baseTotalMinor
+      ?? (doc.totalMinor ?? 0),
     taxInclusive: (doc as unknown as { taxInclusive?: boolean }).taxInclusive ?? false,
     createdAt: doc.createdAt.toISOString(),
   };
@@ -417,6 +420,28 @@ export async function createInvoice(
     ? { state: "pending" as const, submittedAt: new Date() }
     : { state: "not_required" as const };
 
+  /*
+   * The rate that connects this invoice to the organization's own currency.
+   *
+   * Taken from the form when it is given — a rate somebody agreed in a contract
+   * beats whatever a public feed says today — and looked up only when it is
+   * not. A lookup that fails refuses the invoice instead of storing 1.0, which
+   * would read afterwards as a rate somebody had checked.
+   */
+  const baseCurrency = org?.baseCurrency ?? "AED";
+  const invoiceCurrency = input.currency ?? customer.currency ?? "AED";
+  let exchangeRate = input.exchangeRate;
+  if (exchangeRate === undefined) {
+    const looked = await getExchangeRate(baseCurrency, invoiceCurrency);
+    if (looked === null) {
+      throw new AppError(
+        "VALIDATION_ERROR",
+        `Could not find today's rate for ${invoiceCurrency} against ${baseCurrency}. Enter it on the invoice.`,
+      );
+    }
+    exchangeRate = looked;
+  }
+
   const computation = await invoiceComputationDefaults(orgId);
   const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false, {
     roundTotals: computation.roundTotals,
@@ -474,7 +499,11 @@ export async function createInvoice(
     progress: input.progress ?? null,
     recurring,
     locale: input.locale ?? "en",
-    exchangeRate: input.exchangeRate ?? (await getExchangeRate(org?.baseCurrency ?? "AED", input.currency ?? customer.currency ?? "AED")),
+    exchangeRate,
+    // The total in the organization's own currency, stored rather than derived,
+    // so a report across mixed currencies is one sum instead of a join against
+    // whatever the rate was that day.
+    baseTotalMinor: toBaseMinor(totals.totalMinor, exchangeRate),
     taxInclusive: input.taxInclusive ?? false,
   });
   await doc.populate("tagIds", "name color");

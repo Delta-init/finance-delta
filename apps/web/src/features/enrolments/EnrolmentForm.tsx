@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useForm } from "react-hook-form";
@@ -15,6 +15,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CurrencyRateFields } from "@/components/ui/currency-rate-fields";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCurrency } from "@/lib/currency-context";
@@ -89,7 +90,24 @@ const prettySize = (bytes: number) =>
 export function EnrolmentForm() {
   const router = useRouter();
   const { data: session } = useSession();
-  const { baseCurrency } = useCurrency();
+  const { baseCurrency, rateBetween, ratesDate } = useCurrency();
+  const base = baseCurrency || "AED";
+  /*
+   * The enrolment's own currency, not the display toggle in the header. What
+   * somebody chose to look at figures in has no business deciding what currency
+   * a client is billed in.
+   */
+  const [currency, setCurrency] = useState(base);
+  const [rate, setRate] = useState("");
+
+  // Pre-filled when the currency changes, and whenever the table finally loads.
+  // Left alone once somebody has typed over it — their number is the agreed one.
+  const rateTouched = useRef(false);
+  useEffect(() => {
+    if (rateTouched.current) return;
+    const fetched = rateBetween(base, currency);
+    setRate(fetched === null ? "" : String(fetched));
+  }, [base, currency, rateBetween]);
   const createCustomer = useCreateCustomer();
   const createInvoice = useCreateInvoice();
   const { data: colleagues } = useColleagues();
@@ -125,9 +143,15 @@ export function EnrolmentForm() {
 
   const courseMinor = toMinor(watch("courseAmount") || "0");
   const paidMinor = toMinor(watch("paidAmount") || "0");
-  const currency = baseCurrency || "AED";
+
+
+  const rateMissing = currency !== base && !(Number(rate) > 0);
 
   async function onSubmit(v: Values) {
+    if (rateMissing) {
+      toast.error(`Enter what 1 ${base} is worth in ${currency} before saving.`);
+      return;
+    }
     setBusy(true);
     try {
       // The client first: an invoice needs somebody to bill, and a counsellor
@@ -149,6 +173,7 @@ export function EnrolmentForm() {
         // day it is raised rather than on terms nobody agreed.
         dueDate: v.enrolledOn,
         currency,
+        exchangeRate: Number(rate) || undefined,
         lineItems: [
           {
             description: v.course,
@@ -264,6 +289,15 @@ export function EnrolmentForm() {
           <Field label={`Course amount (${currency})`} error={errors.courseAmount?.message}>
             <Input type="number" min="0" step="0.01" {...register("courseAmount")} placeholder="0.00" />
           </Field>
+          <CurrencyRateFields
+            currency={currency}
+            onCurrencyChange={(c) => { rateTouched.current = false; setCurrency(c); }}
+            baseCurrency={base}
+            rate={rate}
+            onRateChange={(r) => { rateTouched.current = true; setRate(r); }}
+            ratesDate={ratesDate}
+            amountMinor={courseMinor}
+          />
           <Field label="Mode of study">
             <Select value={watch("modeOfStudy")} onValueChange={(x) => setValue("modeOfStudy", x as Values["modeOfStudy"])}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -426,7 +460,7 @@ export function EnrolmentForm() {
 
       <div className="flex items-center justify-end gap-3">
         <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
-        <Button type="submit" loading={busy}>Send for approval</Button>
+        <Button type="submit" loading={busy} disabled={rateMissing}>Send for approval</Button>
       </div>
     </form>
   );

@@ -205,6 +205,8 @@ export const enrolmentInputSchema = z.object({
    * leaves and their account goes.
    */
   meetingById: z.string().optional(),
+  /** One unit of the organization's currency buys this many of the invoice's. */
+  exchangeRate: z.coerce.number().positive().optional(),
   meetingBy: z.string().trim().max(120).optional().default(""),
   /**
    * What the counsellor says was collected, and how.
@@ -324,6 +326,8 @@ export const invoiceSchema = z.object({
   /** Adjustment folded into totalMinor to reach a whole unit of currency. */
   roundOffMinor: z.number().default(0),
   totalMinor: z.number(),
+  /** The total in the organization's own currency, at the rate on the invoice. */
+  baseTotalMinor: z.number().default(0),
   amountPaidMinor: z.number(),
   balanceMinor: z.number(),
   notes: z.string(),

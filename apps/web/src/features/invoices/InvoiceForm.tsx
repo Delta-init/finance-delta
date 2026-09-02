@@ -32,6 +32,7 @@ import {
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { SuggestInput } from "@/components/ui/suggest-input";
 import { TotalRow } from "@/components/ui/total-row";
+import { CurrencyRateFields } from "@/components/ui/currency-rate-fields";
 import { useRecentSuggestion } from "@/features/suggestions/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,6 +105,8 @@ const formSchema = z.object({
   hasRecurring: z.boolean().default(false),
   recurring: recurringSchema.optional(),
   taxInclusive: z.boolean().default(false),
+  currency: z.string().min(3).max(3),
+  exchangeRate: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -147,6 +150,8 @@ function fromInvoice(inv: Invoice): FormValues {
     progress: inv.progress ?? undefined,
     hasRecurring: !!inv.recurring,
     taxInclusive: inv.taxInclusive ?? false,
+    currency: inv.currency,
+    exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "",
     recurring: inv.recurring
       ? {
           frequency: inv.recurring.frequency,
@@ -169,6 +174,11 @@ function toApiInput(v: FormValues): CreateInvoiceInput {
     terms: v.terms ?? "",
     locale: v.locale,
     tagIds: v.tagIds ?? [],
+    // Sent explicitly. It used to be left out, so the server fell back to the
+    // customer's currency while the form displayed the header's display toggle
+    // — two different answers to what currency the invoice was in.
+    currency: v.currency,
+    exchangeRate: v.exchangeRate ? Number(v.exchangeRate) : undefined,
     lineItems: v.lineItems.map((l) => ({
       description: l.description,
       quantity: l.quantity,
@@ -198,7 +208,7 @@ export function InvoiceForm({
   onSubmit: (input: CreateInvoiceInput) => Promise<void>;
 }) {
   const router = useRouter();
-  const { currency: orgCurrency, baseCurrency } = useCurrency();
+  const { baseCurrency, rateBetween, ratesDate } = useCurrency();
   const isINROrg = baseCurrency === "INR";
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   // Somebody raising their own invoices has one salesperson available —
@@ -274,10 +284,22 @@ export function InvoiceForm({
           hasProgress: false,
           hasRecurring: false,
           taxInclusive: false,
+          // Filled from the organization once the session has loaded.
+          currency: "",
+          exchangeRate: "",
         },
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
+
+  // A new invoice starts in the organization's own currency. Only once — after
+  // that it is whatever was chosen on the invoice.
+  const currencySeeded = useRef(false);
+  useEffect(() => {
+    if (initial || currencySeeded.current || !baseCurrency) return;
+    currencySeeded.current = true;
+    setValue("currency", baseCurrency);
+  }, [baseCurrency, initial, setValue]);
 
   // The initial line is created before the tax config loads, so apply the
   // default taxes (CGST + SGST) to untaxed lines once — INR orgs, new forms only.
@@ -311,7 +333,31 @@ export function InvoiceForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentNotes, recentTerms, defaultTerms, org, isNew]);
 
-  const currency = initial?.currency ?? orgCurrency;
+  /*
+   * The invoice's own currency, chosen on the invoice.
+   *
+   * Not the header's display toggle, which is a preference about how figures
+   * are shown and has no business deciding what a client is billed in.
+   */
+  const currency = watch("currency") || baseCurrency || "AED";
+  const rate = watch("exchangeRate") ?? "";
+  const rateTouched = useRef(false);
+  // What the invoice comes to as it stands, so the conversion beside the rate
+  // moves while the line items are being typed.
+  const watchedLines = watch("lineItems");
+  const totalMinorForFx = (watchedLines ?? []).reduce((sum, l) => {
+    const qty = Number(l?.quantity) || 0;
+    const unit = toMinor(l?.unitPrice ?? 0);
+    const gross = Math.round(qty * unit);
+    const disc = Math.round((gross * (Number(l?.discountPct) || 0)) / 100);
+    return sum + gross - disc;
+  }, 0);
+
+  useEffect(() => {
+    if (rateTouched.current) return;
+    const fetched = rateBetween(baseCurrency || "AED", currency);
+    setValue("exchangeRate", fetched === null ? "" : String(fetched));
+  }, [baseCurrency, currency, rateBetween, setValue]);
   const hasProgress = watch("hasProgress");
   const hasRecurring = watch("hasRecurring");
   const locale = watch("locale");
@@ -436,6 +482,16 @@ export function InvoiceForm({
               {errors.salespersonId && <p className="text-xs text-danger">{errors.salespersonId.message}</p>}
             </div>
           )}
+
+          <CurrencyRateFields
+            currency={currency}
+            onCurrencyChange={(c) => { rateTouched.current = false; setValue("currency", c, { shouldDirty: true }); }}
+            baseCurrency={baseCurrency || "AED"}
+            rate={rate}
+            onRateChange={(r) => { rateTouched.current = true; setValue("exchangeRate", r, { shouldDirty: true }); }}
+            ratesDate={ratesDate}
+            amountMinor={totalMinorForFx}
+          />
 
           <div className="space-y-1.5">
             <Label>Reference / PO#</Label>

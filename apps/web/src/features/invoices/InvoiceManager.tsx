@@ -1,10 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search, X, ReceiptText } from "lucide-react";
-import { INVOICE_STATUSES, type Invoice, type InvoiceStatus } from "@delta/shared";
+import {
+  INVOICE_STATUSES,
+  INVOICE_APPROVALS,
+  type Invoice,
+  type InvoiceStatus,
+  type InvoiceApproval,
+} from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +28,14 @@ import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { useInvoices } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
+
+/** "not_required" says nothing to somebody reading a filter menu. */
+const APPROVAL_LABELS: Record<InvoiceApproval, string> = {
+  not_required: "No approval needed",
+  pending: "Waiting for approval",
+  approved: "Approved",
+  returned: "Sent back",
+};
 import { useCan } from "@/lib/use-can";
 
 const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
@@ -39,6 +54,18 @@ export function InvoiceManager() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState<InvoiceStatus | "all">("all");
+  /*
+   * Seeded from the URL, because the approvals queue links here with
+   * ?approval=pending. Landing on an unfiltered list after clicking "see all
+   * the ones waiting" would answer a different question from the one asked.
+   */
+  const search = useSearchParams();
+  const [approval, setApproval] = useState<InvoiceApproval | "all">(() => {
+    const q = search.get("approval");
+    return (INVOICE_APPROVALS as readonly string[]).includes(q ?? "")
+      ? (q as InvoiceApproval)
+      : "all";
+  });
   const [salespersonId, setSalespersonId] = useState("");
   const [issueFrom, setIssueFrom] = useState("");
   const [issueTo, setIssueTo] = useState("");
@@ -46,11 +73,12 @@ export function InvoiceManager() {
   const [dueTo, setDueTo] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
 
-  useEffect(() => t.resetPage(), [status, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => t.resetPage(), [status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data, isLoading } = useInvoices({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
+    approval: approval === "all" ? undefined : approval,
     salespersonId: salespersonId || undefined,
     issueFrom: issueFrom || undefined,
     issueTo: issueTo || undefined,
@@ -70,10 +98,11 @@ export function InvoiceManager() {
   );
 
   const hasFilters =
-    status !== "all" || salespersonId || issueFrom || issueTo || dueFrom || dueTo || tagIds.length > 0;
+    status !== "all" || approval !== "all" || salespersonId || issueFrom || issueTo || dueFrom || dueTo || tagIds.length > 0;
 
   const clear = () => {
     setStatus("all");
+    setApproval("all");
     setSalespersonId("");
     setIssueFrom("");
     setIssueTo("");
@@ -189,6 +218,20 @@ export function InvoiceManager() {
               <SelectItem value="all">All</SelectItem>
               {INVOICE_STATUSES.map((s) => (
                 <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <Field label="Approval">
+          <Select value={approval} onValueChange={(v) => setApproval(v as InvoiceApproval | "all")}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="All" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              {INVOICE_APPROVALS.map((a) => (
+                <SelectItem key={a} value={a}>{APPROVAL_LABELS[a]}</SelectItem>
               ))}
             </SelectContent>
           </Select>

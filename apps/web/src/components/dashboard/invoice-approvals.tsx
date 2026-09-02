@@ -42,7 +42,7 @@ export function InvoiceApprovals() {
           {total === 1 ? "1 invoice needs your approval" : `${total} invoices need your approval`}
         </h2>
         <Link
-          href="/invoices?approval=pending"
+          href="/approvals"
           className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
         >
           See all <ArrowRight className="h-3 w-3" />

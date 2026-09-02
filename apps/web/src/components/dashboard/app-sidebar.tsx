@@ -26,6 +26,7 @@ import {
   Repeat,
   Link2,
   Wallet,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 import { hasPermission, type Permission } from "@delta/shared";
@@ -96,6 +97,10 @@ const NAV: NavGroup[] = [
       { href: "/quotations", label: "Quotations", icon: FileText, enabled: true, permission: "quotation:read" },
       { href: "/sales-orders", label: "Sales Orders", icon: ClipboardList, enabled: true, permission: "salesorder:read" },
       { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
+      // Only for people who can actually decide. Somebody who sees just their
+      // own invoices is on the far side of this queue, and a menu item leading
+      // to "not something your role does" is worse than no menu item.
+      { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: "invoice:write" },
       // Taking an enrolment is the counsellor's whole job, so it is its own
       // entry rather than something reached through the invoice list.
       { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },

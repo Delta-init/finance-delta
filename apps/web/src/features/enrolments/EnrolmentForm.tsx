@@ -313,7 +313,7 @@ export function EnrolmentForm() {
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Meeting done by" hint="Leave it as “That was me” if you ran it.">
+          <Field label="Salesperson" hint="Leave it as “That was me” if the enrolment was yours.">
             {/* Picked, not typed: "Yamini", "yamini" and "Yamini K" are three
                 people as far as any report is concerned. */}
             <Select

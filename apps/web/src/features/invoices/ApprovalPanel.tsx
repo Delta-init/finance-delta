@@ -79,8 +79,11 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           <Detail label="Course" value={e.course} />
           <Detail label="Mode of study" value={MODE_LABELS[e.modeOfStudy] ?? e.modeOfStudy} />
           <Detail label="Language" value={e.language} />
-          <Detail label="Academic counsellor" value={invoice.salespersonName} />
-          {e.meetingBy ? <Detail label="Meeting done by" value={e.meetingBy} /> : null}
+          {/* Who raised it, and who the enrolment is credited to. The same
+              person unless somebody entered it on a colleague's behalf, which
+              is the only reason the second line is ever shown. */}
+          <Detail label="Raised by" value={invoice.salespersonName} />
+          {e.meetingBy ? <Detail label="Salesperson" value={e.meetingBy} /> : null}
           {e.declaredPaidMinor ? (
             <Detail
               label="Collected by counsellor"

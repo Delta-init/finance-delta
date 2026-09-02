@@ -1,18 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Link2, Plus, Trash2, Wallet } from "lucide-react";
-import { formatMoney, toMinor, type BankAccount, type BankTransaction } from "@delta/shared";
+import { Calculator, Link2, Pencil, Plus, Trash2, Wallet } from "lucide-react";
+import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
 import { CashCountDialog } from "@/features/banking/CashCountDialog";
+import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
 import {
   useBankTransactions,
-  useCreateBankTransaction,
   useDeleteBankTransaction,
 } from "@/features/banking/api";
 
@@ -29,19 +28,17 @@ import {
  * two apart is a column that gets misread.
  *
  * The running balance is not computed in this component. It is stored on each
- * transaction and recomputed on the server whenever one is added, so a row
- * entered with last week's date lands in its place and every balance after it
- * moves — which is the thing a spreadsheet gets wrong.
+ * transaction and recomputed on the server whenever one is added or corrected,
+ * so a row entered with last week's date lands in its place and every balance
+ * after it moves — which is the thing a spreadsheet gets wrong.
  */
+
 /** The server caps a page at 100. */
 const PAGE_SIZE = 100;
-
-const today = () => new Date().toISOString().slice(0, 10);
 
 export function CashBook({ account }: { account: BankAccount }) {
   const { can } = useCan();
   const canWrite = can("banking:write");
-  const create = useCreateBankTransaction(account.id);
   const remove = useDeleteBankTransaction(account.id);
 
   /*
@@ -61,42 +58,14 @@ export function CashBook({ account }: { account: BankAccount }) {
     dir: "asc",
   });
 
-  const [date, setDate] = useState(today);
-  const [description, setDescription] = useState("");
-  const [inAmount, setInAmount] = useState("");
-  const [outAmount, setOutAmount] = useState("");
   const [linking, setLinking] = useState<BankTransaction | null>(null);
   const [counting, setCounting] = useState(false);
+  // Null while adding, a row while correcting one. The dialog is the same.
+  const [entry, setEntry] = useState<BankTransaction | null>(null);
+  const [entryOpen, setEntryOpen] = useState(false);
 
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
-
-  const inMinor = toMinor(inAmount || "0");
-  const outMinor = toMinor(outAmount || "0");
-  // Exactly one side, or there is nothing to record and no way to know which.
-  const bothSides = inMinor > 0 && outMinor > 0;
-  const canSubmit = description.trim().length > 0 && (inMinor > 0 || outMinor > 0) && !bothSides;
-
-  async function addRow() {
-    if (!canSubmit) return;
-    try {
-      await create.mutateAsync({
-        date,
-        description: description.trim(),
-        // In is positive, out is negative. The server takes the sign from here
-        // and derives the credit/debit type from it.
-        amountMinor: inMinor > 0 ? inMinor : -outMinor,
-        reference: "",
-        notes: "",
-      });
-      setDescription("");
-      setInAmount("");
-      setOutAmount("");
-      // The date stays, because a run of entries is usually the same day.
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not add the entry");
-    }
-  }
 
   return (
     <div className="rounded-lg border border-border bg-surface">
@@ -110,6 +79,11 @@ export function CashBook({ account }: { account: BankAccount }) {
         <span className="ml-auto text-xs text-foreground-muted">
           {total} {total === 1 ? "entry" : "entries"}
         </span>
+        {canWrite && (
+          <Button size="sm" onClick={() => { setEntry(null); setEntryOpen(true); }}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> New entry
+          </Button>
+        )}
         {can("banking:reconcile") && (
           <Button size="sm" variant="outline" onClick={() => setCounting(true)}>
             <Calculator className="mr-1.5 h-3.5 w-3.5" /> Count cash
@@ -126,7 +100,7 @@ export function CashBook({ account }: { account: BankAccount }) {
               <th className="px-4 py-2 text-right font-medium">In</th>
               <th className="px-4 py-2 text-right font-medium">Out</th>
               <th className="px-4 py-2 text-right font-medium">Balance</th>
-              <th className="w-20 px-4 py-2" />
+              <th className="w-28 px-4 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -187,6 +161,16 @@ export function CashBook({ account }: { account: BankAccount }) {
                     {formatMoney(tx.runningBalanceMinor, account.currency)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right">
+                    {canWrite && !tx.isReconciled && (
+                      <button
+                        type="button"
+                        onClick={() => { setEntry(tx); setEntryOpen(true); }}
+                        className="mr-2 text-foreground-subtle hover:text-primary"
+                        aria-label={`Edit ${tx.description}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {canWrite && tx.matches.length === 0 && (
                       <button
                         type="button"
@@ -221,78 +205,15 @@ export function CashBook({ account }: { account: BankAccount }) {
             })}
           </tbody>
 
-          {canWrite && (
-            <tfoot>
-              <tr className="border-t-2 border-border bg-surface-muted/30">
-                <td className="px-3 py-2">
-                  <Input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="h-8"
-                  />
-                </td>
-                <td className="px-3 py-2">
-                  <Input
-                    value={description}
-                    placeholder="What was it for?"
-                    maxLength={200}
-                    onChange={(e) => setDescription(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addRow())}
-                    className="h-8"
-                  />
-                </td>
-                <td className="px-3 py-2">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={inAmount}
-                    placeholder="In"
-                    onChange={(e) => setInAmount(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addRow())}
-                    className="h-8 text-right"
-                  />
-                </td>
-                <td className="px-3 py-2">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={outAmount}
-                    placeholder="Out"
-                    onChange={(e) => setOutAmount(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addRow())}
-                    className="h-8 text-right"
-                  />
-                </td>
-                <td className="px-3 py-2 text-right text-xs text-foreground-muted">
-                  {bothSides ? (
-                    <span className="text-danger">One side only</span>
-                  ) : (
-                    formatMoney(
-                      account.currentBalanceMinor + (inMinor > 0 ? inMinor : -outMinor),
-                      account.currency,
-                    )
-                  )}
-                </td>
-                <td className="px-2 py-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={create.isPending}
-                    disabled={!canSubmit}
-                    onClick={addRow}
-                    aria-label="Add entry"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </td>
-              </tr>
-            </tfoot>
-          )}
         </table>
       </div>
+
+      <CashEntryDialog
+        account={account}
+        entry={entry}
+        open={entryOpen}
+        onClose={() => setEntryOpen(false)}
+      />
 
       <CashCountDialog account={account} open={counting} onClose={() => setCounting(false)} />
 

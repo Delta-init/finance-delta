@@ -36,6 +36,20 @@ const envSchema = z.object({
   HRMS_CLIENT_ID: z.string().default(""),
   HRMS_INTEGRATION_SECRET: z.string().default(""),
 
+  /*
+   * The inbound side: what another server must present to call this one.
+   *
+   * Separate from the HRMS pair above, which is what this server presents when
+   * it calls out. Sharing one secret for both directions would mean anybody
+   * able to read the outbound credentials could also impersonate a caller.
+   *
+   * Empty means the integration API is off. Unconfigured has to mean closed,
+   * not open — a deployment that has not set this up must not accept signed
+   * requests from anyone who guesses the header names.
+   */
+  INBOUND_CLIENT_ID: z.string().default(""),
+  INBOUND_INTEGRATION_SECRET: z.string().default(""),
+
   // Seed bootstrap (used by scripts/seed.ts)
   SEED_ORG_NAME: z.string().default("Delta HQ"),
   SEED_ADMIN_NAME: z.string().default("Owner"),

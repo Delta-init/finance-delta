@@ -166,6 +166,18 @@ const invoiceSchema = new Schema(
       submittedAt: { type: Date },
     },
     attachments: { type: [invoiceAttachmentSchema], default: [] },
+    /**
+     * Where this invoice came from, when it was not raised here.
+     *
+     * `externalId` is the calling system's own id and is unique per source, so
+     * a retry after a timeout finds the invoice that already exists instead of
+     * billing the client twice.
+     */
+    external: {
+      source: { type: String },
+      externalId: { type: String },
+      flags: { type: [String], default: [] },
+    },
     reference: { type: String, default: "" },
     status: {
       type: String,
@@ -221,6 +233,12 @@ invoiceSchema.index({ organizationId: 1, invoiceNumber: 1 }, { unique: true });
 invoiceSchema.index({ organizationId: 1, status: 1, dueDate: 1 });
 invoiceSchema.index({ organizationId: 1, salespersonId: 1 });
 invoiceSchema.index({ organizationId: 1, customerId: 1 });
+// Partial, so the millions of invoices raised here — which carry no external id
+// at all — are not forced to be unique on a field they do not have.
+invoiceSchema.index(
+  { organizationId: 1, "external.source": 1, "external.externalId": 1 },
+  { unique: true, partialFilterExpression: { "external.externalId": { $type: "string" } } },
+);
 
 export type InvoiceDoc = InferSchemaType<typeof invoiceSchema> & {
   _id: Types.ObjectId;

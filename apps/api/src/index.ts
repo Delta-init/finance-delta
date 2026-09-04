@@ -16,6 +16,7 @@ import salesOrderRoutes from "./modules/salesorder/salesorder.routes";
 import tagRoutes from "./modules/tag/tag.routes";
 import departmentRoutes from "./modules/department/department.routes";
 import invoiceRoutes from "./modules/invoice/invoice.routes";
+import integrationRoutes from "./modules/integrations/integrations.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
 import searchRoutes from "./modules/search/search.routes";
 import suggestionsRoutes from "./modules/suggestions/suggestions.routes";
@@ -53,7 +54,17 @@ async function bootstrap() {
       credentials: true,
     }),
   );
-  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    express.json({
+      limit: "1mb",
+      // Kept so a signed request can be verified against the bytes that
+      // actually arrived. Re-serialising the parsed body would change key
+      // order or number formatting and break honest signatures.
+      verify: (req, _res, buf) => {
+        (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(cookieParser());
 
   app.get("/health", (_req, res) => ok(res, { status: "ok" }));
@@ -68,6 +79,9 @@ async function bootstrap() {
   api.use("/tags", tagRoutes);
   api.use("/departments", departmentRoutes);
   api.use("/invoices", invoiceRoutes);
+  // Signed server-to-server calls. Guarded by its own middleware, not the
+  // session cookie every other route uses.
+  api.use("/integrations", integrationRoutes);
   api.use("/organizations", organizationRoutes);
   api.use("/search", searchRoutes);
   api.use("/suggestions", suggestionsRoutes);

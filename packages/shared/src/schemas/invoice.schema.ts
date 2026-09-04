@@ -413,3 +413,66 @@ export const returnInvoiceSchema = z.object({
   reason: z.string().trim().min(1, "Say what needs correcting").max(300),
 });
 export type ReturnInvoiceInput = z.infer<typeof returnInvoiceSchema>;
+
+/**
+ * An enrolment arriving from another system — today, the sales CRM when a lead
+ * is closed.
+ *
+ * Deliberately narrow. The caller says who the client is, what they bought and
+ * what they paid; everything else — the tax, the currency, the invoice number,
+ * whether it needs approving — is decided here, because those are this system's
+ * rules and a caller that could set them could quietly bypass them.
+ */
+export const inboundEnrolmentSchema = z.object({
+  /**
+   * The caller's own id for this enrolment.
+   *
+   * The idempotency key. A retry after a timeout must find the invoice that was
+   * already made rather than billing the client a second time.
+   */
+  externalId: z.string().min(1).max(120),
+  /** What the caller calls itself, for the audit trail. */
+  source: z.string().min(1).max(40).default("crm"),
+
+  customer: z.object({
+    name: z.string().min(1).max(120),
+    email: z.string().email(),
+    phone: z.string().min(1).max(30),
+  }),
+
+  course: z.object({
+    name: z.string().min(1).max(160),
+    /** The finance inventory item, where the caller has mapped one. */
+    itemId: z.string().optional(),
+    amountMinor: z.number().int().min(0),
+  }),
+
+  /** Who sold it, by email. Attributed to the fallback when unknown here. */
+  salespersonEmail: z.string().email().optional(),
+  /** Their name in the calling system, kept whether or not they have an account here. */
+  salespersonName: z.string().max(120).optional(),
+
+  enrolledOn: z.string().optional(),
+  declaredPaidMinor: z.number().int().min(0).default(0),
+  declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  modeOfStudy: z.enum(MODES_OF_STUDY).default("online"),
+  language: z.string().max(60).default(""),
+  notes: z.string().max(2000).optional(),
+});
+export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;
+
+/** What the caller gets back, and stores against its own record. */
+export const inboundEnrolmentResultSchema = z.object({
+  invoiceId: z.string(),
+  invoiceNumber: z.string(),
+  customerId: z.string(),
+  /** True when this call found an invoice a previous one had already made. */
+  duplicate: z.boolean(),
+  /**
+   * Anything accounts should look at: an unmatched course, a salesperson with
+   * no account here. The enrolment is created regardless — a sale is never
+   * blocked by a mapping somebody has not got round to.
+   */
+  flags: z.array(z.string()),
+});
+export type InboundEnrolmentResult = z.infer<typeof inboundEnrolmentResultSchema>;

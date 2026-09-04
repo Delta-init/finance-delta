@@ -8,7 +8,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { GraduationCap, User, Wallet, Paperclip, X, FileText } from "lucide-react";
-import { MODES_OF_STUDY, PAYMENT_METHODS, paymentMethodLabel, toMinor, formatMoney } from "@delta/shared";
+import {
+  MODES_OF_STUDY,
+  PAYMENT_METHODS,
+  paymentMethodLabel,
+  computeInvoiceLine,
+  toMinor,
+  formatMoney,
+} from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,6 +28,7 @@ import { toast } from "@/lib/toast";
 import { useCurrency } from "@/lib/currency-context";
 import { useCreateCustomer } from "@/features/customers/api";
 import { useCreateInvoice } from "@/features/invoices/api";
+import { useTaxConfig } from "@/features/organization/api";
 import { useColleagues } from "@/features/users/api";
 
 /**
@@ -111,6 +119,20 @@ export function EnrolmentForm() {
   const createCustomer = useCreateCustomer();
   const createInvoice = useCreateInvoice();
   const { data: colleagues } = useColleagues();
+  const { data: taxConfig } = useTaxConfig();
+
+  /*
+   * The tax the organization charges, applied to the course without asking.
+   *
+   * A counsellor taking an enrolment is not the person who decides whether VAT
+   * applies, and every enrolment carries the same answer — so it comes from
+   * Settings → Taxes rather than from a field on this form. An AED business set
+   * to VAT 5% gets VAT 5%; the Bangalore organization gets its CGST and SGST,
+   * which is the same rule giving a different answer rather than a special case.
+   */
+  const defaultTaxes = (taxConfig?.taxRates ?? [])
+    .filter((r) => r.isDefault && r.appliesTo !== "purchases")
+    .map((r) => ({ code: r.code, rate: r.rate }));
   const [busy, setBusy] = useState(false);
   /*
    * Documents are chosen before there is anything to attach them to — the
@@ -143,6 +165,17 @@ export function EnrolmentForm() {
 
   const courseMinor = toMinor(watch("courseAmount") || "0");
   const paidMinor = toMinor(watch("paidAmount") || "0");
+
+  /*
+   * What the client owes, which is the course plus tax.
+   *
+   * Everything below compares against this rather than the course amount: a
+   * counsellor told that 1,200 leaves nothing outstanding, on an invoice for
+   * 1,260, has been told the wrong thing at the only moment it matters.
+   */
+  const line = computeInvoiceLine({ quantity: 1, unitPriceMinor: courseMinor, taxes: defaultTaxes });
+  const taxMinor = line.taxTotalMinor;
+  const dueMinor = line.lineTotalMinor;
 
 
   const rateMissing = currency !== base && !(Number(rate) > 0);
@@ -183,6 +216,7 @@ export function EnrolmentForm() {
             // to point at, and inventing one here would be a second source of
             // products nobody curates.
             ...(v.itemId ? { itemId: v.itemId } : {}),
+            taxes: defaultTaxes,
           },
         ],
         enrolment: {
@@ -289,6 +323,27 @@ export function EnrolmentForm() {
           <Field label={`Course amount (${currency})`} error={errors.courseAmount?.message}>
             <Input type="number" min="0" step="0.01" {...register("courseAmount")} placeholder="0.00" />
           </Field>
+          {/* What the client is actually asked for. The tax is not a field —
+              it is what the organization charges — but leaving it off the
+              screen means quoting the course price and invoicing something
+              else. */}
+          {courseMinor > 0 && taxMinor > 0 && (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-surface-muted px-3 py-2 text-xs sm:col-span-2 lg:col-span-4">
+              <span className="text-foreground-muted">
+                Course <span className="font-numeric font-medium text-foreground">{formatMoney(courseMinor, currency)}</span>
+              </span>
+              {line.taxes.map((t) => (
+                <span key={t.code} className="text-foreground-muted">
+                  {t.code} {t.rate}%{" "}
+                  <span className="font-numeric font-medium text-foreground">{formatMoney(t.amountMinor, currency)}</span>
+                </span>
+              ))}
+              <span className="text-foreground-muted">
+                Total <span className="font-numeric font-semibold text-foreground">{formatMoney(dueMinor, currency)}</span>
+              </span>
+            </div>
+          )}
+
           <CurrencyRateFields
             currency={currency}
             onCurrencyChange={(c) => { rateTouched.current = false; setCurrency(c); }}
@@ -296,7 +351,7 @@ export function EnrolmentForm() {
             rate={rate}
             onRateChange={(r) => { rateTouched.current = true; setRate(r); }}
             ratesDate={ratesDate}
-            amountMinor={courseMinor}
+            amountMinor={dueMinor}
           />
           <Field label="Mode of study">
             <Select value={watch("modeOfStudy")} onValueChange={(x) => setValue("modeOfStudy", x as Values["modeOfStudy"])}>
@@ -346,7 +401,7 @@ export function EnrolmentForm() {
           approver has checked it.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={`Paid amount (${currency})`}>
+          <Field label={`Paid amount (${currency})`} hint={taxMinor > 0 ? `Of ${formatMoney(dueMinor, currency)} due` : undefined}>
             <Input type="number" min="0" step="0.01" {...register("paidAmount")} placeholder="0.00" />
           </Field>
           <Field label="Payment mode">
@@ -369,14 +424,14 @@ export function EnrolmentForm() {
           </Field>
         </div>
 
-        {courseMinor > 0 && paidMinor > 0 && paidMinor < courseMinor && (
+        {courseMinor > 0 && paidMinor > 0 && paidMinor < dueMinor && (
           <p className="rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-xs">
-            {formatMoney(courseMinor - paidMinor, currency)} will remain outstanding after this.
+            {formatMoney(dueMinor - paidMinor, currency)} will remain outstanding after this.
           </p>
         )}
-        {paidMinor > courseMinor && courseMinor > 0 && (
+        {paidMinor > dueMinor && courseMinor > 0 && (
           <p className="rounded-lg border border-danger/30 bg-danger/5 p-2.5 text-xs text-danger">
-            That is more than the course costs. Check the two figures.
+            That is more than the enrolment comes to. Check the two figures.
           </p>
         )}
       </Card>

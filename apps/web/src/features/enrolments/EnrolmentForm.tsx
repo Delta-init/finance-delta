@@ -26,7 +26,7 @@ import { CurrencyRateFields } from "@/components/ui/currency-rate-fields";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCurrency } from "@/lib/currency-context";
-import { useCreateCustomer } from "@/features/customers/api";
+import { useCustomers, useFindOrCreateCustomer } from "@/features/customers/api";
 import { useCreateInvoice } from "@/features/invoices/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useColleagues } from "@/features/users/api";
@@ -111,12 +111,13 @@ export function EnrolmentForm() {
   // Pre-filled when the currency changes, and whenever the table finally loads.
   // Left alone once somebody has typed over it — their number is the agreed one.
   const rateTouched = useRef(false);
+
   useEffect(() => {
     if (rateTouched.current) return;
     const fetched = rateBetween(base, currency);
     setRate(fetched === null ? "" : String(fetched));
   }, [base, currency, rateBetween]);
-  const createCustomer = useCreateCustomer();
+  const findOrCreateCustomer = useFindOrCreateCustomer();
   const createInvoice = useCreateInvoice();
   const { data: colleagues } = useColleagues();
   const { data: taxConfig } = useTaxConfig();
@@ -152,7 +153,7 @@ export function EnrolmentForm() {
   const [pickedItem, setPickedItem] = useState<string | null>(null);
 
   const {
-    register, handleSubmit, setValue, watch,
+    register, handleSubmit, setValue, watch, getValues,
     formState: { errors },
   } = useForm<Values>({
     resolver: zodResolver(schema),
@@ -162,6 +163,36 @@ export function EnrolmentForm() {
       paidAmount: "", enrolledOn: today(),
     },
   });
+
+  /*
+   * Whether this email already belongs to somebody.
+   *
+   * Searched rather than fetched by email, because the customer list already
+   * searches on it and adding a second way to ask the same question is not
+   * worth an endpoint. The search matches five fields, so the answer is only
+   * used when the email matches exactly — "fajin@x.com" must not be reported as
+   * an existing client because somebody's company is called Fajin.
+   */
+  const typedEmail = (watch("email") ?? "").trim().toLowerCase();
+  const emailLooksComplete = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typedEmail);
+  const { data: matches } = useCustomers(
+    { q: typedEmail, page: 1, pageSize: 5 },
+    { enabled: emailLooksComplete },
+  );
+  const existingClient = emailLooksComplete
+    ? (matches?.data ?? []).find((c) => c.email.trim().toLowerCase() === typedEmail)
+    : undefined;
+
+  // Filled in from the client we found, and only where the counsellor has left
+  // the field empty — their typing is never overwritten, and neither is the
+  // stored record.
+  const prefilledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!existingClient || prefilledFor.current === existingClient.id) return;
+    prefilledFor.current = existingClient.id;
+    if (!getValues("name")?.trim()) setValue("name", existingClient.name, { shouldValidate: true });
+    if (!getValues("phone")?.trim()) setValue("phone", existingClient.phone, { shouldValidate: true });
+  }, [existingClient, getValues, setValue]);
 
   const courseMinor = toMinor(watch("courseAmount") || "0");
   const paidMinor = toMinor(watch("paidAmount") || "0");
@@ -189,7 +220,10 @@ export function EnrolmentForm() {
     try {
       // The client first: an invoice needs somebody to bill, and a counsellor
       // taking an enrolment is usually meeting them for the first time.
-      const customer = await createCustomer.mutateAsync({
+      // Found or made. A client buying a second course is not a duplicate, and
+      // an existing one comes back exactly as they are stored — their name and
+      // phone are not overwritten from this form.
+      const { customer } = await findOrCreateCustomer.mutateAsync({
         name: v.name,
         email: v.email,
         phone: v.phone,
@@ -275,7 +309,15 @@ export function EnrolmentForm() {
           <Field label="Name" error={errors.name?.message}>
             <Input {...register("name")} placeholder="Fajin" />
           </Field>
-          <Field label="Email" error={errors.email?.message}>
+          <Field
+            label="Email"
+            error={errors.email?.message}
+            hint={
+              existingClient
+                ? `${existingClient.name} is already a client — this enrolment goes on their record.`
+                : undefined
+            }
+          >
             <Input type="email" {...register("email")} placeholder="name@example.com" />
           </Field>
           <Field label="Contact number" error={errors.phone?.message}>

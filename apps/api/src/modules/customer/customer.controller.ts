@@ -18,6 +18,17 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
   created(res, await customerService.createCustomer(req.auth!.organizationId, req.body));
 });
 
+/**
+ * The client for an enrolment, found or made.
+ *
+ * Answers with `existed` so the caller can say "this client was already here"
+ * rather than leaving somebody to wonder whether a second record was created.
+ */
+export const findOrCreate = asyncHandler(async (req: Request, res: Response) => {
+  const result = await customerService.findOrCreateCustomer(req.auth!.organizationId, req.body);
+  ok(res, result);
+});
+
 export const update = asyncHandler(async (req: Request, res: Response) => {
   ok(
     res,

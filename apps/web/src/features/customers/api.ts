@@ -10,11 +10,13 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["customers"] as const;
 
-export function useCustomers(params: QueryParams) {
+export function useCustomers(params: QueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],
     queryFn: () => api.getList<Customer>("customers", params),
     placeholderData: (prev) => prev,
+    // Honoured only when given, so every existing caller is unaffected.
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -87,5 +89,24 @@ export function useDeleteCustomer() {
     meta: { skipToast: true },
     mutationFn: (id: string) => api.del<void>(`customers/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/**
+ * The client for an enrolment, found by email or created.
+ *
+ * Separate from `useCreateCustomer`, which still refuses a duplicate — on the
+ * customers screen that error is the right answer. Here a repeat client is the
+ * ordinary case.
+ */
+export function useFindOrCreateCustomer() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: CreateCustomerInput) =>
+      api.post<{ customer: Customer; existed: boolean }>("customers/find-or-create", input),
+    onSuccess: (res) => {
+      if (!res.existed) qc.invalidateQueries({ queryKey: KEY });
+    },
   });
 }

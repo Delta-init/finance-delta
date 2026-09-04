@@ -104,6 +104,32 @@ export async function getCustomer(orgId: string, id: string): Promise<CustomerDT
   return toDTO(doc as unknown as CustomerDoc);
 }
 
+/**
+ * The client this enrolment is for, whether or not they are already known.
+ *
+ * A client buying a second course is not a duplicate. The enrolment form always
+ * created, so the second course was refused after the whole form had been
+ * filled in — and the enrolment lost with it.
+ *
+ * Matched on email within the organization, which is the identity here and is
+ * already indexed. An existing client is returned exactly as they are stored:
+ * their name and phone are not overwritten from the form, because somebody
+ * taking an enrolment may simply have typed one of them carelessly, and the
+ * customers screen is where details get corrected.
+ */
+export async function findOrCreateCustomer(
+  orgId: string,
+  input: CreateCustomerInput,
+): Promise<{ customer: CustomerDTO; existed: boolean }> {
+  const email = input.email.trim().toLowerCase();
+  const found = await Customer.findOne({ organizationId: orgId, email })
+    .populate("tagIds", "name color")
+    .populate("departmentId", "name");
+  if (found) return { customer: toDTO(found as unknown as CustomerDoc), existed: true };
+
+  return { customer: await createCustomer(orgId, { ...input, email }), existed: false };
+}
+
 export async function createCustomer(
   orgId: string,
   input: CreateCustomerInput,

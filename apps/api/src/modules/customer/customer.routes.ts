@@ -17,6 +17,14 @@ router.post(
   validateBody(createCustomerSchema),
   customerController.create,
 );
+// A client buying a second course is not a duplicate. Same permission as
+// creating one, since that is what it does when nobody matches.
+router.post(
+  "/find-or-create",
+  requirePermission("customer:create"),
+  validateBody(createCustomerSchema),
+  customerController.findOrCreate,
+);
 router.patch(
   "/:id",
   requirePermission("customer:update"),

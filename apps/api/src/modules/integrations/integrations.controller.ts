@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { inboundEnrolmentSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
+import { Item } from "../inventory/item.model";
 import { intakeEnrolment } from "./enrolment-intake.service";
 
 /**
@@ -28,4 +29,28 @@ export const takeEnrolment = asyncHandler(async (req: Request, res: Response) =>
   const orgId = await organizationOf(req);
   const parsed = inboundEnrolmentSchema.parse(req.body);
   ok(res, await intakeEnrolment(orgId, parsed));
+});
+
+/**
+ * The catalogue, for a caller that needs to map its own courses onto it.
+ *
+ * Name, sku and price only. A calling system needs enough to show somebody a
+ * list and let them pick; it has no business reading stock levels or margins.
+ */
+export const listItems = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const items = await Item.find({ organizationId: orgId, isActive: { $ne: false } })
+    .select("name sku unitPriceMinor type")
+    .sort({ name: 1 })
+    .lean();
+  ok(
+    res,
+    items.map((i) => ({
+      id: String(i._id),
+      name: i.name as string,
+      sku: (i.sku as string) ?? "",
+      unitPriceMinor: (i.unitPriceMinor as number) ?? 0,
+      type: (i.type as string) ?? "",
+    })),
+  );
 });

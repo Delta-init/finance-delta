@@ -11,6 +11,9 @@ router.use(serviceAuth);
 
 router.get("/ping", c.ping);
 
+// The catalogue, so a calling system can map its own courses onto it.
+router.get("/items", c.listItems);
+
 // A lead closed in the CRM is an enrolment here. Idempotent on the caller's own
 // id, because the case this is built for is a retry after a timeout.
 router.post("/enrolments", c.takeEnrolment);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock } from "lucide-react";
+import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye } from "lucide-react";
 import { formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useApproveInvoice, useReturnInvoice, useResubmitInvoice } from "@/features/invoices/api";
+import { EnrolmentDetailsDialog } from "@/features/invoices/EnrolmentDetailsDialog";
 
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
 
@@ -36,6 +37,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
   const sendBack = useReturnInvoice(invoice.id);
   const resubmit = useResubmitInvoice(invoice.id);
   const [returning, setReturning] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const [reason, setReason] = useState("");
 
   if (!approval || approval.state === "not_required") return null;
@@ -76,6 +78,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
 
       {e && (
         <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Detail label="Client" value={invoice.customerName} />
           <Detail label="Course" value={e.course} />
           <Detail label="Mode of study" value={MODE_LABELS[e.modeOfStudy] ?? e.modeOfStudy} />
           <Detail label="Language" value={e.language} />
@@ -116,6 +119,14 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        {/* Offered whatever the state and whoever is looking: reading an
+            enrolment is not a decision, and somebody who cannot approve still
+            has to check what they raised. */}
+        {e && (
+          <Button size="sm" variant="secondary" onClick={() => setViewing(true)}>
+            <Eye className="mr-1.5 h-3.5 w-3.5" />View details
+          </Button>
+        )}
         {canDecide && pending && (
           <>
             <Button size="sm" loading={approve.isPending}
@@ -134,6 +145,10 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           </Button>
         )}
       </div>
+
+      {e && (
+        <EnrolmentDetailsDialog invoice={invoice} open={viewing} onClose={() => setViewing(false)} />
+      )}
 
       <Dialog open={returning} onOpenChange={(o) => { if (!o) setReason(""); setReturning(o); }}>
         <DialogContent className="max-w-md">

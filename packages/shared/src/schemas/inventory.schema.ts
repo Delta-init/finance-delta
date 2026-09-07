@@ -51,6 +51,15 @@ export const createItemSchema = z.object({
   unit: itemUnitSchema.default("each"),
   unitPriceMinor: z.number().int().min(0).default(0),
   costPriceMinor: z.number().int().min(0).default(0),
+  /**
+   * The HSN or SAC code this item is sold under.
+   *
+   * Per item, because it is a property of what is being sold rather than of
+   * who is selling it: two courses on the same GST invoice can sit under
+   * different codes. The organization's default fills in for anything that
+   * does not carry its own.
+   */
+  hsnSac: z.string().max(20).optional().default(""),
   trackStock: z.boolean().default(true),
   reorderPoint: z.number().min(0).default(0),
   reorderQty: z.number().min(0).default(0),
@@ -73,6 +82,7 @@ export const itemSchema = z.object({
   unit: itemUnitSchema,
   unitPriceMinor: z.number(),
   costPriceMinor: z.number(),
+  hsnSac: z.string(),
   trackStock: z.boolean(),
   reorderPoint: z.number(),
   reorderQty: z.number(),

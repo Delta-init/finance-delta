@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel } from "@delta/shared";
+import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel, type Invoice } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
@@ -129,6 +129,29 @@ export default function PrintInvoicePage({
             </div>
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>
+            {/* What was actually bought. The invoice has carried these since
+                enrolments existed; only the line description showed them, and
+                a client reading "Course Fee" could not tell which course. */}
+            {invoice.enrolment && (
+              <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#64748b" }}>Course</div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{invoice.enrolment.course}</div>
+                <div style={{ display: "flex", gap: 20, justifyContent: isRtl ? "flex-start" : "flex-end", marginTop: 6 }}>
+                  {invoice.enrolment.language ? (
+                    <div>
+                      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: 1, color: "#64748b" }}>Language</div>
+                      <div style={{ fontSize: 12 }}>{invoice.enrolment.language}</div>
+                    </div>
+                  ) : null}
+                  {invoice.enrolment.meetingBy ? (
+                    <div>
+                      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: 1, color: "#64748b" }}>Counsellor</div>
+                      <div style={{ fontSize: 12 }}>{invoice.enrolment.meetingBy}</div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )}
             <MetaLine label={L.salesperson} value={invoice.salespersonName} />
             {invoice.reference && <MetaLine label={L.reference} value={invoice.reference} />}
             <MetaLine label={L.issueDate} value={invoice.issueDate} />
@@ -209,6 +232,13 @@ export default function PrintInvoicePage({
           </div>
         )}
 
+        {/* Tax details — a GST requirement, and the same summary Zoho prints.
+            The per-rate split of what has been received, plus what the invoice
+            was raised for and what is still outstanding. */}
+        {showHsn && invoice.taxBreakdown.length > 0 && (
+          <TaxDetailsTable invoice={invoice} />
+        )}
+
         <PrintBankBlock account={bankAccount} labels={L} />
 
         {/* Notes / Terms */}
@@ -270,6 +300,85 @@ function PrintTotalRow({
     }}>
       <span>{label}</span>
       <span>{value}</span>
+    </div>
+  );
+}
+
+
+/**
+ * The GST tax-details summary.
+ *
+ * Columns are whatever tax codes the invoice actually carries, so CGST/SGST
+ * within a state and IGST across one both come out right without this knowing
+ * which it is looking at.
+ *
+ * Three rows, because three different figures get asked about. What the
+ * invoice was raised for; what has been received against it, split across the
+ * same codes in the proportion they were charged, which is how the payment
+ * carries its tax; and what is left. A summary that showed only one of them
+ * answers a third of the question.
+ */
+function TaxDetailsTable({ invoice }: { invoice: Invoice }) {
+  const codes = invoice.taxBreakdown.map((t) => t.code);
+
+  // Rates come off the lines, where they are recorded per code.
+  const rateOf = new Map<string, number>();
+  for (const line of invoice.lineItems) {
+    for (const t of line.taxes ?? []) if (!rateOf.has(t.code)) rateOf.set(t.code, t.rate);
+  }
+  const totalRate = codes.reduce((sum, c) => sum + (rateOf.get(c) ?? 0), 0);
+  const label = totalRate > 0
+    ? `GST ${totalRate}% (${codes.map((c) => `${rateOf.get(c) ?? 0}%`).join(" + ")})`
+    : codes.join(" + ");
+
+  const paid = invoice.amountPaidMinor;
+  const total = invoice.totalMinor;
+  // Proportional, so the parts of a part payment still add up to it.
+  const share = (amount: number) => (total > 0 ? Math.round((paid * amount) / total) : 0);
+
+  const cell: React.CSSProperties = { padding: "6px 10px", textAlign: "right", fontSize: 11 };
+  const head: React.CSSProperties = { ...cell, fontWeight: 600, color: "#fff" };
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #e2e8f0" }}>
+        <thead>
+          <tr style={{ background: "#1e293b" }}>
+            <th style={{ ...head, textAlign: "left" }}>Tax Details</th>
+            <th style={head}>Taxable</th>
+            {codes.map((c) => (
+              <th key={c} style={head}>{c}</th>
+            ))}
+            <th style={head}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+            <td style={{ ...cell, textAlign: "left" }}>{label} — invoiced</td>
+            <td style={cell}>{formatMoney(invoice.subtotalMinor, invoice.currency)}</td>
+            {invoice.taxBreakdown.map((t) => (
+              <td key={t.code} style={cell}>{formatMoney(t.amountMinor, invoice.currency)}</td>
+            ))}
+            <td style={{ ...cell, fontWeight: 600 }}>{formatMoney(total, invoice.currency)}</td>
+          </tr>
+          {paid > 0 && (
+            <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+              <td style={{ ...cell, textAlign: "left" }}>{label} — received</td>
+              <td style={cell}>{formatMoney(share(invoice.subtotalMinor), invoice.currency)}</td>
+              {invoice.taxBreakdown.map((t) => (
+                <td key={t.code} style={cell}>{formatMoney(share(t.amountMinor), invoice.currency)}</td>
+              ))}
+              <td style={{ ...cell, fontWeight: 600 }}>{formatMoney(paid, invoice.currency)}</td>
+            </tr>
+          )}
+          <tr style={{ background: "#f8fafc" }}>
+            <td style={{ ...cell, textAlign: "left", fontWeight: 600 }} colSpan={codes.length + 2}>
+              Balance
+            </td>
+            <td style={{ ...cell, fontWeight: 700 }}>{formatMoney(invoice.balanceMinor, invoice.currency)}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }

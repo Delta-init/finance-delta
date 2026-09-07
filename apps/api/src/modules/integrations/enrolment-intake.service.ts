@@ -203,6 +203,10 @@ export async function intakeEnrolment(
           unitPriceMinor: input.course.amountMinor,
           taxes,
           ...(itemId ? { itemId } : {}),
+          // The CRM's own code for the course, where it keeps one. Left off
+          // when it does not, so the mapped item's code or the organization's
+          // default decides instead.
+          ...(input.course.hsnSac?.trim() ? { hsnSac: input.course.hsnSac.trim() } : {}),
         },
       ],
       enrolment: {

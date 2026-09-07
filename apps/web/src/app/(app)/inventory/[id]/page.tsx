@@ -13,6 +13,7 @@ import {
 } from "@delta/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
@@ -44,6 +45,12 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
   const t = useTableQuery({ initialSort: { key: "movementDate", dir: "desc" } });
   const { data: movements } = useStockMovements(id, t.baseParams);
   const updateItem = useUpdateItem(id);
+  /*
+   * Editable here because there is no item edit form at all — update is used
+   * only for the active toggle. A code that could be set once at creation and
+   * never corrected would strand every course already in the catalogue.
+   */
+  const [sacDraft, setSacDraft] = useState<string | null>(null);
   const deleteItem = useDeleteItem();
   const { data: departments } = useAllDepartments();
   const [deleting, setDeleting] = useState(false);
@@ -242,6 +249,39 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
         <div className="rounded-lg border border-border bg-surface p-4">
           <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Cost Price</p>
           <MoneyDisplay minor={item.costPriceMinor} className="mt-1 text-xl font-semibold" />
+        </div>
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">HSN / SAC</p>
+          {sacDraft === null ? (
+            <button
+              type="button"
+              onClick={() => setSacDraft(item.hsnSac ?? "")}
+              className="mt-1 flex items-baseline gap-2 text-xl font-semibold hover:underline"
+            >
+              {item.hsnSac || <span className="text-foreground-muted">Not set</span>}
+              <Edit className="h-3.5 w-3.5 text-foreground-muted" />
+            </button>
+          ) : (
+            <div className="mt-1 flex items-center gap-2">
+              <Input
+                value={sacDraft}
+                onChange={(e) => setSacDraft(e.target.value)}
+                placeholder="999293"
+                className="h-8 text-sm"
+              />
+              <Button
+                size="sm"
+                loading={updateItem.isPending}
+                onClick={async () => {
+                  await updateItem.mutateAsync({ hsnSac: sacDraft.trim() });
+                  setSacDraft(null);
+                }}
+              >
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSacDraft(null)}>Cancel</Button>
+            </div>
+          )}
         </div>
         <div className="rounded-lg border border-border bg-surface p-4">
           <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Total Stock</p>

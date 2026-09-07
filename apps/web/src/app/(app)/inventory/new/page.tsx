@@ -22,6 +22,7 @@ const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   sku: z.string().min(1, "SKU is required"),
+  hsnSac: z.string().optional(),
   type: z.enum(["product", "service"]),
   unit: z.enum(["each", "kg", "g", "liter", "ml", "meter", "cm", "box", "set", "hour", "day", "pair", "dozen", "pack"]),
   unitPriceDisplay: z.string().default("0"),
@@ -55,6 +56,7 @@ export default function NewItemPage() {
         name: values.name,
         description: values.description ?? "",
         sku: values.sku,
+        hsnSac: values.hsnSac ?? "",
         type: values.type,
         unit: values.unit,
         unitPriceMinor: toMinor(values.unitPriceDisplay),
@@ -101,6 +103,16 @@ export default function NewItemPage() {
               <Label htmlFor="sku">SKU *</Label>
               <Input id="sku" {...register("sku")} placeholder="e.g. CHAIR-001" />
               {errors.sku && <p className="text-xs text-danger">{errors.sku.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              {/* Per item, because the code belongs to what is being sold: two
+                  courses on one GST invoice can sit under different codes.
+                  Blank falls back to the organization's default. */}
+              <Label htmlFor="hsnSac">HSN / SAC</Label>
+              <Input id="hsnSac" {...register("hsnSac")} placeholder="e.g. 999293" />
+              <p className="text-xs text-foreground-muted">
+                Printed on GST invoices. Left blank, the organization&apos;s default is used.
+              </p>
             </div>
 
             <div className="space-y-1">

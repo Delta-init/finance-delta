@@ -445,6 +445,15 @@ export const inboundEnrolmentSchema = z.object({
     /** The finance inventory item, where the caller has mapped one. */
     itemId: z.string().optional(),
     amountMinor: z.number().int().min(0),
+    /**
+     * The code this course is sold under, where the calling system keeps one.
+     *
+     * A GST invoice needs it per line, and the CRM is where somebody who knows
+     * the course sets it. Falls back to the mapped item's code, then to the
+     * organization's default, so a caller that knows nothing about tax codes
+     * still produces a valid invoice.
+     */
+    hsnSac: z.string().max(20).optional(),
   }),
 
   /** Who sold it, by email. Attributed to the fallback when unknown here. */

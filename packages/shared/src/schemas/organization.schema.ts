@@ -54,6 +54,16 @@ export const updateOrganizationSchema = z.object({
     })
     .optional(),
   address: orgAddressSchema.partial().optional(),
+  /**
+   * A second address, where the registered office is not where the work happens.
+   *
+   * An Indian company prints both: the address on the GST registration, and the
+   * one people actually visit. Optional and left off entirely when empty, so an
+   * organization with a single address prints a single address.
+   */
+  registeredAddress: orgAddressSchema.partial().optional(),
+  /** Heading for the second address block. "Registered office" when unset. */
+  registeredAddressLabel: z.string().max(60).optional(),
   phone: z.string().max(40).optional(),
   email: z.string().email("Must be a valid email").or(z.literal("")).optional(),
   website: z.string().max(200).optional(),
@@ -77,6 +87,8 @@ export const organizationSchema = z.object({
     footerText: z.string(),
   }),
   address: orgAddressSchema,
+  registeredAddress: orgAddressSchema,
+  registeredAddressLabel: z.string().default(""),
   phone: z.string().default(""),
   email: z.string().default(""),
   website: z.string().default(""),

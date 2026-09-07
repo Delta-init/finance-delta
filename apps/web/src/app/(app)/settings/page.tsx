@@ -54,6 +54,8 @@ export default function SettingsPage() {
           footerText: org.branding.footerText,
         },
         address: { ...org.address },
+        registeredAddress: { ...org.registeredAddress },
+        registeredAddressLabel: org.registeredAddressLabel,
         phone: org.phone,
         email: org.email,
         website: org.website,
@@ -193,6 +195,54 @@ export default function SettingsPage() {
               <label className="text-sm font-medium text-foreground">Country</label>
               <input {...register("address.country")} className={FIELD} placeholder="United Arab Emirates" />
             </div>
+          </div>
+
+          {/* A second address, for an organization whose registered office is
+              not the place people visit. Indian invoices print both. Left
+              empty, the block is left off the invoice entirely. */}
+          <details className="rounded-lg border border-border bg-surface-muted/40 p-4">
+            <summary className="cursor-pointer text-sm font-medium text-foreground">
+              Second address
+              <span className="ml-2 font-normal text-foreground-muted">
+                — a registered office that differs from the address above
+              </span>
+            </summary>
+            <div className="mt-4 space-y-4">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Heading</label>
+                <input {...register("registeredAddressLabel")} className={FIELD} placeholder="Registered office" />
+                <p className="text-xs text-foreground-muted">What to call it on the invoice. &ldquo;Registered office&rdquo; if left blank.</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Address line 1</label>
+                <input {...register("registeredAddress.line1")} className={FIELD} placeholder="Prestige Towers, 412A, 4th floor" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Address line 2</label>
+                <input {...register("registeredAddress.line2")} className={FIELD} placeholder="Residency Rd, Shanthala Nagar" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">City</label>
+                  <input {...register("registeredAddress.city")} className={FIELD} placeholder="Bengaluru" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">State</label>
+                  <input {...register("registeredAddress.state")} className={FIELD} placeholder="Karnataka" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">Postcode</label>
+                  <input {...register("registeredAddress.postcode")} className={FIELD} placeholder="560025" />
+                </div>
+              </div>
+              <div className="space-y-1 sm:w-1/2">
+                <label className="text-sm font-medium text-foreground">Country</label>
+                <input {...register("registeredAddress.country")} className={FIELD} placeholder="India" />
+              </div>
+            </div>
+          </details>
+
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">Phone</label>
               <input {...register("phone")} className={FIELD} placeholder="+971 4 000 0000" />

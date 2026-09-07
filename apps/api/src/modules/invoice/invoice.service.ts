@@ -183,12 +183,35 @@ function approvalDTO(doc: unknown): InvoiceDTO["approval"] {
   };
 }
 
+/**
+ * The HSN/SAC each of these catalogue items is sold under.
+ *
+ * One query for the whole invoice rather than one per line. Items that carry
+ * no code of their own are simply absent, and the caller falls back.
+ */
+async function itemHsnSacFor(
+  orgId: string,
+  lines: { itemId?: string }[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(lines.map((l) => l.itemId).filter(Boolean) as string[])];
+  if (ids.length === 0) return new Map();
+  const { Item } = await import("../inventory/item.model");
+  const items = await Item.find({ organizationId: orgId, _id: { $in: ids } })
+    .select("hsnSac")
+    .lean();
+  return new Map(
+    items
+      .map((i) => [String(i._id), ((i as { hsnSac?: string }).hsnSac ?? "").trim()] as const)
+      .filter(([, code]) => code.length > 0),
+  );
+}
+
 function buildLines(
   raw: CreateInvoiceInput["lineItems"],
   taxInclusive = false,
-  opts: { roundTotals?: boolean; defaultHsnSac?: string } = {},
+  opts: { roundTotals?: boolean; defaultHsnSac?: string; itemHsnSac?: Map<string, string> } = {},
 ) {
-  const { roundTotals = false, defaultHsnSac = "" } = opts;
+  const { roundTotals = false, defaultHsnSac = "", itemHsnSac } = opts;
   const lineItems = raw.map((l) => {
     const b = computeInvoiceLine({ ...l, taxInclusive });
     return {
@@ -198,10 +221,19 @@ function buildLines(
       discountPct: l.discountPct ?? 0,
       itemId: l.itemId,
       warehouseId: l.warehouseId,
-      // The organization's default stands in for a line nobody coded, so a
-      // single-service business types it once in Settings rather than on
-      // every line of every invoice.
-      hsnSac: l.hsnSac?.trim() || defaultHsnSac,
+      /*
+       * Three places, most specific first.
+       *
+       * What was typed on the line wins; otherwise the catalogue item's own
+       * code, because the code belongs to the thing being sold and two courses
+       * on one invoice can differ; otherwise the organization's default, so a
+       * single-service business types it once in Settings rather than on every
+       * line of every invoice.
+       */
+      hsnSac:
+        l.hsnSac?.trim() ||
+        (l.itemId ? itemHsnSac?.get(String(l.itemId))?.trim() : "") ||
+        defaultHsnSac,
       taxes: b.taxes,
       lineSubtotalMinor: b.lineSubtotalMinor,
       discountMinor: b.discountMinor,
@@ -446,6 +478,7 @@ export async function createInvoice(
   const { lineItems, totals } = buildLines(input.lineItems, input.taxInclusive ?? false, {
     roundTotals: computation.roundTotals,
     defaultHsnSac: computation.hsnSac,
+    itemHsnSac: await itemHsnSacFor(orgId, input.lineItems),
   });
   const numbering = await invoiceNumberingFor(orgId);
   const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
@@ -595,6 +628,7 @@ export async function updateInvoice(
     const { lineItems, totals } = buildLines(input.lineItems, effectiveTaxInclusive, {
       roundTotals: computation.roundTotals,
       defaultHsnSac: computation.hsnSac,
+      itemHsnSac: await itemHsnSacFor(orgId, input.lineItems),
     });
     doc.set({
       lineItems,

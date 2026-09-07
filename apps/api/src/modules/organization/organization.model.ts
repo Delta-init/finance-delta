@@ -29,6 +29,18 @@ const organizationSchema = new Schema(
       postcode: { type: String, default: "" },
       country:  { type: String, default: "" },
     },
+    // The registered office, where that is not the address people visit. An
+    // Indian invoice prints both; everywhere else this stays empty and the
+    // block is left off.
+    registeredAddress: {
+      line1:    { type: String, default: "" },
+      line2:    { type: String, default: "" },
+      city:     { type: String, default: "" },
+      state:    { type: String, default: "" },
+      postcode: { type: String, default: "" },
+      country:  { type: String, default: "" },
+    },
+    registeredAddressLabel: { type: String, default: "" },
     phone:   { type: String, default: "" },
     email:   { type: String, default: "" },
     website: { type: String, default: "" },

@@ -187,6 +187,15 @@ export async function intakeEnrolment(
       dueDate: enrolledOn,
       reference: `${input.source}:${input.externalId}`,
       notes: input.notes ?? "",
+      /*
+       * The fee the CRM sends is what the client agreed to pay, the same as
+       * the figure a counsellor types into the enrolment form — so the tax
+       * comes out of it rather than on top. Adding it here instead would bill
+       * the same course two different totals depending on which screen the
+       * enrolment came through, which is the thing `defaultSalesTaxes` exists
+       * to prevent.
+       */
+      taxInclusive: true,
       lineItems: [
         {
           description: input.course.name,

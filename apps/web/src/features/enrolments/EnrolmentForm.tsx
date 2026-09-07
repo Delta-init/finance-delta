@@ -198,15 +198,30 @@ export function EnrolmentForm() {
   const paidMinor = toMinor(watch("paidAmount") || "0");
 
   /*
-   * What the client owes, which is the course plus tax.
+   * The course price already includes the tax.
    *
-   * Everything below compares against this rather than the course amount: a
-   * counsellor told that 1,200 leaves nothing outstanding, on an invoice for
-   * 1,260, has been told the wrong thing at the only moment it matters.
+   * A course is sold at the price on the brochure: a counsellor agreeing 1,300
+   * with a client has agreed 1,300, not 1,365. So the figure typed here is what
+   * the client pays, and the VAT is taken out of it rather than added on top.
+   *
+   * Everything below compares against `dueMinor` rather than the typed amount.
+   * They are the same number now, and stay so if the organization ever charges
+   * no tax — but a counsellor told that 1,300 leaves nothing outstanding, on an
+   * invoice for something else, has been told the wrong thing at the only
+   * moment it matters.
    */
-  const line = computeInvoiceLine({ quantity: 1, unitPriceMinor: courseMinor, taxes: defaultTaxes });
+  const line = computeInvoiceLine({
+    quantity: 1,
+    unitPriceMinor: courseMinor,
+    taxes: defaultTaxes,
+    taxInclusive: true,
+  });
   const taxMinor = line.taxTotalMinor;
   const dueMinor = line.lineTotalMinor;
+  // Net of tax, derived as total less tax rather than computed a second time,
+  // so the three figures on screen always add up. `taxableMinor` can be a fil
+  // out from that when a rate does not divide evenly.
+  const netMinor = dueMinor - taxMinor;
 
 
   const rateMissing = currency !== base && !(Number(rate) > 0);
@@ -241,6 +256,9 @@ export function EnrolmentForm() {
         dueDate: v.enrolledOn,
         currency,
         exchangeRate: Number(rate) || undefined,
+        // The price agreed with the client contains the tax; the server splits
+        // it the same way the summary above does.
+        taxInclusive: true,
         lineItems: [
           {
             description: v.course,
@@ -365,14 +383,14 @@ export function EnrolmentForm() {
           <Field label={`Course amount (${currency})`} error={errors.courseAmount?.message}>
             <Input type="number" min="0" step="0.01" {...register("courseAmount")} placeholder="0.00" />
           </Field>
-          {/* What the client is actually asked for. The tax is not a field —
-              it is what the organization charges — but leaving it off the
-              screen means quoting the course price and invoicing something
-              else. */}
+          {/* How the agreed price splits. The tax is not a field — it is what
+              the organization charges — but leaving it off the screen means
+              agreeing a price and invoicing something else. The total is the
+              figure typed above: the tax comes out of it, not on top. */}
           {courseMinor > 0 && taxMinor > 0 && (
             <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-md border border-border bg-surface-muted px-3 py-2 text-xs sm:col-span-2 lg:col-span-4">
               <span className="text-foreground-muted">
-                Course <span className="font-numeric font-medium text-foreground">{formatMoney(courseMinor, currency)}</span>
+                Course <span className="font-numeric font-medium text-foreground">{formatMoney(netMinor, currency)}</span>
               </span>
               {line.taxes.map((t) => (
                 <span key={t.code} className="text-foreground-muted">

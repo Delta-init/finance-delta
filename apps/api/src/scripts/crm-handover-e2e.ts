@@ -382,7 +382,20 @@ async function main() {
   );
   const flags = (inv1?.external as { flags?: string[] } | undefined)?.flags ?? [];
   check("no attribution flag was raised", !flags.some((f) => /no account/i.test(f)), JSON.stringify(flags));
-  check("VAT is applied by the server, not taken from the caller", inv1?.totalMinor === 136_500, `totalMinor=${inv1?.totalMinor}`);
+  // The fee the CRM sends is what the client agreed to pay: 1,300 stays 1,300,
+  // and the VAT comes out of it rather than being added on top.
+  check(
+    "the agreed fee is the total, with tax taken out of it",
+    inv1?.totalMinor === 130_000,
+    `totalMinor=${inv1?.totalMinor}`,
+  );
+  const net = inv1?.subtotalMinor ?? 0;
+  const vat = inv1?.taxTotalMinor ?? 0;
+  check(
+    "...and the tax was still charged, out of that figure",
+    vat > 0 && net + vat === inv1?.totalMinor,
+    `subtotal=${net} tax=${vat} total=${inv1?.totalMinor}`,
+  );
   check("it starts pending, so it cannot reach the client unapproved", inv1?.approval?.state === "pending", JSON.stringify(inv1?.approval));
   // The bug this whole script was written to catch.
   check(

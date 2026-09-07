@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ChevronUp,
@@ -54,6 +54,15 @@ interface DataTableProps<T> {
   onSortChange?: (key: string) => void;
   selectable?: boolean;
   onSelectionChange?: (ids: string[]) => void;
+  /**
+   * Change this to drop the selection.
+   *
+   * The rows a bulk action just acted on are gone, but their ids would stay
+   * ticked — and the header checkbox, which reads "is every row on this page
+   * selected", would then answer about records that no longer exist. The caller
+   * knows when its action finished; the table cannot infer it from new data.
+   */
+  selectionResetKey?: string | number;
   onRowClick?: (row: T) => void;
   isLoading?: boolean;
   emptyMessage?: string;
@@ -87,6 +96,7 @@ export function DataTable<T>({
   onSortChange,
   selectable = false,
   onSelectionChange,
+  selectionResetKey,
   onRowClick,
   isLoading = false,
   emptyMessage = "No records found.",
@@ -96,6 +106,13 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const reduce = useReducedMotion();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (selectionResetKey === undefined) return;
+    setSelected(new Set());
+    // Deliberately not calling onSelectionChange: the caller asked for this,
+    // and telling it what it already knows invites a loop.
+  }, [selectionResetKey]);
   const [viewing, setViewing] = useState<T | null>(null);
   const rows = data ?? [];
   const pageCount = Math.max(1, Math.ceil(total / pageSize));

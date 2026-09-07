@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, X, ReceiptText } from "lucide-react";
+import { Plus, Search, X, ReceiptText, Trash2 } from "lucide-react";
 import {
   INVOICE_STATUSES,
   INVOICE_APPROVALS,
@@ -26,7 +26,12 @@ import { useUsers } from "@/features/users/api";
 import { useTableQuery } from "@/lib/use-table-query";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
-import { useInvoices } from "./api";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useDeleteInvoice, useInvoices } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 
 /** "not_required" says nothing to somebody reading a filter menu. */
@@ -72,6 +77,11 @@ export function InvoiceManager() {
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /** Bumped after a delete, to untick rows that are no longer there. */
+  const [selectionResetKey, setSelectionResetKey] = useState(0);
+  const deleteInvoice = useDeleteInvoice();
 
   useEffect(() => t.resetPage(), [status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -89,8 +99,45 @@ export function InvoiceManager() {
 
   // Somebody who only sees their own invoices has one salesperson to choose
   // from — themselves — and cannot read the user list to build the picker.
-  const { ownOnly } = useCan();
+  const { can, ownOnly } = useCan();
   const mineOnly = ownOnly("invoice:read", "invoice:read:own");
+  // Deleting is behind the broad permission, as it is on the server: somebody
+  // limited to their own invoices cannot remove one.
+  const canDelete = can("invoice:write");
+
+  const selected = (data?.data ?? []).filter((inv) => selectedIds.includes(inv.id));
+  // Only a draft can be deleted — the server refuses anything else, because an
+  // invoice that has been sent or paid is a record of something that happened.
+  const deletable = selected.filter((inv) => inv.status === "draft");
+  const undeletable = selected.length - deletable.length;
+
+  /**
+   * Delete what can be deleted, and say plainly what happened.
+   *
+   * One request per invoice, because that is the endpoint there is. Failures
+   * are counted rather than thrown: stopping halfway through would leave the
+   * selection half gone with nothing said about which half.
+   */
+  async function deleteSelected() {
+    const results = await Promise.allSettled(
+      deletable.map((inv) => deleteInvoice.mutateAsync(inv.id)),
+    );
+    const failed = results.filter((r) => r.status === "rejected");
+    const gone = results.length - failed.length;
+
+    if (gone) toast.success(`${gone} invoice${gone === 1 ? "" : "s"} deleted`);
+    if (failed.length) {
+      const first = failed[0] as PromiseRejectedResult;
+      toast.error(
+        failed.length === 1 && first.reason instanceof ApiError
+          ? first.reason.message
+          : `${failed.length} could not be deleted`,
+      );
+    }
+    setConfirmingDelete(false);
+    setSelectedIds([]);
+    setSelectionResetKey((n) => n + 1);
+  }
 
   const { data: users } = useUsers(
     { pageSize: 100, sort: "name", dir: "asc" },
@@ -266,6 +313,44 @@ export function InvoiceManager() {
         )}
       </div>
 
+      {/* Only once something is ticked. A row of controls that is always there
+          but usually does nothing is worse than none. */}
+      {canDelete && selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-muted px-4 py-2.5">
+          <span className="text-sm font-medium">
+            {selectedIds.length} selected
+          </span>
+          {undeletable > 0 && (
+            <span className="text-xs text-foreground-muted">
+              {undeletable === selectedIds.length
+                ? "None of these are drafts, so none can be deleted."
+                : `${undeletable} of them ${undeletable === 1 ? "is not a draft" : "are not drafts"} and will be left alone.`}
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedIds([]);
+                setSelectionResetKey((n) => n + 1);
+              }}
+            >
+              Clear
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={deletable.length === 0}
+              onClick={() => setConfirmingDelete(true)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete{deletable.length > 0 ? ` ${deletable.length}` : ""}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <DataTable
         columns={columns}
         data={data?.data}
@@ -278,9 +363,41 @@ export function InvoiceManager() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         selectable
+        onSelectionChange={setSelectedIds}
+        selectionResetKey={selectionResetKey}
         isLoading={isLoading}
         emptyMessage="No invoices match your filters."
       />
+
+      <Dialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Delete {deletable.length} invoice{deletable.length === 1 ? "" : "s"}?
+            </DialogTitle>
+            <DialogDescription>
+              {undeletable > 0
+                ? `${undeletable} of the ${selectedIds.length} selected ${undeletable === 1 ? "is not a draft and will be left" : "are not drafts and will be left"} alone. `
+                : ""}
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
+            {deletable.map((inv) => (
+              <li key={inv.id} className="flex justify-between gap-3 border-b border-border/50 py-1 last:border-0">
+                <span className="font-medium">{inv.invoiceNumber}</span>
+                <span className="text-foreground-muted">{inv.customerName}</span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
+            <Button variant="destructive" loading={deleteInvoice.isPending} onClick={deleteSelected}>
+              Delete {deletable.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -111,10 +111,16 @@ async function bootstrap() {
     logger.info(`API listening on http://localhost:${env.API_PORT}`);
   });
 
-  void startRecurringWorker();
-  void startReminderWorker();
-  void startRecurringExpenseWorker();
-  void startPayrollWaitingWorker();
+  // Off in a second process against the same database: these issue invoices
+  // and send mail on a timer, and two of them do it twice.
+  if (env.RUN_SCHEDULERS) {
+    void startRecurringWorker();
+    void startReminderWorker();
+    void startRecurringExpenseWorker();
+    void startPayrollWaitingWorker();
+  } else {
+    logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");
+  }
 }
 
 bootstrap().catch((err) => {

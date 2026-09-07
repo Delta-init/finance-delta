@@ -50,6 +50,20 @@ const envSchema = z.object({
   INBOUND_CLIENT_ID: z.string().default(""),
   INBOUND_INTEGRATION_SECRET: z.string().default(""),
 
+  /**
+   * Whether this process runs the timed jobs.
+   *
+   * They write: the recurring worker issues invoices, the reminder worker mails
+   * clients. A second process against the same database therefore issues them
+   * twice — which is what happens the moment somebody points a local copy at
+   * production to look at real data. Set false there; the API still serves
+   * every request, it simply is not the one on the clock.
+   */
+  RUN_SCHEDULERS: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+
   // Seed bootstrap (used by scripts/seed.ts)
   SEED_ORG_NAME: z.string().default("Delta HQ"),
   SEED_ADMIN_NAME: z.string().default("Owner"),

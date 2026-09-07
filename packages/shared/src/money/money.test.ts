@@ -78,7 +78,20 @@ describe("toMinor / formatMoney", () => {
   it("formats minor units with currency and two decimals", () => {
     expect(formatMoney(105050, "AED")).toBe("AED 1,050.50");
     expect(formatMoney(0)).toBe("AED 0.00");
-    expect(formatMoney(500000, "INR")).toBe("INR 5,000.00");
+  });
+
+  /**
+   * Rupees are written whole.
+   *
+   * This asserted "INR 5,000.00" until an Indian tax invoice was compared
+   * against the one the accountant actually files, which carries no paise
+   * anywhere on it. The stored figures are unchanged — only what is printed.
+   * See whole-unit.test.ts for the rounding that keeps a printed column adding
+   * up to its own total.
+   */
+  it("writes rupees whole", () => {
+    expect(formatMoney(500000, "INR")).toBe("INR 5,000");
+    expect(formatMoney(2118644, "INR")).toBe("INR 21,186");
   });
 });
 

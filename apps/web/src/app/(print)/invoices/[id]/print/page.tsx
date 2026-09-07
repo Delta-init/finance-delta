@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel, type Invoice } from "@delta/shared";
+import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel, displayTaxSplit, type Invoice } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
@@ -10,6 +10,7 @@ import { PrintSellerBlock } from "@/components/print/seller-block";
 import { PrintBankBlock } from "@/components/print/bank-block";
 import { useCustomer } from "@/features/customers/api";
 import { useBankAccount } from "@/features/banking/api";
+import { downloadInvoicePdf } from "@/features/invoices/invoice-pdf";
 
 const TONE_COLORS: Record<string, string> = {
   neutral: "#64748b",
@@ -34,12 +35,10 @@ export default function PrintInvoicePage({
   const { data: customer } = useCustomer(invoice?.customerId);
   const { data: bankAccount } = useBankAccount(org?.invoiceDefaults?.bankAccountId || undefined);
 
+  // No print dialog. Opening a document should not put a decision in front of
+  // somebody who only wanted the file — the button below hands them the PDF.
   useEffect(() => {
-    if (invoice) {
-      document.title = `Invoice ${invoice.invoiceNumber}`;
-      const t = setTimeout(() => window.print(), 400);
-      return () => clearTimeout(t);
-    }
+    if (invoice) document.title = `Invoice ${invoice.invoiceNumber}`;
   }, [invoice]);
 
   if (isLoading) {
@@ -71,6 +70,16 @@ export default function PrintInvoicePage({
   // HSN/SAC is an Indian requirement, so the column appears only under GST —
   // an empty column on a dirham invoice reads as something left unfilled.
   const showHsn = org?.taxSystem === "gst";
+
+  /*
+   * The figures as they are printed.
+   *
+   * On a rupee invoice everything is written whole, and rounding each part on
+   * its own leaves the column a rupee short of its own total — so the taxes are
+   * rounded and the taxable value is what is left. Elsewhere this changes
+   * nothing at all.
+   */
+  const shown = displayTaxSplit(invoice.totalMinor, invoice.taxBreakdown, invoice.currency);
 
   const billToLines = formatOrgAddress(
     customer
@@ -193,11 +202,11 @@ export default function PrintInvoicePage({
         {/* Totals */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 32 }}>
           <div style={{ width: 260, fontSize: 13 }}>
-            <PrintTotalRow label={L.subtotal} value={formatMoney(invoice.subtotalMinor, invoice.currency)} />
+            <PrintTotalRow label={L.subtotal} value={formatMoney(shown.taxableMinor, invoice.currency)} />
             {invoice.discountTotalMinor > 0 && (
               <PrintTotalRow label={L.discount} value={`− ${formatMoney(invoice.discountTotalMinor, invoice.currency)}`} />
             )}
-            {invoice.taxBreakdown.map((t) => (
+            {shown.taxes.map((t) => (
               <PrintTotalRow key={t.code} label={`${L.tax} (${t.code})`} value={formatMoney(t.amountMinor, invoice.currency)} />
             ))}
             {invoice.roundOffMinor !== 0 && (
@@ -255,8 +264,11 @@ export default function PrintInvoicePage({
 
         {/* Print button — hidden in print */}
         <div className="no-print" style={{ marginTop: 32, display: "flex", gap: 8 }}>
-          <button onClick={() => window.print()} style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-            {L.print}
+          <button
+            onClick={() => downloadInvoicePdf({ invoice, org, customer, bankAccount })}
+            style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+          >
+            Download PDF
           </button>
           <button onClick={() => window.close()} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#111", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
             {L.close}
@@ -336,6 +348,15 @@ function TaxDetailsTable({ invoice }: { invoice: Invoice }) {
   // Proportional, so the parts of a part payment still add up to it.
   const share = (amount: number) => (total > 0 ? Math.round((paid * amount) / total) : 0);
 
+  // Printed whole on a rupee invoice, and made to add up the same way the
+  // totals block does.
+  const invoiced = displayTaxSplit(total, invoice.taxBreakdown, invoice.currency);
+  const received = displayTaxSplit(
+    paid,
+    invoice.taxBreakdown.map((t) => ({ code: t.code, amountMinor: share(t.amountMinor) })),
+    invoice.currency,
+  );
+
   const cell: React.CSSProperties = { padding: "6px 10px", textAlign: "right", fontSize: 11 };
   const head: React.CSSProperties = { ...cell, fontWeight: 600, color: "#fff" };
 
@@ -355,8 +376,8 @@ function TaxDetailsTable({ invoice }: { invoice: Invoice }) {
         <tbody>
           <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
             <td style={{ ...cell, textAlign: "left" }}>{label} — invoiced</td>
-            <td style={cell}>{formatMoney(invoice.subtotalMinor, invoice.currency)}</td>
-            {invoice.taxBreakdown.map((t) => (
+            <td style={cell}>{formatMoney(invoiced.taxableMinor, invoice.currency)}</td>
+            {invoiced.taxes.map((t) => (
               <td key={t.code} style={cell}>{formatMoney(t.amountMinor, invoice.currency)}</td>
             ))}
             <td style={{ ...cell, fontWeight: 600 }}>{formatMoney(total, invoice.currency)}</td>
@@ -364,9 +385,9 @@ function TaxDetailsTable({ invoice }: { invoice: Invoice }) {
           {paid > 0 && (
             <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
               <td style={{ ...cell, textAlign: "left" }}>{label} — received</td>
-              <td style={cell}>{formatMoney(share(invoice.subtotalMinor), invoice.currency)}</td>
-              {invoice.taxBreakdown.map((t) => (
-                <td key={t.code} style={cell}>{formatMoney(share(t.amountMinor), invoice.currency)}</td>
+              <td style={cell}>{formatMoney(received.taxableMinor, invoice.currency)}</td>
+              {received.taxes.map((t) => (
+                <td key={t.code} style={cell}>{formatMoney(t.amountMinor, invoice.currency)}</td>
               ))}
               <td style={{ ...cell, fontWeight: 600 }}>{formatMoney(paid, invoice.currency)}</td>
             </tr>

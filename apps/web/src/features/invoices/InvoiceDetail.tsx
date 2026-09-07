@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Printer, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X,
+  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -42,11 +42,20 @@ import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdate
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
+import { downloadInvoicePdf } from "@/features/invoices/invoice-pdf";
+import { useOrganization } from "@/features/organization/api";
+import { useCustomer } from "@/features/customers/api";
+import { useBankAccount } from "@/features/banking/api";
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
   const { data: invoice, isLoading } = useInvoice(id);
+  // Everything the PDF prints beyond the invoice itself. Cheap here: all three
+  // are already cached by the time somebody reaches for the download.
+  const { data: org } = useOrganization();
+  const { data: customer } = useCustomer(invoice?.customerId);
+  const { data: bankAccount } = useBankAccount(org?.invoiceDefaults?.bankAccountId || undefined);
   const { can } = useCan();
   const send = useSendInvoice();
   const voidInv = useVoidInvoice();
@@ -129,10 +138,12 @@ export function InvoiceDetail({ id }: { id: string }) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => window.open(`/invoices/${id}/print`, "_blank")}
-            title="Download / Print PDF"
+            onClick={() =>
+              downloadInvoicePdf({ invoice, org, customer, bankAccount })
+            }
+            title="Download this invoice as a PDF"
           >
-            <Printer className="h-3.5 w-3.5" /> PDF
+            <Download className="h-3.5 w-3.5" /> PDF
           </Button>
           {canEdit && (
             <Link href={`/invoices/${id}/edit`}>

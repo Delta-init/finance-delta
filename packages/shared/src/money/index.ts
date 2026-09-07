@@ -55,13 +55,57 @@ export function sumTotals(lines: LineInput[]): Totals {
   );
 }
 
+/**
+ * Currencies whose documents are written in whole units.
+ *
+ * An Indian invoice is settled in whole rupees and printed that way — every
+ * invoice an accountant there has ever filed shows 21,186 rather than
+ * 21,186.44. This is presentation only: the stored figures keep their paise,
+ * because the arithmetic has to stay exact whatever the paper says.
+ */
+const WHOLE_UNIT_CURRENCIES = new Set(["INR"]);
+
+export function isWholeUnitCurrency(currency: string): boolean {
+  return WHOLE_UNIT_CURRENCIES.has(currency.toUpperCase());
+}
+
 /** Format minor units for display, e.g. formatMoney(105050, "AED") → "AED 1,050.50". */
 export function formatMoney(minor: number, currency = "AED"): string {
-  const major = minor / 100;
+  const whole = isWholeUnitCurrency(currency);
+  const major = whole ? Math.round(minor / 100) : minor / 100;
   return `${currency} ${major.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
   })}`;
+}
+
+/**
+ * The figures to print for a set of taxes, in a currency shown whole.
+ *
+ * Rounding each part on its own does not stay honest: 1,000 inclusive of 18%
+ * is 847.46 + 76.27 + 76.27, and rounding those separately prints 847 + 76 + 76
+ * = 999 against a total of 1,000. So the taxes are rounded and the taxable
+ * value is taken as what is left, which makes the printed column add up by
+ * construction.
+ *
+ * Returned in minor units so the caller still formats them the usual way.
+ */
+export function displayTaxSplit(
+  totalMinor: number,
+  taxes: { code: string; amountMinor: number }[],
+  currency: string,
+): { taxableMinor: number; taxes: { code: string; amountMinor: number }[] } {
+  if (!isWholeUnitCurrency(currency)) {
+    const taxTotal = taxes.reduce((s, t) => s + t.amountMinor, 0);
+    return { taxableMinor: totalMinor - taxTotal, taxes };
+  }
+  const rounded = taxes.map((t) => ({
+    code: t.code,
+    amountMinor: Math.round(t.amountMinor / 100) * 100,
+  }));
+  const total = Math.round(totalMinor / 100) * 100;
+  const taxTotal = rounded.reduce((s, t) => s + t.amountMinor, 0);
+  return { taxableMinor: total - taxTotal, taxes: rounded };
 }
 
 /**

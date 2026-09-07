@@ -18,4 +18,8 @@ router.get("/items", c.listItems);
 // id, because the case this is built for is a retry after a timeout.
 router.post("/enrolments", c.takeEnrolment);
 
+// What became of them. POST because the caller sends a list of its own ids, and
+// a list of ids is not a thing to put in a query string.
+router.post("/enrolments/status", c.enrolmentStatuses);
+
 export default router;

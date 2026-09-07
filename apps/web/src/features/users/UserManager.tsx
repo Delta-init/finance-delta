@@ -35,6 +35,7 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EditUserDialog } from "@/features/users/EditUserDialog";
+import { SUPER_ADMIN_OPTION, roleLabel } from "./super-admin";
 import {
   Dialog as ConfirmDialog,
   DialogContent as ConfirmContent,
@@ -43,6 +44,7 @@ import {
   DialogDescription as ConfirmDescription,
   DialogFooter as ConfirmFooter,
 } from "@/components/ui/dialog";
+import { useCan } from "@/lib/use-can";
 import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
 import { useCreateUser, useRemoveUser, useUpdateUser, useUsers } from "./api";
@@ -50,7 +52,7 @@ import { useCreateUser, useRemoveUser, useUpdateUser, useUsers } from "./api";
 const USERS_EXPORT_COLUMNS: ExportColumn<User>[] = [
   { header: "Name", value: (u) => u.name || "—" },
   { header: "Email", value: (u) => u.email },
-  { header: "Role", value: (u) => u.role.name },
+  { header: "Role", value: (u) => roleLabel(u) },
   { header: "Department", value: (u) => u.department?.name ?? "—" },
   { header: "Tags", value: (u) => u.tags.map((tag) => tag.name).join(", ") },
   { header: "Status", value: (u) => u.status },
@@ -73,6 +75,7 @@ export function UserManager() {
     // They appear in the salesperson pickers, and on the salesperson report.
     excludePayrollOnly: "true",
   });
+  const { isSuperAdmin } = useCan();
   const { data: roles } = useRoles({ pageSize: 100 });
   const { data: departments } = useAllDepartments();
   const createUser = useCreateUser();
@@ -92,7 +95,12 @@ export function UserManager() {
   const columns: Column<User>[] = [
     { key: "name", header: "Name", sortable: true, cell: (u) => <span className="font-medium">{u.name || "—"}</span> },
     { key: "email", header: "Email", sortable: true, cell: (u) => <span className="text-foreground-muted">{u.email}</span> },
-    { key: "role", header: "Role", cell: (u) => u.role.name },
+    {
+      key: "role",
+      header: "Role",
+      cell: (u) =>
+        u.isSuperAdmin ? <Badge tone="primary">Super Admin</Badge> : u.role.name,
+    },
     { key: "department", header: "Department", cell: (u) => u.department?.name ?? <span className="text-foreground-subtle">—</span> },
     { key: "tags", header: "Tags", cell: (u) => <TagList tags={u.tags} /> },
     {
@@ -177,8 +185,17 @@ export function UserManager() {
   }
 
   async function onSubmit(values: CreateUserInput) {
+    const adminRoleId = roles?.data.find((r) => r.key === "admin")?.id;
+    if (values.roleId === SUPER_ADMIN_OPTION && !adminRoleId) {
+      toast.error("This organization has no Administrator role to attach super admin to");
+      return;
+    }
+    const payload: CreateUserInput =
+      values.roleId === SUPER_ADMIN_OPTION
+        ? { ...values, roleId: adminRoleId!, isSuperAdmin: true }
+        : values;
     try {
-      await createUser.mutateAsync(values);
+      await createUser.mutateAsync(payload);
       toast.success("User created");
       setOpen(false);
     } catch (e) {
@@ -275,6 +292,12 @@ export function UserManager() {
                             {r.name}
                           </SelectItem>
                         ))}
+                        {/* Offered only to somebody who already holds it — the
+                            server refuses it from anybody else, so showing it
+                            more widely would only produce a refusal. */}
+                        {isSuperAdmin && (
+                          <SelectItem value={SUPER_ADMIN_OPTION}>Super Admin</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   )}

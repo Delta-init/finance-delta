@@ -14,8 +14,10 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { useCan } from "@/lib/use-can";
 import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
+import { SUPER_ADMIN_OPTION } from "./super-admin";
 import { useUpdateUser } from "./api";
 
 /** Radix reads "" as unset, so "no department" needs a value of its own. */
@@ -39,29 +41,46 @@ export function EditUserDialog({
   onClose: () => void;
 }) {
   const update = useUpdateUser();
+  const { isSuperAdmin: viewerIsSuperAdmin } = useCan();
   const { data: roles } = useRoles({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: departments } = useAllDepartments();
 
+  // Super admin is a flag rather than a role, so it shares the role picker: it
+  // is what somebody means when they set what this person may do.
+  const initialRole = () => (user.isSuperAdmin ? SUPER_ADMIN_OPTION : user.role.id);
+
   const [name, setName] = useState(user.name);
-  const [roleId, setRoleId] = useState(user.role.id);
+  const [roleId, setRoleId] = useState(initialRole);
   const [departmentId, setDepartmentId] = useState(user.department?.id ?? "");
 
   useEffect(() => {
     if (!open) return;
     setName(user.name);
-    setRoleId(user.role.id);
+    setRoleId(user.isSuperAdmin ? SUPER_ADMIN_OPTION : user.role.id);
     setDepartmentId(user.department?.id ?? "");
   }, [open, user]);
 
+  const adminRoleId = (roles?.data ?? []).find((r) => r.key === "admin")?.id;
+  const wantsSuperAdmin = roleId === SUPER_ADMIN_OPTION;
+
   async function submit() {
     if (name.trim().length < 2) return;
+    if (wantsSuperAdmin && !adminRoleId) {
+      toast.error("This organization has no Administrator role to attach super admin to");
+      return;
+    }
     try {
       await update.mutateAsync({
         id: user.id,
         input: {
           name: name.trim(),
-          roleId,
+          roleId: wantsSuperAdmin ? adminRoleId! : roleId,
           departmentId: departmentId || null,
+          // Sent only when it changes, so an ordinary edit by an ordinary
+          // administrator never touches the field they may not set.
+          ...(wantsSuperAdmin !== (user.isSuperAdmin ?? false)
+            ? { isSuperAdmin: wantsSuperAdmin }
+            : {}),
         },
       });
       toast.success(`${name.trim()} saved`);
@@ -102,8 +121,21 @@ export function EditUserDialog({
                 {(roles?.data ?? []).map((r) => (
                   <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
                 ))}
+                {/* Shown to a super admin, and to anybody looking at one — so
+                    the picker can say what this person actually is rather than
+                    silently reading back the role underneath the flag. */}
+                {(viewerIsSuperAdmin || user.isSuperAdmin) && (
+                  <SelectItem value={SUPER_ADMIN_OPTION} disabled={!viewerIsSuperAdmin}>
+                    Super Admin
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
+            {wantsSuperAdmin && (
+              <p className="text-xs text-foreground-muted">
+                Full access to every organization on the platform, and to everything in them.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">

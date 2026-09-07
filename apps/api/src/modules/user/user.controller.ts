@@ -11,8 +11,14 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
   ok(res, result.data, result.meta);
 });
 
+/** The flag that grants platform-wide access is checked against who is asking. */
+const actorOf = (req: Request) => ({
+  userId: req.auth!.userId,
+  isSuperAdmin: req.auth!.isSuperAdmin,
+});
+
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const user = await userService.createUser(req.auth!.organizationId, req.body);
+  const user = await userService.createUser(req.auth!.organizationId, req.body, actorOf(req));
   created(res, user);
 });
 
@@ -21,6 +27,7 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
     req.auth!.organizationId,
     req.params.id!,
     req.body,
+    actorOf(req),
   );
   ok(res, user);
 });

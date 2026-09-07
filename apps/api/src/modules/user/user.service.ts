@@ -21,8 +21,17 @@ interface PopulatedRole {
 
 type DepartmentRef = { id: string; name: string } | null;
 
+type UserDoc = {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+  status: string;
+  createdAt: Date;
+  isSuperAdmin?: boolean;
+};
+
 function toDTO(
-  doc: { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date },
+  doc: UserDoc,
   role: PopulatedRole,
   department: DepartmentRef = null,
 ): UserDTO {
@@ -32,6 +41,7 @@ function toDTO(
     email: doc.email,
     status: doc.status as "active" | "suspended",
     role: { id: role._id.toString(), key: role.key, name: role.name },
+    isSuperAdmin: doc.isSuperAdmin ?? false,
     department,
     tags: [],
     createdAt: doc.createdAt.toISOString(),
@@ -104,7 +114,7 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
     if (!role) continue;
     const deptId = membership.departmentId?.toString();
     const department = deptId && deptNames.has(deptId) ? { id: deptId, name: deptNames.get(deptId)! } : null;
-    results.push(toDTO(u as unknown as { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date }, role as unknown as PopulatedRole, department));
+    results.push(toDTO(u as unknown as UserDoc, role as unknown as PopulatedRole, department));
   }
 
   return { data: results, meta: pageMeta(total, query.page, query.pageSize) };
@@ -116,7 +126,57 @@ async function requireOrgRole(orgId: string, roleId: string) {
   return role;
 }
 
-export async function createUser(orgId: string, input: CreateUserInput): Promise<UserDTO> {
+/** Who is asking. Super admin is granted from above, never from within. */
+export interface Actor {
+  userId: string;
+  isSuperAdmin: boolean;
+}
+
+/**
+ * Only a super admin may hand out super admin.
+ *
+ * An organization administrator holds the wildcard permission, so without this
+ * every administrator could mint themselves an account that reads and writes
+ * every *other* organization on the platform. The permission system cannot
+ * express that, because the wildcard is scoped to an organization and this flag
+ * is not — so it is checked here, on the one field that grants it.
+ */
+function assertMaySetSuperAdmin(actor: Actor) {
+  if (!actor.isSuperAdmin) {
+    throw new AppError("FORBIDDEN", "Only a super admin can grant super admin access");
+  }
+}
+
+/**
+ * What an update should do to somebody's super admin flag: `null` for "leave it
+ * alone", a boolean to write.
+ *
+ * Asking for the value it already holds is not a change, so an ordinary
+ * administrator editing a super admin's name or department is not refused for
+ * echoing back a field they may not set.
+ */
+export function superAdminChange(
+  current: boolean,
+  requested: boolean | undefined,
+  actor: Actor,
+  targetUserId: string,
+): boolean | null {
+  if (requested === undefined || requested === current) return null;
+  assertMaySetSuperAdmin(actor);
+  // Taking it off yourself is how a platform ends up with nobody who can put
+  // it back. Another super admin can do it; you cannot do it to yourself.
+  if (!requested && targetUserId === actor.userId) {
+    throw new AppError("CONFLICT", "You cannot remove your own super admin access");
+  }
+  return requested;
+}
+
+export async function createUser(
+  orgId: string,
+  input: CreateUserInput,
+  actor: Actor,
+): Promise<UserDTO> {
+  if (input.isSuperAdmin) assertMaySetSuperAdmin(actor);
   const role = await requireOrgRole(orgId, input.roleId);
   const dept = input.departmentId ? await requireOrgDepartment(orgId, input.departmentId) : null;
   const departmentRef = dept ? { id: dept._id.toString(), name: dept.name } : null;
@@ -133,26 +193,28 @@ export async function createUser(orgId: string, input: CreateUserInput): Promise
       departmentId: dept?._id,
       status: "active",
     });
+    if (input.isSuperAdmin) existing.isSuperAdmin = true;
     await existing.save();
-    return toDTO(existing as unknown as { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date }, role as unknown as PopulatedRole, departmentRef);
+    return toDTO(existing as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef);
   }
 
   const user = await User.create({
     name: input.name,
     email: input.email,
     passwordHash: await hashPassword(input.password),
-    isSuperAdmin: false,
+    isSuperAdmin: input.isSuperAdmin ?? false,
     status: "active",
     memberships: [{ organizationId: new Types.ObjectId(orgId), roleId: role._id, departmentId: dept?._id, status: "active" }],
   });
 
-  return toDTO(user as unknown as { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date }, role as unknown as PopulatedRole, departmentRef);
+  return toDTO(user as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef);
 }
 
 export async function updateUser(
   orgId: string,
   userId: string,
   input: UpdateUserInput,
+  actor: Actor,
 ): Promise<UserDTO> {
   const user = await User.findOne({
     _id: userId,
@@ -162,6 +224,9 @@ export async function updateUser(
 
   if (input.name !== undefined) user.name = input.name;
   if (input.status !== undefined) user.status = input.status;
+
+  const superAdmin = superAdminChange(user.isSuperAdmin ?? false, input.isSuperAdmin, actor, userId);
+  if (superAdmin !== null) user.isSuperAdmin = superAdmin;
 
   const membership = user.memberships.find((m) => m.organizationId.equals(orgId));
   if (membership && input.roleId !== undefined) {
@@ -188,7 +253,7 @@ export async function updateUser(
     if (dept) department = { id: dept._id.toString(), name: dept.name };
   }
 
-  return toDTO(user as unknown as { _id: Types.ObjectId; name: string; email: string; status: string; createdAt: Date }, finalRole as unknown as PopulatedRole, department);
+  return toDTO(user as unknown as UserDoc, finalRole as unknown as PopulatedRole, department);
 }
 
 /**

@@ -461,6 +461,19 @@ export const inboundEnrolmentSchema = z.object({
 });
 export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;
 
+/**
+ * The language to record for an enrolment that arrived from another system.
+ *
+ * The two schemas disagree on purpose. A caller cannot be made to supply a
+ * language it does not hold — the CRM has no such field, and refusing the
+ * payload would lose the sale — but an enrolment invoice must carry one, both
+ * here (`enrolmentInputSchema`) and in the database. This is the bridge, and it
+ * lives beside both schemas so the next person changing either can see it.
+ */
+export function inboundEnrolmentLanguage(language: string | undefined): string {
+  return (language ?? "").trim() || "Not specified";
+}
+
 /** What the caller gets back, and stores against its own record. */
 export const inboundEnrolmentResultSchema = z.object({
   invoiceId: z.string(),

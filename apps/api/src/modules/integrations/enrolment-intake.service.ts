@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { inboundEnrolmentLanguage } from "@delta/shared";
 import type { InboundEnrolmentInput, InboundEnrolmentResult } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
@@ -198,7 +199,12 @@ export async function intakeEnrolment(
       enrolment: {
         course: input.course.name,
         modeOfStudy: input.modeOfStudy,
-        language: input.language,
+        /*
+         * Not flagged: a flag on every single record from one caller is noise,
+         * rather than something anybody can act on. The approval panel shows
+         * the value, so it says plainly that nobody chose one.
+         */
+        language: inboundEnrolmentLanguage(input.language),
         meetingBy: input.salespersonName ?? "",
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,

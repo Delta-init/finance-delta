@@ -5,6 +5,8 @@ import { formatMoney } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
 import { PrintCloseButton } from "@/components/print/close-button";
+import { downloadReceiptPdf } from "@/features/invoices/receipt-pdf";
+import { useOrganization } from "@/features/organization/api";
 
 export default function PaymentReceiptPage({
   params,
@@ -13,15 +15,16 @@ export default function PaymentReceiptPage({
 }) {
   const { id, paymentId } = use(params);
   const { data: invoice, isLoading } = useInvoice(id);
+  // Whoever issued the receipt: a file that leaves the application has to
+  // say so, where the page on screen shows a logo instead.
+  const { data: org } = useOrganization();
 
   const payment = invoice?.payments.find((p) => p.id === paymentId);
 
+  // No print dialog. Somebody opening a receipt wants the receipt, and the
+  // button below hands them the file.
   useEffect(() => {
-    if (payment) {
-      document.title = `Receipt — ${invoice?.invoiceNumber ?? ""}`;
-      const t = setTimeout(() => window.print(), 400);
-      return () => clearTimeout(t);
-    }
+    if (payment) document.title = `Receipt — ${invoice?.invoiceNumber ?? ""}`;
   }, [payment, invoice?.invoiceNumber]);
 
   if (isLoading) {
@@ -96,10 +99,12 @@ export default function PaymentReceiptPage({
           </div>
         )}
 
-        {/* Print button */}
         <div className="no-print" style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => window.print()} style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-            Print / Save as PDF
+          <button
+            onClick={() => downloadReceiptPdf({ invoice, paymentId, org })}
+            style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+          >
+            Download PDF
           </button>
           <PrintCloseButton fallbackHref={`/invoices/${id}/payments/${paymentId}`} />
         </div>

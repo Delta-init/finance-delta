@@ -6,6 +6,7 @@ import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
+import { PrintCloseButton } from "@/components/print/close-button";
 import { PrintSellerBlock } from "@/components/print/seller-block";
 import { PrintBankBlock } from "@/components/print/bank-block";
 import { useCustomer } from "@/features/customers/api";
@@ -270,9 +271,7 @@ export default function PrintInvoicePage({
           >
             Download PDF
           </button>
-          <button onClick={() => window.close()} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#111", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
-            {L.close}
-          </button>
+          <PrintCloseButton fallbackHref={`/invoices/${id}`} />
         </div>
       </div>
     </>

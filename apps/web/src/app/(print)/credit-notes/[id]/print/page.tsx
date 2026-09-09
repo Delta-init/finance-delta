@@ -5,6 +5,7 @@ import { formatMoney, getPrintLabels } from "@delta/shared";
 import { useCreditNote } from "@/features/credit-notes/api";
 import { useOrganization } from "@/features/organization/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
+import { PrintCloseButton } from "@/components/print/close-button";
 
 const STATUS_COLOR: Record<string, string> = {
   draft: "#64748b",
@@ -143,9 +144,7 @@ export default function PrintCreditNotePage({
           <button onClick={() => window.print()} style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             Print / Save as PDF
           </button>
-          <button onClick={() => window.close()} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#111", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
-            Close
-          </button>
+          <PrintCloseButton fallbackHref={`/credit-notes/${id}`} />
         </div>
       </div>
     </>

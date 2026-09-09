@@ -4,6 +4,7 @@ import { use, useEffect } from "react";
 import { formatMoney } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
+import { PrintCloseButton } from "@/components/print/close-button";
 
 export default function PaymentReceiptPage({
   params,
@@ -100,9 +101,7 @@ export default function PaymentReceiptPage({
           <button onClick={() => window.print()} style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             Print / Save as PDF
           </button>
-          <button onClick={() => window.close()} style={{ padding: "8px 16px", background: "#f1f5f9", color: "#111", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
-            Close
-          </button>
+          <PrintCloseButton fallbackHref={`/invoices/${id}/payments/${paymentId}`} />
         </div>
       </div>
     </>

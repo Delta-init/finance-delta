@@ -376,6 +376,22 @@ export async function convertToInvoice(
     invoiceInclusive = false; // portion already reduced to an ex-tax base
   }
 
+  /*
+   * Fetched before the lines are built, because they are what builds them.
+   *
+   * This sat below, and the map above reached for `defaultHsnSac` while it was
+   * still in the temporal dead zone — so converting a quotation threw
+   * "Cannot access 'defaultHsnSac' before initialization" and answered 500,
+   * in every mode, for as long as the line has been there. TypeScript cannot
+   * see it: the read is inside a closure, and it has no way to know the
+   * closure runs immediately.
+   *
+   * An invoice converted from a quote is still an invoice: it rounds on the
+   * same terms as one raised directly, or the two would disagree on what the
+   * same figures are worth.
+   */
+  const { roundTotals, hsnSac: defaultHsnSac } = await invoiceComputationDefaults(orgId);
+
   const computedLines = rawLines.map((l) => {
     const b = computeInvoiceLine({ ...l, taxInclusive: invoiceInclusive });
     return { ...l, hsnSac: defaultHsnSac, taxes: b.taxes, lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: b.taxTotalMinor, lineTotalMinor: b.lineTotalMinor };
@@ -390,10 +406,6 @@ export async function convertToInvoice(
     throw new AppError("VALIDATION_ERROR", "The amount to invoice must be greater than 0");
   }
 
-  // An invoice converted from a quote is still an invoice: it rounds on the
-  // same terms as one raised directly, or the two would disagree on what the
-  // same figures are worth.
-  const { roundTotals, hsnSac: defaultHsnSac } = await invoiceComputationDefaults(orgId);
   const roundOffMinor = roundTotals ? roundingAdjustmentMinor(totals.totalMinor) : 0;
   const invoiceTotalMinor = totals.totalMinor + roundOffMinor;
 

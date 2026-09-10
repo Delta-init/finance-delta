@@ -98,6 +98,9 @@ export function useRecordPayment(invoiceId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
+      // A new payment belongs in the payments list straight away, for the same
+      // reason an edited one does.
+      qc.invalidateQueries({ queryKey: ["payments"] });
     },
   });
 }
@@ -111,6 +114,27 @@ export function useUpdatePayment(invoiceId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
+      // The payments list and a payment's own page read their own queries.
+      // Without this an edit saved correctly and the page went on showing the
+      // old figure until it was reloaded by hand.
+      qc.invalidateQueries({ queryKey: ["payments"] });
+    },
+  });
+}
+
+export function useDeletePayment(invoiceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (paymentId: string) =>
+      api.del<Invoice>(`invoices/${invoiceId}/payments/${paymentId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
+      // The payments list and the standalone payment page read their own
+      // queries, and a payment that has just gone must not still be sitting in
+      // either of them.
+      qc.invalidateQueries({ queryKey: ["payments"] });
     },
   });
 }

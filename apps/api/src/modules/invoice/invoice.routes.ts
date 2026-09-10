@@ -61,5 +61,8 @@ router.delete(
 router.post("/:id/void", requirePermission("invoice:write"), c.voidInvoice);
 router.post("/:id/payments", requirePermission("invoice:write"), parseUpload, validateBody(recordPaymentSchema), c.recordPayment);
 router.patch("/:id/payments/:paymentId", requirePermission("invoice:write"), validateBody(recordPaymentSchema), c.updatePayment);
+// Removing one entered by mistake. Behind the same permission as recording
+// it: whoever may put money on an invoice may take an error back off.
+router.delete("/:id/payments/:paymentId", requirePermission("invoice:write"), c.deletePayment);
 
 export default router;

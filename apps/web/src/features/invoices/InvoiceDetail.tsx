@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X,
+  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -30,7 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -38,7 +38,7 @@ import {
 import { TagList } from "@/features/tags/TagBadge";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useResendInvoice } from "./api";
+import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
@@ -56,6 +56,8 @@ export function InvoiceDetail({ id }: { id: string }) {
   const { data: org } = useOrganization();
   const { data: customer } = useCustomer(invoice?.customerId);
   const { data: bankAccount } = useBankAccount(org?.invoiceDefaults?.bankAccountId || undefined);
+  const deletePayment = useDeletePayment(id);
+  const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
   const { can } = useCan();
   const send = useSendInvoice();
   const voidInv = useVoidInvoice();
@@ -203,6 +205,38 @@ export function InvoiceDetail({ id }: { id: string }) {
       <ApprovalPanel invoice={invoice} />
 
       <InvoiceAttachments invoice={invoice} />
+
+      <Dialog open={!!deletingPayment} onOpenChange={(o) => { if (!o) setDeletingPayment(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this payment?</DialogTitle>
+            <DialogDescription>
+              {deletingPayment
+                ? `${formatMoney(deletingPayment.amountMinor, invoice.currency)} recorded on ${deletingPayment.paidOn} comes off this invoice, and its balance goes back up by the same amount. This cannot be undone.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDeletingPayment(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={deletePayment.isPending}
+              onClick={async () => {
+                if (!deletingPayment) return;
+                try {
+                  await deletePayment.mutateAsync(deletingPayment.id);
+                  toast.success("Payment deleted");
+                  setDeletingPayment(null);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : "Could not delete this payment");
+                }
+              }}
+            >
+              Delete payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PaymentDialog
         open={payOpen}
@@ -402,13 +436,25 @@ export function InvoiceDetail({ id }: { id: string }) {
                         </a>
                       )}
                       {canManage && invoice.status !== "void" && (
-                        <button
-                          onClick={() => { setEditingPayment(p); setPayOpen(true); }}
-                          className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
-                          title="Edit payment"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => { setEditingPayment(p); setPayOpen(true); }}
+                            className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
+                            title="Edit payment"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {/* Beside editing, because a payment entered against
+                              the wrong invoice cannot be corrected by editing
+                              it — it has to come off. */}
+                          <button
+                            onClick={() => setDeletingPayment(p)}
+                            className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-danger"
+                            title="Delete payment"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
@@ -429,7 +475,14 @@ export function InvoiceDetail({ id }: { id: string }) {
   );
 }
 
-function PaymentDialog({
+/**
+ * Recording a payment, and correcting one already recorded.
+ *
+ * Exported because the payment's own page needs exactly this form: a second
+ * one written there would be a second set of rules about what a payment may
+ * be, and they would drift.
+ */
+export function PaymentDialog({
   open,
   onClose,
   invoiceId,

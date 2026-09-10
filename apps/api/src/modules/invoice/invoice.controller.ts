@@ -61,6 +61,14 @@ export const updatePayment = asyncHandler(async (req, res) => {
   ok(res, invoice);
 });
 
+export const deletePayment = asyncHandler(async (req, res) => {
+  const invoice = await invoiceService.deletePayment(orgId(req), req.params.id!, req.params.paymentId!);
+  // Commission and anything else keyed off what has been received has to be
+  // told, the same way it is told when a payment arrives or changes.
+  void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
+  ok(res, invoice);
+});
+
 export const resend = asyncHandler(async (req, res) => {
   await invoiceService.resendInvoice(orgId(req), req.params.id!, writeScope(req), req.body?.message);
   ok(res, { queued: true });

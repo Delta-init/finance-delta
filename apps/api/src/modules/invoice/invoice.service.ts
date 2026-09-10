@@ -1028,6 +1028,54 @@ export async function updatePayment(
   return toDTO(doc);
 }
 
+/**
+ * Remove a payment that should not have been recorded.
+ *
+ * For a payment entered by mistake — the wrong invoice, a duplicate, an amount
+ * typed twice. Editing covers a wrong figure; this covers one that should not
+ * be there at all, and without it the only remedy was to edit the amount down
+ * to nothing and leave a payment of zero on the record.
+ *
+ * The invoice's paid total, balance and status are recomputed from what is
+ * left, exactly as editing one does — a payment removed without that would
+ * leave an invoice claiming money it no longer holds.
+ *
+ * Refused on a voided invoice, on the same grounds editing is: a void invoice
+ * is a record of something that was cancelled, not a document to keep working
+ * on.
+ */
+export async function deletePayment(
+  orgId: string,
+  id: string,
+  paymentId: string,
+): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  if (effectiveStatus(doc) === "void") {
+    throw new AppError("CONFLICT", "Cannot delete a payment on a voided invoice");
+  }
+
+  const list = doc.payments as unknown as {
+    id: (pid: string) => ({ deleteOne: () => void }) | null;
+  };
+  const pm = list.id(paymentId);
+  if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+  pm.deleteOne();
+
+  const remaining = (doc.payments as unknown as { amountMinor?: number }[])
+    .reduce((sum, p) => sum + (p.amountMinor ?? 0), 0);
+
+  doc.amountPaidMinor = remaining;
+  doc.balanceMinor = (doc.totalMinor ?? 0) - remaining;
+  // Back to "sent" when nothing is left against it: an invoice with no payment
+  // is not partially paid, it is simply outstanding. effectiveStatus still
+  // decides whether that reads as overdue.
+  doc.status = doc.balanceMinor <= 0 ? "paid" : remaining > 0 ? "partial" : "sent";
+
+  await doc.save();
+  await doc.populate("tagIds", "name color");
+  return toDTO(doc);
+}
+
 async function _restoreInventory(orgId: string, doc: InvoiceDoc) {
   try {
     const { restoreStockForInvoice } = await import("../inventory/inventory.service");

@@ -193,6 +193,23 @@ export const useMatchTransaction = (accountId: string, txId: string) => {
 };
 export const useUnmatchTransaction = (accountId: string, txId: string) =>
   useTxAction("unmatch", accountId, txId);
+
+/**
+ * Unlinking from a list, where the row is not known until it is clicked.
+ *
+ * `useUnmatchTransaction` fixes the transaction when the hook is created,
+ * which a table of rows cannot do — a hook per row is a hook in a loop. This
+ * takes the row at the moment somebody asks, the same way deleting one does.
+ */
+export function useUnlinkTransaction(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (txId: string) =>
+      api.post<BankTransaction>(`bank-accounts/${accountId}/transactions/${txId}/unmatch`),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
 export const useExcludeTransaction = (accountId: string, txId: string) =>
   useTxAction("exclude", accountId, txId);
 export const useMarkDuplicate = (accountId: string, txId: string) =>

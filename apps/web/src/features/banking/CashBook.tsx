@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Link2, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,8 +16,7 @@ import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
 import { EntryReceipts } from "@/features/banking/EntryReceipts";
 import {
   useBankTransactions,
-  useDeleteBankTransaction,
-} from "@/features/banking/api";
+  useDeleteBankTransaction, useUnlinkTransaction} from "@/features/banking/api";
 
 /**
  * The petty cash book.
@@ -64,6 +63,7 @@ export function CashBook({ account }: { account: BankAccount }) {
   const { can } = useCan();
   const canWrite = can("banking:write");
   const remove = useDeleteBankTransaction(account.id);
+  const unlink = useUnlinkTransaction(account.id);
 
   /*
    * Oldest first, and a page as large as the server allows — a cash book is
@@ -276,15 +276,40 @@ export function CashBook({ account }: { account: BankAccount }) {
                     >
                       <Paperclip className="h-3.5 w-3.5" />
                     </button>
-                    {canWrite && tx.matches.length === 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setLinking(tx)}
-                        className="mr-2 text-foreground-subtle hover:text-primary"
-                        aria-label={`Link ${tx.description} to a document`}
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                      </button>
+                    {/* Linking was one-way: once an entry pointed at a
+                        document the button went, and an entry linked to the
+                        wrong expense could only be deleted and typed again.
+                        The server has always been able to undo it. */}
+                    {canWrite && (
+                      tx.matches.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setLinking(tx)}
+                          className="mr-2 text-foreground-subtle hover:text-primary"
+                          aria-label={`Link ${tx.description} to a document`}
+                          title="Link to a document"
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={unlink.isPending}
+                          onClick={async () => {
+                            try {
+                              await unlink.mutateAsync(tx.id);
+                              toast.success("Unlinked");
+                            } catch (e) {
+                              toast.error(e instanceof ApiError ? e.message : "Could not unlink it");
+                            }
+                          }}
+                          className="mr-2 text-foreground-subtle hover:text-danger disabled:opacity-50"
+                          aria-label={`Unlink ${tx.description} from ${tx.matches.map((m) => m.referenceNumber).join(", ")}`}
+                          title={`Unlink from ${tx.matches.map((m) => m.referenceNumber).join(", ")}`}
+                        >
+                          <Link2Off className="h-3.5 w-3.5" />
+                        </button>
+                      )
                     )}
                     {canWrite && (
                       <button

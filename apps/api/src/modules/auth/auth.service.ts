@@ -71,6 +71,28 @@ export async function login(email: string, password: string): Promise<AuthRespon
 
   const activeMemberships = user.memberships.filter((m) => m.status === "active");
 
+  /*
+   * A super admin may work in an organization they hold no membership in —
+   * switchOrg lets them, borrowing that organization's admin role. Login has
+   * to honour the same choice, or theirs is the one account the memory does
+   * not work for.
+   *
+   * Ahead of the no-memberships branch below, which hands a super admin a
+   * token with no organization at all and would otherwise swallow this.
+   */
+  if (user.isSuperAdmin && user.lastOrganizationId) {
+    const [rememberedOrg, adminRole] = await Promise.all([
+      Organization.findById(user.lastOrganizationId).select("name baseCurrency"),
+      Role.findOne({ organizationId: user.lastOrganizationId, key: "admin" }),
+    ]);
+    // Their own membership role where they have one, the organization's admin
+    // role where they do not — the same rule switchOrg applies.
+    const own = activeMemberships.find((m) => m.organizationId.equals(user.lastOrganizationId!));
+    const role = own ? await Role.findById(own.roleId) : adminRole;
+    if (rememberedOrg && role) return issueTokens(buildAuthUser(user, rememberedOrg, role));
+    // Otherwise fall through: the organization is gone, or has no admin role.
+  }
+
   if (activeMemberships.length === 0) {
     if (user.isSuperAdmin) {
       // Super admin with no org memberships — issue a no-org token; they'll select via platform.
@@ -109,9 +131,22 @@ export async function login(email: string, password: string): Promise<AuthRespon
     throw new AppError("FORBIDDEN", "No active organization membership");
   }
 
-  if (activeMemberships.length === 1 || user.isSuperAdmin) {
-    // Single org or super admin — skip the picker and log into first active org.
-    const membership = activeMemberships[0]!;
+  /*
+   * Where this user was last working, if they may still go there.
+   *
+   * A membership that has since been revoked, or an organization that has been
+   * deleted, falls through to the ordinary choice below rather than failing the
+   * login — being unable to sign in at all is a far worse outcome than landing
+   * in the wrong place.
+   */
+  const remembered = user.lastOrganizationId
+    ? activeMemberships.find((m) => m.organizationId.equals(user.lastOrganizationId!))
+    : undefined;
+
+  if (remembered || activeMemberships.length === 1 || user.isSuperAdmin) {
+    // The remembered organization when there is one, otherwise the first —
+    // which is all this could do before.
+    const membership = remembered ?? activeMemberships[0]!;
     const [org, role] = await Promise.all([
       Organization.findById(membership.organizationId).select("name baseCurrency"),
       Role.findById(membership.roleId),
@@ -174,6 +209,12 @@ export async function switchOrg(
 
   const role = await Role.findById(roleId);
   if (!role) throw new AppError("INTERNAL", "Role not found");
+
+  // Remembered so the next login lands here rather than back at the first
+  // membership. Written after the checks above, so only a switch that was
+  // actually allowed is the one that sticks.
+  user.lastOrganizationId = org._id;
+  await user.save();
 
   return issueTokens(buildAuthUser(user, org, role));
 }

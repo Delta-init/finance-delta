@@ -1,4 +1,4 @@
- # Delta Finance
+  # Delta Finance
 
 > Internal Business Management System — a Zoho Books–parity platform for quotations,
 > invoicing, payables, expenses, banking, inventory, payroll, projects, and full

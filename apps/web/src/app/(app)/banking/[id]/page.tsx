@@ -41,6 +41,8 @@ import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialo
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 import { CashBook } from "@/features/banking/CashBook";
 import { CashCounts } from "@/features/banking/CashCounts";
+import { OpeningBalanceDialog } from "@/features/banking/OpeningBalanceDialog";
+import { useCan } from "@/lib/use-can";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -60,6 +62,9 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const router = useRouter();
   const { data: account, isLoading: accountLoading } = useBankAccount(id);
+  const { can } = useCan();
+  const canWrite = can("banking:write");
+  const [openingOpen, setOpeningOpen] = useState(false);
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
   const [status, setStatus] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -232,7 +237,22 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           <p className="text-xs text-foreground-subtle mt-1">{account.currency}</p>
         </div>
         <div className="rounded-lg border border-border bg-surface p-4">
-          <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Opening Balance</p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Opening Balance</p>
+            {/* It could only be set when the account was created, so a tin
+                opened with the wrong figure stayed wrong for good. */}
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => setOpeningOpen(true)}
+                className="text-foreground-subtle hover:text-primary"
+                aria-label="Edit the opening balance"
+                title="Edit the opening balance"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <MoneyDisplay
             minor={account.openingBalanceMinor}
             currency={account.currency}
@@ -266,6 +286,12 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           first, money in and out in their own columns, balance carried down.
           The generic list stays below it for searching and reconciling. */}
       {account.accountType === "petty_cash" && <CashBook account={account} />}
+
+      <OpeningBalanceDialog
+        account={account}
+        open={openingOpen}
+        onClose={() => setOpeningOpen(false)}
+      />
 
       {account.accountType === "petty_cash" && <CashCounts account={account} />}
 

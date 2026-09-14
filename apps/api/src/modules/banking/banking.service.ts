@@ -160,6 +160,25 @@ export async function updateBankAccount(
     { new: true },
   );
   if (!doc) throw new AppError("NOT_FOUND", "Bank account not found");
+
+  /*
+   * Every balance below the opening one is measured from it.
+   *
+   * The opening figure could always be changed through this endpoint, and
+   * changing it moved nothing else — so the cash book showed a new opening
+   * balance with the old running balances underneath, and a closing balance
+   * that no longer followed from the rows above it. The date matters for the
+   * same reason: the running total is accumulated in date order, so moving the
+   * opening date can reorder what comes after it.
+   */
+  const openingChanged =
+    input.openingBalanceMinor !== undefined || input.openingDate !== undefined;
+  if (openingChanged) {
+    await recalculateRunningBalances(orgId, doc._id as Types.ObjectId);
+    const fresh = await BankAccount.findById(doc._id);
+    if (fresh) return accountToDTO(fresh);
+  }
+
   return accountToDTO(doc);
 }
 

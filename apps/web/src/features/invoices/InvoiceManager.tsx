@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, X, ReceiptText, Trash2 } from "lucide-react";
+import { Plus, Search, X, ReceiptText, Trash2, Ban } from "lucide-react";
 import {
   INVOICE_STATUSES,
   INVOICE_APPROVALS,
@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useDeleteInvoice, useInvoices } from "./api";
+import { useDeleteInvoice, useVoidInvoice, useInvoices } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 
 /** "not_required" says nothing to somebody reading a filter menu. */
@@ -79,9 +79,11 @@ export function InvoiceManager() {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingVoid, setConfirmingVoid] = useState(false);
   /** Bumped after a delete, to untick rows that are no longer there. */
   const [selectionResetKey, setSelectionResetKey] = useState(0);
   const deleteInvoice = useDeleteInvoice();
+  const voidInvoice = useVoidInvoice();
 
   useEffect(() => t.resetPage(), [status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -111,6 +113,18 @@ export function InvoiceManager() {
   const deletable = selected.filter((inv) => inv.status === "draft");
   const undeletable = selected.length - deletable.length;
 
+  /*
+   * What can be cancelled, which is nearly everything.
+   *
+   * The server refuses only two: an invoice already void, and a paid one —
+   * money that has arrived is reversed with a credit note, not by cancelling
+   * the document it was paid against. "Overdue" is not a stored status, it is
+   * a sent invoice past its date, so those are cancellable like any other.
+   */
+  const voidable = selected.filter((inv) => inv.status !== "void" && inv.status !== "paid");
+  /** Neither cancellable nor deletable: there is nothing to offer for these. */
+  const untouchable = selected.filter((inv) => inv.status === "void" || inv.status === "paid");
+
   /**
    * Delete what can be deleted, and say plainly what happened.
    *
@@ -118,6 +132,32 @@ export function InvoiceManager() {
    * are counted rather than thrown: stopping halfway through would leave the
    * selection half gone with nothing said about which half.
    */
+  /**
+   * Cancel what can be cancelled, and say plainly what happened.
+   *
+   * One request per invoice, as deleting does, and failures are counted rather
+   * than thrown — stopping halfway would leave half the selection cancelled
+   * with nothing said about which half.
+   */
+  async function voidSelected() {
+    const results = await Promise.allSettled(voidable.map((inv) => voidInvoice.mutateAsync(inv.id)));
+    const failed = results.filter((r) => r.status === "rejected");
+    const done = results.length - failed.length;
+
+    if (done) toast.success(`${done} invoice${done === 1 ? "" : "s"} voided`);
+    if (failed.length) {
+      const first = failed[0] as PromiseRejectedResult;
+      toast.error(
+        failed.length === 1 && first.reason instanceof ApiError
+          ? first.reason.message
+          : `${failed.length} could not be voided`,
+      );
+    }
+    setConfirmingVoid(false);
+    setSelectedIds([]);
+    setSelectionResetKey((n) => n + 1);
+  }
+
   async function deleteSelected() {
     const results = await Promise.allSettled(
       deletable.map((inv) => deleteInvoice.mutateAsync(inv.id)),
@@ -320,11 +360,22 @@ export function InvoiceManager() {
           <span className="text-sm font-medium">
             {selectedIds.length} selected
           </span>
-          {undeletable > 0 && (
+          {/* What each button will act on, rather than leaving somebody to
+              work out why a count is lower than their selection. Only drafts
+              can be deleted; anything not already void or paid can be
+              cancelled. */}
+          {untouchable.length > 0 && (
+            <span className="text-xs text-foreground-muted">
+              {untouchable.length === selectedIds.length
+                ? "These are already void or paid, so there is nothing to do here."
+                : `${untouchable.length} already void or paid — ${untouchable.length === 1 ? "that one stays" : "those stay"} as ${untouchable.length === 1 ? "it is" : "they are"}.`}
+            </span>
+          )}
+          {untouchable.length === 0 && undeletable > 0 && (
             <span className="text-xs text-foreground-muted">
               {undeletable === selectedIds.length
-                ? "None of these are drafts, so none can be deleted."
-                : `${undeletable} of them ${undeletable === 1 ? "is not a draft" : "are not drafts"} and will be left alone.`}
+                ? "None of these are drafts, so they can be voided but not deleted."
+                : `${undeletable} of them ${undeletable === 1 ? "is not a draft" : "are not drafts"} — those can be voided, not deleted.`}
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -337,6 +388,15 @@ export function InvoiceManager() {
               }}
             >
               Clear
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={voidable.length === 0}
+              onClick={() => setConfirmingVoid(true)}
+            >
+              <Ban className="mr-1.5 h-3.5 w-3.5" />
+              Void{voidable.length > 0 ? ` ${voidable.length}` : ""}
             </Button>
             <Button
               variant="destructive"
@@ -368,6 +428,37 @@ export function InvoiceManager() {
         isLoading={isLoading}
         emptyMessage="No invoices match your filters."
       />
+
+      <Dialog open={confirmingVoid} onOpenChange={setConfirmingVoid}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Void {voidable.length} invoice{voidable.length === 1 ? "" : "s"}?
+            </DialogTitle>
+            <DialogDescription>
+              {untouchable.length > 0
+                ? `${untouchable.length} of the ${selectedIds.length} selected ${untouchable.length === 1 ? "is" : "are"} already void or paid and will be left alone. `
+                : ""}
+              A voided invoice keeps its number and stays on the record as cancelled, and any stock
+              it took is put back. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
+            {voidable.map((inv) => (
+              <li key={inv.id} className="flex justify-between gap-3 border-b border-border/50 py-1 last:border-0">
+                <span className="font-medium">{inv.invoiceNumber}</span>
+                <span className="text-foreground-muted">{inv.customerName}</span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmingVoid(false)}>Cancel</Button>
+            <Button variant="destructive" loading={voidInvoice.isPending} onClick={voidSelected}>
+              Void {voidable.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
         <DialogContent className="max-w-md">

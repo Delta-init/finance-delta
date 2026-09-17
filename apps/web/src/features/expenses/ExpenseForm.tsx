@@ -18,6 +18,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { QuickCreateCategoryModal } from "@/features/expense-categories/QuickCreateCategoryModal";
 import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -78,6 +79,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const createExpense = useCreateExpense();
   const updateExpense = useUpdateExpense(expenseId ?? "");
   const { data: categoryList } = useExpenseCategories();
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const { data: departments } = useAllDepartments();
   const { can } = useCan();
   const canAddDepartment = can("department:create");
@@ -186,6 +188,15 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
+      <QuickCreateCategoryModal
+        open={categoryModalOpen}
+        onClose={() => setCategoryModalOpen(false)}
+        existing={categoryList}
+        onCreated={(slug) => {
+          setValue("category", slug, { shouldValidate: true });
+          setCategoryModalOpen(false);
+        }}
+      />
       <div className="flex items-center gap-3">
         <Link href={isEdit && expenseId ? `/expenses/${expenseId}` : "/expenses"} className="rounded-md p-1.5 text-foreground-muted hover:bg-surface-muted">
           <ArrowLeft className="h-4 w-4" />
@@ -200,8 +211,20 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Category *</Label>
+              <div className="flex items-center justify-between">
+                <Label>Category *</Label>
+                <button
+                  type="button"
+                  onClick={() => setCategoryModalOpen(true)}
+                  className="text-xs text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="h-3 w-3" /> New
+                </button>
+              </div>
+              {/* Keyed on the value so a category created a second ago, which
+                  the list is only now refetching, still shows as the choice. */}
               <Select
+                key={watch("category")}
                 value={watch("category")}
                 onValueChange={(v) => setValue("category", v)}
               >

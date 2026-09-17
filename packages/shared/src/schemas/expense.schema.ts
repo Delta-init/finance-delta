@@ -31,6 +31,28 @@ export const expenseStatusSchema = z.enum([
 ]);
 export type ExpenseStatus = z.infer<typeof expenseStatusSchema>;
 
+/**
+ * Whether the money has actually gone out, which the approval status does not
+ * say.
+ *
+ * `status` is an approval workflow — drafted, submitted, approved, rejected —
+ * and an approved claim is a promise to pay, not a payment. These two ran
+ * together for a long time, so an approved claim from March and one settled
+ * yesterday looked identical.
+ *
+ * Never stored. "Overdue" is a fact about today rather than about the expense,
+ * so a stored copy is wrong by the next morning; it is derived on read from the
+ * due date, exactly as an invoice's is.
+ */
+export const expensePaymentStatusSchema = z.enum(["unpaid", "overdue", "paid"]);
+export type ExpensePaymentStatus = z.infer<typeof expensePaymentStatusSchema>;
+
+export const EXPENSE_PAYMENT_STATUS_LABELS: Record<ExpensePaymentStatus, string> = {
+  unpaid: "Unpaid",
+  overdue: "Overdue",
+  paid: "Paid",
+};
+
 export const expensePaymentMethodSchema = z.enum([
   "bank_transfer",
   "cash",
@@ -76,6 +98,12 @@ export const createExpenseSchema = z.object({
   paymentAccount: z.string().optional().default(""),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string().optional().default(""),
+  /**
+   * When this should be settled by. Optional, and blank is a real answer: an
+   * expense with no date to meet simply never falls overdue, which is better
+   * than inventing a deadline nobody agreed to.
+   */
+  dueDate: z.string().optional(),
   requiresApproval: z.boolean().optional().default(false),
   isRecurring: z.boolean().optional().default(false),
   recurrence: z
@@ -143,6 +171,12 @@ export const expenseSchema = z.object({
   submittedById: z.string(),
   submittedByName: z.string(),
   status: expenseStatusSchema,
+  /** When it should be settled by. Blank means it never falls overdue. */
+  dueDate: z.string().optional(),
+  /** The day it was paid. Absent means it has not been. */
+  paidOn: z.string().optional(),
+  /** Derived on read, never stored — see expensePaymentStatusSchema. */
+  paymentStatus: expensePaymentStatusSchema,
   approvedById: z.string().optional(),
   approvedByName: z.string().optional(),
   approvedAt: z.string().optional(),
@@ -195,3 +229,18 @@ export function resolveCategoryName(category: string, label: string, typed?: str
   const named = typed?.trim();
   return named ? named.slice(0, 60) : label;
 }
+
+/**
+ * Recording that an expense was settled.
+ *
+ * Deliberately not a payments ledger. A vendor bill is settled in instalments
+ * often enough to need one; a claim is reimbursed in one go, and a list holding
+ * exactly one row forever would be a worse way to say so.
+ */
+export const markExpensePaidSchema = z.object({
+  paidOn: z.string().min(1, "Payment date is required"),
+  paymentMethod: expensePaymentMethodSchema.optional(),
+  paymentAccount: z.string().max(120).optional(),
+  reference: z.string().max(120).optional(),
+});
+export type MarkExpensePaidInput = z.infer<typeof markExpensePaidSchema>;

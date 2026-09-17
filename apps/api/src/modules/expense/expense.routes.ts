@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema } from "@delta/shared";
+import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema, markExpensePaidSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requireAnyPermission, requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -32,6 +32,10 @@ router.delete(
 router.post("/:id/approve", requirePermission("expense:approve"), c.approve);
 router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectExpenseSchema), c.reject);
 router.post("/:id/void", requirePermission("expense:delete"), c.voidExpense);
+// Settling a claim is updating it, not approving it: the approver decides
+// whether it is owed, whoever pays it records that it went.
+router.post("/:id/mark-paid", requirePermission("expense:update"), validateBody(markExpensePaidSchema), c.markPaid);
+router.post("/:id/mark-unpaid", requirePermission("expense:update"), c.markUnpaid);
 // Recurring template controls
 router.post("/:id/recurrence/pause", requirePermission("expense:update"), c.pauseRecurrence);
 router.post("/:id/recurrence/resume", requirePermission("expense:update"), c.resumeRecurrence);

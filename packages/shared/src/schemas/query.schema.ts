@@ -120,10 +120,15 @@ export const vendorCreditQuerySchema = listQuerySchema.extend({
 });
 export type VendorCreditQuery = z.infer<typeof vendorCreditQuerySchema>;
 
-import { expenseCategorySchema, expenseStatusSchema } from "./expense.schema";
+import {
+  expenseCategorySchema,
+  expenseStatusSchema,
+  expensePaymentStatusSchema,
+} from "./expense.schema";
 
 export const expenseQuerySchema = listQuerySchema.extend({
   status: expenseStatusSchema.optional(),
+  paymentStatus: expensePaymentStatusSchema.optional(),
   category: expenseCategorySchema.optional(),
   submittedById: z.string().optional(),
   dateFrom: z.string().optional(),

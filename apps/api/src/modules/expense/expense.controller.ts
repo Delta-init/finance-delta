@@ -57,6 +57,14 @@ export const voidExpense = asyncHandler(async (req, res) => {
   ok(res, await svc.voidExpense(org(req), req.params.id!));
 });
 
+export const markPaid = asyncHandler(async (req, res) => {
+  ok(res, await svc.markExpensePaid(org(req), req.params.id!, req.body));
+});
+
+export const markUnpaid = asyncHandler(async (req, res) => {
+  ok(res, await svc.markExpenseUnpaid(org(req), req.params.id!));
+});
+
 export const pauseRecurrence = asyncHandler(async (req, res) => {
   ok(res, await svc.setRecurrenceActive(org(req), req.params.id!, false));
 });

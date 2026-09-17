@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
-import { type Expense } from "@delta/shared";
+import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,18 @@ const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   approved: "success",
   rejected: "danger",
   voided: "neutral",
+};
+
+/**
+ * Whether the money went out, which the approval status does not say.
+ *
+ * Kept visually distinct from the approval badge beside it: paid is the quiet
+ * one, because a settled claim needs no attention, and overdue is the loud one.
+ */
+const PAYMENT_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
+  unpaid: "warning",
+  overdue: "danger",
+  paid: "success",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -82,22 +94,25 @@ export default function ExpensesPage() {
   const [voidTarget, setVoidTarget] = useState<Expense | null>(null);
   const { data: categoryList } = useExpenseCategories();
   const [status, setStatus] = useState("all");
+  const [payment, setPayment] = useState("all");
   const [category, setCategory] = useState("all");
   const [recurring, setRecurring] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  useEffect(() => t.resetPage(), [status, category, recurring, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => t.resetPage(), [status, payment, category, recurring, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data, isLoading } = useExpenses({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
+    paymentStatus: payment === "all" ? undefined : payment,
     category: category === "all" ? undefined : category,
     isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   });
 
-  const hasFilters = status !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
+  const hasFilters =
+    status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
 
   // True when this person only ever sees their own claims.
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
@@ -162,6 +177,24 @@ export default function ExpensesPage() {
         <Badge tone={STATUS_TONE[e.status] ?? "neutral"}>
           {STATUS_LABELS[e.status] ?? e.status}
         </Badge>
+      ),
+    },
+    {
+      key: "payment",
+      header: "Payment",
+      cell: (e) => (
+        <div className="flex flex-col gap-0.5">
+          <Badge tone={PAYMENT_TONE[e.paymentStatus] ?? "neutral"} className="w-fit">
+            {EXPENSE_PAYMENT_STATUS_LABELS[e.paymentStatus] ?? e.paymentStatus}
+          </Badge>
+          {/* The date that explains the badge: what it was settled on, or what
+              it is being measured against. */}
+          {e.paidOn ? (
+            <span className="text-xs text-foreground-muted">{e.paidOn}</span>
+          ) : e.dueDate ? (
+            <span className="text-xs text-foreground-muted">due {e.dueDate}</span>
+          ) : null}
+        </div>
       ),
     },
     {
@@ -259,6 +292,16 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
 
+        <Select value={payment} onValueChange={setPayment}>
+          <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Paid & unpaid</SelectItem>
+            {Object.entries(EXPENSE_PAYMENT_STATUS_LABELS).map(([k, v]) => (
+              <SelectItem key={k} value={k}>{v}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Select value={category} onValueChange={setCategory}>
           <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -295,7 +338,17 @@ export default function ExpensesPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setStatus("all"); setCategory("all"); setDateFrom(""); setDateTo(""); t.setQ(""); }}
+            onClick={() => {
+              setStatus("all");
+              setPayment("all");
+              setCategory("all");
+              // Counted by hasFilters, so it put the Clear button on screen and
+              // was then the one thing the button did not clear.
+              setRecurring("all");
+              setDateFrom("");
+              setDateTo("");
+              t.setQ("");
+            }}
           >
             <X className="h-4 w-4" /> Clear
           </Button>

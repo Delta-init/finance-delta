@@ -7,16 +7,20 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, User,
-  Repeat, Pause, Play, CircleStop, Pencil,
+  Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
-import { EXPENSE_CATEGORY_LABELS, type ExpenseCategory } from "@delta/shared";
+import {
+  EXPENSE_CATEGORY_LABELS,
+  EXPENSE_PAYMENT_STATUS_LABELS,
+  type ExpenseCategory,
+} from "@delta/shared";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyDisplay } from "@/components/ui/money";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import {
@@ -25,6 +29,8 @@ import {
   useApproveExpense,
   useRejectExpense,
   useVoidExpense,
+  useMarkExpensePaid,
+  useMarkExpenseUnpaid,
   usePauseRecurrence,
   useResumeRecurrence,
   useStopRecurrence,
@@ -38,6 +44,13 @@ const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   approved: "success",
   rejected: "danger",
   voided: "neutral",
+};
+
+/** Paid is the quiet one — a settled claim needs no attention. */
+const PAYMENT_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
+  unpaid: "warning",
+  overdue: "danger",
+  paid: "success",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -61,10 +74,14 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const approveExpense = useApproveExpense(id);
   const rejectExpense = useRejectExpense(id);
   const voidExpense = useVoidExpense(id);
+  const markPaid = useMarkExpensePaid(id);
+  const markUnpaid = useMarkExpenseUnpaid(id);
   const pauseRecurrence = usePauseRecurrence(id);
   const resumeRecurrence = useResumeRecurrence(id);
   const stopRecurrence = useStopRecurrence(id);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
+  const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
     useForm<RejectFormValues>({ resolver: zodResolver(rejectFormSchema) });
@@ -98,6 +115,12 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   // broader permission is an approver and may still correct it. The server
   // enforces this either way — this is so the button is not offered to
   // somebody it would only refuse.
+  // Settling is a different question from approving, so it is gated on the
+  // update permission rather than the approver's. Decided-against claims have
+  // nothing to settle.
+  const canMarkPaid =
+    can("expense:update") && !["voided", "rejected"].includes(expense.status);
+
   const canEdit =
     expense.status !== "voided" &&
     (can("expense:update") || ["draft", "rejected"].includes(expense.status));
@@ -120,6 +143,12 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             <h1 className="text-xl font-semibold">{expense.expenseNumber}</h1>
             <Badge tone={STATUS_TONE[expense.status] ?? "neutral"}>
               {STATUS_LABELS[expense.status] ?? expense.status}
+            </Badge>
+            {/* Beside the approval badge, not instead of it: whether a claim
+                was agreed to and whether it has been paid are two questions,
+                and the second is the one nobody could answer before. */}
+            <Badge tone={PAYMENT_TONE[expense.paymentStatus] ?? "neutral"}>
+              {EXPENSE_PAYMENT_STATUS_LABELS[expense.paymentStatus] ?? expense.paymentStatus}
             </Badge>
             {expense.isRecurring && (
               <Badge tone="primary">
@@ -163,6 +192,24 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             <Button variant="outline" size="sm" onClick={() => handleAction(() => voidExpense.mutateAsync(undefined), "Expense voided")} loading={voidExpense.isPending}>
               <Ban className="h-4 w-4" /> Void
             </Button>
+          )}
+          {/* Voided and rejected claims are decided against, so there is
+              nothing to settle and the server refuses it anyway. */}
+          {canMarkPaid && (
+            expense.paidOn ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction(() => markUnpaid.mutateAsync(undefined), "Marked as unpaid")}
+                loading={markUnpaid.isPending}
+              >
+                <Undo2 className="h-4 w-4" /> Mark unpaid
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => setPayOpen(true)}>
+                <BadgeCheck className="h-4 w-4" /> Mark as paid
+              </Button>
+            )
           )}
         </div>
       </div>
@@ -375,6 +422,41 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* Reject Dialog */}
+      {/* Marking paid asks for the date rather than assuming today: the money
+          usually left before anybody got round to recording that it had. */}
+      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Mark as paid</DialogTitle>
+            <DialogDescription>
+              {formatMoney(expense.totalMinor, expense.currency)} to {expense.submittedByName}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="paid-on">Paid on</Label>
+            <Input
+              id="paid-on"
+              type="date"
+              value={paidOn}
+              onChange={(e) => setPaidOn(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPayOpen(false)}>Cancel</Button>
+            <Button
+              loading={markPaid.isPending}
+              disabled={!paidOn}
+              onClick={async () => {
+                await handleAction(() => markPaid.mutateAsync({ paidOn }), "Marked as paid");
+                setPayOpen(false);
+              }}
+            >
+              Mark as paid
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={rejectOpen} onOpenChange={(o) => { if (!o) { setRejectOpen(false); reset(); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Reject Expense</DialogTitle></DialogHeader>

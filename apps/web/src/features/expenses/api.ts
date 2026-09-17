@@ -70,6 +70,8 @@ function useExpenseAction(action: string, id: string) {
 export const useSubmitExpense = (id: string) => useExpenseAction("submit", id);
 export const useApproveExpense = (id: string) => useExpenseAction("approve", id);
 export const useVoidExpense = (id: string) => useExpenseAction("void", id);
+export const useMarkExpensePaid = (id: string) => useExpenseAction("mark-paid", id);
+export const useMarkExpenseUnpaid = (id: string) => useExpenseAction("mark-unpaid", id);
 export const usePauseRecurrence = (id: string) => useExpenseAction("recurrence/pause", id);
 export const useResumeRecurrence = (id: string) => useExpenseAction("recurrence/resume", id);
 export const useStopRecurrence = (id: string) => useExpenseAction("recurrence/stop", id);

@@ -6,6 +6,8 @@ import type {
   ExpenseQuery,
   Paginated,
   RejectExpenseInput,
+  ExpensePaymentStatus,
+  MarkExpensePaidInput,
 } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { AppError } from "../../lib/http";
@@ -51,6 +53,24 @@ function dateOnly(d: Date | undefined): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Whether the money has gone out, and whether it is late.
+ *
+ * Derived rather than stored, because "overdue" is a fact about today: a copy
+ * written into the document would be right on the day it was written and wrong
+ * the next morning. The same reasoning as an invoice's effective status.
+ *
+ * A claim with no due date is never late. That is the point of leaving it
+ * blank — an expense nobody set a deadline for has not missed one.
+ */
+function paymentStatus(paidOn: Date | undefined, dueDate: Date | undefined): ExpensePaymentStatus {
+  if (paidOn) return "paid";
+  if (!dueDate) return "unpaid";
+  // Compared by day, not by instant, so a claim due today is not overdue at one
+  // minute past midnight.
+  return dateOnly(dueDate) < new Date().toISOString().slice(0, 10) ? "overdue" : "unpaid";
+}
+
 function toDTO(doc: ExpenseDoc): ExpenseDTO {
   const d = doc as unknown as Record<string, unknown>;
   const rec = d.recurrence as { frequency: string; nextDate: Date; endDate?: Date; isActive?: boolean } | undefined;
@@ -84,6 +104,9 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     submittedById: String(doc.submittedById),
     submittedByName: doc.submittedByName,
     status: doc.status as ExpenseDTO["status"],
+    dueDate: d.dueDate ? dateOnly(d.dueDate as Date) : undefined,
+    paidOn: d.paidOn ? dateOnly(d.paidOn as Date) : undefined,
+    paymentStatus: paymentStatus(d.paidOn as Date | undefined, d.dueDate as Date | undefined),
     approvedById: d.approvedById ? String(d.approvedById) : undefined,
     approvedByName: (d.approvedByName as string) ?? undefined,
     approvedAt: d.approvedAt ? (d.approvedAt as Date).toISOString() : undefined,
@@ -145,6 +168,17 @@ export async function listExpenses(
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
   if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
+
+  // The derived status, expressed as the query that produces it, so filtering
+  // and the badge on the row cannot disagree. The three are exclusive: unpaid
+  // means not paid and not yet late, which is what the badge says.
+  if (query.paymentStatus) {
+    const todayStart = new Date(new Date().toISOString().slice(0, 10));
+    if (query.paymentStatus === "paid") and.push({ paidOn: { $ne: null } });
+    else if (query.paymentStatus === "overdue")
+      and.push({ paidOn: null, dueDate: { $ne: null, $lt: todayStart } });
+    else and.push({ paidOn: null, $or: [{ dueDate: null }, { dueDate: { $gte: todayStart } }] });
+  }
 
   // Applied after the caller's own filters, and not from `query`, so asking
   // for somebody else's expenses narrows the result to nothing instead of
@@ -223,6 +257,7 @@ export async function createExpense(
     paymentAccount: input.paymentAccount ?? "",
     paymentMethod: input.paymentMethod,
     reference: input.reference ?? "",
+    dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
     submittedById: new Types.ObjectId(userId),
     submittedByName: user.name,
     status,
@@ -283,6 +318,9 @@ export async function updateExpense(
   if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
   if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
   if (input.reference !== undefined) d.reference = input.reference;
+  // Clearable: an empty string means "no date to meet", which is a real answer
+  // and different from not mentioning the field at all.
+  if (input.dueDate !== undefined) d.dueDate = input.dueDate ? new Date(input.dueDate) : undefined;
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.projectName !== undefined) d.projectName = input.projectName;
   if (input.departmentId !== undefined) {
@@ -417,6 +455,61 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
 
 /** Pause (isActive=false) or resume (isActive=true) a recurring expense template.
  *  A paused template is skipped by the generator until resumed. */
+/**
+ * Recording that a claim was settled.
+ *
+ * The approval status says whether the claim was agreed to; this says whether
+ * the money left. They are different questions and were previously the same
+ * one, so an approved claim from March and one paid yesterday read alike.
+ *
+ * A voided or rejected claim cannot be paid, because both mean it was decided
+ * against. Everything else can: a draft is often a spend that has already
+ * happened, and refusing to record what the bank statement plainly shows would
+ * make the field a worse record than the statement.
+ *
+ * Method, account and reference are optional and only overwrite when given —
+ * the expense may already carry them from when it was created, and passing
+ * nothing should not blank what is there.
+ */
+export async function markExpensePaid(
+  orgId: string,
+  id: string,
+  input: MarkExpensePaidInput,
+): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+
+  const status = doc.status as string;
+  if (status === "voided") throw new AppError("CONFLICT", "A voided expense cannot be marked paid");
+  if (status === "rejected") throw new AppError("CONFLICT", "A rejected expense cannot be marked paid");
+
+  const d = doc as unknown as Record<string, unknown>;
+  d.paidOn = new Date(input.paidOn);
+  if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
+  if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
+  if (input.reference !== undefined) d.reference = input.reference;
+  await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
+/**
+ * Undoing that, for when it was marked paid by mistake.
+ *
+ * Only the date goes. Method, account and reference are left alone: they were
+ * often filled in when the claim was created, describing how it was meant to be
+ * paid, and clearing them here would throw away something this never set.
+ */
+export async function markExpenseUnpaid(orgId: string, id: string): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  if (!(doc as unknown as Record<string, unknown>).paidOn) {
+    throw new AppError("CONFLICT", "This expense is not marked paid");
+  }
+  (doc as unknown as Record<string, unknown>).paidOn = undefined;
+  await doc.save();
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
 export async function setRecurrenceActive(
   orgId: string,
   id: string,

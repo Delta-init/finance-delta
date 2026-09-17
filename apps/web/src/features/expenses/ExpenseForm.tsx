@@ -41,6 +41,7 @@ const formSchema = z.object({
   category: z.string().min(1, "Category is required"),
   description: z.string().min(1, "Description is required"),
   expenseDate: z.string().min(1, "Expense date is required"),
+  dueDate: z.string().optional(),
   amountDisplay: z.string().min(1, "Amount is required"),
   currency: z.string().default("AED"),
   categoryOther: z.string().max(60).optional().default(""),
@@ -97,6 +98,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       defaultValues: {
         category: "other",
         expenseDate: today,
+        dueDate: "",
         currency: orgCurrency,
         categoryOther: "",
         departmentId: "",
@@ -138,6 +140,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       category: values.category,
       description: values.description,
       expenseDate: values.expenseDate,
+      dueDate: values.dueDate || undefined,
       amountMinor: toMinor(values.amountDisplay),
       currency: values.currency,
       categoryOther: values.categoryOther ?? "",
@@ -258,6 +261,15 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               <Label>Expense Date *</Label>
               <Input type="date" {...register("expenseDate")} />
               {errors.expenseDate && <p className="text-xs text-danger">{errors.expenseDate.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Due Date</Label>
+              <Input type="date" {...register("dueDate")} />
+              {/* Blank is a real answer, not a missing one: a claim nobody set
+                  a deadline for cannot miss it, and will never read overdue. */}
+              <p className="text-xs text-foreground-muted">
+                Optional. Left blank, this never shows as overdue.
+              </p>
             </div>
           </div>
 

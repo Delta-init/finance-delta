@@ -78,6 +78,15 @@ const expenseSchema = new Schema(
       enum: ["draft", "submitted", "approved", "rejected", "voided"],
       default: "draft",
     },
+    /**
+     * When the claim should be settled by, and when it was.
+     *
+     * Two facts, not three: "overdue" is a fact about today rather than about
+     * the expense, so storing it would be wrong by the next morning. It is
+     * derived from these on read.
+     */
+    dueDate: { type: Date },
+    paidOn: { type: Date },
     approvedById: { type: Schema.Types.ObjectId, ref: "User" },
     approvedByName: { type: String },
     approvedAt: { type: Date },
@@ -106,6 +115,8 @@ expenseSchema.index({ organizationId: 1, expenseNumber: 1 }, { unique: true });
 expenseSchema.index({ organizationId: 1, expenseDate: 1, status: 1 });
 expenseSchema.index({ organizationId: 1, submittedById: 1 });
 expenseSchema.index({ organizationId: 1, category: 1 });
+// Listing the unpaid and the overdue, which is what the payment filter asks for.
+expenseSchema.index({ organizationId: 1, paidOn: 1, dueDate: 1 });
 
 export type ExpenseDoc = InferSchemaType<typeof expenseSchema> & {
   _id: Types.ObjectId;

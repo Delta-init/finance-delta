@@ -46,6 +46,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
       expense.category === "other" && expense.categoryName !== "Other" ? expense.categoryName : "",
     description: expense.description,
     expenseDate: expense.expenseDate,
+    dueDate: expense.dueDate ?? "",
     // Shown back the way it was typed. amountMinor holds the net, so a claim
     // entered tax-inclusive has to be reopened at its gross or the figure would
     // drop by the tax every time somebody saved it.

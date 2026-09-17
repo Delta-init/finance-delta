@@ -69,9 +69,22 @@ export function isWholeUnitCurrency(currency: string): boolean {
   return WHOLE_UNIT_CURRENCIES.has(currency.toUpperCase());
 }
 
-/** Format minor units for display, e.g. formatMoney(105050, "AED") → "AED 1,050.50". */
+/**
+ * Format minor units for display, e.g. formatMoney(105050, "AED") → "AED 1,050.50".
+ *
+ * Rounding a rupee figure to whole units is presentation, and presentation is
+ * allowed to lose the paise — but it is not allowed to lose the difference
+ * between something and nothing. A bill with seven paise outstanding printed
+ * its balance as "INR 0" beside a badge reading Partially Paid, and the two
+ * together looked like a fault in the badge. The figures were right; the
+ * rounding had turned a remainder into a flat contradiction.
+ *
+ * So a non-zero amount is never shown as zero. Below one rupee it keeps its
+ * decimals, which is the only reading that explains itself. Everything else
+ * rounds as before, and an amount that is actually zero still prints "INR 0".
+ */
 export function formatMoney(minor: number, currency = "AED"): string {
-  const whole = isWholeUnitCurrency(currency);
+  const whole = isWholeUnitCurrency(currency) && !(minor !== 0 && Math.round(minor / 100) === 0);
   const major = whole ? Math.round(minor / 100) : minor / 100;
   return `${currency} ${major.toLocaleString("en-US", {
     minimumFractionDigits: whole ? 0 : 2,

@@ -56,3 +56,25 @@ describe("whole-unit currencies", () => {
     expect(split.taxableMinor).toBe(1_238_09);
   });
 });
+
+describe("a rupee amount too small to round to a whole rupee", () => {
+  /**
+   * The case that made a settled-looking bill read Partially Paid: seven paise
+   * outstanding, printed as "INR 0" next to a badge that disagreed with it.
+   */
+  it("keeps its paise rather than printing as nothing", () => {
+    expect(formatMoney(7, "INR")).toBe("INR 0.07");
+    expect(formatMoney(49, "INR")).toBe("INR 0.49");
+    expect(formatMoney(-7, "INR")).toBe("INR -0.07");
+  });
+
+  it("still prints a real zero as zero", () => {
+    expect(formatMoney(0, "INR")).toBe("INR 0");
+  });
+
+  it("leaves everything a rupee or over alone", () => {
+    expect(formatMoney(100, "INR")).toBe("INR 1");
+    expect(formatMoney(150, "INR")).toBe("INR 2");
+    expect(formatMoney(2_118_644, "INR")).toBe("INR 21,186");
+  });
+});

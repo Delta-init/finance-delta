@@ -99,7 +99,9 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     } else if (paymentOpen && !editingPayment) {
       reset({
         method: "bank_transfer",
-        amountMinor: 0,
+        // The whole of what is left, so the field and the form agree and
+        // submitting without touching the amount settles the bill exactly.
+        amountMinor: Math.max(bill?.balanceMinor ?? 0, 0),
         paidOn: new Date().toISOString().slice(0, 10),
         reference: "",
         accountName: "",
@@ -107,7 +109,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentOpen, editingPayment]);
+  }, [paymentOpen, editingPayment, bill?.balanceMinor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleMethodChange(v: string) {
     setValue("method", v as RecordBillPaymentInput["method"]);
@@ -489,12 +491,23 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Amount ({bill.currency}) *</Label>
+                {/* A new payment starts at what is actually left, to the paise.
+                    It used to start blank, so people typed the total as the
+                    screen showed it — and a rupee figure is shown rounded, so
+                    paying a bill of 12,074.07 that reads "INR 12,074" left
+                    seven paise behind and the bill was never settled. */}
                 <Input
                   key={editingPayment?.id ?? "new"}
                   type="number"
                   step="0.01"
                   placeholder="0.00"
-                  defaultValue={editingPayment ? (editingPayment.amountMinor / 100).toString() : ""}
+                  defaultValue={
+                    editingPayment
+                      ? (editingPayment.amountMinor / 100).toString()
+                      : bill.balanceMinor > 0
+                        ? (bill.balanceMinor / 100).toFixed(2)
+                        : ""
+                  }
                   onChange={(e) => setValue("amountMinor", toMinorFromInput(e.target.value))}
                 />
                 {errors.amountMinor && <p className="text-xs text-danger">{errors.amountMinor.message}</p>}

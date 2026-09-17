@@ -110,7 +110,18 @@ export function InvoiceManager() {
   const selected = (data?.data ?? []).filter((inv) => selectedIds.includes(inv.id));
   // Only a draft can be deleted — the server refuses anything else, because an
   // invoice that has been sent or paid is a record of something that happened.
-  const deletable = selected.filter((inv) => inv.status === "draft");
+  /*
+   * What can be removed outright.
+   *
+   * A draft never left the building. A voided one has been cancelled already,
+   * so the only thing deleting it costs is the gap in the numbering — but only
+   * when nothing was ever paid against it. The server checks further still (a
+   * credit note, a commission, a quotation converted into it) and refuses with
+   * a reason, which the toolbar reports rather than guessing at here.
+   */
+  const deletable = selected.filter(
+    (inv) => inv.status === "draft" || (inv.status === "void" && inv.amountPaidMinor === 0),
+  );
   const undeletable = selected.length - deletable.length;
 
   /*
@@ -122,8 +133,16 @@ export function InvoiceManager() {
    * a sent invoice past its date, so those are cancellable like any other.
    */
   const voidable = selected.filter((inv) => inv.status !== "void" && inv.status !== "paid");
-  /** Neither cancellable nor deletable: there is nothing to offer for these. */
-  const untouchable = selected.filter((inv) => inv.status === "void" || inv.status === "paid");
+  /**
+   * Neither cancellable nor deletable, so there is nothing to offer for these.
+   *
+   * Derived from the two sets rather than listed again: a voided invoice with
+   * nothing paid against it is deletable, and naming the statuses twice is how
+   * the toolbar and the buttons end up disagreeing.
+   */
+  const untouchable = selected.filter(
+    (inv) => !voidable.includes(inv) && !deletable.includes(inv),
+  );
 
   /**
    * Delete what can be deleted, and say plainly what happened.
@@ -374,8 +393,8 @@ export function InvoiceManager() {
           {untouchable.length === 0 && undeletable > 0 && (
             <span className="text-xs text-foreground-muted">
               {undeletable === selectedIds.length
-                ? "None of these are drafts, so they can be voided but not deleted."
-                : `${undeletable} of them ${undeletable === 1 ? "is not a draft" : "are not drafts"} — those can be voided, not deleted.`}
+                ? "None of these can be deleted — only drafts and voided invoices can. They can be voided."
+                : `${undeletable} of them can be voided but not deleted — only drafts and voided invoices can be.`}
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -468,9 +487,9 @@ export function InvoiceManager() {
             </DialogTitle>
             <DialogDescription>
               {undeletable > 0
-                ? `${undeletable} of the ${selectedIds.length} selected ${undeletable === 1 ? "is not a draft and will be left" : "are not drafts and will be left"} alone. `
+                ? `${undeletable} of the ${selectedIds.length} selected cannot be deleted and will be left alone. `
                 : ""}
-              This cannot be undone.
+              A voided invoice leaves a gap in the numbering where it was. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">

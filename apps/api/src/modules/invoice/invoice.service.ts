@@ -725,11 +725,62 @@ export async function removeAttachment(
   return toDTO(doc as unknown as InvoiceDoc);
 }
 
+/**
+ * Remove an invoice that should not be on the books at all.
+ *
+ * A draft never left the building, so it can go. A voided one is the other
+ * case: it has been cancelled already, and somebody clearing up a mistaken
+ * invoice should not have to leave the cancelled shell behind for ever. It
+ * costs a gap in the numbering, which is the deliberate price of the choice —
+ * voiding, which keeps the number, remains the ordinary way to cancel.
+ *
+ * Anything else is a record of something that happened, and the client has a
+ * copy.
+ *
+ * A voided invoice still goes only when nothing depends on it. A payment, a
+ * credit note, a commission or a quotation that was converted into it all
+ * point at this document, and deleting it underneath them leaves rows
+ * referring to an invoice that no longer exists — worse than the shell it was
+ * tidying away.
+ */
 export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   const doc = await findDoc(orgId, id);
-  if (effectiveStatus(doc) !== "draft") {
-    throw new AppError("CONFLICT", "Only draft invoices can be deleted");
+  const status = effectiveStatus(doc);
+
+  if (status !== "draft" && status !== "void") {
+    throw new AppError("CONFLICT", "Only draft or voided invoices can be deleted");
   }
+
+  if (status === "void") {
+    const payments = (doc.payments as unknown as unknown[]) ?? [];
+    if (payments.length > 0) {
+      throw new AppError(
+        "CONFLICT",
+        "This invoice has payments recorded against it. Remove them first, or leave it voided.",
+      );
+    }
+
+    const objectId = new Types.ObjectId(id);
+    const [{ CreditNote }, { CommissionRecord }, { Quotation }] = await Promise.all([
+      import("../credit-note/credit-note.model"),
+      import("../commission/commission-record.model"),
+      import("../quotation/quotation.model"),
+    ]);
+
+    const [credited, commissioned, quoted] = await Promise.all([
+      CreditNote.exists({ organizationId: orgId, invoiceId: objectId }),
+      CommissionRecord.exists({ organizationId: orgId, invoiceId: objectId }),
+      Quotation.exists({
+        organizationId: orgId,
+        $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
+      }),
+    ]);
+
+    if (credited) throw new AppError("CONFLICT", "A credit note refers to this invoice, so it cannot be deleted");
+    if (commissioned) throw new AppError("CONFLICT", "A commission was calculated from this invoice, so it cannot be deleted");
+    if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
+  }
+
   await doc.deleteOne();
 }
 

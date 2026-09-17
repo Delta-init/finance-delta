@@ -1,5 +1,5 @@
 /**
- * Drives deleting a bill over real HTTP against a real API process.
+ * Drives deleting and editing a bill over real HTTP against a real API process.
  *
  * Deleting is not voiding. Voiding leaves a marked row in the payables book,
  * which is right for a bill that was real and then wasn't. Deleting is for the
@@ -66,6 +66,7 @@ async function request(method: string, p: string, body?: unknown, token?: string
 }
 
 const post = (p: string, b?: unknown, t?: string) => request("POST", p, b, t);
+const patch = (p: string, b?: unknown, t?: string) => request("PATCH", p, b, t);
 const get = (p: string, t?: string) => request("GET", p, undefined, t);
 const del = (p: string, t?: string) => request("DELETE", p, undefined, t);
 
@@ -256,6 +257,79 @@ async function main() {
     const r = await del(`/bills/${id}`, token);
     check("the credited bill cannot be deleted", r.status === 409, `got ${r.status}`);
     check("...and survives", await exists(id));
+  }
+
+  // ── Editing a bill money has moved against ────────────────────────────────
+  step("Editing a bill with payments against it");
+
+  /** A bill with `paid` already paid, of `totalMinor`. */
+  async function partPaid(totalMinor: number, paid: number): Promise<string> {
+    const id = await draftBill(totalMinor);
+    await post(`/bills/${id}/approve`, undefined, token);
+    await post(`/bills/${id}/payments`, { method: "cash", amountMinor: paid, paidOn: today }, token);
+    return id;
+  }
+
+  const lines = (unitPriceMinor: number) => ({
+    lineItems: [{ description: "Stationery", quantity: 1, unitPriceMinor, discountPct: 0, taxPct: 0 }],
+  });
+
+  {
+    // The case the guard used to refuse outright.
+    const id = await partPaid(100_000, 40_000);
+    const r = await patch(`/bills/${id}`, lines(150_000), token);
+    check("a part-paid bill can be edited", r.status === 200, `got ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+
+    const d = (await get(`/bills/${id}`, token)).body?.data as unknown as
+      { totalMinor?: number; amountPaidMinor?: number; balanceMinor?: number; status?: string } | undefined;
+    check("...the new total sticks", d?.totalMinor === 150_000, `total=${d?.totalMinor}`);
+    check("...the payment is untouched", d?.amountPaidMinor === 40_000, `paid=${d?.amountPaidMinor}`);
+    check("...the balance follows the total", d?.balanceMinor === 110_000, `balance=${d?.balanceMinor}`);
+    check("...and it is still partially paid", d?.status === "partially_paid", `status=${d?.status}`);
+  }
+  {
+    // Edited down to exactly what was paid: nothing is outstanding any more, so
+    // the bill is settled and must say so.
+    const id = await partPaid(100_000, 40_000);
+    const r = await patch(`/bills/${id}`, lines(40_000), token);
+    check("a part-paid bill edited down to what was paid saves", r.status === 200, `got ${r.status}`);
+
+    const d = (await get(`/bills/${id}`, token)).body?.data as unknown as
+      { balanceMinor?: number; status?: string } | undefined;
+    check("...leaves nothing outstanding", d?.balanceMinor === 0, `balance=${d?.balanceMinor}`);
+    check("...and becomes paid", d?.status === "paid", `status=${d?.status}`);
+  }
+  {
+    // A settled bill edited upwards is owed again.
+    const id = await partPaid(100_000, 100_000);
+    const before = (await get(`/bills/${id}`, token)).body?.data as unknown as { status?: string } | undefined;
+    check("a fully paid bill starts out paid", before?.status === "paid", `status=${before?.status}`);
+
+    const r = await patch(`/bills/${id}`, lines(180_000), token);
+    check("...can be edited upwards", r.status === 200, `got ${r.status}`);
+
+    const d = (await get(`/bills/${id}`, token)).body?.data as unknown as
+      { balanceMinor?: number; status?: string } | undefined;
+    check("...is owed the difference", d?.balanceMinor === 80_000, `balance=${d?.balanceMinor}`);
+    check("...and is partially paid again", d?.status === "partially_paid", `status=${d?.status}`);
+  }
+  {
+    // The floor: a bill cannot be worth less than what has gone out of the door.
+    const id = await partPaid(100_000, 60_000);
+    const r = await patch(`/bills/${id}`, lines(20_000), token);
+    check("below what is already paid is refused", r.status === 409, `got ${r.status}`);
+    const msg = String((r.body as unknown as { error?: { message?: string } })?.error?.message ?? "");
+    check("...saying so in money", /600\.00|vendor credit/i.test(msg), `message was "${msg}"`);
+
+    const d = (await get(`/bills/${id}`, token)).body?.data as unknown as
+      { totalMinor?: number; balanceMinor?: number } | undefined;
+    check("...and changes nothing", d?.totalMinor === 100_000 && d?.balanceMinor === 40_000, `total=${d?.totalMinor} balance=${d?.balanceMinor}`);
+  }
+  {
+    const id = await draftBill();
+    await post(`/bills/${id}/void`, undefined, token);
+    const r = await patch(`/bills/${id}`, lines(50_000), token);
+    check("a voided bill still cannot be edited", r.status === 409, `got ${r.status}`);
   }
 
   // ── Nonsense ──────────────────────────────────────────────────────────────

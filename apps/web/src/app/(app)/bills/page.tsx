@@ -123,7 +123,7 @@ export default function BillsPage() {
       align: "right",
       cell: (b) => (
         <div className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
-          {b.status !== "voided" && b.amountPaidMinor === 0 && (
+          {b.status !== "voided" && (
             <button
               type="button"
               title="Edit"

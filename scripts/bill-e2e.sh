@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 #
-# End-to-end test of deleting a bill.
+# End-to-end test of deleting and editing a bill.
 #
-# Stands up a throwaway mongod and a throwaway finance API, then deletes bills
-# over real HTTP — checking both that the ones which should go do, and that
-# every guard refuses the ones that must stay: bills that are approved or paid,
-# voided bills carrying a payment, and bills something else points at. Tears
-# both down afterwards.
+# Stands up a throwaway mongod and a throwaway finance API, then exercises the
+# two operations that can damage a payables book over real HTTP: deleting a
+# bill and editing one that money has already moved against. Checks both that
+# what should work does, and that every guard refuses what must not — a bill
+# carrying a payment, one something else points at, and an edit that would take
+# a bill below what has already been paid. Tears both down afterwards.
 #
 # Nothing here touches a configured database. The scratch mongod runs on its own
 # port with its own data directory under /tmp, and the driver refuses to start
 # unless MONGODB_URI names a local test database.
 #
-#   ./scripts/bill-delete-e2e.sh
-#   E2E_API_PORT=4123 ./scripts/bill-delete-e2e.sh
+#   ./scripts/bill-e2e.sh
+#   E2E_API_PORT=4123 ./scripts/bill-e2e.sh
 #
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MONGO_PORT="${E2E_MONGO_PORT:-27081}"
 API_PORT="${E2E_API_PORT:-4113}"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/bill-delete-e2e.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/bill-e2e.XXXXXX")"
 
 # Local and throwaway. The API validates their length, not their secrecy.
 LONG="$(printf 'x%.0s' {1..40})"
@@ -93,8 +94,8 @@ curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null || {
   exit 1
 }
 
-echo "Deleting bills"
-if ! bun src/scripts/bill-delete-e2e.ts; then
+echo "Deleting and editing bills"
+if ! bun src/scripts/bill-e2e.ts; then
   echo
   echo "--- last 40 lines of the API log ---" >&2
   tail -40 "$WORK/log/api.log" >&2

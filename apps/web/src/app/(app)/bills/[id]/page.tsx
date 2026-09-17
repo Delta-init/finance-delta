@@ -208,7 +208,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <p className="text-sm text-foreground-muted">{bill.vendorName}</p>
         </div>
         <div className="flex items-center gap-2">
-          {bill.status !== "voided" && bill.amountPaidMinor === 0 && (
+          {bill.status !== "voided" && (
             <Link href={`/bills/${id}/edit`}>
               <Button variant="outline" size="sm">
                 <Pencil className="h-4 w-4" /> Edit

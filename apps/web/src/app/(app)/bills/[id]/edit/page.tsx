@@ -17,9 +17,11 @@ export default function EditBillPage({ params }: { params: Promise<{ id: string 
     return <div className="flex h-64 items-center justify-center text-foreground-muted">Bill not found.</div>;
   }
 
-  // A bill can be edited only while it's non-voided and has no recorded payments (mirrors the API guard).
-  if (bill.status === "voided" || bill.amountPaidMinor > 0) {
-    const reason = bill.status === "voided" ? "it has been voided" : "it has recorded payments";
+  // Only a voided bill is off limits now, which mirrors the API guard. A bill
+  // with payments against it is editable: money having moved is a reason to get
+  // the bill right, not a reason to leave it wrong.
+  if (bill.status === "voided") {
+    const reason = "it has been voided";
     return (
       <div className="mx-auto max-w-4xl space-y-4 p-6">
         <div className="flex items-center gap-3">
@@ -56,5 +58,12 @@ export default function EditBillPage({ params }: { params: Promise<{ id: string 
     })),
   };
 
-  return <BillForm mode="edit" billId={id} initialValues={initialValues} />;
+  return (
+    <BillForm
+      mode="edit"
+      billId={id}
+      initialValues={initialValues}
+      amountPaidMinor={bill.amountPaidMinor}
+    />
+  );
 }

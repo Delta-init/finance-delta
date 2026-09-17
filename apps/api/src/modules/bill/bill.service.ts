@@ -14,6 +14,11 @@ function lineTotal(l: { quantity: number; unitPriceMinor: number; discountPct: n
   return taxable + Math.round(taxable * l.taxPct / 100);
 }
 
+/** Whole units with separators, for a message somebody has to read. */
+function formatMinor(minor: number, currency: string): string {
+  return `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function dateOnly(d: Date | undefined): string {
   if (!d) return "";
   return d.toISOString().slice(0, 10);
@@ -179,8 +184,11 @@ export async function createBill(orgId: string, input: CreateBillInput): Promise
 export async function updateBill(orgId: string, id: string, input: UpdateBillInput): Promise<BillDTO> {
   const doc = await Bill.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+  // A voided bill is a cancelled record and stays as it was. A paid one is
+  // not: money having moved is a reason to get the bill right, not a reason to
+  // leave it wrong. A vendor who re-issues a corrected invoice after a part
+  // payment is ordinary, and the edit is the only way to record it.
   if (doc.status === "voided") throw new AppError("CONFLICT", "A voided bill can't be edited");
-  if (((doc.amountPaidMinor as number) ?? 0) > 0) throw new AppError("CONFLICT", "A bill with recorded payments can't be edited");
 
   if (input.vendorId && String(doc.vendorId) !== input.vendorId) {
     const vendor = await Vendor.findOne({ _id: input.vendorId, organizationId: orgId });
@@ -196,14 +204,36 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
 
   if (input.lineItems) {
     const lines = input.lineItems.map((l) => ({ ...l, lineTotalMinor: lineTotal(l) }));
+    const total = lines.reduce((s, l) => s + l.lineTotalMinor, 0);
+    const paid = (doc.amountPaidMinor as number) ?? 0;
+
+    // Editing the bill below what has already gone out would make the vendor
+    // owe money back, which a bill cannot express — its balance would go
+    // negative and the books would quietly stop adding up. That situation is
+    // real, but it is a vendor credit, not a smaller bill.
+    if (total < paid) {
+      throw new AppError(
+        "CONFLICT",
+        `This bill already has ${formatMinor(paid, doc.currency as string)} paid against it, so it cannot be reduced to ${formatMinor(total, doc.currency as string)}. Raise a vendor credit for the difference, or remove the payment first.`,
+      );
+    }
+
     doc.lineItems = lines as unknown as typeof doc.lineItems;
     doc.subtotalMinor = lines.reduce((s, l) => s + l.quantity * l.unitPriceMinor, 0);
     doc.taxTotalMinor = lines.reduce((s, l) => {
       const taxable = l.quantity * l.unitPriceMinor - Math.round(l.quantity * l.unitPriceMinor * l.discountPct / 100);
       return s + Math.round(taxable * l.taxPct / 100);
     }, 0);
-    doc.totalMinor = lines.reduce((s, l) => s + l.lineTotalMinor, 0);
-    doc.balanceMinor = doc.totalMinor - (doc.amountPaidMinor as number ?? 0);
+    doc.totalMinor = total;
+    doc.balanceMinor = total - paid;
+
+    // The status describes what is outstanding, so changing the total changes
+    // it: a part-paid bill edited down to what was paid is now settled, and one
+    // edited up is owed again. Same rule recordBillPayment uses, so a bill
+    // reaches a status the same way however it got there. Bills with nothing
+    // paid keep whatever they had — approval state is not this function's
+    // business.
+    if (paid > 0) doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   }
 
   await doc.save();

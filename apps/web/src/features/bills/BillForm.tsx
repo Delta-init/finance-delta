@@ -63,9 +63,17 @@ interface BillFormProps {
   mode: "create" | "edit";
   billId?: string;
   initialValues?: Partial<BillFormValues>;
+  /**
+   * What has already been paid against this bill, for an edit.
+   *
+   * A bill with payments can be edited, but not down to less than has already
+   * gone out — the balance would go negative and the books would stop adding
+   * up. The form needs the figure to say so before the save rather than after.
+   */
+  amountPaidMinor?: number;
 }
 
-export function BillForm({ mode, billId, initialValues }: BillFormProps) {
+export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: BillFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sourcePOId = searchParams.get("poId") ?? "";
@@ -137,6 +145,10 @@ export function BillForm({ mode, billId, initialValues }: BillFormProps) {
     },
     { subtotal: 0, tax: 0 },
   );
+
+  // The same figure the API will compute, so the warning and the refusal agree.
+  const nextTotalMinor = toMinor(totals.subtotal + totals.tax);
+  const belowPaid = amountPaidMinor > 0 && nextTotalMinor < amountPaidMinor;
 
   async function onSubmit(values: BillFormValues) {
     const input: CreateBillInput = {
@@ -325,8 +337,34 @@ export function BillForm({ mode, billId, initialValues }: BillFormProps) {
                 <span className="font-semibold">Total</span>
                 <span className="font-semibold">{formatMoney(toMinor(totals.subtotal + totals.tax), currency)}</span>
               </div>
+              {/* Only when money has already gone out, which is the only time
+                  the total is not free to be anything. */}
+              {amountPaidMinor > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-foreground-muted">Already paid</span>
+                    <span className="font-medium">{formatMoney(amountPaidMinor, currency)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-border pt-1.5">
+                    <span className="text-foreground-muted">Balance after saving</span>
+                    <span
+                      className={`font-semibold ${belowPaid ? "text-danger" : ""}`}
+                    >
+                      {formatMoney(nextTotalMinor - amountPaidMinor, currency)}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+
+          {belowPaid && (
+            <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2.5 text-xs text-danger">
+              This bill already has {formatMoney(amountPaidMinor, currency)} paid against it, so it
+              cannot be saved for less than that. Raise a vendor credit for the difference, or
+              remove the payment first.
+            </div>
+          )}
         </div>
 
         {mode === "create" && (
@@ -373,7 +411,9 @@ export function BillForm({ mode, billId, initialValues }: BillFormProps) {
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="ghost" onClick={() => router.push(backHref)}>Cancel</Button>
-          <Button type="submit" loading={isSubmitting}>{isEdit ? "Save Changes" : "Create bill"}</Button>
+          <Button type="submit" loading={isSubmitting} disabled={belowPaid}>
+            {isEdit ? "Save Changes" : "Create bill"}
+          </Button>
         </div>
       </form>
     </div>

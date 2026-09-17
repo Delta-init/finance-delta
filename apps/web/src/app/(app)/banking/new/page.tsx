@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -47,7 +47,13 @@ export default function NewBankAccountPage() {
   const presetType = useSearchParams().get("type") ?? "";
   const router = useRouter();
   const createAccount = useCreateBankAccount();
-  const { currency: orgCurrency } = useCurrency();
+  // The organization's own currency, not the display currency from the top bar.
+  // Those are different things and this used to read the wrong one: the header
+  // selector only changes how figures are *shown*, but it was seeding what the
+  // account would be *denominated in*. Open this page while the bar happened to
+  // say AED and an Indian branch got an AED tin, whose entries then read as
+  // dirhams forever after. What an account holds is a fact about the account.
+  const { baseCurrency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
 
   const {
@@ -69,8 +75,13 @@ export default function NewBankAccountPage() {
     },
   });
 
+  // The base currency arrives with the session, a moment after this form first
+  // renders, so the untouched field is filled in when it does. Only untouched:
+  // a foreign-currency account is a real thing to want, and somebody who has
+  // deliberately picked one should not have it taken back.
+  const currencyPicked = useRef(false);
   useEffect(() => {
-    setValue("currency", orgCurrency, { shouldDirty: false });
+    if (!currencyPicked.current) setValue("currency", orgCurrency, { shouldDirty: false });
   }, [orgCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function onSubmit(values: FormValues) {
@@ -178,7 +189,11 @@ export default function NewBankAccountPage() {
             </div>
             <div className="space-y-1">
               <Label>Currency *</Label>
-              <Select key={currency} value={currency} onValueChange={(v) => setValue("currency", v)}>
+              <Select
+                key={currency}
+                value={currency}
+                onValueChange={(v) => { currencyPicked.current = true; setValue("currency", v); }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

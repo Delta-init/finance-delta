@@ -142,7 +142,7 @@ export function QuotationForm({
   onSubmit: (input: CreateQuotationInput) => Promise<void>;
 }) {
   const router = useRouter();
-  const { currency: orgCurrency, baseCurrency } = useCurrency();
+  const { baseCurrency } = useCurrency();
   const isINROrg = baseCurrency === "INR";
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
@@ -191,7 +191,7 @@ export function QuotationForm({
   });
 
   const { fields, append, remove, move } = useFieldArray({ control, name: "lineItems" });
-  const currency = initial?.currency ?? orgCurrency;
+  const currency = initial?.currency ?? baseCurrency;
   const taxInclusive = watch("taxInclusive");
 
   // The initial line is created before the tax config loads, so apply the

@@ -58,7 +58,7 @@ function toFormValues(v: Vendor): CreateVendorInput {
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const { data: vendor, isLoading } = useVendor(id);
   const updateVendor = useUpdateVendor();
   const { data: poData } = usePurchaseOrders({ vendorId: id, limit: "50", sort: "createdAt", dir: "desc" });

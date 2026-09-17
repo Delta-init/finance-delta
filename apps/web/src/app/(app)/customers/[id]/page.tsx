@@ -76,7 +76,7 @@ function formatAddress(addr?: { street?: string; city?: string; state?: string; 
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const { data: customer, isLoading } = useCustomer(id);
   const { data: statement, isLoading: statLoading } = useCustomerStatement(id);
   const updateMutation = useUpdateCustomer();

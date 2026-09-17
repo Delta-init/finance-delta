@@ -50,7 +50,7 @@ export default function NewVendorCreditPage() {
   const createCredit = useCreateVendorCredit();
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<FormValues>({

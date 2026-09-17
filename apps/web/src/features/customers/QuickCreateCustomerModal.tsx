@@ -47,7 +47,7 @@ export function QuickCreateCustomerModal({
   onClose: () => void;
   onCreated: (id: string, name: string) => void;
 }) {
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const { data: departments } = useAllDepartments();
   const createCustomer = useCreateCustomer();
   const [serverError, setServerError] = useState<string | null>(null);

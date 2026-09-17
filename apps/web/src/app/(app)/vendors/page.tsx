@@ -49,7 +49,7 @@ function toFormValues(v: Vendor): CreateVendorInput {
 
 export default function VendorsPage() {
   const router = useRouter();
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState("all");
   useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -117,7 +117,7 @@ function AddressFields({
 
 export function CustomerManager() {
   const router = useRouter();
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState<string>("all");
   const [tagIds, setTagIds] = useState<string[]>([]);

@@ -85,7 +85,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   // Shown only where a claim already carries one; there is no way to type a new
   // one, which is the point of replacing it.
   const legacyCostCentre = initialValues?.costCentre?.trim() || "";
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const today = new Date().toISOString().slice(0, 10);
   const isEdit = mode === "edit";
 

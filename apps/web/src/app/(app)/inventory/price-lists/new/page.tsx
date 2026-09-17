@@ -26,7 +26,7 @@ export default function NewPriceListPage() {
   const createPriceList = useCreatePriceList();
   const { data: itemsData } = useItems({ pageSize: 500, isActive: "true", type: "product" });
   const items = itemsData?.data ?? [];
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

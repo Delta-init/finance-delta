@@ -73,7 +73,7 @@ export function BillForm({ mode, billId, initialValues }: BillFormProps) {
   const updateBill = useUpdateBill(billId ?? "");
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
-  const { currency: orgCurrency } = useCurrency();
+  const { baseCurrency: orgCurrency } = useCurrency();
   const isEdit = mode === "edit";
 
   const today = new Date().toISOString().slice(0, 10);

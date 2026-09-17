@@ -21,5 +21,6 @@ router.patch("/:id/notes", requirePermission("bill:update"), validateBody(update
 router.post("/:id/attachments", requirePermission("bill:update"), parseUpload, c.addAttachment);
 router.delete("/:id/attachments/:attId", requirePermission("bill:update"), c.removeAttachment);
 router.post("/:id/void", requirePermission("bill:delete"), c.voidBill);
+router.delete("/:id", requirePermission("bill:delete"), c.remove);
 
 export default router;

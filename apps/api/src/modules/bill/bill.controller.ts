@@ -44,6 +44,11 @@ export const voidBill = asyncHandler(async (req, res) => {
   ok(res, await svc.voidBill(org(req), req.params.id!));
 });
 
+export const remove = asyncHandler(async (req, res) => {
+  await svc.deleteBill(org(req), req.params.id!);
+  res.status(204).end();
+});
+
 export const updateNotes = asyncHandler(async (req, res) => {
   ok(res, await svc.updateBillNotes(org(req), req.params.id!, (req.body?.notes as string) ?? ""));
 });

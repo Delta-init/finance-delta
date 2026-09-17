@@ -61,6 +61,22 @@ function useBillAction(action: string, id: string) {
   });
 }
 
+/**
+ * Deleting a bill, which is not the same as voiding one.
+ *
+ * The id is an argument rather than something the hook is built around,
+ * because a bulk delete needs one mutation used many times and hooks cannot be
+ * called in a loop.
+ */
+export function useDeleteBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (id: string) => api.del<void>(`bills/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export const useApproveBill = (id: string) => useBillAction("approve", id);
 export const useRejectBill = (id: string) => useBillAction("reject", id);
 export const useVoidBill = (id: string) => useBillAction("void", id);

@@ -18,6 +18,7 @@
     "test:payroll-e2e": "./scripts/payroll-e2e.sh",
     "test:crm-e2e": "./scripts/crm-handover-e2e.sh",
     "test:quote-e2e": "./scripts/quotation-convert-e2e.sh",
+    "test:bill-e2e": "./scripts/bill-delete-e2e.sh",
     "payroll-demo": "./scripts/payroll-demo.sh"
   },
   "engines": {

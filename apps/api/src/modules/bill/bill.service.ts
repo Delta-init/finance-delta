@@ -394,3 +394,60 @@ export async function voidBill(orgId: string, id: string): Promise<BillDTO> {
   await doc.save();
   return toDTO(doc as unknown as BillDoc);
 }
+
+/**
+ * Removing a bill outright, which voiding does not do.
+ *
+ * Voiding is the right answer for a bill that was real and then wasn't: it
+ * stays in the book, marked, because the book is a record. Deleting is for the
+ * ones that were never real in the first place — typed twice, entered against
+ * the wrong vendor, left behind by a test — where a permanent voided row is
+ * filing clutter rather than an audit trail.
+ *
+ * The test is what has happened to the bill, not what it is called. An invoice
+ * can be a draft and that is the natural "not real yet" state to key on, but a
+ * bill has no such state: `createBill` opens it at `approved`, or at
+ * `pending_approval` when approval is on, and nothing ever writes `draft`. So
+ * keying on status would have meant a bill entered by mistake could never be
+ * removed, which is the case this exists for.
+ *
+ * What does matter is money and references. A bill with a payment against it
+ * stays, whatever its status, because the payment is a real event and deleting
+ * the bill would strand it — that alone rules out the paid and part-paid ones.
+ * A bill a purchase order was converted into stays, because the PO is marked
+ * billed and would be left pointing at nothing. A vendor credit raised against
+ * a bill pins it likewise. Everything else can go.
+ */
+export async function deleteBill(orgId: string, id: string): Promise<void> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+
+  const payments = (doc.payments as unknown as unknown[]) ?? [];
+  if (payments.length > 0) {
+    throw new AppError(
+      "CONFLICT",
+      "This bill has payments recorded against it. Remove them first, or void it instead.",
+    );
+  }
+
+  const objectId = new Types.ObjectId(id);
+  const [{ PurchaseOrder }, { VendorCredit }] = await Promise.all([
+    import("../purchase-order/purchase-order.model"),
+    import("../vendor-credit/vendor-credit.model"),
+  ]);
+  const [fromPO, credited] = await Promise.all([
+    PurchaseOrder.exists({ organizationId: orgId, sourceBillId: objectId }),
+    VendorCredit.exists({ organizationId: orgId, sourceBillId: objectId }),
+  ]);
+  if (fromPO) {
+    throw new AppError(
+      "CONFLICT",
+      "A purchase order was converted into this bill, so it cannot be deleted",
+    );
+  }
+  if (credited) {
+    throw new AppError("CONFLICT", "A vendor credit refers to this bill, so it cannot be deleted");
+  }
+
+  await doc.deleteOne();
+}

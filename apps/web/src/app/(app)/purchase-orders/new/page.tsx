@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
+import { QuickCreateVendorModal } from "@/features/vendors/QuickCreateVendorModal";
 import { useCreatePO } from "@/features/purchase-orders/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -54,6 +55,7 @@ function computeLine(l: { quantity: number; unitPrice: number; discountPct: numb
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
   const createPO = useCreatePO();
+  const [vendorModalOpen, setVendorModalOpen] = useState(false);
   const { data: vendorData } = useVendors({ limit: "200" });
   const vendors = vendorData?.data ?? [];
   const { baseCurrency: orgCurrency } = useCurrency();
@@ -116,6 +118,14 @@ export default function NewPurchaseOrderPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
+      <QuickCreateVendorModal
+        open={vendorModalOpen}
+        onClose={() => setVendorModalOpen(false)}
+        onCreated={(id) => {
+          setValue("vendorId", id, { shouldValidate: true });
+          setVendorModalOpen(false);
+        }}
+      />
       <div className="flex items-center gap-3">
         <button onClick={() => router.back()} className="rounded-md p-1.5 text-foreground-muted hover:bg-surface-muted">
           <ArrowLeft className="h-4 w-4" />
@@ -128,8 +138,23 @@ export default function NewPurchaseOrderPage() {
           <h2 className="text-sm font-semibold text-foreground-muted uppercase tracking-wider">Details</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Vendor *</Label>
-              <Select value={watch("vendorId")} onValueChange={(v) => setValue("vendorId", v)}>
+              <div className="flex items-center justify-between">
+                <Label>Vendor *</Label>
+                <button
+                  type="button"
+                  onClick={() => setVendorModalOpen(true)}
+                  className="text-xs text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="h-3 w-3" /> New
+                </button>
+              </div>
+              {/* Keyed on the value so a vendor created a second ago, which the
+                  list is only now refetching, still shows as the selection. */}
+              <Select
+                key={watch("vendorId")}
+                value={watch("vendorId")}
+                onValueChange={(v) => setValue("vendorId", v)}
+              >
                 <SelectTrigger><SelectValue placeholder="Select vendor" /></SelectTrigger>
                 <SelectContent>
                   {vendors.map((v) => (

@@ -100,3 +100,66 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export const isProd = env.NODE_ENV === "production";
+
+/**
+ * Two settings that are only wrong once mail is switched on.
+ *
+ * `FROM_EMAIL` defaults to noreply@delta.local so the application runs with no
+ * mail configured at all. The moment a transport is configured that default
+ * becomes a guaranteed failure: no provider will send from an unverified
+ * .local domain. It would fail per-email, silently, in a background dispatch
+ * nobody is watching — so it is dealt with here, once, at boot.
+ *
+ * Dealt with rather than only refused. When SMTP is the transport there is a
+ * right answer sitting next to the wrong one: SMTP_USER is the authenticated
+ * account, and most providers — Gmail among them — require the From address to
+ * be exactly that or a verified alias of it. So the sender falls back to the
+ * account doing the sending, which is both a working value and the one the
+ * provider wants. Refusing to boot over a question that answers itself would
+ * be a worse failure than the one being prevented.
+ *
+ * Resend gets no such fallback. Its key says nothing about which addresses the
+ * account may send from, so there is nothing to infer and the only honest move
+ * is to stop and say so.
+ *
+ * `WEB_ORIGIN` is the other one: every action button in every email is built
+ * from it, so a default left in place sends the whole company links to
+ * localhost. A warning rather than a refusal — wrong, but not broken.
+ */
+const PLACEHOLDER_SENDER = /@(delta\.local|example\.com)$|\.local$/i;
+
+export function assertMailConfigSane(): void {
+  const smtp = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+  if (!env.RESEND_API_KEY && !smtp) return;
+
+  if (PLACEHOLDER_SENDER.test(env.FROM_EMAIL)) {
+    // SMTP can answer the question itself; Resend cannot.
+    if (smtp && env.SMTP_USER && env.SMTP_USER.includes("@")) {
+      (env as { FROM_EMAIL: string }).FROM_EMAIL = env.SMTP_USER;
+      console.warn(
+        [
+          `\u26a0\ufe0f  FROM_EMAIL was still "noreply@delta.local", so mail will be sent as ${env.SMTP_USER}.`,
+          "   Set FROM_EMAIL explicitly to silence this. It must be the SMTP account or a verified alias of it.",
+        ].join("\n"),
+      );
+    } else {
+      console.error(
+        [
+          `\u274c Mail is configured but FROM_EMAIL is still "${env.FROM_EMAIL}".`,
+          "   No provider will send from that domain, so every email would fail silently.",
+          "   Set FROM_EMAIL to an address on a domain verified with your mail provider.",
+        ].join("\n"),
+      );
+      process.exit(1);
+    }
+  }
+
+  if (isProd && env.WEB_ORIGIN.includes("localhost")) {
+    console.warn(
+      [
+        `\u26a0\ufe0f  Mail is configured but WEB_ORIGIN is "${env.WEB_ORIGIN}".`,
+        "   Every link in every email will point there. Set it to the address people actually use.",
+      ].join("\n"),
+    );
+  }
+}

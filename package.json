@@ -20,6 +20,7 @@
     "test:quote-e2e": "./scripts/quotation-convert-e2e.sh",
     "test:bill-e2e": "./scripts/bill-e2e.sh",
     "test:expense-e2e": "./scripts/expense-payment-e2e.sh",
+    "test:mail-e2e": "./scripts/mail-e2e.sh",
     "payroll-demo": "./scripts/payroll-demo.sh"
   },
   "engines": {

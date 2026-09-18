@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import { env } from "./config/env";
+import { env, assertMailConfigSane } from "./config/env";
 import { connectDb } from "./config/db";
 import { logger } from "./lib/logger";
 import { ok } from "./lib/http";
@@ -43,6 +43,11 @@ import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
 import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
 
 async function bootstrap() {
+  // Before anything else: a mail misconfiguration that only shows up per-email,
+  // in a background dispatch nobody is watching, is caught here while somebody
+  // is still looking at the console.
+  assertMailConfigSane();
+
   await connectDb();
 
   const app = express();

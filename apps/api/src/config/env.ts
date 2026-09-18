@@ -18,6 +18,21 @@ const envSchema = z.object({
 
   REDIS_URL: z.string().default("redis://localhost:6379"),
   RESEND_API_KEY: z.string().default(""),
+  /**
+   * SMTP, for sending without Resend.
+   *
+   * Same variable names HRMS uses, deliberately: an organization that has
+   * already set up a mail account for one of these should not have to do it
+   * again with different spellings for the other.
+   *
+   * Resend wins when its key is set. Otherwise these are used, and when
+   * neither is configured sending is a logged no-op.
+   */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: z.string().optional(), // "true" | "false"
   FROM_EMAIL: z.string().email().default("noreply@delta.local"),
   FROM_NAME: z.string().default("Delta Finance"),
 

@@ -1,16 +1,130 @@
 import { Resend } from "resend";
+import nodemailer, { type Transporter } from "nodemailer";
 import { DELTA_LOGO_EMAIL } from "@delta/shared";
 import { env } from "../config/env";
 import { logger } from "./logger";
 
-let client: Resend | null = null;
-function getClient(): Resend | null {
+/**
+ * How mail leaves this application.
+ *
+ * There are two ways, and which one is in use depends only on what has been
+ * configured. Resend is an HTTP API and takes a key; SMTP is an ordinary mail
+ * account. Resend wins when its key is set, because it was here first and an
+ * organization that has deliberately configured it should keep it.
+ *
+ * SMTP exists because that is what most people already have. The variable
+ * names are the ones HRMS uses — SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS,
+ * SMTP_SECURE — so a mail account set up once works for both without being
+ * entered twice under different spellings.
+ *
+ * Every send goes through `deliver`, so the three kinds of message cannot
+ * drift apart in how they reach a transport or in what they report back.
+ */
+type Transport = "resend" | "smtp" | "none";
+
+let resendClient: Resend | null = null;
+let smtpTransport: Transporter | null = null;
+
+function smtpConfigured(): boolean {
+  return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+}
+
+/** Which transport will actually be used, without building anything. */
+export function activeTransport(): Transport {
+  if (env.RESEND_API_KEY) return "resend";
+  if (smtpConfigured()) return "smtp";
+  return "none";
+}
+
+function getResend(): Resend | null {
   if (!env.RESEND_API_KEY) return null;
-  if (!client) client = new Resend(env.RESEND_API_KEY);
-  return client;
+  if (!resendClient) resendClient = new Resend(env.RESEND_API_KEY);
+  return resendClient;
+}
+
+function getSmtp(): Transporter | null {
+  if (!smtpConfigured()) return null;
+  if (!smtpTransport) {
+    smtpTransport = nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT ? parseInt(env.SMTP_PORT, 10) : 587,
+      // Port 465 is implicit TLS; 587 upgrades with STARTTLS. Saying "secure"
+      // on 587 makes the connection hang rather than fail, which is a bad way
+      // to find out, so the port decides unless told otherwise.
+      secure: env.SMTP_SECURE ? env.SMTP_SECURE === "true" : Number(env.SMTP_PORT) === 465,
+      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    });
+  }
+  return smtpTransport;
 }
 
 interface SendResult { id?: string; error?: string }
+
+/**
+ * One message, out through whichever transport is configured.
+ *
+ * Always returns rather than throws: mail is a side effect of doing something
+ * else — approving a claim, issuing an invoice — and a mail outage must not
+ * turn into a failure to do the thing. What it does not do is pretend. A
+ * message that did not go returns an error, and the caller is expected to
+ * record that rather than report success.
+ */
+async function deliver(opts: {
+  to: string[];
+  subject: string;
+  html: string;
+}): Promise<SendResult> {
+  const recipients = [...new Set(opts.to.filter((t) => t && t.trim()))];
+  if (!recipients.length) return { error: "no_recipients" };
+
+  const from = `${env.FROM_NAME} <${env.FROM_EMAIL}>`;
+
+  const resend = getResend();
+  if (resend) {
+    try {
+      const { data, error } = await resend.emails.send({
+        from, to: recipients, subject: opts.subject, html: opts.html,
+      });
+      if (error) {
+        logger.warn({ error, to: recipients }, "Resend refused the message");
+        return { error: error.message };
+      }
+      return { id: data?.id };
+    } catch (err) {
+      logger.error({ err, to: recipients }, "Resend threw");
+      return { error: "send_failed" };
+    }
+  }
+
+  const smtp = getSmtp();
+  if (smtp) {
+    try {
+      const info = await smtp.sendMail({
+        from, to: recipients.join(", "), subject: opts.subject, html: opts.html,
+      });
+      // A server can accept a message for some recipients and refuse others.
+      const rejected = (info.rejected ?? []) as string[];
+      if (rejected.length === recipients.length) {
+        logger.warn({ to: recipients }, "SMTP refused every recipient");
+        return { error: "all_recipients_rejected" };
+      }
+      if (rejected.length) logger.warn({ rejected }, "SMTP refused some recipients");
+      return { id: info.messageId };
+    } catch (err) {
+      // The usual causes are worth having in the log in plain words, because
+      // the underlying errors are terse and this is read when mail is broken.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ err, to: recipients, host: env.SMTP_HOST }, `SMTP send failed: ${message}`);
+      return { error: message };
+    }
+  }
+
+  logger.warn(
+    { subject: opts.subject, to: recipients },
+    "No mail transport configured — set RESEND_API_KEY, or SMTP_HOST/SMTP_USER/SMTP_PASS",
+  );
+  return { error: "not_configured" };
+}
 
 /**
  * The masthead every message carries.
@@ -94,30 +208,20 @@ export async function sendNotice(opts: {
   actionLabel?: string;
   actionUrl?: string;
 }): Promise<{ sent: number; skipped?: string }> {
-  const resend = getClient();
-  if (!resend) {
-    logger.warn(`RESEND_API_KEY not set — notice "${opts.subject}" skipped`);
-    return { sent: 0, skipped: "not_configured" };
-  }
   const recipients = [...new Set(opts.to.filter(Boolean))];
   if (!recipients.length) return { sent: 0, skipped: "no_recipients" };
 
+  // One at a time, so a notice to five approvers does not put their addresses
+  // in each other's To line.
+  const html = noticeHtml(opts);
   let sent = 0;
+  let lastError: string | undefined;
   for (const to of recipients) {
-    try {
-      const { error } = await resend.emails.send({
-        from: `${env.FROM_NAME} <${env.FROM_EMAIL}>`,
-        to: [to],
-        subject: opts.subject,
-        html: noticeHtml(opts),
-      });
-      if (error) logger.warn({ error, to }, "Notice send failed");
-      else sent++;
-    } catch (err) {
-      logger.error({ err, to }, "Notice send threw");
-    }
+    const { error } = await deliver({ to: [to], subject: opts.subject, html });
+    if (error) lastError = error;
+    else sent++;
   }
-  return { sent };
+  return sent > 0 ? { sent } : { sent: 0, skipped: lastError ?? "send_failed" };
 }
 
 export async function sendInvoiceEmail(opts: {
@@ -126,21 +230,11 @@ export async function sendInvoiceEmail(opts: {
   /** The organization's own logo, where it has one. */
   logoUrl?: string;
 }): Promise<SendResult> {
-  const resend = getClient();
-  if (!resend) { logger.warn("RESEND_API_KEY not set — invoice email skipped"); return {}; }
-  try {
-    const { data, error } = await resend.emails.send({
-      from: `${env.FROM_NAME} <${env.FROM_EMAIL}>`,
-      to: [opts.to],
-      subject: `Invoice ${opts.invoiceNumber} from ${opts.orgName}`,
-      html: invoiceHtml(opts),
-    });
-    if (error) { logger.warn({ error }, "Resend error"); return { error: error.message }; }
-    return { id: data?.id };
-  } catch (err) {
-    logger.error({ err }, "Failed to send invoice email");
-    return { error: "send_failed" };
-  }
+  return deliver({
+    to: [opts.to],
+    subject: `Invoice ${opts.invoiceNumber} from ${opts.orgName}`,
+    html: invoiceHtml(opts),
+  });
 }
 
 export async function sendReminderEmail(opts: {
@@ -149,21 +243,12 @@ export async function sendReminderEmail(opts: {
   /** The organization's own logo, where it has one. */
   logoUrl?: string;
 }): Promise<SendResult> {
-  const resend = getClient();
-  if (!resend) return {};
   const subjectPrefix = opts.intervalDays < 0
     ? `Upcoming payment due in ${Math.abs(opts.intervalDays)} day(s)`
     : `Payment overdue by ${opts.intervalDays} day(s)`;
-  try {
-    const { data, error } = await resend.emails.send({
-      from: `${env.FROM_NAME} <${env.FROM_EMAIL}>`,
-      to: [opts.to],
-      subject: `${subjectPrefix}: Invoice ${opts.invoiceNumber}`,
-      html: invoiceHtml({ ...opts, isReminder: true }),
-    });
-    if (error) return { error: error.message };
-    return { id: data?.id };
-  } catch {
-    return { error: "send_failed" };
-  }
+  return deliver({
+    to: [opts.to],
+    subject: `${subjectPrefix}: Invoice ${opts.invoiceNumber}`,
+    html: invoiceHtml({ ...opts, isReminder: true }),
+  });
 }

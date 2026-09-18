@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2,
+  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2, AlertTriangle,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -199,6 +199,11 @@ export function InvoiceDetail({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {/* An invoice that says Sent but was never delivered. The status means
+          somebody pressed Send; this is whether the message actually left, and
+          for a long time nothing said when it had not. */}
+      <UndeliveredNotice invoice={invoice} onResend={() => setResendOpen(true)} />
 
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}
@@ -780,6 +785,60 @@ function TotalRow({
     <div className={`flex justify-between gap-8 ${strong ? "border-t border-border pt-2 font-semibold" : "text-sm text-foreground-muted"}`}>
       <span>{label}</span>
       <MoneyDisplay minor={value} currency={currency} className="font-numeric" />
+    </div>
+  );
+}
+
+/**
+ * Why an invoice marked Sent never reached anybody.
+ *
+ * The email is dispatched without being waited on — deliberately, since a mail
+ * outage must not fail the send — so every way it could fail used to be
+ * silent. The invoice read Sent whether the message left or not, which is
+ * worse than an error, because nobody goes looking for a problem the screen
+ * says they do not have.
+ *
+ * Only shown when something went wrong. A delivered invoice needs no notice.
+ */
+function UndeliveredNotice({
+  invoice,
+  onResend,
+}: {
+  invoice: Invoice;
+  onResend: () => void;
+}) {
+  const d = invoice.emailDelivery;
+  if (!d || d.state === "sent") return null;
+
+  const reason =
+    d.state === "no_address"
+      ? `${invoice.customerName} has no email address on file, so there was nowhere to send it.`
+      : d.state === "not_configured"
+        ? "No mail transport is configured on the server, so nothing could be sent."
+        : d.error || "The mail provider refused the message.";
+
+  const remedy =
+    d.state === "no_address"
+      ? "Add an address to the customer, then resend."
+      : d.state === "not_configured"
+        ? "Ask whoever administers the server to set RESEND_API_KEY, or the SMTP settings."
+        : "Resend once the cause is dealt with.";
+
+  return (
+    <div className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3">
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div className="flex-1 text-sm">
+          <p className="font-medium">This invoice was not emailed</p>
+          <p className="mt-0.5 text-foreground-muted">{reason}</p>
+          <p className="mt-1 text-xs text-foreground-muted">{remedy}</p>
+        </div>
+        {invoice.emailDelivery?.state !== "not_configured" && (
+          <Button variant="outline" size="sm" onClick={onResend}>
+            <RotateCcw className="h-3.5 w-3.5" /> Resend
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

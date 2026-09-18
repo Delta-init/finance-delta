@@ -223,6 +223,27 @@ const invoiceSchema = new Schema(
     locale: { type: String, default: "en" },
     exchangeRate: { type: Number, default: 1 },
     lastEmailId: { type: String, default: "" },
+    /**
+     * What became of the last attempt to email this invoice.
+     *
+     * `sentAt` records that somebody pressed Send, which is a decision. This
+     * records whether the message actually left, which is an outcome — and
+     * they are not the same thing. The email was fired off unawaited, so every
+     * way it could fail was silent: no mail transport configured, the customer
+     * having no address, the provider refusing it. The invoice said "Sent"
+     * through all of them.
+     */
+    emailDelivery: {
+      state: {
+        type: String,
+        enum: ["sent", "failed", "no_address", "not_configured"],
+      },
+      at: Date,
+      /** The transport's own id, where it gave one. */
+      messageId: String,
+      /** Why it did not go, in the transport's words. */
+      error: String,
+    },
     sentAt: Date,
     viewedAt: Date,
   },

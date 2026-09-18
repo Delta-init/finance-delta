@@ -52,8 +52,19 @@ function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
 
 function toDTO(doc: InvoiceDoc): InvoiceDTO {
+  const del = (doc as unknown as Record<string, unknown>).emailDelivery as
+    | { state?: string; at?: Date; messageId?: string; error?: string }
+    | undefined;
   return {
     id: doc._id.toString(),
+    emailDelivery: del?.state
+      ? {
+          state: del.state as NonNullable<InvoiceDTO["emailDelivery"]>["state"],
+          at: del.at ? new Date(del.at).toISOString() : "",
+          messageId: del.messageId ?? "",
+          error: del.error ?? "",
+        }
+      : undefined,
     invoiceNumber: doc.invoiceNumber,
     customerId: doc.customerId.toString(),
     customerName: doc.customerName,
@@ -953,20 +964,46 @@ export async function resendInvoice(
   void _dispatchInvoiceEmail(orgId, doc, message);
 }
 
+/** Record what became of an attempt, so the invoice stops claiming it was sent. */
+async function _recordDelivery(
+  invoiceId: unknown,
+  state: "sent" | "failed" | "no_address" | "not_configured",
+  extra: { messageId?: string; error?: string } = {},
+): Promise<void> {
+  await Invoice.findByIdAndUpdate(invoiceId, {
+    $set: {
+      emailDelivery: {
+        state,
+        at: new Date(),
+        messageId: extra.messageId ?? "",
+        error: extra.error ?? "",
+      },
+      ...(extra.messageId ? { lastEmailId: extra.messageId } : {}),
+    },
+  }).catch(() => {});
+}
+
 async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: string) {
   try {
     const [customer, org] = await Promise.all([
       Customer.findById(doc.customerId),
       Organization.findById(orgId),
     ]);
-    if (!customer?.email) return;
+    // A customer with no address is the commonest reason an invoice was never
+    // emailed, and it used to leave no trace at all.
+    if (!customer?.email) {
+      await _recordDelivery(doc._id, "no_address", {
+        error: `${doc.customerName} has no email address on file`,
+      });
+      return;
+    }
     const orgName = org?.name ?? "Delta Finance";
     const footerText = (org?.branding as { footerText?: string })?.footerText ?? "";
     // The organization's own logo where it has set one; the email template
     // falls back to Delta's otherwise.
     const logoUrl = (org?.branding as { logoUrl?: string })?.logoUrl ?? "";
     const totalFormatted = formatMoney(doc.totalMinor ?? 0, doc.currency ?? "AED");
-    const { id: emailId } = await sendInvoiceEmail({
+    const { id: emailId, error } = await sendInvoiceEmail({
       to: customer.email,
       orgName,
       invoiceNumber: doc.invoiceNumber,
@@ -977,9 +1014,15 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       logoUrl,
       message,
     });
-    if (emailId) {
-      await Invoice.findByIdAndUpdate(doc._id, { $set: { lastEmailId: emailId } });
+
+    if (error) {
+      await _recordDelivery(doc._id, error === "not_configured" ? "not_configured" : "failed", { error });
+      // No reminders behind a message that never arrived: chasing payment for
+      // an invoice the customer has not seen is worse than not chasing.
+      return;
     }
+    await _recordDelivery(doc._id, "sent", { messageId: emailId });
+
     const intervals: number[] = (org as unknown as { reminderIntervals?: number[] })?.reminderIntervals ?? [-3, 1, 7];
     await scheduleReminders({
       invoiceId: String(doc._id),
@@ -994,9 +1037,14 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       intervals,
     });
   } catch (err) {
-    // non-fatal — email failure must not block the send action
+    // non-fatal — email failure must not block the send action, but it is
+    // written down rather than only logged, because a log nobody reads is how
+    // this went unnoticed for months.
     const { logger } = await import("../../lib/logger");
     logger.error({ err }, "Invoice email dispatch failed");
+    await _recordDelivery(doc._id, "failed", {
+      error: err instanceof Error ? err.message : "dispatch failed",
+    });
   }
 }
 

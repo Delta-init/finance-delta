@@ -308,6 +308,14 @@ export const invoiceAttachmentSchema = z.object({
 });
 export type InvoiceAttachment = z.infer<typeof invoiceAttachmentSchema>;
 
+export const invoiceEmailDeliverySchema = z.object({
+  state: z.enum(["sent", "failed", "no_address", "not_configured"]),
+  at: z.string(),
+  messageId: z.string().default(""),
+  error: z.string().default(""),
+});
+export type InvoiceEmailDelivery = z.infer<typeof invoiceEmailDeliverySchema>;
+
 export const invoiceSchema = z.object({
   id: z.string(),
   invoiceNumber: z.string(),
@@ -316,6 +324,13 @@ export const invoiceSchema = z.object({
   salespersonId: z.string(),
   enrolment: enrolmentSchema.optional(),
   approval: invoiceApprovalSchema,
+  /**
+   * What became of the last attempt to email this invoice.
+   *
+   * Absent on invoices nobody has tried to send. "Sent" as a status means
+   * somebody pressed Send; this means the message actually left.
+   */
+  emailDelivery: invoiceEmailDeliverySchema.optional(),
   attachments: z.array(invoiceAttachmentSchema).default([]),
   salespersonName: z.string(),
   reference: z.string(),

@@ -249,19 +249,14 @@ export default function PrintInvoicePage({
           <TaxDetailsTable invoice={invoice} />
         )}
 
-        <PrintBankBlock account={bankAccount} labels={L} />
-
-        {/* Notes / Terms */}
-        {(invoice.notes || invoice.terms) && (
-          <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, fontSize: 12, color: "#64748b" }}>
-            {invoice.notes && (
-              <div><div style={{ fontWeight: 600, marginBottom: 4 }}>{L.notes}</div><div style={{ whiteSpace: "pre-wrap" }}>{invoice.notes}</div></div>
-            )}
-            {invoice.terms && (
-              <div><div style={{ fontWeight: 600, marginBottom: 4 }}>{L.terms}</div><div style={{ whiteSpace: "pre-wrap" }}>{invoice.terms}</div></div>
-            )}
-          </div>
-        )}
+        {/* Bank details and what else applies, side by side in one block —
+            the same shape the downloaded PDF draws. */}
+        <PrintBankBlock
+          account={bankAccount}
+          labels={L}
+          notes={invoice.notes}
+          terms={invoice.terms}
+        />
 
         {/* Print button — hidden in print */}
         <div className="no-print" style={{ marginTop: 32, display: "flex", gap: 8 }}>

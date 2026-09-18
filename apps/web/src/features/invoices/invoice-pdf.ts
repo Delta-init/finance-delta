@@ -289,7 +289,17 @@ export function downloadInvoicePdf(opts: {
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
   }
 
-  // ── Bank details ──────────────────────────────────────────────────────────
+  // ── Where to pay, and what to know ────────────────────────────────────────
+  //
+  // One block with two columns rather than three stacked sections. They answer
+  // two different questions — where the money goes, and anything else the
+  // reader needs — and standing them side by side is both how the document is
+  // read and how it fits: an invoice with bank details, a note and terms used
+  // to run three headings down the page and push the total off it.
+  //
+  // Bank details are set right against the divider and the notes left against
+  // it, so the two columns lean on the rule between them rather than drifting
+  // apart across the page.
   const bankBits = bankAccount
     ? ([
         [L.accountName, bankAccount.accountName],
@@ -301,36 +311,77 @@ export function downloadInvoicePdf(opts: {
         ["SWIFT", bankAccount.swift],
       ].filter(([, v]) => (v ?? "").toString().trim()) as [string, string][])
     : [];
-  if (bankBits.length > 0) {
-    doc.setFont("helvetica", "bold").setFontSize(8).setTextColor(100, 116, 139);
-    doc.text(L.bankDetails.toUpperCase(), MARGIN, y);
-    y += LINE + 0.5;
-    doc.setFont("helvetica", "normal").setFontSize(8.5);
-    for (const [k, v] of bankBits) {
-      doc.setTextColor(100, 116, 139);
-      doc.text(`${k}:`, MARGIN, y);
-      doc.setTextColor(17);
-      doc.text(String(v), MARGIN + 32, y);
-      y += LINE;
-    }
-    y += 2;
-  }
 
-  // ── Notes and terms ───────────────────────────────────────────────────────
-  for (const [heading, text] of [
-    [L.notes, invoice.notes],
-    [L.terms, invoice.terms],
-  ] as [string, string | undefined][]) {
-    if (!text?.trim()) continue;
-    doc.setFont("helvetica", "bold").setFontSize(8).setTextColor(100, 116, 139);
-    doc.text(heading.toUpperCase(), MARGIN, y);
-    y += LINE + 0.5;
-    doc.setFont("helvetica", "normal").setFontSize(8.5).setTextColor(71, 85, 105);
-    for (const line of doc.splitTextToSize(text, PAGE_W - MARGIN * 2) as string[]) {
-      doc.text(line, MARGIN, y);
-      y += LINE;
+  const notes = invoice.notes?.trim() ?? "";
+  const terms = invoice.terms?.trim() ?? "";
+  const hasBank = bankBits.length > 0;
+  const hasSaid = Boolean(notes || terms);
+
+  if (hasBank || hasSaid) {
+    const contentW = PAGE_W - MARGIN * 2;
+    // Down the middle when both are present; otherwise the one that is there
+    // has the whole width, because half a box with nothing beside it reads as
+    // something missing.
+    const split = MARGIN + (hasBank && hasSaid ? contentW * 0.5 : hasBank ? contentW : 0);
+    const PAD = 5;
+
+    const notesW = (hasBank ? PAGE_W - MARGIN - split : contentW) - PAD * 2;
+    const noteLines = notes ? (doc.splitTextToSize(notes, notesW) as string[]) : [];
+    const termLines = terms ? (doc.splitTextToSize(terms, notesW) as string[]) : [];
+
+    // The taller column decides the box.
+    const bankH = hasBank ? LINE + 1.5 + bankBits.length * LINE : 0;
+    const saidH = hasSaid
+      ? LINE + 1.5 + noteLines.length * LINE + (termLines.length ? 1.5 + termLines.length * (LINE - 0.6) : 0)
+      : 0;
+    const boxH = Math.max(bankH, saidH) + PAD * 2;
+
+    doc.setDrawColor(226, 232, 240).setLineWidth(0.3);
+    doc.rect(MARGIN, y, contentW, boxH);
+    if (hasBank && hasSaid) doc.line(split, y, split, y + boxH);
+
+    if (hasBank) {
+      // Right-aligned against the divider, as the account details sit on a
+      // printed invoice: the labels vary in length and a ragged left edge is
+      // less noticeable than a ragged right one next to a rule.
+      const right = split - PAD;
+      let by = y + PAD + 3;
+      doc.setFont("helvetica", "bold").setFontSize(8).setTextColor(51, 65, 85);
+      doc.text(L.bankDetails.toUpperCase(), right, by, { align: "right" });
+      by += LINE + 1.5;
+      doc.setFont("helvetica", "normal").setFontSize(8).setTextColor(71, 85, 105);
+      for (const [k, v] of bankBits) {
+        doc.text(`${k.toUpperCase()} : ${v}`, right, by, { align: "right" });
+        by += LINE;
+      }
     }
-    y += 2;
+
+    if (hasSaid) {
+      const left = (hasBank ? split : MARGIN) + PAD;
+      let ny = y + PAD + 3;
+      doc.setFont("helvetica", "bold").setFontSize(8).setTextColor(51, 65, 85);
+      doc.text(L.notes.toUpperCase(), left, ny, { align: "left" });
+      ny += LINE + 1.5;
+
+      doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(17);
+      for (const line of noteLines) {
+        doc.text(line, left, ny);
+        ny += LINE;
+      }
+      // The terms sit under the note, smaller and quieter. They are a condition
+      // rather than a message, and giving them their own heading made two
+      // paragraphs out of what is read as one.
+      if (termLines.length) {
+        ny += 1.5;
+        doc.setFontSize(7.5).setTextColor(148, 163, 184);
+        for (const line of termLines) {
+          doc.text(line, left, ny);
+          ny += LINE - 0.6;
+        }
+      }
+    }
+
+    y += boxH + 6;
   }
 
   if (org?.branding?.footerText?.trim()) {

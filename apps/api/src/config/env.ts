@@ -62,6 +62,17 @@ const envSchema = z.object({
    * not open — a deployment that has not set this up must not accept signed
    * requests from anyone who guesses the header names.
    */
+  /**
+   * The LMS, for giving a student their course once an enrolment is approved.
+   *
+   * A shared secret rather than the HMAC the HRMS link uses, because that is
+   * what the LMS already accepts on its server-to-server routes and a second
+   * scheme there would be one more thing to keep in step. Unset, nothing is
+   * provisioned and approvals carry on exactly as before.
+   */
+  LMS_API_URL: z.string().default(""),
+  LMS_S2S_SECRET: z.string().default(""),
+
   INBOUND_CLIENT_ID: z.string().default(""),
   INBOUND_INTEGRATION_SECRET: z.string().default(""),
 

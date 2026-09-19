@@ -17,6 +17,16 @@ const itemSchema = new Schema(
     // Per item: two courses on one GST invoice can sit under different codes.
     // The organization's default fills in for anything left blank.
     hsnSac: { type: String, default: "", trim: true },
+    /**
+     * Which course this is in the LMS.
+     *
+     * A slug, because a name cannot identify a course: this database holds
+     * nine spellings of three of them — "Market Break out", "MARKET BREAK OUT",
+     * "Market Breakout", "MBT" — and enrolling somebody on the wrong course is
+     * worse than not enrolling them at all. Blank means not mapped, and an
+     * approval for an unmapped item provisions nothing and says so.
+     */
+    lmsCourseSlug: { type: String, default: "", trim: true },
     costPriceMinor: { type: Number, default: 0 },
     trackStock: { type: Boolean, default: true },
     reorderPoint: { type: Number, default: 0 },

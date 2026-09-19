@@ -51,6 +51,7 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
    * never corrected would strand every course already in the catalogue.
    */
   const [sacDraft, setSacDraft] = useState<string | null>(null);
+  const [lmsDraft, setLmsDraft] = useState<string | null>(null);
   const deleteItem = useDeleteItem();
   const { data: departments } = useAllDepartments();
   const [deleting, setDeleting] = useState(false);
@@ -280,6 +281,49 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
                 Save
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setSacDraft(null)}>Cancel</Button>
+            </div>
+          )}
+        </div>
+        {/* Which course this is in the LMS.
+            An approved enrolment gives the student their course by this slug,
+            and by nothing else: the invoice's own course name is free text and
+            this organization has nine spellings of three courses. Unmapped, the
+            approval provisions nobody and says so rather than guessing. */}
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">LMS Course</p>
+          {lmsDraft === null ? (
+            <button
+              type="button"
+              onClick={() => setLmsDraft(item.lmsCourseSlug ?? "")}
+              className="mt-1 flex items-baseline gap-2 text-left text-sm font-semibold hover:underline"
+            >
+              {item.lmsCourseSlug || <span className="text-foreground-muted">Not mapped</span>}
+              <Edit className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+            </button>
+          ) : (
+            <div className="mt-1 space-y-1.5">
+              <Input
+                value={lmsDraft}
+                onChange={(e) => setLmsDraft(e.target.value)}
+                placeholder="market-break-out-trading-program"
+                className="h-8 text-sm"
+              />
+              <p className="text-[11px] text-foreground-muted">
+                The course&apos;s slug in the LMS, from its address bar.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  loading={updateItem.isPending}
+                  onClick={async () => {
+                    await updateItem.mutateAsync({ lmsCourseSlug: lmsDraft.trim() });
+                    setLmsDraft(null);
+                  }}
+                >
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setLmsDraft(null)}>Cancel</Button>
+              </div>
             </div>
           )}
         </div>

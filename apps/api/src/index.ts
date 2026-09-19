@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { env, assertMailConfigSane } from "./config/env";
+import { startLmsProvisionWorker } from "./jobs/lms-provision.worker";
 import { connectDb } from "./config/db";
 import { logger } from "./lib/logger";
 import { ok } from "./lib/http";
@@ -123,6 +124,7 @@ async function bootstrap() {
     void startReminderWorker();
     void startRecurringExpenseWorker();
     void startPayrollWaitingWorker();
+    startLmsProvisionWorker();
   } else {
     logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");
   }

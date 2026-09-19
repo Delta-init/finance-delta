@@ -60,6 +60,14 @@ export const createItemSchema = z.object({
    * does not carry its own.
    */
   hsnSac: z.string().max(20).optional().default(""),
+  /**
+   * Which course this is in the LMS. Blank means not mapped.
+   *
+   * Optional and undefaulted: it is set by mapping an existing item to a
+   * course, not by whoever first types the item in, and a default here
+   * would oblige every creator to say something about it.
+   */
+  lmsCourseSlug: z.string().max(200).optional(),
   trackStock: z.boolean().default(true),
   reorderPoint: z.number().min(0).default(0),
   reorderQty: z.number().min(0).default(0),
@@ -83,6 +91,7 @@ export const itemSchema = z.object({
   unitPriceMinor: z.number(),
   costPriceMinor: z.number(),
   hsnSac: z.string(),
+  lmsCourseSlug: z.string().default(""),
   trackStock: z.boolean(),
   reorderPoint: z.number(),
   reorderQty: z.number(),

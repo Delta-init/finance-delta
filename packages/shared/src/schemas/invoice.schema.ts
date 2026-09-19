@@ -469,6 +469,15 @@ export const inboundEnrolmentSchema = z.object({
      * still produces a valid invoice.
      */
     hsnSac: z.string().max(20).optional(),
+    /**
+     * Which course this is in the LMS, where the calling system knows.
+     *
+     * The mapping lives on the finance item, because that is what an approval
+     * reads. This is how it gets there without being typed twice: a caller
+     * that already knows the slug says so, and an item with no mapping of its
+     * own learns it from the first enrolment that carries one.
+     */
+    lmsCourseSlug: z.string().max(200).optional(),
   }),
 
   /** Who sold it, by email. Attributed to the fallback when unknown here. */

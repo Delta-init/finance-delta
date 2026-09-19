@@ -742,6 +742,104 @@ async function _reconcileInventory(
  * draft. Those come back to what their payments make them, and can be
  * corrected in place like any other sent invoice.
  */
+/**
+ * Put an approved enrolment in the queue for the LMS.
+ *
+ * Deliberately narrow. Only an enrolment the sales CRM raised reaches the LMS:
+ * an invoice accounts typed here themselves is a billing document, not a sale
+ * of a course to a student, and giving somebody access to a course because a
+ * bookkeeper raised an invoice would be a surprise of the worst kind. So the
+ * test is where it came from, not what it looks like.
+ *
+ * The course arrives as a slug from the mapped item, because the enrolment's
+ * own `course` is free text and this database holds nine spellings of three
+ * courses. Unmapped, nothing is sent and the row says why, so the invoice can
+ * be found and the item mapped — rather than guessing at a name and enrolling
+ * somebody on the wrong course.
+ *
+ * Never throws. Approving is the approver's act; it does not fail because
+ * another system is unreachable, unmapped or switched off.
+ */
+async function _queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise<void> {
+  try {
+    const { lmsConfigured } = await import("../../lib/lms-client");
+    if (!lmsConfigured()) return;
+
+    const d = doc as unknown as Record<string, unknown>;
+    const external = d.external as { source?: string } | undefined;
+    if (external?.source !== "crm") return;
+    if (!(d.enrolment as { course?: string } | undefined)?.course) return;
+
+    const { LmsProvision } = await import("../integrations/lms-provision.model");
+    if (await LmsProvision.exists({ invoiceId: doc._id })) return;
+
+    const [customer, { Item }] = await Promise.all([
+      Customer.findById(doc.customerId).lean(),
+      import("../inventory/item.model"),
+    ]);
+
+    // The first line that names an item we have mapped. An enrolment is one
+    // course on one invoice, so there is no question of choosing between two.
+    const lines = (doc.lineItems as unknown as { itemId?: string }[]) ?? [];
+    let courseSlug = "";
+    for (const line of lines) {
+      if (!line.itemId) continue;
+      const item = await Item.findById(line.itemId).select("lmsCourseSlug").lean<{ lmsCourseSlug?: string } | null>();
+      const slug = item?.lmsCourseSlug?.trim();
+      if (slug) { courseSlug = slug; break; }
+    }
+
+    const base = {
+      organizationId: doc.organizationId,
+      invoiceId: doc._id,
+      invoiceNumber: doc.invoiceNumber,
+    };
+
+    if (!courseSlug) {
+      // Recorded rather than dropped: an enrolment nobody provisioned is worth
+      // finding, and "no course mapped" is the answer somebody needs.
+      await LmsProvision.create({
+        ...base,
+        payload: {},
+        status: "unmapped",
+        lastError: "No LMS course is mapped to the item on this invoice",
+      });
+      const { logger } = await import("../../lib/logger");
+      logger.warn({ invoice: doc.invoiceNumber }, "Approved enrolment has no LMS course mapped");
+      return;
+    }
+
+    const email = (customer as { email?: string } | null)?.email?.trim();
+    if (!email) {
+      await LmsProvision.create({
+        ...base,
+        payload: {},
+        status: "unmapped",
+        lastError: `${doc.customerName} has no email address, so there is no LMS account to create`,
+      });
+      return;
+    }
+
+    await LmsProvision.create({
+      ...base,
+      payload: {
+        email,
+        name: doc.customerName,
+        ...((customer as { phone?: string } | null)?.phone ? { phone: (customer as { phone?: string }).phone } : {}),
+        courseSlug,
+        invoiceId: String(doc._id),
+        invoiceNumber: doc.invoiceNumber,
+        // Whole units: the LMS records orders the way its own gateways do.
+        amount: Math.round((doc.totalMinor ?? 0) / 100),
+      },
+      status: "pending",
+    });
+  } catch (err) {
+    const { logger } = await import("../../lib/logger");
+    logger.error({ err, invoiceId: String(doc._id) }, "Could not queue the LMS provisioning");
+  }
+}
+
 export async function restoreInvoice(orgId: string, id: string): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if ((doc.status as string) !== "void") {
@@ -939,6 +1037,7 @@ export async function approveInvoice(
   await doc.save();
 
   void notifyDecided(doc, actor.name, "approved");
+  void _queueLmsProvision(orgId, doc);
   return toDTO(doc as unknown as InvoiceDoc);
 }
 

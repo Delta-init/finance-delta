@@ -46,6 +46,7 @@ function itemToDTO(doc: ItemDoc, totalStock = 0): ItemDTO {
     unit: doc.unit as ItemDTO["unit"],
     unitPriceMinor: (doc.unitPriceMinor as number) ?? 0,
     hsnSac: (doc.hsnSac as string) ?? "",
+    lmsCourseSlug: ((doc as unknown as { lmsCourseSlug?: string }).lmsCourseSlug) ?? "",
     costPriceMinor: (doc.costPriceMinor as number) ?? 0,
     trackStock: (doc.trackStock as boolean) ?? true,
     reorderPoint: (doc.reorderPoint as number) ?? 0,

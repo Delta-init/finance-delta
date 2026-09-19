@@ -159,6 +159,23 @@ export async function intakeEnrolment(
   const salesperson = await resolveSalesperson(orgId, input, flags);
   const itemId = await resolveItem(orgId, input, flags);
 
+  /*
+   * Teach the item its LMS course, once.
+   *
+   * The approval reads the mapping off the item, and somebody has to put it
+   * there. A caller that already knows which course this is can save them the
+   * job — but only for an item that has no mapping yet: finance's own answer
+   * wins, because whoever set it there did so deliberately and a sales system
+   * should not be able to move where an approved enrolment sends students.
+   */
+  if (itemId && input.course.lmsCourseSlug?.trim()) {
+    const { Item } = await import("../inventory/item.model");
+    await Item.updateOne(
+      { _id: new Types.ObjectId(itemId), organizationId: orgId, $or: [{ lmsCourseSlug: "" }, { lmsCourseSlug: { $exists: false } }] },
+      { $set: { lmsCourseSlug: input.course.lmsCourseSlug.trim() } },
+    ).catch(() => {});
+  }
+
   // Found or made, and never overwritten — a student enrolling on a second
   // course is the ordinary case, not a duplicate.
   const { customer } = await findOrCreateCustomer(orgId, {

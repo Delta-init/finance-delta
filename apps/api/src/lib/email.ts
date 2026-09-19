@@ -69,10 +69,18 @@ interface SendResult { id?: string; error?: string }
  * message that did not go returns an error, and the caller is expected to
  * record that rather than report success.
  */
+export interface MailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 async function deliver(opts: {
   to: string[];
   subject: string;
   html: string;
+  /** Files to send with it. Both transports take them, in different shapes. */
+  attachments?: MailAttachment[];
 }): Promise<SendResult> {
   const recipients = [...new Set(opts.to.filter((t) => t && t.trim()))];
   if (!recipients.length) return { error: "no_recipients" };
@@ -84,6 +92,15 @@ async function deliver(opts: {
     try {
       const { data, error } = await resend.emails.send({
         from, to: recipients, subject: opts.subject, html: opts.html,
+        ...(opts.attachments?.length
+          ? {
+              attachments: opts.attachments.map((a) => ({
+                filename: a.filename,
+                // Resend takes base64 over its API; nodemailer takes the bytes.
+                content: a.content.toString("base64"),
+              })),
+            }
+          : {}),
       });
       if (error) {
         logger.warn({ error, to: recipients }, "Resend refused the message");
@@ -101,6 +118,7 @@ async function deliver(opts: {
     try {
       const info = await smtp.sendMail({
         from, to: recipients.join(", "), subject: opts.subject, html: opts.html,
+        ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
       });
       // A server can accept a message for some recipients and refuse others.
       const rejected = (info.rejected ?? []) as string[];
@@ -147,30 +165,129 @@ function brandHeader(opts: { orgName?: string; logoUrl?: string }): string {
 </div>`;
 }
 
+/** Enough of the invoice to read without opening anything. */
+export interface InvoiceEmailDetail {
+  lineItems: { description: string; quantity: number; unitPrice: string; amount: string }[];
+  subtotal: string;
+  taxes: { label: string; amount: string }[];
+  total: string;
+  amountPaid?: string;
+  balanceDue: string;
+  issueDate?: string;
+  reference?: string;
+}
+
+/** Text from a record, on its way into HTML. */
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * The invoice written out in the message, beside the copy attached to it.
+ *
+ * The attachment is the document; this is so the message can be read at a
+ * glance, on a phone, without downloading anything — which is how most of them
+ * are read. A line that says only "your invoice is attached" makes opening the
+ * file the price of knowing what it is about.
+ *
+ * Every value comes from the record already formatted, and is escaped on the
+ * way in: a client called "Smith & Sons <Trading>" is ordinary, and it must not
+ * be able to close a tag in the mail it is sent.
+ */
+function detailHtml(d: InvoiceEmailDetail | undefined): string {
+  if (!d) return "";
+  const cell = "padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:13px";
+  const rows = d.lineItems
+    .map(
+      (l) => `<tr>
+  <td style="${cell};color:#111">${esc(l.description)}</td>
+  <td style="${cell};text-align:center;color:#475569">${esc(l.quantity)}</td>
+  <td style="${cell};text-align:right;color:#475569">${esc(l.unitPrice)}</td>
+  <td style="${cell};text-align:right;color:#111;font-weight:600">${esc(l.amount)}</td>
+</tr>`,
+    )
+    .join("");
+
+  const summary = (label: string, value: string, strong = false) =>
+    `<tr>
+  <td style="padding:4px 10px;text-align:right;font-size:13px;color:#64748b">${esc(label)}</td>
+  <td style="padding:4px 10px;text-align:right;font-size:${strong ? "15px" : "13px"};color:#111;font-weight:${strong ? "700" : "600"};white-space:nowrap">${esc(value)}</td>
+</tr>`;
+
+  return `<table style="width:100%;border-collapse:collapse;margin:0 0 20px">
+  <thead><tr style="background:#f8fafc">
+    <th style="${cell};text-align:left;font-size:11px;letter-spacing:.4px;color:#64748b;text-transform:uppercase">Description</th>
+    <th style="${cell};text-align:center;font-size:11px;letter-spacing:.4px;color:#64748b;text-transform:uppercase">Qty</th>
+    <th style="${cell};text-align:right;font-size:11px;letter-spacing:.4px;color:#64748b;text-transform:uppercase">Rate</th>
+    <th style="${cell};text-align:right;font-size:11px;letter-spacing:.4px;color:#64748b;text-transform:uppercase">Amount</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<table style="width:100%;border-collapse:collapse;margin:0 0 24px">
+  ${summary("Subtotal", d.subtotal)}
+  ${d.taxes.map((t) => summary(t.label, t.amount)).join("")}
+  ${summary("Total", d.total, true)}
+  ${d.amountPaid ? summary("Paid", d.amountPaid) : ""}
+  ${summary("Balance Due", d.balanceDue, true)}
+</table>`;
+}
+
 function invoiceHtml(opts: {
   orgName: string; invoiceNumber: string; customerName: string;
   totalFormatted: string; dueDate: string; footerText?: string; isReminder?: boolean; message?: string;
   /** The organization's own logo, where it has one. */
   logoUrl?: string;
+  detail?: InvoiceEmailDetail;
+  /** Said plainly, so nobody hunts for a document that is right there. */
+  hasAttachment?: boolean;
 }): string {
+  /*
+   * Everything interpolated below comes from a record somebody typed, and goes
+   * into a document made of tags. A client called "Smith & Sons <Trading>" is
+   * an ordinary client, and it must not be able to close a tag in the mail it
+   * is sent — which it could, until this. The covering note is escaped too: it
+   * is written in a plain textarea, so treating it as markup gains nothing and
+   * lets a note decide what the rest of the message looks like.
+   */
+  const invoiceNumber = esc(opts.invoiceNumber);
+  const orgName = esc(opts.orgName);
+  const customerName = esc(opts.customerName);
+  const totalFormatted = esc(opts.totalFormatted);
+  const dueDate = esc(opts.dueDate);
+  const message = opts.message ? esc(opts.message) : "";
+  const footerText = esc(opts.footerText ?? "Thank you for your business.");
+
   const heading = opts.isReminder
-    ? `Payment Reminder: Invoice ${opts.invoiceNumber}`
-    : `Invoice ${opts.invoiceNumber} from ${opts.orgName}`;
+    ? `Payment Reminder: Invoice ${invoiceNumber}`
+    : `Invoice ${invoiceNumber} from ${orgName}`;
   return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
 ${brandHeader({ orgName: opts.orgName, logoUrl: opts.logoUrl })}
 <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
   <h2 style="margin:0 0 8px;font-size:18px">${heading}</h2>
-  <p style="color:#64748b;margin:0 0 24px">Dear ${opts.customerName},</p>
-  ${opts.message ? `<p style="margin:0 0 16px">${opts.message}</p>` : ""}
+  <p style="color:#64748b;margin:0 0 24px">Dear ${customerName},</p>
+  ${opts.message ? `<p style="margin:0 0 16px">${message}</p>` : ""}
   ${opts.isReminder
-    ? `<p style="margin:0 0 16px">This is a reminder that invoice <strong>${opts.invoiceNumber}</strong> for <strong>${opts.totalFormatted}</strong> is ${opts.dueDate ? `due on <strong>${opts.dueDate}</strong>` : "overdue"}. Please arrange payment at your earliest convenience.</p>`
-    : `<p style="margin:0 0 16px">Please find your invoice <strong>${opts.invoiceNumber}</strong> for the amount of <strong>${opts.totalFormatted}</strong>, due on <strong>${opts.dueDate}</strong>.</p>`}
-  <div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin-bottom:24px">
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b"><span>Invoice</span><span style="color:#111;font-weight:600">${opts.invoiceNumber}</span></div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b;margin-top:8px"><span>Amount Due</span><span style="color:#111;font-weight:700;font-size:15px">${opts.totalFormatted}</span></div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b;margin-top:8px"><span>Due Date</span><span style="color:#111">${opts.dueDate}</span></div>
-  </div>
-  <p style="color:#64748b;font-size:12px;margin:24px 0 0">${opts.footerText ?? "Thank you for your business."}</p>
+    ? `<p style="margin:0 0 16px">This is a reminder that invoice <strong>${invoiceNumber}</strong> for <strong>${totalFormatted}</strong> is ${opts.dueDate ? `due on <strong>${dueDate}</strong>` : "overdue"}. Please arrange payment at your earliest convenience.</p>`
+    : `<p style="margin:0 0 16px">Please find your invoice <strong>${invoiceNumber}</strong> for the amount of <strong>${totalFormatted}</strong>, due on <strong>${dueDate}</strong>.</p>`}
+  <!-- A table rather than flexbox: Outlook ignores display:flex outright, and
+       the three figures used to stack on top of each other there. -->
+  <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:8px;margin-bottom:24px">
+    <tr><td style="padding:12px 20px 4px;font-size:13px;color:#64748b">Invoice</td>
+        <td style="padding:12px 20px 4px;font-size:13px;color:#111;font-weight:600;text-align:right">${invoiceNumber}</td></tr>
+    ${opts.detail?.issueDate ? `<tr><td style="padding:4px 20px;font-size:13px;color:#64748b">Issued</td><td style="padding:4px 20px;font-size:13px;color:#111;text-align:right">${esc(opts.detail.issueDate)}</td></tr>` : ""}
+    ${opts.detail?.reference ? `<tr><td style="padding:4px 20px;font-size:13px;color:#64748b">Reference</td><td style="padding:4px 20px;font-size:13px;color:#111;text-align:right">${esc(opts.detail.reference)}</td></tr>` : ""}
+    <tr><td style="padding:4px 20px;font-size:13px;color:#64748b">Amount Due</td>
+        <td style="padding:4px 20px;font-size:15px;color:#111;font-weight:700;text-align:right">${opts.detail?.balanceDue ?? opts.totalFormatted}</td></tr>
+    <tr><td style="padding:4px 20px 12px;font-size:13px;color:#64748b">Due Date</td>
+        <td style="padding:4px 20px 12px;font-size:13px;color:#111;text-align:right">${dueDate}</td></tr>
+  </table>
+
+  ${detailHtml(opts.detail)}
+
+  ${opts.hasAttachment ? `<p style="color:#64748b;font-size:12px;margin:0 0 8px">A PDF copy of this invoice is attached.</p>` : ""}
+  <p style="color:#64748b;font-size:12px;margin:24px 0 0">${footerText}</p>
 </div></body></html>`;
 }
 
@@ -229,11 +346,23 @@ export async function sendInvoiceEmail(opts: {
   totalFormatted: string; dueDate: string; footerText?: string; message?: string;
   /** The organization's own logo, where it has one. */
   logoUrl?: string;
+  /** The invoice written out in the message, beside the copy attached. */
+  detail?: InvoiceEmailDetail;
+  /**
+   * The invoice itself, as a file.
+   *
+   * The message has always described the invoice — number, amount, due date —
+   * and left the reader to log in somewhere for the document. An invoice is a
+   * document; sending a paragraph about one and keeping the document back is
+   * most of the way to sending nothing.
+   */
+  attachments?: MailAttachment[];
 }): Promise<SendResult> {
   return deliver({
     to: [opts.to],
     subject: `Invoice ${opts.invoiceNumber} from ${opts.orgName}`,
-    html: invoiceHtml(opts),
+    html: invoiceHtml({ ...opts, hasAttachment: Boolean(opts.attachments?.length) }),
+    attachments: opts.attachments,
   });
 }
 
@@ -242,6 +371,10 @@ export async function sendReminderEmail(opts: {
   totalFormatted: string; dueDate: string; footerText?: string; intervalDays: number;
   /** The organization's own logo, where it has one. */
   logoUrl?: string;
+  /** The invoice written out in the message, beside the copy attached. */
+  detail?: InvoiceEmailDetail;
+  /** The invoice being chased, so the reader has it to hand. */
+  attachments?: MailAttachment[];
 }): Promise<SendResult> {
   const subjectPrefix = opts.intervalDays < 0
     ? `Upcoming payment due in ${Math.abs(opts.intervalDays)} day(s)`
@@ -249,6 +382,7 @@ export async function sendReminderEmail(opts: {
   return deliver({
     to: [opts.to],
     subject: `${subjectPrefix}: Invoice ${opts.invoiceNumber}`,
-    html: invoiceHtml({ ...opts, isReminder: true }),
+    html: invoiceHtml({ ...opts, isReminder: true, hasAttachment: Boolean(opts.attachments?.length) }),
+    attachments: opts.attachments,
   });
 }

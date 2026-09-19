@@ -174,6 +174,46 @@ async function main() {
     check("...addressed to the customer", caught.at(-1)?.to.includes("client@e2e-test.com") === true, JSON.stringify(caught.at(-1)?.to));
     check("...and the invoice records that it was delivered", d?.emailDelivery?.state === "sent", `got ${JSON.stringify(d?.emailDelivery)}`);
     check("...keeping the transport's own id", Boolean(d?.emailDelivery?.messageId), "no messageId");
+
+    // The document, not just a paragraph describing it. Checked in the raw
+    // message that crossed the socket: a MIME part naming the invoice, and a
+    // PDF really inside it rather than an empty part with the right name.
+    const raw = caught.at(-1)?.body ?? "";
+    check("...carrying the invoice as a PDF", /application\/pdf/i.test(raw), "no pdf part");
+    check("...named after the invoice", /filename=.?IN-\d+\.pdf/i.test(raw), "attachment not named for the invoice");
+    const b64 = /Content-Type: application\/pdf[\s\S]*?\r?\n\r?\n([A-Za-z0-9+/=\s]+)/i.exec(raw)?.[1] ?? "";
+    const bytes = Buffer.from(b64.replace(/\s/g, ""), "base64");
+    check("...and the part really is a PDF", bytes.subarray(0, 5).toString() === "%PDF-", `starts "${bytes.subarray(0, 8).toString()}"`);
+    check("...of a believable size", bytes.byteLength > 2000, `${bytes.byteLength} bytes`);
+
+    // The message is readable on its own, without opening the attachment.
+    const html = Buffer.from(
+      (/Content-Type: text\/html[\s\S]*?\r?\n\r?\n([A-Za-z0-9+/=\s]+)/i.exec(raw)?.[1] ?? "").replace(/\s/g, ""),
+      "base64",
+    ).toString() || raw;
+    check("the message writes the invoice out too", /Consulting/.test(html), "no line items in the body");
+    check("...with the amount against the line", /1,000\.00/.test(html), "no line amount");
+    check("...its subtotal and total", /Subtotal/i.test(html) && /Balance Due/i.test(html), "no totals block");
+    check("...and says the PDF is attached", /PDF copy of this invoice is attached/i.test(html), "no attachment note");
+  }
+  {
+    // A client name that is ordinary and also HTML. It must not be able to
+    // close a tag in the mail it is sent.
+    const nasty = await Customer.create({
+      organizationId: org._id, customerCode: "CUS-00003",
+      name: 'Smith & Sons <Trading>', email: "nasty@e2e-test.com",
+      phone: "+971500000002", currency: "AED", status: "active",
+    });
+    const id = await makeInvoice(String(nasty._id), 30_000);
+    await post(`/invoices/${id}/send`, undefined, token);
+    await settle();
+    const raw = caught.at(-1)?.body ?? "";
+    const html = Buffer.from(
+      (/Content-Type: text\/html[\s\S]*?\r?\n\r?\n([A-Za-z0-9+/=\s]+)/i.exec(raw)?.[1] ?? "").replace(/\s/g, ""),
+      "base64",
+    ).toString() || raw;
+    check("a name containing markup is escaped", !/<Trading>/.test(html), "raw tag reached the message");
+    check("...while still reading correctly", /Smith &amp; Sons/.test(html) || /Smith & Sons/.test(html), "name lost");
   }
   {
     // The commonest silent failure: nowhere to send it.

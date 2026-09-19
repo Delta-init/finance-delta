@@ -230,7 +230,29 @@ export async function intakeEnrolment(
 
   await Invoice.updateOne(
     { _id: new Types.ObjectId(invoice.id) },
-    { $set: { external: { source: input.source, externalId: input.externalId, flags } } },
+    {
+      $set: {
+        external: { source: input.source, externalId: input.externalId, flags },
+        // The receipt the counsellor took at the close, recorded as an
+        // ordinary attachment so it appears where an approver already looks
+        // for one — beside the invoice they are deciding about, rather than in
+        // whatever system it was collected in.
+        ...(input.receipt
+          ? {
+              attachments: [
+                {
+                  name: input.receipt.name,
+                  url: input.receipt.url,
+                  key: input.receipt.key,
+                  size: input.receipt.size,
+                  mimeType: input.receipt.mimeType,
+                  uploadedAt: new Date(),
+                },
+              ],
+            }
+          : {}),
+      },
+    },
   );
 
   logger.info(

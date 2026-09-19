@@ -362,7 +362,9 @@ async function main() {
     enrolledOn: new Date().toISOString().slice(0, 10),
     declaredPaidMinor: 0,
     modeOfStudy: "online" as const,
-    // Exactly what the CRM sends: it has no language field.
+    // What the CRM used to send: no language at all. Kept, because the bridge
+    // that turns it into "Not specified" still has to work for any caller that
+    // does not hold one.
     language: "",
   });
 
@@ -403,6 +405,56 @@ async function main() {
     inv1?.enrolment?.language === "Not specified",
     `language=${inv1?.enrolment?.language}`,
   );
+
+  // ── What the close now collects ───────────────────────────────────────────
+  //
+  // Language, how the money was taken and proof that it was. The first two were
+  // accepted here long before anything sent them; the receipt is new. All three
+  // exist so an approver is not deciding on an invoice with none of it in front
+  // of them.
+  {
+    const withDetail = {
+      ...enrolment("e2e-detail", "driftone@e2e-test.com", "Detailed Student"),
+      language: "Malayalam",
+      declaredPaidMinor: 50_000,
+      declaredPaymentMethod: "tabby" as const,
+      receipt: {
+        name: "receipt.jpg",
+        url: "https://files.example.com/enrolment-receipts/lead-1/1758-receipt.jpg",
+        key: "enrolment-receipts/lead-1/1758-receipt.jpg",
+        size: 84_213,
+        mimeType: "image/jpeg",
+      },
+    };
+    const res = await signedPost(orgId, "/api/v1/integrations/enrolments", withDetail);
+    check("an enrolment carrying the closing details is accepted", res.status === 200, show(res));
+
+    const inv = await Invoice.findOne({ "external.externalId": "e2e-detail" }).lean();
+    check("the language it was sold in is kept as given", inv?.enrolment?.language === "Malayalam", `language=${inv?.enrolment?.language}`);
+    check("...not replaced by the fallback", inv?.enrolment?.language !== "Not specified");
+    check(
+      "how the money was taken is recorded",
+      inv?.enrolment?.declaredPaymentMethod === "tabby",
+      `method=${inv?.enrolment?.declaredPaymentMethod}`,
+    );
+    check(
+      "...beside what the counsellor says was taken",
+      inv?.enrolment?.declaredPaidMinor === 50_000,
+      `declaredPaidMinor=${inv?.enrolment?.declaredPaidMinor}`,
+    );
+
+    // The receipt crosses as a key, not as bytes: both applications address the
+    // same bucket, so this is the file the CRM wrote, not a copy of it.
+    const atts = (inv?.attachments as { name?: string; key?: string; url?: string; mimeType?: string }[]) ?? [];
+    check("the receipt is attached to the invoice", atts.length === 1, `${atts.length} attachment(s)`);
+    check("...under the name it was uploaded with", atts[0]?.name === "receipt.jpg", `name=${atts[0]?.name}`);
+    check(
+      "...pointing at the object the CRM wrote",
+      atts[0]?.key === "enrolment-receipts/lead-1/1758-receipt.jpg",
+      `key=${atts[0]?.key}`,
+    );
+    check("...so an approver can open it", Boolean(atts[0]?.url), `url=${atts[0]?.url}`);
+  }
 
   const retry = await signedPost(orgId, "/api/v1/integrations/enrolments", enrolment("e2e-1", "driftone@e2e-test.com"));
   check("a retry after a timeout is idempotent", retry.status === 200, show(retry));

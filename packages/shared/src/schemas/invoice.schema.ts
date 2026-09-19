@@ -481,6 +481,27 @@ export const inboundEnrolmentSchema = z.object({
   declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
   modeOfStudy: z.enum(MODES_OF_STUDY).default("online"),
   language: z.string().max(60).default(""),
+  /**
+   * Proof the money was taken, as a file already in storage.
+   *
+   * A reference rather than the bytes. The calling system writes the receipt
+   * to the same bucket this one reads, so what crosses is a key — the file is
+   * attached to the invoice without being uploaded twice, and there is one
+   * object rather than two copies that can drift apart.
+   *
+   * Which means the URL is trusted, and is only as trustworthy as the caller:
+   * this endpoint is already authenticated per integration client, and a
+   * client that can raise invoices can be believed about where it put a file.
+   */
+  receipt: z
+    .object({
+      name: z.string().max(200),
+      url: z.string().url(),
+      key: z.string().max(500),
+      size: z.number().int().min(0).optional(),
+      mimeType: z.string().max(100).optional(),
+    })
+    .optional(),
   notes: z.string().max(2000).optional(),
 });
 export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;

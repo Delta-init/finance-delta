@@ -232,6 +232,74 @@ async function main() {
     check("...so nobody is enrolled on a guess", !nobody, "a student was created anyway");
   }
 
+  // ── The mapping arriving from the CRM ─────────────────────────────────────
+  step("Learning the mapping from the sales system");
+  {
+    const { Item } = await import("../modules/inventory/item.model");
+    const fresh = await Item.create({
+      organizationId: org._id, itemNumber: "ITM-0003", name: "Digital Marketing", sku: "DM",
+      type: "service", trackStock: false, sellingPriceMinor: 130_000,
+    });
+    check("an item starts unmapped", !fresh.lmsCourseSlug, `slug=${fresh.lmsCourseSlug}`);
+
+    const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
+    await intakeEnrolment(orgId, {
+      externalId: "crm-learn", source: "crm",
+      customer: { name: "Learner", email: "learner@e2e-test.com", phone: "+971500000001" },
+      course: { name: "Digital Marketing", itemId: String(fresh._id), amountMinor: 130_000,
+                lmsCourseSlug: "market-break-out-trading-program" },
+      enrolledOn: today, declaredPaidMinor: 0, modeOfStudy: "online", language: "English",
+    } as never);
+
+    const learned = await Item.findById(fresh._id).lean<{ lmsCourseSlug?: string } | null>();
+    check("...and learns its course from the enrolment", learned?.lmsCourseSlug === "market-break-out-trading-program",
+      `slug=${learned?.lmsCourseSlug}`);
+
+    // Finance's own answer was set deliberately; sales must not move it.
+    await intakeEnrolment(orgId, {
+      externalId: "crm-overwrite", source: "crm",
+      customer: { name: "Learner Two", email: "learner2@e2e-test.com", phone: "+971500000002" },
+      course: { name: "Digital Marketing", itemId: String(fresh._id), amountMinor: 130_000,
+                lmsCourseSlug: "some-other-course" },
+      enrolledOn: today, declaredPaidMinor: 0, modeOfStudy: "online", language: "English",
+    } as never);
+    const after = await Item.findById(fresh._id).lean<{ lmsCourseSlug?: string } | null>();
+    check("...but a later one cannot move it", after?.lmsCourseSlug === "market-break-out-trading-program",
+      `slug=${after?.lmsCourseSlug}`);
+  }
+
+  // ── The door itself ───────────────────────────────────────────────────────
+  step("Refusing callers who are not finance");
+  {
+    const url = `${process.env.LMS_API_URL}/api/v1/integrations/finance/enrolment`;
+    const body = JSON.stringify({
+      email: "intruder@e2e-test.com", courseSlug: "market-break-out-trading-program",
+      invoiceId: "forged-1",
+    });
+
+    const none = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body });
+    check("no secret is refused", none.status === 401, `got ${none.status}`);
+
+    const wrong = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": "not-the-secret" },
+      body,
+    });
+    check("a wrong secret is refused", wrong.status === 401, `got ${wrong.status}`);
+
+    const intruder = await lms.db!.collection("users").findOne({ email: "intruder@e2e-test.com" });
+    check("...and no student is created either way", !intruder, "a student was created");
+
+    // A slug nobody has: the caller's mistake, and it will not come right by
+    // retrying, so it must not be treated as a transient failure.
+    const unknown = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": process.env.LMS_S2S_SECRET! },
+      body: JSON.stringify({ email: "ghost@e2e-test.com", courseSlug: "no-such-course", invoiceId: "ghost-1" }),
+    });
+    check("an unknown course is refused as permanent, not retried", unknown.status === 422, `got ${unknown.status}`);
+  }
+
   await lms.close();
   await mongoose.disconnect();
   console.log("");

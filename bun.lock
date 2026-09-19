@@ -89,6 +89,8 @@
       "name": "@delta/shared",
       "version": "0.0.0",
       "dependencies": {
+        "jspdf": "^4.2.1",
+        "jspdf-autotable": "^5.0.8",
         "zod": "^3.23.8",
       },
       "devDependencies": {

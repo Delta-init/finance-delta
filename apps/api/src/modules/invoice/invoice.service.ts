@@ -596,9 +596,33 @@ export async function updateInvoice(
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
   assertEditable(doc, scope);
-  if (effectiveStatus(doc) !== "draft") {
-    throw new AppError("CONFLICT", "Only draft invoices can be edited");
+
+  /*
+   * An invoice that has gone out can still be corrected.
+   *
+   * It could not be, and the reasoning was that a sent invoice is a document
+   * the client is holding. But a wrong invoice in a client's hands is the case
+   * that most needs fixing, and the only way to fix it was to void the invoice
+   * and raise another — losing the number, the history and any payment already
+   * recorded against it. People did it anyway, badly.
+   *
+   * A voided invoice stays shut. That is a cancelled record rather than a
+   * wrong one, and it has its own way back now.
+   */
+  const before = effectiveStatus(doc);
+  if (before === "void") {
+    throw new AppError(
+      "CONFLICT",
+      "This invoice was voided. Restore it first, then make the correction.",
+    );
   }
+
+  const paid = (doc.amountPaidMinor as number) ?? 0;
+  // What was sold before the edit, kept for the stock reconciliation below:
+  // doc.lineItems is about to be replaced in place.
+  const linesBefore = JSON.parse(
+    JSON.stringify((doc.lineItems as unknown as unknown[]) ?? []),
+  ) as { itemId?: string; warehouseId?: string; quantity: number; description: string }[];
 
   if (input.customerId) {
     const customer = await Customer.findOne({ _id: input.customerId, organizationId: orgId });
@@ -641,6 +665,16 @@ export async function updateInvoice(
       defaultHsnSac: computation.hsnSac,
       itemHsnSac: await itemHsnSacFor(orgId, input.lineItems),
     });
+    // Editing below what has already been received would make the balance
+    // negative, which an invoice cannot express — the customer would be owed
+    // money back, and that is a credit note rather than a smaller invoice.
+    if (totals.totalMinor < paid) {
+      throw new AppError(
+        "CONFLICT",
+        `${formatMoney(paid, doc.currency ?? "AED")} has already been received against this invoice, so it cannot be reduced to ${formatMoney(totals.totalMinor, doc.currency ?? "AED")}. Raise a credit note for the difference, or remove the payment first.`,
+      );
+    }
+
     doc.set({
       lineItems,
       subtotalMinor: totals.subtotalMinor,
@@ -649,13 +683,85 @@ export async function updateInvoice(
       taxTotalMinor: totals.taxTotalMinor,
       roundOffMinor: totals.roundOffMinor,
       totalMinor: totals.totalMinor,
-      balanceMinor: totals.totalMinor - (doc.amountPaidMinor ?? 0),
+      balanceMinor: totals.totalMinor - paid,
     });
+
+    // The status describes what is outstanding, so changing the total changes
+    // it: an invoice edited down to what was paid is settled, one edited up is
+    // owed again. Drafts keep their status — nothing has been sent, so there
+    // is nothing for a balance to mean yet.
+    if (before !== "draft") {
+      doc.status = doc.balanceMinor <= 0 ? "paid" : paid > 0 ? "partial" : "sent";
+    }
   }
   if (input.tagIds !== undefined) {
     doc.set("tagIds", await resolveTagIds(orgId, input.tagIds));
   }
   await doc.save();
+
+  // Stock follows what was sold. Only for an invoice that had already gone
+  // out: a draft has taken nothing off the shelf yet.
+  if (input.lineItems && before !== "draft") {
+    void _reconcileInventory(orgId, doc, linesBefore);
+  }
+
+  await doc.populate("tagIds", "name color");
+  return toDTO(doc);
+}
+
+async function _reconcileInventory(
+  orgId: string,
+  doc: InvoiceDoc,
+  linesBefore: { itemId?: string; warehouseId?: string; quantity: number; description: string }[],
+) {
+  try {
+    const lines = (doc.lineItems as unknown as { itemId?: string; warehouseId?: string; quantity: number; description: string }[]) ?? [];
+    // Nothing tracked on either side of the edit: no stock was ever involved.
+    if (!lines.some((l) => l.itemId) && !linesBefore.some((l) => l.itemId)) return;
+    const { reconcileStockForInvoice } = await import("../inventory/inventory.service");
+    await reconcileStockForInvoice(orgId, String(doc._id), doc.invoiceNumber, lines, "system");
+  } catch (err) {
+    const { logger } = await import("../../lib/logger");
+    logger.error({ err }, "Inventory reconciliation failed after an invoice edit");
+  }
+}
+
+/**
+ * Bring a voided invoice back.
+ *
+ * Voiding is how an invoice raised in error is taken out of the books, and
+ * until now it was the end of that invoice: the number, the enrolment attached
+ * to it and anything recorded against it were spent. Somebody who voided the
+ * wrong one, or voided the right one and then needed it after all, had to
+ * raise a new invoice and explain the gap.
+ *
+ * Where nothing was paid it comes back as a draft, which is the state it can
+ * be corrected in and sent from — the same path a new invoice takes.
+ *
+ * Where money was received it cannot: a draft that has taken payment is not a
+ * draft. Those come back to what their payments make them, and can be
+ * corrected in place like any other sent invoice.
+ */
+export async function restoreInvoice(orgId: string, id: string): Promise<InvoiceDTO> {
+  const doc = await findDoc(orgId, id);
+  if ((doc.status as string) !== "void") {
+    throw new AppError("CONFLICT", "Only a voided invoice can be restored");
+  }
+
+  const paid = (doc.amountPaidMinor as number) ?? 0;
+  const total = (doc.totalMinor as number) ?? 0;
+  doc.status = paid <= 0 ? "draft" : paid >= total ? "paid" : "partial";
+  doc.balanceMinor = total - paid;
+  // It is not a sent document again until somebody sends it.
+  if (doc.status === "draft") doc.set("sentAt", undefined);
+  await doc.save();
+
+  // Voiding put the stock back. An invoice returning to a sent state is
+  // selling it again; one returning to draft has sold nothing yet.
+  if (doc.status !== "draft") {
+    void _reconcileInventory(orgId, doc as unknown as InvoiceDoc, []);
+  }
+
   await doc.populate("tagIds", "name color");
   return toDTO(doc);
 }
@@ -1003,6 +1109,63 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
     // falls back to Delta's otherwise.
     const logoUrl = (org?.branding as { logoUrl?: string })?.logoUrl ?? "";
     const totalFormatted = formatMoney(doc.totalMinor ?? 0, doc.currency ?? "AED");
+
+    /*
+     * The invoice itself, drawn here and attached.
+     *
+     * The message has always described the invoice and left the reader to log
+     * in somewhere for the document. The same drawing the download uses, from
+     * shared, so what is emailed and what is downloaded cannot differ.
+     *
+     * Failing to draw it must not stop the message: an invoice email without
+     * its attachment is worth far more than no email at all, so this falls
+     * back to what was sent before rather than throwing.
+     */
+    let attachments: { filename: string; content: Buffer; contentType?: string }[] | undefined;
+    try {
+      const { invoicePdfBuffer, invoicePdfName } = await import("@delta/shared");
+      const bankAccountId = (org as unknown as { invoiceDefaults?: { bankAccountId?: unknown } })
+        ?.invoiceDefaults?.bankAccountId;
+      const bankAccount = bankAccountId
+        ? await (await import("../banking/bank-account.model")).BankAccount.findById(bankAccountId).lean()
+        : null;
+      attachments = [
+        {
+          filename: invoicePdfName(doc.invoiceNumber),
+          content: invoicePdfBuffer({
+            invoice: toDTO(doc),
+            org: org as never,
+            customer: customer as never,
+            bankAccount: bankAccount as never,
+          }),
+          contentType: "application/pdf",
+        },
+      ];
+    } catch (err) {
+      const { logger } = await import("../../lib/logger");
+      logger.warn({ err, invoiceId: String(doc._id) }, "Could not draw the invoice PDF — sending without it");
+    }
+
+    // The invoice written out for the message body. The attachment is the
+    // document; this is so it can be read on a phone without opening one.
+    const dto = toDTO(doc);
+    const m = (minor: number) => formatMoney(minor, doc.currency ?? "AED");
+    const detail = {
+      lineItems: dto.lineItems.map((l) => ({
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: m(l.unitPriceMinor),
+        amount: m(l.lineTotalMinor),
+      })),
+      subtotal: m(dto.subtotalMinor),
+      taxes: dto.taxBreakdown.map((t) => ({ label: t.code, amount: m(t.amountMinor) })),
+      total: m(dto.totalMinor),
+      ...(dto.amountPaidMinor > 0 ? { amountPaid: m(dto.amountPaidMinor) } : {}),
+      balanceDue: m(dto.balanceMinor),
+      issueDate: dto.issueDate,
+      ...(dto.reference ? { reference: dto.reference } : {}),
+    };
+
     const { id: emailId, error } = await sendInvoiceEmail({
       to: customer.email,
       orgName,
@@ -1013,6 +1176,8 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       footerText,
       logoUrl,
       message,
+      detail,
+      attachments,
     });
 
     if (error) {

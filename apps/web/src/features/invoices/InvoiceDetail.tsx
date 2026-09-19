@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2, AlertTriangle,
+  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2, AlertTriangle, Undo2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -38,7 +38,7 @@ import {
 import { TagList } from "@/features/tags/TagBadge";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useInvoice, useSendInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice } from "./api";
+import { useInvoice, useSendInvoice, useRestoreInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
@@ -60,6 +60,7 @@ export function InvoiceDetail({ id }: { id: string }) {
   const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
   const { can } = useCan();
   const send = useSendInvoice();
+  const restore = useRestoreInvoice();
   const voidInv = useVoidInvoice();
   const resend = useResendInvoice();
   const [payOpen, setPayOpen] = useState(false);
@@ -97,7 +98,11 @@ export function InvoiceDetail({ id }: { id: string }) {
    * The server enforces this; hiding the button here spares somebody a click
    * that only ever returns an error.
    */
-  const canEdit = isDraft && (canManage || !approvalBlocksEditing(invoice.approval?.state));
+  // A sent invoice can be corrected now. A voided one cannot — it is a
+  // cancelled record rather than a wrong one, and has its own way back.
+  const canEdit =
+    invoice.status !== "void" && (canManage || !approvalBlocksEditing(invoice.approval?.state));
+  const canRestore = canManage && invoice.status === "void";
 
   const canVoid = canManage && invoice.status !== "paid" && invoice.status !== "void";
   const canPay =
@@ -151,6 +156,26 @@ export function InvoiceDetail({ id }: { id: string }) {
             <Link href={`/invoices/${id}/edit`}>
               <Button variant="outline" size="sm"><Pencil className="h-3.5 w-3.5" /> Edit</Button>
             </Link>
+          )}
+          {/* Out of void and back into the ordinary life of an invoice. Where
+              nothing was paid it lands in draft, which is where it can be
+              corrected and sent from. */}
+          {canRestore && (
+            <Button
+              size="sm"
+              loading={restore.isPending}
+              onClick={() => restore.mutate(id, {
+                onSuccess: (inv) =>
+                  toast.success(
+                    inv.status === "draft"
+                      ? "Restored as a draft — edit it and send it again"
+                      : "Restored, with its payments still against it",
+                  ),
+                onError: (e) => toast.error(e instanceof ApiError ? e.message : "Could not restore this invoice"),
+              })}
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Restore
+            </Button>
           )}
           {canSend && (
             <Button

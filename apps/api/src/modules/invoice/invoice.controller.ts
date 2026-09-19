@@ -41,6 +41,10 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
   res.status(204).end();
 });
 
+export const restore = asyncHandler(async (req, res) => {
+  ok(res, await invoiceService.restoreInvoice(orgId(req), req.params.id!));
+});
+
 export const send = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.sendInvoice(orgId(req), req.params.id!, writeScope(req)));
 });

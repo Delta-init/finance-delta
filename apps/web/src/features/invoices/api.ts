@@ -73,6 +73,7 @@ function useAction(path: (id: string) => string) {
 
 export const useSendInvoice = () => useAction((id) => `invoices/${id}/send`);
 export const useVoidInvoice = () => useAction((id) => `invoices/${id}/void`);
+export const useRestoreInvoice = () => useAction((id) => `invoices/${id}/restore`);
 
 export function useResendInvoice() {
   return useMutation({

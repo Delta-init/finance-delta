@@ -21,6 +21,9 @@ router.get("/:id", requireAnyPermission("invoice:read", "invoice:read:own"), c.g
 router.post("/", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(createInvoiceSchema), c.create);
 router.patch("/:id", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(updateInvoiceSchema), c.update);
 router.delete("/:id", requirePermission("invoice:write"), c.remove);
+// Bringing one back out of void, which only accounts may do — the same
+// permission that put it there.
+router.post("/:id/restore", requirePermission("invoice:write"), c.restore);
 
 router.post("/:id/send", requireAnyPermission("invoice:write", "invoice:write:own"), c.send);
 router.post("/:id/resend", requireAnyPermission("invoice:write", "invoice:write:own"), c.resend);

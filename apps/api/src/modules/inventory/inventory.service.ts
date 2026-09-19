@@ -644,6 +644,99 @@ export async function deductStockForInvoice(
   }
 }
 
+/**
+ * Bring an invoice's stock in line with the lines it now has.
+ *
+ * Editing an invoice that has already gone out changes what was sold after the
+ * stock for it was taken. Reversing everything and taking it again would be the
+ * obvious move and is wrong twice over: `restoreStockForInvoice` reverses every
+ * `invoice_out` it can find and leaves those rows in place, so a second edit
+ * reverses the first edit's deduction as well as the original, and the working
+ * of it means stock briefly returns to the shelf for something that was never
+ * sent back.
+ *
+ * So this works out what is currently out against this invoice — everything
+ * deducted, less everything since put back — and moves only the difference. A
+ * line whose quantity did not change produces no movement at all, which is also
+ * what the stock history should show: nothing happened to it.
+ */
+export async function reconcileStockForInvoice(
+  orgId: string,
+  invoiceId: string,
+  invoiceNumber: string,
+  lines: { itemId?: string; warehouseId?: string; quantity: number; description: string }[],
+  createdByName: string,
+): Promise<void> {
+  const org = new Types.ObjectId(orgId);
+
+  // What this invoice currently holds off the shelf, per item and warehouse.
+  const movements = await StockMovement.find({
+    organizationId: org,
+    referenceId: invoiceId,
+    referenceType: "invoice",
+  }).lean();
+
+  const out = new Map<string, number>();
+  const at = (itemId: string, warehouseId: string) => `${itemId}:${warehouseId}`;
+  for (const mv of movements as unknown as StockMovementDoc[]) {
+    // Quantities are signed as they were applied: an out is negative, a put
+    // back positive, so the sum is simply what is still out.
+    const key = at(mv.itemId.toString(), mv.warehouseId.toString());
+    out.set(key, (out.get(key) ?? 0) - (mv.quantity as number));
+  }
+
+  // What the invoice now says should be out.
+  const want = new Map<string, { qty: number; line: (typeof lines)[number]; target: NonNullable<Awaited<ReturnType<typeof resolveStockTarget>>> }>();
+  for (const line of lines) {
+    const t = await resolveStockTarget(orgId, line);
+    if (!t) continue;
+    const key = at(line.itemId!, t.warehouseId);
+    const prev = want.get(key);
+    want.set(key, { qty: (prev?.qty ?? 0) + line.quantity, line, target: t });
+  }
+
+  // Anything the invoice no longer sells goes back on the shelf.
+  for (const [key, held] of out) {
+    if (held <= 0 || want.has(key)) continue;
+    const [itemId, warehouseId] = key.split(":");
+    const item = await Item.findOne({ _id: new Types.ObjectId(itemId), organizationId: org });
+    if (!item) continue;
+    await applyStockChange({
+      orgId, itemId: itemId!, itemName: item.name as string, sku: item.sku as string,
+      warehouseId: warehouseId!, warehouseName: "",
+      delta: held,
+      unitCostMinor: (item.costPriceMinor as number) ?? 0,
+      movementType: "adjustment_in",
+      reference: `Edit of ${invoiceNumber}`,
+      referenceType: "invoice",
+      referenceId: invoiceId,
+      adjustmentReason: "correction",
+      notes: "Line removed from the invoice",
+      createdByName,
+    });
+  }
+
+  // And the difference is moved for everything it still sells.
+  for (const [key, { qty, line, target }] of want) {
+    const delta = qty - (out.get(key) ?? 0);
+    if (delta === 0) continue;
+    await applyStockChange({
+      orgId, itemId: line.itemId!,
+      itemName: target.item.name as string, sku: target.item.sku as string,
+      warehouseId: target.warehouseId, warehouseName: target.warehouseName,
+      delta: -delta,
+      unitCostMinor: (target.item.costPriceMinor as number) ?? 0,
+      movementType: delta > 0 ? "invoice_out" : "adjustment_in",
+      reference: delta > 0 ? invoiceNumber : `Edit of ${invoiceNumber}`,
+      referenceType: "invoice",
+      referenceId: invoiceId,
+      ...(delta < 0 ? { adjustmentReason: "correction" as const } : {}),
+      notes: line.description,
+      createdByName,
+    });
+  }
+}
+
 export async function restoreStockForInvoice(
   orgId: string,
   invoiceId: string,

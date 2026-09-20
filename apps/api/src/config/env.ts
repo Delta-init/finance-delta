@@ -82,6 +82,14 @@ const envSchema = z.object({
    * refuses, and that is the exact mistake the CRMs had to fix.
    */
   ROOT_ERP_API_URL: z.string().default(""),
+  /**
+   * The secret the portal presents when asking this server to create an
+   * account. The same value the portal holds against this target.
+   *
+   * Unset and provisioning is off — the endpoint answers 503 rather than
+   * creating accounts for an unauthenticated caller.
+   */
+  ROOT_ERP_SECRET: z.string().default(""),
 
   INBOUND_CLIENT_ID: z.string().default(""),
   INBOUND_INTEGRATION_SECRET: z.string().default(""),

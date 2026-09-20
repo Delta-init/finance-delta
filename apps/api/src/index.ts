@@ -18,6 +18,7 @@ import tagRoutes from "./modules/tag/tag.routes";
 import departmentRoutes from "./modules/department/department.routes";
 import invoiceRoutes from "./modules/invoice/invoice.routes";
 import integrationRoutes from "./modules/integrations/integrations.routes";
+import portalRoutes from "./modules/integrations/portal.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
 import searchRoutes from "./modules/search/search.routes";
 import suggestionsRoutes from "./modules/suggestions/suggestions.routes";
@@ -88,6 +89,9 @@ async function bootstrap() {
   // Signed server-to-server calls. Guarded by its own middleware, not the
   // session cookie every other route uses.
   api.use("/integrations", integrationRoutes);
+  // The Root portal, which authenticates with its own shared secret rather
+  // than the signed scheme the CRM integration uses.
+  api.use("/service", portalRoutes);
   api.use("/organizations", organizationRoutes);
   api.use("/search", searchRoutes);
   api.use("/suggestions", suggestionsRoutes);

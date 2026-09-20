@@ -47,6 +47,9 @@ const resetLimiter = rateLimit({
 });
 
 router.post("/login", loginLimiter, validateBody(loginSchema), authController.login);
+// Rate limited like a login, because that is what it is — the credential is
+// just a one-time token from the portal rather than a password.
+router.post("/sso-login", loginLimiter, authController.ssoLogin);
 router.post("/refresh", validateBody(refreshSchema), authController.refresh);
 router.post("/forgot-password", forgotLimiter, validateBody(forgotPasswordSchema), authController.forgotPassword);
 router.post("/reset-password", resetLimiter, validateBody(resetPasswordSchema), authController.resetPassword);

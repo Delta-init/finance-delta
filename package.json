@@ -23,6 +23,7 @@
     "test:mail-e2e": "./scripts/mail-e2e.sh",
     "test:invoice-e2e": "./scripts/invoice-e2e.sh",
     "test:lms-e2e": "./scripts/lms-provision-e2e.sh",
+    "test:sso-e2e": "./scripts/sso-e2e.sh",
     "payroll-demo": "./scripts/payroll-demo.sh"
   },
   "engines": {

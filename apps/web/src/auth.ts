@@ -88,6 +88,78 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
         };
       },
     }),
+
+    /*
+     * Arriving from the Root portal instead of typing a password.
+     *
+     * Its own provider rather than a branch inside the one above, because the
+     * credential is a different thing: a single-use token the portal minted,
+     * not an email and a password. Folding them together would mean a provider
+     * that accepts either, and the branch that decides which is the one an
+     * attacker would go looking at.
+     *
+     * The shape it returns is identical, so everything downstream — the org
+     * choice, the refresh, the session callbacks — cannot tell the difference
+     * and does not need to.
+     */
+    Credentials({
+      id: "sso",
+      name: "Root portal",
+      credentials: { ssoToken: {} },
+      async authorize(raw) {
+        const ssoToken = String((raw as { ssoToken?: unknown })?.ssoToken ?? "").trim();
+        if (!ssoToken) return null;
+
+        const res = await fetch(`${API_URL}/auth/sso-login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ssoToken }),
+        });
+        if (!res.ok) return null;
+
+        const json = (await res.json()) as { data: AuthSuccess | OrgChoiceResult };
+        const data = json.data;
+
+        // Somebody who belongs to more than one organization is asked which,
+        // exactly as they would be after a password login.
+        if ("status" in data && data.status === "choose_org") {
+          return {
+            id: "pending",
+            name: "",
+            email: "",
+            organizationId: "",
+            orgName: "",
+            roleKey: "",
+            roleName: "",
+            permissions: [],
+            isSuperAdmin: false,
+            accessToken: "",
+            refreshToken: "",
+            needsOrgChoice: true,
+            orgs: data.orgs,
+            pendingToken: data.pendingToken,
+            baseCurrency: "AED",
+          };
+        }
+
+        const success = data as AuthSuccess;
+        return {
+          id: success.user.id,
+          name: success.user.name,
+          email: success.user.email,
+          organizationId: success.user.organizationId,
+          orgName: success.user.orgName ?? "",
+          roleKey: success.user.roleKey,
+          roleName: success.user.roleName,
+          permissions: success.user.permissions,
+          isSuperAdmin: success.user.isSuperAdmin ?? false,
+          accessToken: success.accessToken,
+          refreshToken: success.refreshToken,
+          needsOrgChoice: false,
+          baseCurrency: success.user.baseCurrency ?? "AED",
+        };
+      },
+    }),
   ],
   callbacks: {
     async jwt({ token, user, trigger, session: updateData }) {

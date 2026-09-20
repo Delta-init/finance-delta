@@ -73,6 +73,16 @@ const envSchema = z.object({
   LMS_API_URL: z.string().default(""),
   LMS_S2S_SECRET: z.string().default(""),
 
+  /**
+   * The Root portal, for signing somebody in who arrived from it.
+   *
+   * Unset and SSO is off: the endpoint answers 503 rather than trusting a
+   * token it cannot check. It must never fall back to a default — a server
+   * that quietly asks itself to vouch for a token is worse than one that
+   * refuses, and that is the exact mistake the CRMs had to fix.
+   */
+  ROOT_ERP_API_URL: z.string().default(""),
+
   INBOUND_CLIENT_ID: z.string().default(""),
   INBOUND_INTEGRATION_SECRET: z.string().default(""),
 

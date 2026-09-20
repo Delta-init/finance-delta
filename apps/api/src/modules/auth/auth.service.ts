@@ -1,4 +1,4 @@
-import { Types } from "mongoose";
+import { Types, type HydratedDocument } from "mongoose";
 import type { AuthSuccess, AuthUser, OrgChoiceResult, SwitchOrgInput } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import {
@@ -9,7 +9,7 @@ import {
 } from "../../lib/jwt";
 import { verifyPassword } from "../../lib/password";
 import { env } from "../../config/env";
-import { User } from "../user/user.model";
+import { User, type UserDoc } from "../user/user.model";
 import { Role, type RoleDoc } from "../role/role.model";
 import { Organization } from "../organization/organization.model";
 import { RefreshToken } from "./refreshToken.model";
@@ -66,6 +66,37 @@ export async function login(email: string, password: string): Promise<AuthRespon
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) throw new AppError("UNAUTHENTICATED", "Invalid email or password");
 
+  return startSession(user);
+}
+
+/**
+ * Sign somebody in who arrived from the Root portal.
+ *
+ * The portal has already established who they are — it minted a single-use
+ * token, this server spent it, and what comes back is an email it vouches for.
+ * What happens next has to be identical to a password login: the same rules
+ * about super admins, remembered organizations and being asked to choose
+ * between several. So the password check is the only thing skipped, and
+ * everything after it is the same code rather than a second copy that drifts.
+ *
+ * No account here means no session. This server trusts whatever the portal
+ * says, so creating one on demand would turn a spoofed portal into an instant
+ * account — the same reasoning the CRMs already apply.
+ */
+export async function ssoLogin(email: string): Promise<AuthResponse> {
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user) {
+    throw new AppError(
+      "UNAUTHENTICATED",
+      `There is no Delta Finance account for ${email}. It has to be created here before the portal can sign anybody in with it.`,
+    );
+  }
+  if (user.status === "suspended") throw new AppError("FORBIDDEN", "This account is suspended");
+  return startSession(user);
+}
+
+/** Everything a login does once it knows who is asking. */
+async function startSession(user: HydratedDocument<UserDoc>): Promise<AuthResponse> {
   user.lastLoginAt = new Date();
   await user.save();
 

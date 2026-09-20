@@ -30,8 +30,73 @@ async function refreshTokens(refreshToken: string): Promise<AuthSuccess | null> 
   return json.data;
 }
 
+/**
+ * Cookies that survive the Root portal's frame.
+ *
+ * The portal opens each system it fronts in an iframe, which makes this
+ * application third-party to the page around it. Auth.js sets SameSite=Lax by
+ * default, and a Lax cookie is never stored in that position — by design,
+ * since that is the defence against cross-site request forgery.
+ *
+ * So signing in from the portal looked like a failure and was not: the
+ * handover worked, the session cookie was set, the browser discarded it, and
+ * this application — seeing no session — showed the login page again.
+ *
+ * The CSRF cookie matters as much as the session one. It is checked on the
+ * sign-in POST, so a Lax CSRF cookie means the request is refused before any
+ * of the rest is reached.
+ *
+ * Production only: SameSite=None requires Secure, and a Secure cookie is
+ * dropped over plain http, so locally this would trade one silent sign-in
+ * failure for another. In development Auth.js keeps its own defaults.
+ *
+ * The names are the ones Auth.js already uses here — verified against what
+ * this deployment serves — so nobody is signed out by the change.
+ *
+ * This is a real reduction: Lax was keeping the session off cross-site
+ * requests, and lifting it means another site can cause an authenticated
+ * request to be sent. The CSRF token remains the defence on the auth routes.
+ */
+const crossSite = process.env.NODE_ENV === "production";
+
+const frameFriendlyCookies = crossSite
+  ? {
+      sessionToken: {
+        name: "__Secure-authjs.session-token",
+        options: {
+          httpOnly: true,
+          sameSite: "none" as const,
+          path: "/",
+          secure: true,
+        },
+      },
+      callbackUrl: {
+        name: "__Secure-authjs.callback-url",
+        options: {
+          httpOnly: true,
+          sameSite: "none" as const,
+          path: "/",
+          secure: true,
+        },
+      },
+      // `__Host-` requires Secure, Path=/ and no Domain, all of which hold.
+      // It is the stronger prefix — a cookie by that name cannot have been set
+      // by a subdomain — and it is what Auth.js already uses here.
+      csrfToken: {
+        name: "__Host-authjs.csrf-token",
+        options: {
+          httpOnly: true,
+          sameSite: "none" as const,
+          path: "/",
+          secure: true,
+        },
+      },
+    }
+  : undefined;
+
 export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
   ...authConfig,
+  cookies: frameFriendlyCookies,
   providers: [
     Credentials({
       credentials: { email: {}, password: {} },

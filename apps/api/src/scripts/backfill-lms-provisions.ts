@@ -76,6 +76,39 @@ async function run() {
   console.log(`  already have a provisioning row: ${approved.length - missing.length}`);
   console.log(`  never queued:                    ${missing.length}`);
 
+  /*
+   * What became of the rows that do exist.
+   *
+   * "Queued" is not "provisioned". A row can sit unmapped for want of a course
+   * slug, or fail permanently because the LMS refused it, and both look
+   * identical from the enrolment: approved, no student. Without this the script
+   * answers the smaller half of the question and leaves somebody believing the
+   * integration is broken when it is one missing mapping.
+   */
+  const existing = await LmsProvision.find({ invoiceId: { $in: approved.map((i) => i._id) } })
+    .select("invoiceId invoiceNumber status lastError attempts")
+    .lean();
+
+  if (existing.length > 0) {
+    const byStatus = new Map<string, number>();
+    for (const r of existing) byStatus.set(String(r.status), (byStatus.get(String(r.status)) ?? 0) + 1);
+    console.log("\nthe rows that exist stand at:");
+    for (const [state, n] of byStatus) console.log(`  ${state.padEnd(10)} ${n}`);
+
+    const stuck = existing.filter((r) => r.status === "unmapped" || r.status === "failed");
+    if (stuck.length > 0) {
+      console.log("\nnot going anywhere on their own:");
+      for (const r of stuck) {
+        console.log(`  ${String(r.invoiceNumber).padEnd(12)} ${String(r.status).padEnd(9)} ${r.lastError ?? ""}`);
+      }
+      console.log(
+        "\n  unmapped = the course has no LMS slug. Map the catalogue item, then" +
+          "\n             delete these rows so approval can queue them again." +
+          "\n  failed   = the LMS refused it. The reason is above.",
+      );
+    }
+  }
+
   if (missing.length === 0) {
     console.log("\nNothing to do.");
     await mongoose.disconnect();

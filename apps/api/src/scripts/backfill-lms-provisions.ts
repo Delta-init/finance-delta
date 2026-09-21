@@ -16,10 +16,16 @@
  * not undoable. Run it without --apply first, read the count, and use --since
  * to cut it down to the enrolments you actually want a student created for.
  *
- * Run with:
- *   bun apps/api/src/scripts/backfill-lms-provisions.ts
- *   bun apps/api/src/scripts/backfill-lms-provisions.ts --since 2026-09-01
- *   bun apps/api/src/scripts/backfill-lms-provisions.ts --since 2026-09-01 --apply
+ * Run it from apps/api, not from the repository root. Nothing here loads a
+ * .env by hand — Bun reads the one in the current directory, and the only
+ * directory with the API's settings in it is apps/api. Run from the root and
+ * every variable is missing, which the schema reports as "JWT_ACCESS_SECRET:
+ * Required" and looks nothing like the working-directory mistake it is.
+ *
+ *   cd apps/api
+ *   bun run backfill:lms
+ *   bun run backfill:lms --since 2026-09-01
+ *   bun run backfill:lms --since 2026-09-01 --apply
  */
 
 import mongoose from "mongoose";

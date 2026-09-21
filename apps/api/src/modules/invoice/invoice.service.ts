@@ -1065,7 +1065,23 @@ export async function returnInvoice(
   });
   await doc.save();
 
-  void notifyDecided(doc, actor.name, "returned", reason);
+  /*
+   * Only for invoices raised here.
+   *
+   * An enrolment that came from another system belongs to somebody who works in
+   * that system, and this notice would reach them — if it reached them at all —
+   * as a message about an invoice number, linking to a screen they have no
+   * login for. Worse, it goes to whoever the invoice is *assigned* to here,
+   * which for a rep with no account in finance is an administrator standing in
+   * for them: the one person it is not about.
+   *
+   * The source system is told through the status its own screens already poll,
+   * and it writes to the rep in its own words, about its own record. Two emails
+   * about one send-back, one of them useless, is worse than one that works.
+   */
+  const fromElsewhere = Boolean((doc as unknown as { external?: { source?: string } }).external?.source);
+  if (!fromElsewhere) void notifyDecided(doc, actor.name, "returned", reason);
+
   return toDTO(doc as unknown as InvoiceDoc);
 }
 

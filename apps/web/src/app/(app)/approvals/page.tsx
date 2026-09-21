@@ -25,7 +25,14 @@ import { useInvoices } from "@/features/invoices/api";
 export default function ApprovalsPage() {
   const router = useRouter();
   const { can } = useCan();
-  const t = useTableQuery({ initialSort: { key: "createdAt", dir: "asc" } });
+  /* Newest first, in both lists.
+   *
+   * Asked for, and worth naming the cost: a queue read oldest-first puts the
+   * thing that has waited longest where somebody will see it, and this ordering
+   * sinks it to the bottom instead. The "waiting 6 days" line on each row is
+   * what now carries that, so nothing is hidden — it just has to be read rather
+   * than met at the top. */
+  const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
 
   // Deciding is one permission and reading the queue is another. Somebody who
   // only sees their own invoices is on the far side of this.
@@ -36,7 +43,7 @@ export default function ApprovalsPage() {
     { enabled: usable },
   );
   const returned = useInvoices(
-    { page: 1, pageSize: 50, sort: "createdAt", dir: "asc", approval: "returned" },
+    { page: 1, pageSize: 50, sort: "createdAt", dir: "desc", approval: "returned" },
     { enabled: usable },
   );
 

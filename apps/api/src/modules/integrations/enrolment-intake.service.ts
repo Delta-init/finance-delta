@@ -7,7 +7,8 @@ import { Invoice } from "../invoice/invoice.model";
 import { Item } from "../inventory/item.model";
 import { User } from "../user/user.model";
 import { findOrCreateCustomer } from "../customer/customer.service";
-import { createInvoice } from "../invoice/invoice.service";
+import { createInvoice, updateInvoice } from "../invoice/invoice.service";
+import { notifyApprovers } from "../invoice/approval-notify.service";
 
 /**
  * Taking an enrolment from another system.
@@ -144,14 +145,39 @@ export async function intakeEnrolment(
     organizationId: new Types.ObjectId(orgId),
     "external.source": input.source,
     "external.externalId": input.externalId,
-  }).select("invoiceNumber customerId external");
+  }).select("invoiceNumber customerId external approval");
   if (existing) {
+    /*
+     * One exception to "already here, nothing to do": an invoice somebody sent
+     * back.
+     *
+     * Sending it back asks the person who raised it to correct something, and
+     * for a CRM enrolment that person is in the CRM — so the correction arrives
+     * the only way anything arrives from there, as this same call with the same
+     * externalId. Treated as a duplicate it would answer "yes, that exists"
+     * and change nothing, and the CRM would have no way to tell that from
+     * success. The counsellor would fix the fee, press send, be told it went,
+     * and the approver would see the old figure for ever.
+     *
+     * So a returned invoice is updated from what has just been sent and put
+     * back in front of an approver. The key still protects what it was built to
+     * protect: this is the same invoice and the same number, corrected — never
+     * a second one, and never a second bill.
+     *
+     * Any other state is left exactly alone. An approved or paid invoice is not
+     * something a resend may quietly rewrite.
+     */
+    const state = (existing as unknown as { approval?: { state?: string } }).approval?.state;
+    if (state === "returned") {
+      return await resubmitReturned(orgId, String(existing._id), input, flagsFor(existing));
+    }
+
     return {
       invoiceId: String(existing._id),
       invoiceNumber: existing.invoiceNumber as string,
       customerId: String(existing.customerId),
       duplicate: true,
-      flags: ((existing as unknown as { external?: { flags?: string[] } }).external?.flags) ?? [],
+      flags: flagsFor(existing),
     };
   }
 
@@ -283,5 +309,100 @@ export async function intakeEnrolment(
     customerId: customer.id,
     duplicate: false,
     flags,
+  };
+}
+
+/** Whatever finance flagged about this enrolment last time, defaulted. */
+function flagsFor(doc: unknown): string[] {
+  return (doc as { external?: { flags?: string[] } }).external?.flags ?? [];
+}
+
+/**
+ * A corrected enrolment, put back in front of an approver.
+ *
+ * The same invoice, the same number, the same client — the figures replaced by
+ * what the CRM has just sent and the approval returned to pending, so it
+ * reappears in the queue the approver already watches rather than somewhere
+ * new.
+ *
+ * Scoped `all`, unlike the create path. An update is checked against who owns
+ * the record, and the point of a correction may be that the enrolment was
+ * attributed to the wrong person in the first place — a resubmit that could not
+ * fix the salesperson would leave the one mistake nobody could correct.
+ */
+async function resubmitReturned(
+  orgId: string,
+  invoiceId: string,
+  input: InboundEnrolmentInput,
+  priorFlags: string[],
+): Promise<InboundEnrolmentResult> {
+  const flags: string[] = [];
+  const salesperson = await resolveSalesperson(orgId, input, flags);
+  const itemId = await resolveItem(orgId, input, flags);
+  const taxes = await defaultSalesTaxes(orgId);
+  const enrolledOn = input.enrolledOn?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+
+  const updated = await updateInvoice(
+    orgId,
+    invoiceId,
+    {
+      salespersonId: String(salesperson._id),
+      issueDate: enrolledOn,
+      dueDate: enrolledOn,
+      notes: input.notes ?? "",
+      taxInclusive: true,
+      lineItems: [
+        {
+          description: input.course.name,
+          quantity: 1,
+          unitPriceMinor: input.course.amountMinor,
+          taxes,
+          ...(itemId ? { itemId } : {}),
+          ...(input.course.hsnSac?.trim() ? { hsnSac: input.course.hsnSac.trim() } : {}),
+        },
+      ],
+      enrolment: {
+        course: input.course.name,
+        modeOfStudy: input.modeOfStudy,
+        language: inboundEnrolmentLanguage(input.language),
+        meetingBy: input.salespersonName ?? "",
+        declaredPaidMinor: input.declaredPaidMinor,
+        declaredPaymentMethod: input.declaredPaymentMethod,
+      },
+    } as never,
+    { all: true },
+  );
+
+  /*
+   * Straight to the model for the approval block. resubmitInvoice is the path a
+   * person takes and it insists the invoice is theirs, which is true of a
+   * counsellor in this system and never true of a signed call from another one.
+   * The transition is the same and the reason it is allowed is the same: only
+   * from returned, and only back to pending.
+   */
+  const doc = await Invoice.findOne({
+    _id: new Types.ObjectId(invoiceId),
+    organizationId: new Types.ObjectId(orgId),
+  });
+  if (doc) {
+    doc.set("approval.state", "pending");
+    doc.set("approval.submittedAt", new Date());
+    doc.set("approval.returnedReason", "");
+    doc.set("external.flags", flags);
+    await doc.save();
+    void notifyApprovers(doc as never);
+  }
+
+  logger.info(
+    { orgId, source: input.source, externalId: input.externalId, invoice: updated.invoiceNumber, flags },
+    "Returned enrolment corrected and resubmitted",
+  );
+
+  return {
+    invoiceId: updated.id,
+    invoiceNumber: updated.invoiceNumber,
+    customerId: String(updated.customerId ?? ""),
+    duplicate: false,
+    flags: flags.length > 0 ? flags : priorFlags,
   };
 }

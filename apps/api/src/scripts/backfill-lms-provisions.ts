@@ -24,8 +24,8 @@
  *
  *   cd apps/api
  *   bun run backfill:lms
- *   bun run backfill:lms --since 2026-09-01
  *   bun run backfill:lms --since 2026-09-01 --apply
+ *   bun run backfill:lms --requeue-unmapped --apply
  */
 
 import mongoose from "mongoose";
@@ -36,6 +36,10 @@ import { queueLmsProvision } from "../modules/invoice/invoice.service";
 import { lmsConfigured } from "../lib/lms-client";
 
 const APPLY = process.argv.includes("--apply");
+/* Clear the unmapped rows and queue them afresh. For after somebody has mapped
+   the catalogue item: nothing else ever will, because queueing happens at
+   approval and these invoices were approved long ago. */
+const REQUEUE = process.argv.includes("--requeue-unmapped");
 const sinceArg = process.argv[process.argv.indexOf("--since") + 1];
 const SINCE = process.argv.includes("--since") && sinceArg ? new Date(sinceArg) : null;
 
@@ -97,15 +101,62 @@ async function run() {
 
     const stuck = existing.filter((r) => r.status === "unmapped" || r.status === "failed");
     if (stuck.length > 0) {
+      const { Item } = await import("../modules/inventory/item.model");
+      const byInvoice = new Map(approved.map((i) => [String(i._id), i]));
+
       console.log("\nnot going anywhere on their own:");
       for (const r of stuck) {
+        /*
+         * Naming the item, not just the invoice.
+         *
+         * "No LMS course is mapped to the item on this invoice" is true and
+         * unhelpful: it does not say which item, and that is the one thing
+         * somebody needs in order to go and fix it.
+         */
+        const inv = byInvoice.get(String(r.invoiceId));
+        const lines = ((inv as { lineItems?: { itemId?: string; description?: string }[] } | undefined)?.lineItems) ?? [];
+        const names: string[] = [];
+        for (const line of lines) {
+          if (!line.itemId) { names.push(`${line.description ?? "a line"} — not a catalogue item at all`); continue; }
+          const item = await Item.findById(line.itemId).select("name sku lmsCourseSlug").lean<{ name?: string; sku?: string; lmsCourseSlug?: string } | null>();
+          names.push(item ? `${item.name ?? "(unnamed)"}${item.sku ? ` [${item.sku}]` : ""}` : "an item that no longer exists");
+        }
         console.log(`  ${String(r.invoiceNumber).padEnd(12)} ${String(r.status).padEnd(9)} ${r.lastError ?? ""}`);
+        for (const n of names) console.log(`               item: ${n}`);
       }
       console.log(
-        "\n  unmapped = the course has no LMS slug. Map the catalogue item, then" +
-          "\n             delete these rows so approval can queue them again." +
+        "\n  unmapped = that item has no LMS course slug. Set it on the item —" +
+          "\n             Inventory, the item, \"LMS course\" — then run this again" +
+          "\n             with --requeue-unmapped --apply. Mapping alone changes" +
+          "\n             nothing: queueing happens at approval, and these were" +
+          "\n             approved long ago." +
           "\n  failed   = the LMS refused it. The reason is above.",
       );
+    }
+
+    if (REQUEUE) {
+      const unmapped = existing.filter((r) => r.status === "unmapped");
+      if (unmapped.length === 0) {
+        console.log("\nNo unmapped rows to requeue.");
+      } else if (!APPLY) {
+        console.log(`\n--requeue-unmapped would clear and requeue ${unmapped.length}. Add --apply to do it.`);
+      } else {
+        await LmsProvision.deleteMany({ _id: { $in: unmapped.map((r) => r._id) } });
+        let again = 0;
+        for (const r of unmapped) {
+          const doc = await Invoice.findById(r.invoiceId);
+          if (!doc) continue;
+          await queueLmsProvision(String(doc.organizationId), doc as never);
+          again++;
+        }
+        const after = await LmsProvision.aggregate([
+          { $match: { invoiceId: { $in: unmapped.map((r) => r.invoiceId) } } },
+          { $group: { _id: "$status", n: { $sum: 1 } } },
+        ]);
+        console.log(`\nrequeued ${again}. They now stand at:`);
+        for (const a of after) console.log(`  ${String(a._id).padEnd(10)} ${a.n}`);
+        console.log("  (still 'unmapped' means the item's LMS course is still not set)");
+      }
     }
   }
 

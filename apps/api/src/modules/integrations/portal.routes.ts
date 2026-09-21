@@ -7,6 +7,7 @@ import { provisionFromPortal } from "./portal-provision.service";
 import {
   listRolesForPortal,
   describeUserForPortal,
+  describeManyForPortal,
   setUserRoleFromPortal,
 } from "./portal-directory.service";
 
@@ -90,6 +91,20 @@ router.post(
     const result = await setUserRoleFromPortal({ email, role, status, remoteOrgId });
     logger.info({ email, role, status }, "Portal changed an account's role");
     ok(res, result);
+  }),
+);
+
+/**
+ * The same question as /user, asked about many people at once.
+ *
+ * POST rather than GET because a page of addresses does not belong in a query
+ * string, where every proxy in front of this would log it.
+ */
+router.post(
+  "/accounts",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { emails, remoteOrgId } = (req.body ?? {}) as { emails?: unknown; remoteOrgId?: string };
+    ok(res, await describeManyForPortal({ emails, remoteOrgId }));
   }),
 );
 

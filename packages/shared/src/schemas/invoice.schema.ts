@@ -223,6 +223,20 @@ export const enrolmentInputSchema = z.object({
    */
   declaredPaidMinor: z.number().int().min(0).optional().default(0),
   declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  /*
+   * Which LMS course this enrolment is for, as the calling system named it.
+   *
+   * Kept on the enrolment because it is a fact about the enrolment, and
+   * because the alternative was losing it. The sales CRM sends this with every
+   * handover and finance used it for one thing — filling in a catalogue item's
+   * own slug — and only when a catalogue item had been mapped. So in exactly
+   * the case where nothing else can say which course this is, the one system
+   * that knew had already been told and the answer thrown away.
+   *
+   * The item still wins where there is one. This is what provisioning falls
+   * back to, not what it prefers.
+   */
+  lmsCourseSlug: z.string().trim().max(200).optional().default(""),
 });
 export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
 

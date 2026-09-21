@@ -227,7 +227,13 @@ async function main() {
     await settle();
     const row = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(inv.invoiceId) }).lean();
     check("an unmapped course is not sent", row?.status === "unmapped", `status=${row?.status}`);
-    check("...and says what is missing", /no lms course is mapped/i.test(row?.lastError ?? ""), `"${row?.lastError}"`);
+    // Both halves, because there are two ways to know the course now and the
+    // message has to say that neither of them did.
+    check(
+      "...and says what is missing",
+      /no lms course/i.test(row?.lastError ?? "") && /enrolment named none/i.test(row?.lastError ?? ""),
+      `"${row?.lastError}"`,
+    );
     const nobody = await lms.db!.collection("users").findOne({ email: "unmapped@e2e-test.com" });
     check("...so nobody is enrolled on a guess", !nobody, "a student was created anyway");
   }

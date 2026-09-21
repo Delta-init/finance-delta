@@ -77,6 +77,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           language: doc.enrolment.language,
           meetingById: doc.enrolment.meetingById ? String(doc.enrolment.meetingById) : undefined,
           meetingBy: doc.enrolment.meetingBy ?? "",
+          lmsCourseSlug: (doc.enrolment as { lmsCourseSlug?: string }).lmsCourseSlug ?? "",
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
         }
@@ -795,6 +796,20 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
       invoiceNumber: doc.invoiceNumber,
     };
 
+    /*
+     * Failing that, what the system that raised the enrolment said it was.
+     *
+     * The item is asked first because a mapping somebody set here is this
+     * system's own answer and should win. But an invoice whose line is plain
+     * text — which is what a course nobody has added to the catalogue produces
+     * — has no item to ask, and until now that ended the matter, despite the
+     * enrolment having arrived carrying the slug all along.
+     */
+    if (!courseSlug) {
+      const declared = (d.enrolment as { lmsCourseSlug?: string } | undefined)?.lmsCourseSlug?.trim();
+      if (declared) courseSlug = declared;
+    }
+
     if (!courseSlug) {
       // Recorded rather than dropped: an enrolment nobody provisioned is worth
       // finding, and "no course mapped" is the answer somebody needs.
@@ -802,7 +817,7 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         ...base,
         payload: {},
         status: "unmapped",
-        lastError: "No LMS course is mapped to the item on this invoice",
+        lastError: "No LMS course on this invoice — no catalogue item maps to one, and the enrolment named none",
       });
       const { logger } = await import("../../lib/logger");
       logger.warn({ invoice: doc.invoiceNumber }, "Approved enrolment has no LMS course mapped");

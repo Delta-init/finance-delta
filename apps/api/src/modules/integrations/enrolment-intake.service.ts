@@ -262,6 +262,9 @@ export async function intakeEnrolment(
          */
         language: inboundEnrolmentLanguage(input.language),
         meetingBy: input.salespersonName ?? "",
+        // Recorded whether or not a catalogue item was resolved — the case
+        // this exists for is the one where none was.
+        lmsCourseSlug: input.course.lmsCourseSlug?.trim() ?? "",
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },
@@ -366,6 +369,9 @@ async function resubmitReturned(
         modeOfStudy: input.modeOfStudy,
         language: inboundEnrolmentLanguage(input.language),
         meetingBy: input.salespersonName ?? "",
+        // Recorded whether or not a catalogue item was resolved — the case
+        // this exists for is the one where none was.
+        lmsCourseSlug: input.course.lmsCourseSlug?.trim() ?? "",
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },

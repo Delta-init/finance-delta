@@ -26,6 +26,8 @@
  *   bun run backfill:lms
  *   bun run backfill:lms --since 2026-09-01 --apply
  *   bun run backfill:lms --requeue-unmapped --apply
+ *   bun run backfill:lms --course-slug "Delta Wave Theory=delta-wave-theory-trading-programme" \
+ *                        --requeue-unmapped --apply
  */
 
 import mongoose from "mongoose";
@@ -40,6 +42,26 @@ const APPLY = process.argv.includes("--apply");
    the catalogue item: nothing else ever will, because queueing happens at
    approval and these invoices were approved long ago. */
 const REQUEUE = process.argv.includes("--requeue-unmapped");
+/*
+ * "The enrolments for this course are that LMS course."
+ *
+ * For invoices whose line is plain text rather than a catalogue item — which
+ * is what a course nobody has added to the catalogue produces. There is no
+ * item to map, so the usual advice does not apply, and re-queueing finds the
+ * same nothing it found before.
+ *
+ * Both sides are named by whoever runs it, and the course name must match
+ * exactly. Nothing here guesses that "Delta Wave Theory" means "DELTA WAVE
+ * THEORY TRADING PROGRAMME": enrolling somebody on the wrong course is worse
+ * than not enrolling them, and a near-match is how that happens.
+ */
+const COURSE_SLUGS = process.argv.reduce<{ course: string; slug: string }[]>((acc, a, i) => {
+  if (a !== "--course-slug" || !process.argv[i + 1]) return acc;
+  const pair = process.argv[i + 1]!;
+  const at = pair.lastIndexOf("=");
+  if (at < 1) { console.error(`--course-slug "${pair}" is not COURSE=slug`); process.exit(1); }
+  return [...acc, { course: pair.slice(0, at).trim(), slug: pair.slice(at + 1).trim() }];
+}, []);
 const sinceArg = process.argv[process.argv.indexOf("--since") + 1];
 const SINCE = process.argv.includes("--since") && sinceArg ? new Date(sinceArg) : null;
 
@@ -132,6 +154,36 @@ async function run() {
           "\n             approved long ago." +
           "\n  failed   = the LMS refused it. The reason is above.",
       );
+    }
+
+    /*
+     * Write the named slug onto the enrolments it belongs to, then let the
+     * ordinary requeue below pick them up. Onto the invoice rather than
+     * straight into a provisioning row, because that is where provisioning
+     * looks now and because the next enrolment for this course should not need
+     * this script again.
+     */
+    if (COURSE_SLUGS.length > 0) {
+      for (const { course, slug } of COURSE_SLUGS) {
+        const targets = approved.filter(
+          (i) => (i as { enrolment?: { course?: string } }).enrolment?.course === course,
+        );
+        if (targets.length === 0) {
+          console.log(`\nno approved enrolment names the course "${course}". Its courses are:`);
+          const names = new Set(approved.map((i) => (i as { enrolment?: { course?: string } }).enrolment?.course ?? ""));
+          for (const n of names) console.log(`  ${n}`);
+          continue;
+        }
+        if (!APPLY) {
+          console.log(`\n--course-slug would set "${course}" → ${slug} on ${targets.length} invoice(s).`);
+          continue;
+        }
+        await Invoice.updateMany(
+          { _id: { $in: targets.map((t) => t._id) } },
+          { $set: { "enrolment.lmsCourseSlug": slug } },
+        );
+        console.log(`\nset "${course}" → ${slug} on ${targets.length} invoice(s).`);
+      }
     }
 
     if (REQUEUE) {

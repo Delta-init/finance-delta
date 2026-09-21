@@ -760,7 +760,7 @@ async function _reconcileInventory(
  * Never throws. Approving is the approver's act; it does not fail because
  * another system is unreachable, unmapped or switched off.
  */
-async function _queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise<void> {
+export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise<void> {
   try {
     const { lmsConfigured } = await import("../../lib/lms-client");
     if (!lmsConfigured()) return;
@@ -1037,7 +1037,7 @@ export async function approveInvoice(
   await doc.save();
 
   void notifyDecided(doc, actor.name, "approved");
-  void _queueLmsProvision(orgId, doc);
+  void queueLmsProvision(orgId, doc);
   return toDTO(doc as unknown as InvoiceDoc);
 }
 

@@ -10,7 +10,8 @@
     "db:init": "bun src/scripts/db-init.ts",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"(lint) api\"",
-    "backfill:lms": "bun src/scripts/backfill-lms-provisions.ts"
+    "backfill:lms": "bun src/scripts/backfill-lms-provisions.ts",
+    "verify:lms": "bun src/scripts/verify-lms-enrolment.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1078.0",

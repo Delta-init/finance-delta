@@ -113,6 +113,7 @@ const NAV: NavGroup[] = [
     label: "Purchases",
     items: [
       { href: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList, enabled: true, permission: "po:read" },
+      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "po:read" },
       { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read" },
       { href: "/vendor-credits", label: "Vendor Credits", icon: FileX2, enabled: true, permission: "bill:read" },
       { href: "/vendors", label: "Vendors", icon: Truck, enabled: true, permission: "vendor:read" },

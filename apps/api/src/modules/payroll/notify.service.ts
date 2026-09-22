@@ -29,7 +29,8 @@ const oid = (id: string) => new Types.ObjectId(id);
  * allowed to act on a payroll run are exactly the people who need telling, and
  * a separate list would drift the moment somebody changed roles.
  */
-async function payrollRecipients(orgId: string, permission: string): Promise<string[]> {
+/** Exported so other handovers (procurement) can reach the same approvers. */
+export async function payrollRecipients(orgId: string, permission: string): Promise<string[]> {
   const roles = await Role.find({
     organizationId: oid(orgId),
     permissions: { $in: [permission, "*"] },

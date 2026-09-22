@@ -26,6 +26,7 @@ import creditNoteRoutes from "./modules/credit-note/credit-note.routes";
 import paymentRoutes from "./modules/invoice/payment.routes";
 import vendorRoutes from "./modules/vendor/vendor.routes";
 import purchaseOrderRoutes from "./modules/purchase-order/purchase-order.routes";
+import procurementRoutes from "./modules/procurement/procurement.routes";
 import billRoutes from "./modules/bill/bill.routes";
 import vendorCreditRoutes from "./modules/vendor-credit/vendor-credit.routes";
 import expenseRoutes from "./modules/expense/expense.routes";
@@ -43,6 +44,7 @@ import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
 import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
+import { startProcurementWaitingWorker } from "./jobs/procurement-waiting.worker";
 
 async function bootstrap() {
   // Before anything else: a mail misconfiguration that only shows up per-email,
@@ -99,6 +101,7 @@ async function bootstrap() {
   api.use("/payments", paymentRoutes);
   api.use("/vendors", vendorRoutes);
   api.use("/purchase-orders", purchaseOrderRoutes);
+  api.use("/procurement", procurementRoutes);
   api.use("/bills", billRoutes);
   api.use("/vendor-credits", vendorCreditRoutes);
   api.use("/expenses", expenseRoutes);
@@ -128,6 +131,7 @@ async function bootstrap() {
     void startReminderWorker();
     void startRecurringExpenseWorker();
     void startPayrollWaitingWorker();
+    void startProcurementWaitingWorker();
     startLmsProvisionWorker();
   } else {
     logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");

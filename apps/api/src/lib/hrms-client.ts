@@ -238,6 +238,26 @@ export interface HrmsBatch {
   snapshot: { employeeCount: number; grossTotal: number; deductionTotal: number; netTotal: number };
 }
 
+/** A purchase request HR has approved and passed to finance. */
+export interface HrmsProcurementRequest {
+  _id: string;
+  item: string;
+  category?: string;
+  quantity: number;
+  /** Major units, as HR entered it — convert before writing money here. */
+  estimatedCost: number;
+  currency: string;
+  vendor?: string;
+  justification?: string;
+  neededBy?: string | null;
+  resubmitCount: number;
+  department?: { _id: string; name: string } | null;
+  requestedBy?: { _id: string; name: string; email?: string } | null;
+  hrReviewedAt?: string | null;
+  hrNote?: string;
+  createdAt: string;
+}
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -381,5 +401,36 @@ export const hrmsClient = {
       }
     }
     return out;
+  },
+
+  // ── Procurement ────────────────────────────────────────────────────────────
+
+  /** What HR has approved and is waiting on the money decision. */
+  async procurementRequests(organizationId: string): Promise<HrmsProcurementRequest[]> {
+    return (await request<HrmsProcurementRequest[]>("GET", "/procurement/requests", { query: { organizationId } })).data;
+  },
+
+  /**
+   * Sign one off, naming the purchase order raised against it.
+   *
+   * The reference travels back so somebody reading the request in HRMS months
+   * later can find the order without being told which system to look in.
+   */
+  async approveProcurement(organizationId: string, id: string, opts: { purchaseOrderRef?: string; note?: string } = {}) {
+    return (
+      await request<HrmsProcurementRequest>("POST", `/procurement/requests/${id}/approve`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  async rejectProcurement(organizationId: string, id: string, opts: { note?: string } = {}) {
+    return (
+      await request<HrmsProcurementRequest>("POST", `/procurement/requests/${id}/reject`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
   },
 };

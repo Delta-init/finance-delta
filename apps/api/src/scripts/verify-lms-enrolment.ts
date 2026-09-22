@@ -37,6 +37,7 @@ import { intakeEnrolment } from "../modules/integrations/enrolment-intake.servic
 import { deleteInvoice, voidInvoice } from "../modules/invoice/invoice.service";
 import { lmsConfigured } from "../lib/lms-client";
 import { Organization } from "../modules/organization/organization.model";
+import { Item } from "../modules/inventory/item.model";
 
 const arg = (name: string): string | undefined => {
   const i = process.argv.indexOf(`--${name}`);
@@ -77,14 +78,38 @@ async function create() {
 
   const externalId = `${PREFIX}${Date.now()}`;
   const today = new Date().toISOString().slice(0, 10);
+  const org = await orgId();
 
-  const result = await intakeEnrolment(await orgId(), {
+  /*
+   * The catalogue item, looked up the way the CRM would have it.
+   *
+   * This was sending no itemId at all, which meant every run reported
+   * "not mapped to a catalogue item" — true of the payload this script wrote,
+   * and nothing whatever to do with the estate being tested. A test that
+   * cannot stop complaining is a test nobody reads, and this one sent somebody
+   * looking for a fault in a working link.
+   *
+   * By slug first, because that is the same fact the CRM course and the item
+   * both hold, then by name. A real enrolment carries the item's id because
+   * the CRM course was mapped to it; this stands in for that mapping.
+   */
+  const item = await Item.findOne({
+    organizationId: new Types.ObjectId(org),
+    $or: [{ lmsCourseSlug: slug }, { name: COURSE }],
+  }).select("_id name sku").lean<{ _id: unknown; name?: string; sku?: string } | null>();
+
+  const result = await intakeEnrolment(org, {
     externalId,
     // "crm", because provisioning deliberately ignores invoices raised inside
     // finance. A test that claimed to be anything else would test nothing.
     source: "crm",
     customer: { name: `LMS test ${new Date().toISOString().slice(0, 16)}`, email, phone },
-    course: { name: COURSE, amountMinor: 100, lmsCourseSlug: slug },
+    course: {
+      name: COURSE,
+      amountMinor: 100,
+      lmsCourseSlug: slug,
+      ...(item ? { itemId: String(item._id) } : {}),
+    },
     enrolledOn: today,
     declaredPaidMinor: 0,
     modeOfStudy: "online",
@@ -93,6 +118,11 @@ async function create() {
 
   console.log(`\nraised ${result.invoiceNumber}  (external id ${externalId})`);
   if (result.flags?.length) console.log(`  finance flagged: ${result.flags.join(" · ")}`);
+  console.log(
+    item
+      ? `  item:     ${item.name} [${item.sku}]`
+      : `  item:     none in the catalogue matches — the line will be plain text, as it is for a course the CRM has not mapped`,
+  );
   console.log(`  customer: ${email} / ${phone}`);
   console.log(`  course:   ${COURSE} → ${slug}`);
   console.log(`\nNow approve ${result.invoiceNumber} in finance. Then:`);

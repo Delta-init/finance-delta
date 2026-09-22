@@ -190,11 +190,29 @@ async function cleanup() {
   console.log(`\nThe invoice number is not returned to the sequence. There is a gap where this was.`);
 }
 
+/*
+ * A moment before hanging up.
+ *
+ * Raising an invoice fires the notice to its approvers without waiting for it
+ * — right in a server, where the reply should not be held up by an email and
+ * the process carries on afterwards. A script has no afterwards: this one
+ * disconnected the moment its own work was done, cutting the connection out
+ * from under a query that was still running, and reported a MongoClientClosed
+ * error for something that had in fact gone fine.
+ *
+ * There is nothing to await — that is the point of firing it that way — so
+ * this gives it a beat. Two seconds against an invoice raised once by hand,
+ * and the notice actually reaches the approver rather than dying on the way.
+ */
+async function settle(ms = 2000) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function run() {
   await connectDb();
-  if (has("create")) await create();
+  if (has("create")) { await create(); await settle(); }
   else if (has("check")) await check();
-  else if (has("cleanup")) await cleanup();
+  else if (has("cleanup")) { await cleanup(); await settle(); }
   else {
     console.log("One of --create, --check or --cleanup. See the comment at the top of this file.");
   }

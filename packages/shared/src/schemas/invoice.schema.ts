@@ -452,6 +452,32 @@ export type ReturnInvoiceInput = z.infer<typeof returnInvoiceSchema>;
  * whether it needs approving — is decided here, because those are this system's
  * rules and a caller that could set them could quietly bypass them.
  */
+/** One course on one enrolment — one line on the invoice it becomes. */
+export const inboundEnrolmentCourseSchema = z.object({
+  name: z.string().min(1).max(160),
+  /** The finance inventory item, where the caller has mapped one. */
+  itemId: z.string().optional(),
+  amountMinor: z.number().int().min(0),
+  /**
+   * The code this course is sold under, where the calling system keeps one.
+   *
+   * A GST invoice needs it per line, and the CRM is where somebody who knows
+   * the course sets it. Falls back to the mapped item's code, then to the
+   * organization's default, so a caller that knows nothing about tax codes
+   * still produces a valid invoice.
+   */
+  hsnSac: z.string().max(20).optional(),
+  /**
+   * Which course this is in the LMS, where the calling system knows.
+   *
+   * The mapping lives on the finance item, because that is what an approval
+   * reads. This is how it gets there without being typed twice: a caller
+   * that already knows the slug says so, and an item with no mapping of its
+   * own learns it from the first enrolment that carries one.
+   */
+  lmsCourseSlug: z.string().max(200).optional(),
+});
+
 export const inboundEnrolmentSchema = z.object({
   /**
    * The caller's own id for this enrolment.
@@ -469,30 +495,23 @@ export const inboundEnrolmentSchema = z.object({
     phone: z.string().min(1).max(30),
   }),
 
-  course: z.object({
-    name: z.string().min(1).max(160),
-    /** The finance inventory item, where the caller has mapped one. */
-    itemId: z.string().optional(),
-    amountMinor: z.number().int().min(0),
-    /**
-     * The code this course is sold under, where the calling system keeps one.
-     *
-     * A GST invoice needs it per line, and the CRM is where somebody who knows
-     * the course sets it. Falls back to the mapped item's code, then to the
-     * organization's default, so a caller that knows nothing about tax codes
-     * still produces a valid invoice.
-     */
-    hsnSac: z.string().max(20).optional(),
-    /**
-     * Which course this is in the LMS, where the calling system knows.
-     *
-     * The mapping lives on the finance item, because that is what an approval
-     * reads. This is how it gets there without being typed twice: a caller
-     * that already knows the slug says so, and an item with no mapping of its
-     * own learns it from the first enrolment that carries one.
-     */
-    lmsCourseSlug: z.string().max(200).optional(),
-  }),
+  /** One course. Most callers send this — a sale is usually one course. */
+  course: inboundEnrolmentCourseSchema.optional(),
+  /**
+   * More than one, on the same invoice.
+   *
+   * For a caller whose sale genuinely is several courses at once — Draw's
+   * enrolments hold an array from the start, unlike Delta's — rather than
+   * raising one invoice per course, which would scatter one sale across
+   * several documents an approver has to find and reconcile separately.
+   * Billed as one line each, on one invoice, to one customer.
+   *
+   * LMS provisioning still follows the first course only. Enrolling a
+   * student in more than one course automatically from one approval is a
+   * real extension of that pipeline's own assumptions and is not done here;
+   * every course still appears on the bill.
+   */
+  courses: z.array(inboundEnrolmentCourseSchema).min(1).max(20).optional(),
 
   /** Who sold it, by email. Attributed to the fallback when unknown here. */
   salespersonEmail: z.string().email().optional(),
@@ -526,8 +545,11 @@ export const inboundEnrolmentSchema = z.object({
     })
     .optional(),
   notes: z.string().max(2000).optional(),
+}).refine((v) => Boolean(v.course) !== Boolean(v.courses), {
+  message: "Send exactly one of course or courses, not both and not neither",
 });
 export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;
+export type InboundEnrolmentCourse = z.infer<typeof inboundEnrolmentCourseSchema>;
 
 /**
  * The language to record for an enrolment that arrived from another system.

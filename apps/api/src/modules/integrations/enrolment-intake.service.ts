@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { inboundEnrolmentLanguage } from "@delta/shared";
-import type { InboundEnrolmentInput, InboundEnrolmentResult } from "@delta/shared";
+import type { InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
@@ -32,6 +32,18 @@ import { notifyApprovers } from "../invoice/approval-notify.service";
  */
 function flag(flags: string[], message: string): void {
   if (!flags.includes(message)) flags.push(message);
+}
+
+/**
+ * The courses on this enrolment, however the caller sent them.
+ *
+ * Most send one; the schema keeps `course` as the plain, singular shape for
+ * them. A caller whose sale genuinely is several at once sends `courses`
+ * instead — the schema itself refuses a request carrying both or neither, so
+ * by the time anything gets here exactly one of the two is present.
+ */
+function linesOf(input: InboundEnrolmentInput): InboundEnrolmentCourse[] {
+  return input.courses ?? [input.course!];
 }
 
 /** Who to bill this against when the CRM's rep is not somebody here. */
@@ -90,19 +102,19 @@ async function resolveSalesperson(
  */
 async function resolveItem(
   orgId: string,
-  input: InboundEnrolmentInput,
+  course: InboundEnrolmentCourse,
   flags: string[],
 ): Promise<string | undefined> {
-  if (!input.course.itemId) {
-    flag(flags, `"${input.course.name}" is not mapped to a catalogue item.`);
+  if (!course.itemId) {
+    flag(flags, `"${course.name}" is not mapped to a catalogue item.`);
     return undefined;
   }
   const item = await Item.findOne({
-    _id: new Types.ObjectId(input.course.itemId),
+    _id: new Types.ObjectId(course.itemId),
     organizationId: new Types.ObjectId(orgId),
   }).select("_id");
   if (!item) {
-    flag(flags, `The catalogue item sent for "${input.course.name}" does not exist here.`);
+    flag(flags, `The catalogue item sent for "${course.name}" does not exist here.`);
     return undefined;
   }
   return String(item._id);
@@ -183,10 +195,11 @@ export async function intakeEnrolment(
 
   const flags: string[] = [];
   const salesperson = await resolveSalesperson(orgId, input, flags);
-  const itemId = await resolveItem(orgId, input, flags);
+  const lines = linesOf(input);
+  const itemIds = await Promise.all(lines.map((line) => resolveItem(orgId, line, flags)));
 
   /*
-   * Teach the item its LMS course, once.
+   * Teach each mapped item its LMS course, once.
    *
    * The approval reads the mapping off the item, and somebody has to put it
    * there. A caller that already knows which course this is can save them the
@@ -194,11 +207,14 @@ export async function intakeEnrolment(
    * wins, because whoever set it there did so deliberately and a sales system
    * should not be able to move where an approved enrolment sends students.
    */
-  if (itemId && input.course.lmsCourseSlug?.trim()) {
+  for (let i = 0; i < lines.length; i++) {
+    const itemId = itemIds[i];
+    const slug = lines[i]!.lmsCourseSlug?.trim();
+    if (!itemId || !slug) continue;
     const { Item } = await import("../inventory/item.model");
     await Item.updateOne(
       { _id: new Types.ObjectId(itemId), organizationId: orgId, $or: [{ lmsCourseSlug: "" }, { lmsCourseSlug: { $exists: false } }] },
-      { $set: { lmsCourseSlug: input.course.lmsCourseSlug.trim() } },
+      { $set: { lmsCourseSlug: slug } },
     ).catch(() => {});
   }
 
@@ -239,21 +255,34 @@ export async function intakeEnrolment(
        * to prevent.
        */
       taxInclusive: true,
-      lineItems: [
-        {
-          description: input.course.name,
-          quantity: 1,
-          unitPriceMinor: input.course.amountMinor,
-          taxes,
-          ...(itemId ? { itemId } : {}),
-          // The CRM's own code for the course, where it keeps one. Left off
-          // when it does not, so the mapped item's code or the organization's
-          // default decides instead.
-          ...(input.course.hsnSac?.trim() ? { hsnSac: input.course.hsnSac.trim() } : {}),
-        },
-      ],
+      /*
+       * One line per course. A caller with a single course sends one line, the
+       * same as ever; a caller whose sale is several courses bills them on one
+       * invoice rather than scattering the sale across several documents an
+       * approver would have to find and reconcile separately.
+       */
+      lineItems: lines.map((line, i) => ({
+        description: line.name,
+        quantity: 1,
+        unitPriceMinor: line.amountMinor,
+        taxes,
+        ...(itemIds[i] ? { itemId: itemIds[i] } : {}),
+        // The CRM's own code for the course, where it keeps one. Left off
+        // when it does not, so the mapped item's code or the organization's
+        // default decides instead.
+        ...(line.hsnSac?.trim() ? { hsnSac: line.hsnSac.trim() } : {}),
+      })),
       enrolment: {
-        course: input.course.name,
+        /*
+         * The first course, not the whole list.
+         *
+         * This block is what a notification quotes and what a report groups
+         * by — a summary, not the bill. The bill is the line items above,
+         * which already carry every course in full. LMS provisioning also
+         * follows this one course only; see the schema's own note on
+         * `courses` for why enrolling on more than one is not automatic yet.
+         */
+        course: lines[0]!.name,
         modeOfStudy: input.modeOfStudy,
         /*
          * Not flagged: a flag on every single record from one caller is noise,
@@ -264,7 +293,7 @@ export async function intakeEnrolment(
         meetingBy: input.salespersonName ?? "",
         // Recorded whether or not a catalogue item was resolved — the case
         // this exists for is the one where none was.
-        lmsCourseSlug: input.course.lmsCourseSlug?.trim() ?? "",
+        lmsCourseSlug: lines[0]!.lmsCourseSlug?.trim() ?? "",
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },
@@ -341,7 +370,8 @@ async function resubmitReturned(
 ): Promise<InboundEnrolmentResult> {
   const flags: string[] = [];
   const salesperson = await resolveSalesperson(orgId, input, flags);
-  const itemId = await resolveItem(orgId, input, flags);
+  const lines = linesOf(input);
+  const itemIds = await Promise.all(lines.map((line) => resolveItem(orgId, line, flags)));
   const taxes = await defaultSalesTaxes(orgId);
   const enrolledOn = input.enrolledOn?.slice(0, 10) || new Date().toISOString().slice(0, 10);
 
@@ -354,24 +384,22 @@ async function resubmitReturned(
       dueDate: enrolledOn,
       notes: input.notes ?? "",
       taxInclusive: true,
-      lineItems: [
-        {
-          description: input.course.name,
-          quantity: 1,
-          unitPriceMinor: input.course.amountMinor,
-          taxes,
-          ...(itemId ? { itemId } : {}),
-          ...(input.course.hsnSac?.trim() ? { hsnSac: input.course.hsnSac.trim() } : {}),
-        },
-      ],
+      lineItems: lines.map((line, i) => ({
+        description: line.name,
+        quantity: 1,
+        unitPriceMinor: line.amountMinor,
+        taxes,
+        ...(itemIds[i] ? { itemId: itemIds[i] } : {}),
+        ...(line.hsnSac?.trim() ? { hsnSac: line.hsnSac.trim() } : {}),
+      })),
       enrolment: {
-        course: input.course.name,
+        course: lines[0]!.name,
         modeOfStudy: input.modeOfStudy,
         language: inboundEnrolmentLanguage(input.language),
         meetingBy: input.salespersonName ?? "",
         // Recorded whether or not a catalogue item was resolved — the case
         // this exists for is the one where none was.
-        lmsCourseSlug: input.course.lmsCourseSlug?.trim() ?? "",
+        lmsCourseSlug: lines[0]!.lmsCourseSlug?.trim() ?? "",
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },

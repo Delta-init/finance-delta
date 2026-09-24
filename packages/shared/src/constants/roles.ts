@@ -59,6 +59,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "expense:create",
       "expense:update",
       "expense:approve",
+      "budget:read",
+      "budget:approve",
       "report:read",
       "ledger:read",
       "commission:read",
@@ -98,6 +100,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "ledger:read",
       "ledger:write",
       "organization:read",
+      "budget:read",
+      "budget:manage",
+      "budget:approve",
     ] satisfies Permission[],
     isSystem: true,
   },
@@ -138,6 +143,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     description:
       "Take enrolments and raise the invoices for them. Sees nothing belonging to anybody else, and cannot send an invoice or record a payment until it is approved.",
     permissions: [
+      "budget:read:own",
+      "budget:request",
       // Their own enrolments and nothing else. The `:own` variants are enforced
       // on the rows rather than the route; the unscoped `invoice:read` would
       // return the whole company's billing.

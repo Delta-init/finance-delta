@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Landmark, CheckCircle2, XCircle, Trash2, ChevronDown, ChevronUp,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import {
   useRecordRepayment,
   useDeleteRepayment,
   useUpdateLoan,
+  useDeleteLoan,
 } from "@/features/loans/api";
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -37,6 +39,7 @@ export default function LoanDetailPage() {
   const { mutate: recordRepayment, isPending: recording } = useRecordRepayment(id);
   const { mutate: deleteRepayment } = useDeleteRepayment(id);
   const { mutate: updateLoan } = useUpdateLoan();
+  const { mutate: deleteLoan, isPending: deleting } = useDeleteLoan();
 
   const [showForm, setShowForm] = useState(false);
   const [paidOn, setPaidOn] = useState(today());
@@ -76,11 +79,11 @@ export default function LoanDetailPage() {
 
   if (!loan) return null;
 
+  const isClosed = loan.status === "closed";
   const progressPct = loan.principalMinor > 0
     ? Math.min(100, (loan.totalRepaidPrincipalMinor / loan.principalMinor) * 100)
     : 0;
 
-  const isClosed = loan.status === "closed";
   const suggestedInterest = loan.accruedInterestMinor > 0
     ? (loan.accruedInterestMinor / 100).toFixed(2)
     : "0.00";
@@ -92,8 +95,25 @@ export default function LoanDetailPage() {
         title={loan.loanNumber}
         description={`${loan.type === "taken" ? "Borrowed from" : "Lent to"} ${loan.counterpartyName}`}
         action={
-          !isClosed ? (
-            <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/loans/${id}/edit`}>
+              <Button variant="outline" size="sm">Edit Loan</Button>
+            </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={deleting || !!repayments?.length}
+              title={repayments?.length ? "Loans with repayment history cannot be deleted" : undefined}
+              className="text-danger border-danger/30 hover:bg-danger/5"
+              onClick={() => {
+                if (window.confirm(`Delete ${loan.loanNumber}? This cannot be undone.`)) {
+                  deleteLoan(id, { onSuccess: () => router.push("/loans") });
+                }
+              }}
+            >
+              <Trash2 className="h-4 w-4" /> {deleting ? "Deleting…" : "Delete Loan"}
+            </Button>
+            {!isClosed && <>
               <Button
                 variant="outline"
                 size="sm"
@@ -109,8 +129,8 @@ export default function LoanDetailPage() {
               >
                 <XCircle className="h-4 w-4" /> Mark Defaulted
               </Button>
-            </div>
-          ) : undefined
+            </>}
+          </div>
         }
       />
 

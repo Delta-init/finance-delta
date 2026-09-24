@@ -104,6 +104,11 @@ export const PERMISSIONS = [
   "inventory:delete",
 
   // Finance
+  "budget:read",
+  "budget:read:own",
+  "budget:manage",
+  "budget:request",
+  "budget:approve",
   "report:read",
   "ledger:read",
   "ledger:write",

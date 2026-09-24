@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Landmark, Plus, TrendingDown, TrendingUp, AlertCircle } from "lucide-react";
+import { Landmark, Plus, TrendingDown, TrendingUp, AlertCircle, Pencil, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
-import { useLoans, useLoanReport } from "@/features/loans/api";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useDeleteLoan, useLoans, useLoanReport } from "@/features/loans/api";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
   active: "warning",
@@ -25,6 +27,18 @@ const FREQ_LABELS: Record<string, string> = {
 export default function LoansPage() {
   const { data: report, isLoading: reportLoading } = useLoanReport();
   const { data: activeData, isLoading: listLoading } = useLoans({ status: "active", pageSize: 50 });
+  const deleteLoan = useDeleteLoan();
+
+  async function handleDeleteLoan(id: string, loanNumber: string) {
+    if (!window.confirm(`Delete ${loanNumber}? Loans with repayment history cannot be deleted.`)) return;
+
+    try {
+      await deleteLoan.mutateAsync(id);
+      toast.success(`${loanNumber} deleted`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Failed to delete loan");
+    }
+  }
 
   const summaryCards = [
     {
@@ -155,6 +169,7 @@ export default function LoansPage() {
                   <th className="px-4 py-3 text-right font-medium text-foreground-muted">Rate</th>
                   <th className="px-4 py-3 text-left font-medium text-foreground-muted">Due</th>
                   <th className="px-4 py-3 text-left font-medium text-foreground-muted">Freq</th>
+                  <th className="px-4 py-3 text-right font-medium text-foreground-muted">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -191,6 +206,30 @@ export default function LoansPage() {
                     </td>
                     <td className="px-4 py-3 text-foreground-muted">
                       {FREQ_LABELS[loan.repaymentFrequency]}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <Link
+                          href={`/loans/${loan.id}/edit`}
+                          aria-label={`Edit ${loan.loanNumber}`}
+                          title="Edit loan"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-surface-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Link>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Delete ${loan.loanNumber}`}
+                          title="Delete loan"
+                          className="text-danger hover:text-danger"
+                          loading={deleteLoan.isPending}
+                          onClick={() => void handleDeleteLoan(loan.id, loan.loanNumber)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

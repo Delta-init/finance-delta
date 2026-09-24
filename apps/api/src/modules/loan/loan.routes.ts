@@ -12,6 +12,7 @@ router.get("/report", requirePermission("loan:read"), c.loanReport);
 router.get("/:id", requirePermission("loan:read"), c.getLoan);
 router.post("/", requirePermission("loan:write"), c.createLoan);
 router.patch("/:id", requirePermission("loan:write"), c.updateLoan);
+router.delete("/:id", requirePermission("loan:write"), c.deleteLoan);
 
 // Repayments (nested under loan)
 router.get("/:id/repayments", requirePermission("loan:read"), c.listRepayments);

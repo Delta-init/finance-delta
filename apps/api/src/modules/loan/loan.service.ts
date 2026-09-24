@@ -198,14 +198,32 @@ export async function updateLoan(
 ): Promise<LoanDTO> {
   const doc = await Loan.findOne({ _id: oid(id), organizationId: oid(orgId) });
   if (!doc) throw new AppError("NOT_FOUND", "Loan not found");
+  const repaid = await LoanRepayment.aggregate([
+    { $match: { loanId: oid(id), organizationId: oid(orgId) } },
+    { $group: { _id: null, principal: { $sum: "$principalMinor" } } },
+  ]);
+  if (input.principalMinor !== undefined && input.principalMinor < (repaid[0]?.principal ?? 0)) {
+    throw new AppError("VALIDATION_ERROR", "Principal cannot be less than principal already repaid");
+  }
   const d = doc as unknown as Record<string, unknown>;
-  if (input.status !== undefined) d.status = input.status;
-  if (input.dueDate !== undefined) d.dueDate = input.dueDate;
-  if (input.notes !== undefined) d.notes = input.notes;
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) d[key] = value;
+  }
   await doc.save();
 
   const repayments = await LoanRepayment.find({ loanId: oid(id), organizationId: oid(orgId) }).lean();
   return loanToDTO(doc as unknown as LoanDoc, repayments as unknown as LoanRepaymentDoc[]);
+}
+
+export async function deleteLoan(orgId: string, id: string): Promise<void> {
+  const filter = { _id: oid(id), organizationId: oid(orgId) };
+  const doc = await Loan.findOne(filter);
+  if (!doc) throw new AppError("NOT_FOUND", "Loan not found");
+  const repaymentCount = await LoanRepayment.countDocuments({ loanId: oid(id), organizationId: oid(orgId) });
+  if (repaymentCount > 0) {
+    throw new AppError("VALIDATION_ERROR", "This loan has repayment history and cannot be deleted");
+  }
+  await doc.deleteOne();
 }
 
 // ── Repayments ────────────────────────────────────────────────────────────────

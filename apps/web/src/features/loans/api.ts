@@ -59,6 +59,18 @@ export function useUpdateLoan() {
   });
 }
 
+export function useDeleteLoan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<void>(`loans/${id}`),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: [...KEY, "report"] });
+      qc.removeQueries({ queryKey: [...KEY, id] });
+    },
+  });
+}
+
 // ── Repayments ────────────────────────────────────────────────────────────────
 
 export function useRepayments(loanId: string) {

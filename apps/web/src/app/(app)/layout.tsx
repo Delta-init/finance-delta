@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { SiteHeader } from "@/components/dashboard/site-header";
 import { OrgPickerModal } from "@/components/org-picker/OrgPickerModal";
+import { RootPortalHistoryBridge } from "@/components/root-portal-history-bridge";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -19,6 +20,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider>
+      <RootPortalHistoryBridge />
       <AppSidebar
         user={{
           name: session.user.name ?? "User",

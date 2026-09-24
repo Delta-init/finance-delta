@@ -23,10 +23,18 @@ export const createLoanSchema = z.object({
 export type CreateLoanInput = z.infer<typeof createLoanSchema>;
 
 export const updateLoanSchema = z.object({
+  type: z.enum(["taken", "given"]).optional(),
+  counterpartyName: z.string().min(1).optional(),
+  counterpartyType: z.enum(["customer", "vendor", "other"]).optional(),
+  principalMinor: z.number().int().min(1).optional(),
+  interestRate: z.number().min(0).max(100).optional(),
+  interestType: z.enum(["simple", "compound"]).optional(),
+  startDate: dateStr.optional(),
   status: z.enum(["active", "closed", "defaulted"]).optional(),
   dueDate: dateStr.optional(),
+  repaymentFrequency: z.enum(["monthly", "quarterly", "annually", "bullet", "none"]).optional(),
   notes: z.string().optional(),
-});
+}).refine((input) => Object.keys(input).length > 0, "At least one field must be provided");
 export type UpdateLoanInput = z.infer<typeof updateLoanSchema>;
 
 export const loanQuerySchema = z.object({

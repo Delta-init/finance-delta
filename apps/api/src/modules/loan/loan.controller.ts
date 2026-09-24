@@ -34,6 +34,11 @@ export const updateLoan = asyncHandler(async (req, res) => {
   ok(res, await svc.updateLoan(org(req), req.params.id!, input));
 });
 
+export const deleteLoan = asyncHandler(async (req, res) => {
+  await svc.deleteLoan(org(req), req.params.id!);
+  res.status(204).end();
+});
+
 // ── Repayments ────────────────────────────────────────────────────────────────
 
 export const listRepayments = asyncHandler(async (req, res) => {

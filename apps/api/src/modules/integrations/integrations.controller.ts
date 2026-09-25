@@ -1,10 +1,11 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
 import { Invoice } from "../invoice/invoice.model";
 import { intakeEnrolment } from "./enrolment-intake.service";
+import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 
 /**
  * A signed machine call carries no session, so it carries no organization
@@ -110,4 +111,30 @@ export const enrolmentStatuses = asyncHandler(async (req: Request, res: Response
       };
     }),
   );
+});
+
+/**
+ * A fund request from another system: money out of a department's allocation,
+ * waiting for somebody in finance to approve it.
+ */
+export const takeFundingRequest = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const parsed = inboundFundingRequestSchema.parse(req.body);
+  ok(res, await intakeFundingRequest(orgId, parsed));
+});
+
+/**
+ * Where those requests got to. The decision, who made it and their note —
+ * enough for the requester to be told, and nothing of the rest of the budget.
+ */
+export const fundingRequestStatuses = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const source = String(req.body?.source ?? "").trim();
+  const rawIds = Array.isArray(req.body?.externalIds) ? req.body.externalIds : [];
+
+  if (!source) throw new AppError("VALIDATION_ERROR", "source is required");
+  const externalIds = rawIds.map((v: unknown) => String(v).trim()).filter(Boolean).slice(0, 200);
+  if (externalIds.length === 0) return ok(res, []);
+
+  ok(res, await statusesOfFundingRequests(orgId, source, externalIds));
 });

@@ -1,10 +1,11 @@
 import { Types } from "mongoose";
-import type { BudgetQuery, BudgetSummaryRow, CreateFundingRequestInput, FundingRequest, ReviewFundingRequestInput, UpsertBudgetAllocationInput, BudgetAllocation } from "@delta/shared";
+import type { BudgetQuery, BudgetSummaryRow, CreateFundingRequestInput, FundingRequest, InboundFundingRequest, ReviewFundingRequestInput, UpsertBudgetAllocationInput, BudgetAllocation } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { Department } from "../department/department.model";
 import { Expense } from "../expense/expense.model";
 import { User } from "../user/user.model";
 import { BudgetAllocationModel, FundingRequestModel } from "./budget.model";
+import { notifyFundingApprovers } from "./budget-notify.service";
 
 function refId(value: unknown): string { return String(value ?? ""); }
 
@@ -40,7 +41,8 @@ function requestDTO(row: any): FundingRequest {
     id: refId(row._id), departmentId: refId(row.departmentId?._id ?? row.departmentId),
     departmentName: row.departmentId?.name ?? "Department", period: row.period, currency: row.currency,
     amountMinor: row.amountMinor, title: row.title, purpose: row.purpose, status: row.status,
-    requestedById: refId(row.requestedById), requestedByName: row.requestedByName,
+    kind: row.kind === "drawdown" ? "drawdown" : "topup", source: row.external?.source || "finance", platform: row.platform ?? "",
+    requestedById: refId(row.requestedById), requestedByName: row.requestedByName, requestedByEmail: row.requestedByEmail || undefined,
     requestedAt: new Date(row.createdAt).toISOString(), reviewedByName: row.reviewedByName || undefined,
     reviewedAt: row.reviewedAt ? new Date(row.reviewedAt).toISOString() : undefined, reviewNote: row.reviewNote || undefined,
   };
@@ -70,7 +72,8 @@ export async function getBudgetSummary(organizationId: string, userId: string, q
     BudgetAllocationModel.find({ organizationId: orgObjectId, departmentId: { $in: departmentIds }, period: periodFilter }).lean(),
     FundingRequestModel.aggregate([
       { $match: { organizationId: orgObjectId, departmentId: { $in: departmentIds }, period: periodFilter } },
-      { $group: { _id: { departmentId: "$departmentId", period: "$period", currency: "$currency", status: "$status" }, amountMinor: { $sum: "$amountMinor" }, count: { $sum: 1 } } },
+      // Rows from before drawdowns existed carry no kind, and were all top-ups.
+      { $group: { _id: { departmentId: "$departmentId", period: "$period", currency: "$currency", status: "$status", kind: { $ifNull: ["$kind", "topup"] } }, amountMinor: { $sum: "$amountMinor" }, count: { $sum: 1 } } },
     ]),
     Expense.aggregate([
       { $match: { organizationId: orgObjectId, departmentId: { $in: departmentIds }, status: "approved", expenseDate: { $gte: start, $lt: end } } },
@@ -84,7 +87,7 @@ export async function getBudgetSummary(organizationId: string, userId: string, q
     const key = `${departmentId}|${period}|${currency}`;
     let row = rows.get(key);
     if (!row) {
-      row = { departmentId, departmentName: deptNames.get(departmentId) ?? "Department", period, currency, allocatedMinor: 0, approvedRequestsMinor: 0, approvedExpensesMinor: 0, availableMinor: 0, pendingRequests: 0 };
+      row = { departmentId, departmentName: deptNames.get(departmentId) ?? "Department", period, currency, allocatedMinor: 0, approvedRequestsMinor: 0, approvedDrawdownsMinor: 0, approvedExpensesMinor: 0, availableMinor: 0, pendingRequests: 0 };
       rows.set(key, row);
     }
     return row;
@@ -92,11 +95,14 @@ export async function getBudgetSummary(organizationId: string, userId: string, q
   for (const a of allocations) ensure(String(a.departmentId), a.period, a.currency).allocatedMinor = a.allocatedMinor;
   for (const r of requests) {
     const row = ensure(String(r._id.departmentId), r._id.period, r._id.currency);
-    if (r._id.status === "approved") row.approvedRequestsMinor = r.amountMinor;
+    if (r._id.status === "approved") {
+      if (r._id.kind === "drawdown") row.approvedDrawdownsMinor += r.amountMinor;
+      else row.approvedRequestsMinor += r.amountMinor;
+    }
     if (r._id.status === "submitted") row.pendingRequests += r.count;
   }
   for (const e of expenses) ensure(String(e._id.departmentId), e._id.period, e._id.currency).approvedExpensesMinor = e.amountMinor;
-  for (const row of rows.values()) row.availableMinor = row.allocatedMinor + row.approvedRequestsMinor - row.approvedExpensesMinor;
+  for (const row of rows.values()) row.availableMinor = row.allocatedMinor + row.approvedRequestsMinor - row.approvedDrawdownsMinor - row.approvedExpensesMinor;
   return [...rows.values()].sort((a, b) => a.period.localeCompare(b.period) || a.departmentName.localeCompare(b.departmentName) || a.currency.localeCompare(b.currency));
 }
 
@@ -148,15 +154,140 @@ export async function listFundingRequests(organizationId: string, userId: string
   return rows.map(requestDTO);
 }
 
+/**
+ * What one department has left in one month, in one currency.
+ *
+ * The summary's own arithmetic rather than a second copy of it, so the figure
+ * an approval is refused on is the figure the Budgets page shows.
+ */
+async function monthAvailable(organizationId: string, departmentId: string, period: string, currency: string): Promise<number> {
+  const rows = await getBudgetSummary(organizationId, "", { year: Number(period.slice(0, 4)), month: period, departmentId }, true);
+  return rows.find((row) => row.currency === currency)?.availableMinor ?? 0;
+}
+
+function money(minor: number, currency: string): string {
+  return `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function monthName(period: string): string {
+  return new Date(`${period}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function overBudget(departmentName: string, period: string, currency: string, availableMinor: number, amountMinor: number): AppError {
+  const left = availableMinor > 0 ? `has ${money(availableMinor, currency)} left` : "has nothing left";
+  return new AppError(
+    "CONFLICT",
+    `${departmentName} ${left} for ${monthName(period)}, and this request is ${money(amountMinor, currency)}. Raise the allocation first, or reject the request.`,
+  );
+}
+
 export async function reviewFundingRequest(organizationId: string, userId: string, input: ReviewFundingRequestInput, requestId: string) {
   if (!Types.ObjectId.isValid(requestId)) throw new AppError("NOT_FOUND", "Funding request not found");
   const user = await User.findOne({ _id: userId, "memberships.organizationId": organizationId }).select("name").lean();
   if (!user) throw new AppError("FORBIDDEN", "User membership not found");
+  const orgObjectId = new Types.ObjectId(organizationId);
+
+  /*
+   * A drawdown spends the department's allocation, so it may not spend more
+   * than is left of it. Checked before the approval is written and again
+   * after: two approvals against the same month can each fit on their own and
+   * together overspend it, and whichever finds the month overdrawn afterwards
+   * puts its own request back rather than leaving the overspend standing.
+   */
+  const pending = await FundingRequestModel.findOne({ _id: requestId, organizationId: orgObjectId, status: "submitted" }).populate("departmentId", "name").lean();
+  const guarded = input.decision === "approved" && pending?.kind === "drawdown";
+  const guard = guarded && pending ? {
+    departmentId: refId((pending.departmentId as any)?._id ?? pending.departmentId),
+    departmentName: (pending.departmentId as any)?.name ?? "The department",
+    period: pending.period, currency: pending.currency, amountMinor: pending.amountMinor,
+  } : null;
+  if (guard) {
+    const available = await monthAvailable(organizationId, guard.departmentId, guard.period, guard.currency);
+    if (guard.amountMinor > available) throw overBudget(guard.departmentName, guard.period, guard.currency, available, guard.amountMinor);
+  }
+
+  const reviewedAt = new Date();
   const row = await FundingRequestModel.findOneAndUpdate(
-    { _id: requestId, organizationId: new Types.ObjectId(organizationId), status: "submitted", requestedById: { $ne: new Types.ObjectId(userId) } },
-    { $set: { status: input.decision, reviewedById: new Types.ObjectId(userId), reviewedByName: user.name, reviewedAt: new Date(), reviewNote: input.note } },
+    { _id: requestId, organizationId: orgObjectId, status: "submitted", requestedById: { $ne: new Types.ObjectId(userId) } },
+    { $set: { status: input.decision, reviewedById: new Types.ObjectId(userId), reviewedByName: user.name, reviewedAt, reviewNote: input.note } },
     { new: true },
   ).populate("departmentId", "name").lean();
   if (!row) throw new AppError("CONFLICT", "Request is unavailable, already reviewed, or you cannot approve your own request");
+
+  if (guard) {
+    const after = await monthAvailable(organizationId, guard.departmentId, guard.period, guard.currency);
+    if (after < 0) {
+      await FundingRequestModel.updateOne(
+        { _id: row._id, status: "approved", reviewedById: new Types.ObjectId(userId), reviewedAt },
+        { $set: { status: "submitted", reviewNote: "" }, $unset: { reviewedById: 1, reviewedByName: 1, reviewedAt: 1 } },
+      );
+      throw overBudget(guard.departmentName, guard.period, guard.currency, after + guard.amountMinor, guard.amountMinor);
+    }
+  }
   return requestDTO(row);
+}
+
+/**
+ * A fund request handed over by another system — Media ERP asking for ad spend
+ * against Marketing's allocation. Always a drawdown, always waiting for review.
+ *
+ * Idempotent on the caller's own id: the case this is built for is a retry
+ * after a timeout, which must return the request already made rather than put
+ * a second one in front of an approver.
+ */
+export async function intakeFundingRequest(organizationId: string, input: InboundFundingRequest): Promise<FundingRequest> {
+  // The unique key on the caller's id is what makes a retry safe, and Mongoose
+  // builds it in the background after start-up. Wait for it (a no-op once
+  // built), so the first deliveries after a deploy cannot slip in twice.
+  await FundingRequestModel.init();
+  const orgObjectId = new Types.ObjectId(organizationId);
+  const department = await Department.findOne({ _id: input.departmentId, organizationId }).select("name").lean();
+  if (!department) throw new AppError("VALIDATION_ERROR", "Department not found in this organization");
+
+  const key = { organizationId: orgObjectId, "external.source": input.source, "external.externalId": input.externalId };
+  const existing = await FundingRequestModel.findOne(key).populate("departmentId", "name").lean();
+  if (existing) return requestDTO(existing);
+
+  let row;
+  try {
+    row = await FundingRequestModel.create({
+      organizationId: orgObjectId, departmentId: department._id, period: input.period, currency: input.currency,
+      amountMinor: input.amountMinor, title: input.title, purpose: input.purpose, platform: input.platform,
+      kind: "drawdown", status: "submitted", external: { source: input.source, externalId: input.externalId },
+      requestedByName: input.requestedBy.name, requestedByEmail: input.requestedBy.email,
+    });
+  } catch (error) {
+    // Two deliveries of the same request can race past the lookup above; the
+    // unique key lets exactly one in, and the other gets the one that won.
+    if ((error as { code?: number }).code !== 11000) throw error;
+    const raced = await FundingRequestModel.findOne(key).populate("departmentId", "name").lean();
+    if (!raced) throw error;
+    return requestDTO(raced);
+  }
+
+  const dto = requestDTO({ ...row.toObject(), departmentId: { _id: department._id, name: department.name } });
+  // Nobody in finance would otherwise know it arrived: the requester has no
+  // login here to chase it with.
+  void notifyFundingApprovers(organizationId, dto);
+  return dto;
+}
+
+/** What became of the requests a calling system handed over, by its own ids. */
+export async function fundingRequestStatuses(organizationId: string, source: string, externalIds: string[]) {
+  const rows = await FundingRequestModel.find({
+    organizationId: new Types.ObjectId(organizationId),
+    "external.source": source,
+    "external.externalId": { $in: externalIds },
+  }).select("external status amountMinor currency period reviewedByName reviewedAt reviewNote").lean();
+  return rows.map((row) => ({
+    externalId: row.external?.externalId ?? "",
+    id: refId(row._id),
+    status: row.status,
+    amountMinor: row.amountMinor,
+    currency: row.currency,
+    period: row.period,
+    reviewedByName: row.reviewedByName ?? "",
+    reviewedAt: row.reviewedAt ? new Date(row.reviewedAt).toISOString() : "",
+    reviewNote: row.reviewNote ?? "",
+  }));
 }

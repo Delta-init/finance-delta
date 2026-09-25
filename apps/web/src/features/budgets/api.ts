@@ -6,8 +6,8 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["budgets"] as const;
 
-export function useBudgetSummary(params: QueryParams) {
-  return useQuery({ queryKey: [...KEY, "summary", params], queryFn: () => api.getList<BudgetSummaryRow>("budgets/summary", params) });
+export function useBudgetSummary(params: QueryParams, enabled = true) {
+  return useQuery({ queryKey: [...KEY, "summary", params], queryFn: () => api.getList<BudgetSummaryRow>("budgets/summary", params), enabled });
 }
 
 export function useBudgetAllocations(params: QueryParams, enabled = true) {

@@ -22,4 +22,12 @@ router.post("/enrolments", c.takeEnrolment);
 // a list of ids is not a thing to put in a query string.
 router.post("/enrolments/status", c.enrolmentStatuses);
 
+// Media ERP asking for money out of Marketing's allocation. Lands as a
+// drawdown waiting for review; idempotent on the caller's own id, like the
+// enrolments above.
+router.post("/funding-requests", c.takeFundingRequest);
+
+// What became of them, by the caller's own ids.
+router.post("/funding-requests/status", c.fundingRequestStatuses);
+
 export default router;

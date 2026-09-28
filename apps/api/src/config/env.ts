@@ -74,6 +74,15 @@ const envSchema = z.object({
   LMS_S2S_SECRET: z.string().default(""),
 
   /**
+   * Tetra Commission, which gets each new student once the LMS has them — a
+   * team in turn is given them there. Same shared-secret scheme as the LMS.
+   * Unset, nobody is sent, and students the LMS takes meanwhile are never
+   * sent later: switching it on starts from the next new student.
+   */
+  COMMISSION_API_URL: z.string().default(""),
+  COMMISSION_S2S_SECRET: z.string().default(""),
+
+  /**
    * The Root portal, for signing somebody in who arrived from it.
    *
    * Unset and SSO is off: the endpoint answers 503 rather than trusting a

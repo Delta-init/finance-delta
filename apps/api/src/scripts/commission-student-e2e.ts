@@ -1,0 +1,228 @@
+/**
+ * A new LMS student going on to Tetra Commission, over real HTTP against a
+ * real Tetra Commission process. The LMS is a stand-in here — its half is
+ * proven by lms-provision-e2e — because what matters is what finance does
+ * once the LMS has, or has not, taken the student.
+ *
+ *   1. New students only: nothing the LMS took before this existed, or while
+ *      it was switched off, is ever sent.
+ *   2. Only once the LMS has them, and never holding up the LMS step.
+ *   3. The teams take turns in the order the LMS took the students.
+ *   4. An email Tetra Commission already has is left alone and uses no turn.
+ *   5. Down, not deployed yet, or refusing: retried, waited for, or stopped —
+ *      and a retry never makes a second student.
+ *
+ * Run through scripts/commission-student-e2e.sh. Scratch databases only.
+ */
+import mongoose, { Types } from "mongoose";
+
+const uri = process.env.MONGODB_URI ?? "";
+const commissionUri = process.env.COMMISSION_MONGO_URI ?? "";
+const commissionDb = process.env.COMMISSION_MONGO_DB ?? "";
+for (const [name, value] of [["MONGODB_URI", uri], ["COMMISSION_MONGO_URI", `${commissionUri}/${commissionDb}`]]) {
+  if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(value!) || !/e2e/i.test(value!)) {
+    console.error(`Refusing to run: ${name} must be a scratch e2e database on 127.0.0.1, got "${value}"`);
+    process.exit(1);
+  }
+}
+
+const { env } = await import("../config/env");
+const { LmsProvision } = await import("../modules/integrations/lms-provision.model");
+const { drainLmsProvisions, drainCommissionStudents } = await import("../jobs/lms-provision.worker");
+
+let failures = 0, checks = 0;
+function check(label: string, ok: boolean, detail = "") {
+  checks++;
+  if (ok) console.log(`  \x1b[32m✓\x1b[0m ${label}`);
+  else { failures++; console.log(`  \x1b[31m✗ ${label}${detail ? ` — ${detail}` : ""}\x1b[0m`); }
+}
+function step(s: string) { console.log(`\n\x1b[1m${s}\x1b[0m`); }
+
+/* ── A stand-in LMS: takes every enrolment, except for addresses that say it is down. ── */
+let lmsCalls = 0;
+const lms = Bun.serve({
+  port: Number(process.env.E2E_FAKE_LMS_PORT),
+  async fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path !== "/api/v1/integrations/finance/enrolment" || req.headers.get("x-finance-secret") !== env.LMS_S2S_SECRET) {
+      // What a server without the route says — Tetra Commission's old code answers exactly this.
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    lmsCalls++;
+    const body = (await req.json()) as { email: string; courseSlug: string };
+    if (body.email.includes("lmsdown")) return Response.json({ success: false, error: { message: "LMS is down" } }, { status: 503 });
+    return Response.json({
+      success: true,
+      data: {
+        userId: new Types.ObjectId().toString(), created: true, alreadyProcessed: false,
+        courseSlug: body.courseSlug, courseTitle: "Delta Wave Theory Trading Programme", organizationSlug: null,
+      },
+    });
+  },
+});
+const LMS_URL = `http://127.0.0.1:${lms.port}`;
+const COMMISSION_URL = env.COMMISSION_API_URL;
+const SECRET = env.COMMISSION_S2S_SECRET;
+
+await mongoose.connect(uri);
+await mongoose.connection.dropDatabase();
+const tc = await mongoose.createConnection(commissionUri, { dbName: commissionDb }).asPromise();
+if (tc.host !== "127.0.0.1" || mongoose.connection.host !== "127.0.0.1") { console.error("Refusing: not 127.0.0.1"); process.exit(1); }
+// Emptied, not dropped: Tetra Commission made its indexes when it started.
+for (const c of await tc.db!.listCollections().toArray()) await tc.db!.collection(c.name).deleteMany({});
+const students = tc.db!.collection("students");
+
+step("Setting up");
+const chief = (full_name: string, created_date: string) => ({
+  _id: new Types.ObjectId(), email: `${full_name.toLowerCase().replace(/\s+/g, ".")}@e2e-test.com`, full_name,
+  app_role: "chief_mentor", password_hash: "x", created_date, updated_date: created_date,
+});
+// Four teams as the Teams page has them: each a Chief with somebody under them.
+const chiefs = [
+  chief("Chief One", "2026-01-01T00:00:00.000Z"), chief("Chief Two", "2026-02-01T00:00:00.000Z"),
+  chief("Chief Three", "2026-03-01T00:00:00.000Z"), chief("Chief Four", "2026-04-01T00:00:00.000Z"),
+];
+await tc.db!.collection("users").insertMany([
+  ...chiefs,
+  ...chiefs.map((c) => ({
+    ...chief(`${c.full_name} Member`, c.created_date), app_role: "junior_mentor", up_head_id: String(c._id), up_head_name: c.full_name,
+  })),
+]);
+await students.insertOne({
+  student_code: "STU-0042", full_name: "Already Here", email: "already@e2e-test.com",
+  primary_mentor_id: "someone", primary_mentor_name: "Hand Added", assignment_status: "assigned",
+  status: "ACTIVE", student_level: "LEVEL_2", notes: "added by a mentor",
+});
+const orgId = new Types.ObjectId();
+let n = 0;
+/** An approved CRM enrolment, queued the way the approval queues it. */
+async function enrol(email?: string) {
+  n++;
+  const invoiceId = new Types.ObjectId();
+  const customerId = new Types.ObjectId();
+  await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, name: `Student ${n}`, country: "India" });
+  await mongoose.connection.db!.collection("invoices").insertOne({ _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}` });
+  return LmsProvision.create({
+    organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
+    payload: {
+      email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
+      courseSlug: "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
+      amount: 4500, paymentStatus: "partial",
+    },
+  });
+}
+const row = async (id: unknown) => (await LmsProvision.findById(id).lean()) as any;
+const studentFor = async (id: unknown) => students.findOne({ finance_invoice_id: String((await row(id)).invoiceId) }) as any;
+check("four teams in Tetra Commission, and a student a mentor added by hand", true);
+
+step("New students only");
+// Taken by the LMS before this existed: sent, and nothing about Tetra Commission on it.
+const before = await enrol();
+await LmsProvision.updateOne({ _id: before._id }, { $set: { status: "sent", sentAt: new Date(Date.now() - 86_400_000), lmsUserId: "old" } });
+env.COMMISSION_API_URL = "";
+env.LMS_API_URL = LMS_URL;
+const whileOff = await enrol();
+await drainLmsProvisions();
+check("while Tetra Commission is switched off, the LMS still gets the student", (await row(whileOff._id)).status === "sent");
+env.COMMISSION_API_URL = COMMISSION_URL;
+await drainCommissionStudents();
+check("...but neither that student nor one from before is sent once it is switched on",
+  !(await studentFor(whileOff._id)) && !(await studentFor(before._id)) && (await students.countDocuments()) === 1);
+
+step("Five new students, in the order the LMS took them");
+const five = [];
+for (let i = 0; i < 5; i++) five.push(await enrol());
+const lmsBefore = lmsCalls;
+await drainLmsProvisions();
+check("the LMS got all five first", lmsCalls - lmsBefore === 5 && (await Promise.all(five.map((r) => row(r._id)))).every((r) => r.status === "sent"));
+const marked = await Promise.all(five.map((r) => row(r._id)));
+check("...and each is marked for Tetra Commission", marked.every((r) => r.commission?.state === "pending"), JSON.stringify(marked.map((r) => r.commission)));
+const sent = await drainCommissionStudents();
+const after = await Promise.all(five.map((r) => row(r._id)));
+check("all five sent", sent === 5 && after.every((r) => r.commission?.state === "sent" && r.commission?.alreadyThere === false), JSON.stringify(after.map((r) => r.commission)));
+const teams = after.map((r) => r.commission?.team);
+check("team 1, 2, 3, 4, then team 1 again", JSON.stringify(teams) === JSON.stringify(["Chief One", "Chief Two", "Chief Three", "Chief Four", "Chief One"]), JSON.stringify(teams));
+check("...each with the team's leader as their mentor", after.every((r) => r.commission?.mentorName === r.commission?.team));
+check("codes carry on from the highest there (STU-0042)", JSON.stringify(after.map((r) => r.commission?.studentCode)) ===
+  JSON.stringify(["STU-0043", "STU-0044", "STU-0045", "STU-0046", "STU-0047"]), JSON.stringify(after.map((r) => r.commission?.studentCode)));
+const s = await studentFor(five[0]!._id);
+check("the student there is who finance sent",
+  s?.full_name === "Student 3" && s?.email === "student3@e2e-test.com" && s?.phone === "+919900000003" && s?.country === "India" &&
+  s?.status === "ACTIVE" && s?.student_level === "LEVEL_1" && s?.primary_mentor_name === "Chief One", JSON.stringify(s));
+check("...with the course the LMS named and the invoice", s?.notes === "From Delta LMS — Delta Wave Theory Trading Programme, invoice INV-0003" &&
+  s?.lms_user_id === after[0].lmsUserId, s?.notes);
+
+step("An email Tetra Commission already has");
+const again = await enrol("already@e2e-test.com");
+await drainLmsProvisions();
+await drainCommissionStudents();
+const againRow = await row(again._id);
+check("recorded as sent, and as already there", againRow.commission?.state === "sent" && againRow.commission?.alreadyThere === true &&
+  againRow.commission?.studentCode === "STU-0042" && againRow.commission?.mentorName === "Hand Added", JSON.stringify(againRow.commission));
+const kept = await students.findOne({ email: "already@e2e-test.com" }) as any;
+check("...and left exactly as it was", kept?.primary_mentor_name === "Hand Added" && kept?.student_level === "LEVEL_2" && kept?.notes === "added by a mentor");
+const next = await enrol();
+await drainLmsProvisions();
+await drainCommissionStudents();
+check("it used up no turn: the next new student goes to team 2", (await row(next._id)).commission?.mentorName === "Chief Two");
+
+step("A retry never makes a second student");
+await LmsProvision.updateOne({ _id: five[0]!._id }, { $set: { "commission.state": "pending", "commission.nextAttemptAt": new Date() } });
+await drainCommissionStudents();
+const retried = await row(five[0]!._id);
+check("sent again, the same student comes back — still finance's own, not somebody already there",
+  retried.commission?.studentCode === "STU-0043" && retried.commission?.alreadyThere === false && retried.commission?.team === "Chief One" &&
+  (await students.countDocuments({ finance_invoice_id: String(five[0]!.invoiceId) })) === 1, JSON.stringify(retried.commission));
+
+step("Tetra Commission down, not deployed, or refusing");
+env.COMMISSION_API_URL = "http://127.0.0.1:1";
+const down = await enrol();
+await drainLmsProvisions();
+await drainCommissionStudents();
+let d = await row(down._id);
+check("down: the LMS step is untouched", d.status === "sent");
+check("...and the student waits to be retried, later", d.commission?.state === "pending" && d.commission?.attempts === 1 &&
+  !!d.commission?.lastError && new Date(d.commission?.nextAttemptAt) > new Date(), JSON.stringify(d.commission));
+env.COMMISSION_API_URL = COMMISSION_URL;
+await LmsProvision.updateOne({ _id: down._id }, { $set: { "commission.nextAttemptAt": new Date() } });
+await drainCommissionStudents();
+d = await row(down._id);
+check("...back up: sent, to the next team in turn", d.commission?.state === "sent" && d.commission?.mentorName === "Chief Three", JSON.stringify(d.commission));
+
+env.COMMISSION_API_URL = LMS_URL; // answers 404 {"error":"Not found"}, like a server still on the old code
+const early = await enrol();
+await drainLmsProvisions();
+await LmsProvision.updateOne({ _id: early._id }, { $set: { "commission.attempts": 20 } });
+await drainCommissionStudents();
+let e = await row(early._id);
+check("not deployed yet (404): waited for however long it takes, never given up",
+  e.commission?.state === "pending" && e.commission?.attempts === 21 && /Not found/.test(e.commission?.lastError ?? ""), JSON.stringify(e.commission));
+env.COMMISSION_API_URL = COMMISSION_URL;
+await LmsProvision.updateOne({ _id: early._id }, { $set: { "commission.nextAttemptAt": new Date() } });
+await drainCommissionStudents();
+e = await row(early._id);
+check("...deployed: sent", e.commission?.state === "sent" && e.commission?.mentorName === "Chief Four", JSON.stringify(e.commission));
+
+env.COMMISSION_S2S_SECRET = "not-the-secret";
+const refused = await enrol();
+await drainLmsProvisions();
+await drainCommissionStudents();
+const f = await row(refused._id);
+check("a wrong secret: stopped, with the reason — it will not come right by retrying",
+  f.commission?.state === "failed" && /Bad secret/.test(f.commission?.lastError ?? ""), JSON.stringify(f.commission));
+env.COMMISSION_S2S_SECRET = SECRET;
+
+step("Only once the LMS has them");
+const lmsDown = await enrol("lmsdown@e2e-test.com");
+await drainLmsProvisions();
+await drainCommissionStudents();
+const g = await row(lmsDown._id);
+check("the LMS refusing: nothing goes to Tetra Commission", g.status === "pending" && !g.commission?.state && !(await students.findOne({ email: "lmsdown@e2e-test.com" })));
+
+await tc.db!.dropDatabase();
+await tc.close();
+await mongoose.connection.dropDatabase();
+await mongoose.disconnect();
+lms.stop(true);
+console.log(`\n${checks - failures}/${checks} checks passed`);
+process.exit(failures ? 1 : 0);

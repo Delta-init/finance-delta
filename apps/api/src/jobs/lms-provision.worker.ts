@@ -1,6 +1,11 @@
 import { logger } from "../lib/logger";
 import { lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus } from "../lib/lms-client";
+import {
+  commissionConfigured, sendStudentToCommission, CommissionPermanentError, CommissionNotReadyError, logCommissionConfig,
+} from "../lib/commission-client";
 import { LmsProvision } from "../modules/integrations/lms-provision.model";
+import { Invoice } from "../modules/invoice/invoice.model";
+import { Customer } from "../modules/customer/customer.model";
 
 /**
  * Delivers approved enrolments to the LMS.
@@ -37,10 +42,16 @@ export async function drainLmsProvisions(): Promise<number> {
         status: "sent",
         lmsUserId: result.userId,
         lmsCourseSlug: result.courseSlug,
+        lmsCourseTitle: result.courseTitle,
         studentCreated: result.created,
         sentAt: new Date(),
         lastError: undefined,
         ...(sentStatus ? { "access.sent": sentStatus } : {}),
+        // On to Tetra Commission, if it is switched on now. New students only:
+        // one the LMS took before this, or while it was off, is never sent.
+        ...(commissionConfigured() && !row.commission?.state
+          ? { "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() }
+          : {}),
       });
       await row.save();
       sent++;
@@ -124,15 +135,111 @@ export async function drainLmsAccessUpdates(): Promise<number> {
   return sent;
 }
 
+/**
+ * Sends each new LMS student on to Tetra Commission, where the next team in
+ * turn is given them (team 1, 2, 3, 4, then team 1 again).
+ *
+ * Only rows the LMS has taken, oldest first, so the teams take turns in the
+ * order the students arrived. Tetra Commission is idempotent on the invoice
+ * and leaves an email it already has alone, so a retry is always safe. Kept
+ * apart from the LMS step: this failing never holds up or repeats that one.
+ */
+export async function drainCommissionStudents(): Promise<number> {
+  if (!commissionConfigured()) return 0;
+
+  const due = await LmsProvision.find({
+    status: "sent",
+    "commission.state": "pending",
+    $or: [{ "commission.nextAttemptAt": { $lte: new Date() } }, { "commission.nextAttemptAt": null }],
+  })
+    .sort({ sentAt: 1 })
+    .limit(BATCH);
+
+  let sent = 0;
+  for (const row of due) {
+    const payload = (row.payload ?? {}) as { email?: string; name?: string; phone?: string; courseSlug?: string };
+    try {
+      const result = await sendStudentToCommission({
+        invoiceId: String(row.invoiceId),
+        invoiceNumber: row.invoiceNumber ?? "",
+        email: payload.email ?? "",
+        name: payload.name,
+        phone: payload.phone,
+        country: await customerCountry(row.invoiceId),
+        course: row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
+        lmsUserId: row.lmsUserId ?? undefined,
+      });
+      await LmsProvision.updateOne(
+        { _id: row._id, "commission.state": "pending" },
+        {
+          $set: {
+            "commission.state": "sent",
+            "commission.studentId": result.studentId,
+            "commission.studentCode": result.studentCode,
+            "commission.alreadyThere": result.existing === "email",
+            // Kept from the first answer: a later re-send finds the student and names no team.
+            ...(result.teamName ? { "commission.team": result.teamName } : {}),
+            "commission.mentorName": result.mentorName,
+            "commission.sentAt": new Date(),
+          },
+          $unset: { "commission.lastError": 1, "commission.nextAttemptAt": 1 },
+        },
+      );
+      sent++;
+      logger.info(
+        { invoice: row.invoiceNumber, student: result.studentCode, mentor: result.mentorName, existing: result.existing },
+        result.existing === "email" ? "Student already in Tetra Commission — left as they are" : "Student sent to Tetra Commission",
+      );
+    } catch (err) {
+      const permanent = err instanceof CommissionPermanentError;
+      const notReady = err instanceof CommissionNotReadyError;
+      const attempts = (row.commission?.attempts ?? 0) + 1;
+      const message = (err as Error).message?.slice(0, 500);
+      // Not deployed or not configured there yet waits for as long as that
+      // takes; anything else gets the LMS step's allowance.
+      const giveUp = permanent || (!notReady && attempts >= MAX_ATTEMPTS);
+      await LmsProvision.updateOne(
+        { _id: row._id, "commission.state": "pending" },
+        {
+          $set: {
+            "commission.state": giveUp ? "failed" : "pending",
+            "commission.attempts": attempts,
+            "commission.lastError": message,
+            "commission.nextAttemptAt": new Date(Date.now() + backoffMs(attempts)),
+          },
+        },
+      );
+      logger.warn({ invoice: row.invoiceNumber, attempts, permanent, notReady, err: message }, "Could not send a student to Tetra Commission");
+    }
+  }
+  return sent;
+}
+
+/** The student's country, as accounts have it on the customer — read when sent, so it is current. */
+async function customerCountry(invoiceId: unknown): Promise<string> {
+  const invoice = await Invoice.findById(invoiceId).select("customerId").lean<{ customerId?: unknown } | null>();
+  if (!invoice?.customerId) return "";
+  const customer = await Customer.findById(invoice.customerId).select("country").lean<{ country?: string } | null>();
+  return customer?.country?.trim() ?? "";
+}
+
 export function startLmsProvisionWorker(): void {
   if (!lmsConfigured()) {
     logger.info("LMS provisioning is not configured — approvals will not create students");
     return;
   }
+  logCommissionConfig();
+  // One pass at a time: a slow LMS or Tetra Commission must not let the next
+  // tick start on the same rows while this one is still sending them.
+  let running = false;
   const run = () => {
+    if (running) return;
+    running = true;
     void drainLmsProvisions()
       .then(() => drainLmsAccessUpdates())
-      .catch((err) => logger.error({ err }, "LMS provisioning pass failed"));
+      .then(() => drainCommissionStudents())
+      .catch((err) => logger.error({ err }, "LMS provisioning pass failed"))
+      .finally(() => { running = false; });
   };
   setTimeout(run, 10_000);
   setInterval(run, EVERY_MS);

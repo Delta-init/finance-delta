@@ -35,6 +35,7 @@ const lmsProvisionSchema = new Schema(
     /** What the LMS made of it, once it took it. */
     lmsUserId: { type: String },
     lmsCourseSlug: { type: String },
+    lmsCourseTitle: { type: String },
     studentCreated: { type: Boolean },
     sentAt: { type: Date },
 
@@ -51,10 +52,33 @@ const lmsProvisionSchema = new Schema(
       nextAttemptAt: { type: Date },
       lastError: { type: String },
     },
+
+    /**
+     * The student, sent on to Tetra Commission once the LMS has them.
+     *
+     * Only set when the LMS takes the enrolment while Tetra Commission is
+     * configured, so enrolments from before — and from any time it was
+     * switched off — are never sent: new students only. What came back is
+     * kept, including when somebody with that email was already there and so
+     * was left as they were (`alreadyThere`).
+     */
+    commission: {
+      state: { type: String, enum: ["pending", "sent", "failed"] },
+      attempts: { type: Number },
+      nextAttemptAt: { type: Date },
+      lastError: { type: String },
+      studentId: { type: String },
+      studentCode: { type: String },
+      alreadyThere: { type: Boolean },
+      team: { type: String },
+      mentorName: { type: String },
+      sentAt: { type: Date },
+    },
   },
   { timestamps: true },
 );
 lmsProvisionSchema.index({ status: 1, "access.pending": 1, "access.nextAttemptAt": 1 });
+lmsProvisionSchema.index({ "commission.state": 1, "commission.nextAttemptAt": 1 });
 
 export type LmsProvisionDoc = InferSchemaType<typeof lmsProvisionSchema> & {
   _id: Types.ObjectId;

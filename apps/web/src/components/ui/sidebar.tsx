@@ -160,6 +160,8 @@ interface MenuButtonProps {
   active?: boolean;
   disabled?: boolean;
   onNavigate?: () => void;
+  /** Something waiting here (approvals). Nothing is drawn for zero. */
+  badge?: number;
 }
 
 export function SidebarMenuButton({
@@ -169,18 +171,31 @@ export function SidebarMenuButton({
   active,
   disabled,
   onNavigate,
+  badge,
 }: MenuButtonProps) {
   const { collapsed } = useSidebar();
   const base = cn(
     "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
     collapsed && "justify-center px-0",
   );
+  const count = badge && badge > 0 ? (badge > 99 ? "99+" : String(badge)) : "";
   const inner = (
     <>
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
         {icon}
+        {/* Collapsed, the count has nowhere else to go, so it sits on the icon. */}
+        {collapsed && count && (
+          <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900">
+            {count}
+          </span>
+        )}
       </span>
       {!collapsed && <span className="truncate">{label}</span>}
+      {!collapsed && count && (
+        <span className="ml-auto rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-900" aria-label={`${count} waiting`}>
+          {count}
+        </span>
+      )}
       {!collapsed && disabled && (
         <span className="ml-auto rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground/60">
           Soon

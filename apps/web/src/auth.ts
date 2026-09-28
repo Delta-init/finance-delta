@@ -258,6 +258,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
             accessToken: "",
             refreshToken: "",
             accessTokenExpires: 0,
+            signedInAt: Date.now(),
           };
         }
 
@@ -275,6 +276,9 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
           accessTokenExpires: getJwtExpiryMs(u.accessToken),
           needsOrgChoice: false,
           baseCurrency: (u as Record<string, unknown>).baseCurrency as string ?? "AED",
+          // When this sign-in happened. Carried unchanged through refreshes and
+          // the org choice, so "signed in again" is a new value and nothing else is.
+          signedInAt: Date.now(),
         };
       }
 
@@ -317,6 +321,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
       session.user.orgs = token.orgs as typeof session.user.orgs;
       session.user.pendingToken = token.pendingToken as string | undefined;
       session.user.baseCurrency = (token.baseCurrency as string) ?? "AED";
+      session.user.signedInAt = (token.signedInAt as number) ?? 0;
       session.error = token.error as string | undefined;
       return session;
     },

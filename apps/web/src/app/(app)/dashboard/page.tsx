@@ -9,6 +9,7 @@ import { AgingSummary } from "@/components/dashboard/aging-summary";
 import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
+import { ApprovalsModal } from "@/components/dashboard/approvals-modal";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -26,7 +27,9 @@ export default async function DashboardPage() {
 
   if (!seesCompanyFinances) {
     const seesAnything = can("expense:read:own") || can("invoice:read:own");
-    return seesAnything ? <MyWorkspace name={name} /> : <NoAccessYet name={name} />;
+    // An approver without the company overview still gets the pop-up: some
+    // roles decide fund requests or claims without reading the books.
+    return seesAnything ? <><ApprovalsModal /><MyWorkspace name={name} /></> : <NoAccessYet name={name} />;
   }
 
   const now = new Date();
@@ -50,6 +53,7 @@ export default async function DashboardPage() {
       {/* Above the numbers: something waiting on a decision outranks a chart
           of what already happened. Renders nothing when the queue is empty,
           and nothing at all for somebody who cannot approve. */}
+      <ApprovalsModal />
       <InvoiceApprovals />
       <PendingApprovals />
 

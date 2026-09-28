@@ -30,7 +30,8 @@ import {
   ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
-import { hasPermission, type Permission } from "@delta/shared";
+import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
+import { useApprovalSummary } from "@/features/approvals/api";
 import {
   Sidebar,
   SidebarContent,
@@ -75,12 +76,20 @@ interface NavItem {
    */
   hideWhenOwnScopedOnly?: boolean;
   unhideWith?: Permission;
+  /**
+   * Show how many of this kind are waiting on the reader — or, for Approvals
+   * itself, all of them. Only kinds the reader may decide are ever counted.
+   */
+  badge?: ApprovalType | "total";
 }
 
 interface NavGroup {
   label?: string;
   items: NavItem[];
 }
+
+/** Deciding any one of these makes somebody an approver. */
+const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "expense:approve", "bill:approve", "payroll:approve", "po:create"] as const satisfies readonly Permission[];
 
 const NAV: NavGroup[] = [
   {
@@ -101,7 +110,9 @@ const NAV: NavGroup[] = [
       // Only for people who can actually decide. Somebody who sees just their
       // own invoices is on the far side of this queue, and a menu item leading
       // to "not something your role does" is worse than no menu item.
-      { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: "invoice:write" },
+      // Everything waiting on a decision, of every kind, so anybody who decides
+      // any of them belongs here.
+      { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: [...APPROVER_PERMISSIONS], badge: "total" },
       // Taking an enrolment is the counsellor's whole job, so it is its own
       // entry rather than something reached through the invoice list.
       { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
@@ -114,8 +125,8 @@ const NAV: NavGroup[] = [
     label: "Purchases",
     items: [
       { href: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList, enabled: true, permission: "po:read" },
-      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "po:read" },
-      { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read" },
+      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "po:read", badge: "procurement" },
+      { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read", badge: "bill" },
       { href: "/vendor-credits", label: "Vendor Credits", icon: FileX2, enabled: true, permission: "bill:read" },
       { href: "/vendors", label: "Vendors", icon: Truck, enabled: true, permission: "vendor:read" },
     ],
@@ -123,8 +134,8 @@ const NAV: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"] },
-      { href: "/budgets", label: "Budgets & Funds", icon: WalletCards, enabled: true, permission: ["budget:read", "budget:read:own", "budget:manage", "budget:request", "budget:approve"] },
+      { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"], badge: "expense" },
+      { href: "/budgets", label: "Budgets & Funds", icon: WalletCards, enabled: true, permission: ["budget:read", "budget:read:own", "budget:manage", "budget:request", "budget:approve"], badge: "fund_request" },
       { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
       { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
       // A tin is a bank account underneath, and finding it meant knowing that.
@@ -137,7 +148,7 @@ const NAV: NavGroup[] = [
       { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true, permission: "report:read" },
       { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
-      { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read" },
+      { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read", badge: "payroll" },
       { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
     ],
   },
@@ -181,6 +192,16 @@ export function AppSidebar({
     !hasPermission(user.permissions, "invoice:read");
   const { collapsed, setOpenMobile, isMobile } = useSidebar();
   const closeOnMobile = () => isMobile && setOpenMobile(false);
+
+  // Only asked for by somebody who decides something; for everybody else there
+  // is nothing it could count.
+  const approver = user.isSuperAdmin || APPROVER_PERMISSIONS.some((p) => hasPermission(user.permissions, p));
+  const { data: waiting } = useApprovalSummary(approver);
+  const badgeFor = (key?: ApprovalType | "total") => {
+    if (!key || !waiting) return 0;
+    if (key === "total") return waiting.total;
+    return waiting.groups.find((g) => g.type === key)?.count ?? 0;
+  };
 
   return (
     <Sidebar>
@@ -230,6 +251,7 @@ export function AppSidebar({
                         active={active}
                         disabled={!item.enabled}
                         onNavigate={closeOnMobile}
+                        badge={badgeFor(item.badge)}
                       />
                     </SidebarMenuItem>
                   );

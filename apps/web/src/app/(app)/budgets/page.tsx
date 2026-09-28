@@ -16,7 +16,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCan } from "@/lib/use-can";
 import { useCurrency } from "@/lib/currency-context";
 import { useAllDepartments } from "@/features/departments/api";
-import { useBudgetAllocations, useBudgetSummary, useCreateFundingRequest, useFundingRequests, useReviewFundingRequest, useSaveBudgetAllocation } from "@/features/budgets/api";
+import { useBudgetAllocations, useBudgetSummary, useCreateFundingRequest, useFundingRequests, useSaveBudgetAllocation } from "@/features/budgets/api";
+import { FundingRequestTags, FundingReviewDialog, FundingStatusPill, periodLabel } from "@/features/budgets/review-dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -24,12 +25,6 @@ const now = new Date();
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 const getError = (error: unknown, fallback: string) => error instanceof ApiError ? error.message : fallback;
-const periodLabel = (period: string) => {
-  const [y, m] = period.split("-");
-  return `${MONTHS[Number(m) - 1]} ${y}`;
-};
-const SOURCE_LABELS: Record<string, string> = { "media-erp": "Media ERP" };
-const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? source;
 
 function AllocationDialog({
   open, onOpenChange, initial, departmentId, period, currency, departments, history,
@@ -98,45 +93,6 @@ function FundingRequestDialog({ open, onOpenChange, currency, defaultPeriod }: {
   </DialogContent></Dialog>;
 }
 
-function ReviewDialog({ request, onClose }: { request: FundingRequest | null; onClose: () => void }) {
-  const review = useReviewFundingRequest(request?.id ?? "");
-  const [decision, setDecision] = useState<"approved" | "rejected">("approved");
-  const [note, setNote] = useState("");
-  useEffect(() => { if (request) { setDecision("approved"); setNote(""); } }, [request?.id]);
-  // A drawdown spends the department's allocation, so show what is left of it
-  // for that month — the same figure the server refuses an approval on.
-  const drawdown = request?.kind === "drawdown";
-  const { data: balanceResult, isLoading: balanceLoading } = useBudgetSummary(
-    request ? { year: Number(request.period.slice(0, 4)), month: request.period, departmentId: request.departmentId } : {},
-    !!request && drawdown,
-  );
-  const available = balanceResult?.data?.find((row) => row.currency === request?.currency)?.availableMinor ?? 0;
-  const overBudget = !!request && drawdown && !balanceLoading && request.amountMinor > available;
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!request) return;
-    if (decision === "rejected" && note.trim().length < 5) { toast.error("Add a short reason before rejecting"); return; }
-    try { await review.mutateAsync({ decision, note }); toast.success(decision === "approved" ? "Funding request approved" : "Funding request rejected"); onClose(); }
-    catch (e) { toast.error(getError(e, "Could not review this request")); }
-  };
-  return <Dialog open={!!request} onOpenChange={(open) => !open && onClose()}><DialogContent>
-    <DialogHeader><DialogTitle>Review funding request</DialogTitle><DialogDescription>{request ? `${request.departmentName} · ${periodLabel(request.period)} · ${request.title}` : ""}</DialogDescription></DialogHeader>
-    {request && <div className="rounded-lg bg-surface-muted p-3 text-sm"><p className="font-medium">Requested by {request.requestedByName}{request.source !== "finance" && <span className="font-normal text-foreground-muted"> · {sourceLabel(request.source)}</span>}</p>{request.requestedByEmail && <p className="text-xs text-foreground-muted">{request.requestedByEmail}</p>}{request.platform && <p className="mt-1 text-xs text-foreground-muted">Platform: <span className="font-medium text-foreground">{request.platform}</span></p>}<p className="mt-2 whitespace-pre-wrap text-foreground-muted">{request.purpose}</p><p className="mt-3 font-semibold"><MoneyDisplay minor={request.amountMinor} currency={request.currency} />{drawdown && <span className="ml-2 text-xs font-normal text-foreground-muted">drawn from the {periodLabel(request.period)} allocation</span>}</p>
-      {drawdown && <div className={`mt-3 rounded-md border px-3 py-2 text-xs ${overBudget ? "border-red-500/30 bg-red-500/5 text-red-700" : "border-border text-foreground-muted"}`}>{balanceLoading ? "Checking what is left…" : <>{request.departmentName} has <MoneyDisplay minor={available} currency={request.currency} /> left for {periodLabel(request.period)}.{overBudget ? " This request is more than that — raise the allocation first, or reject it." : <> After this request: <MoneyDisplay minor={available - request.amountMinor} currency={request.currency} />.</>}</>}</div>}
-    </div>}
-    <form onSubmit={submit} className="space-y-4">
-      <div className="space-y-1.5"><Label>Decision</Label><Select value={decision} onValueChange={(v) => setDecision(v as "approved" | "rejected")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approve</SelectItem><SelectItem value="rejected">Reject</SelectItem></SelectContent></Select></div>
-      <div className="space-y-1.5"><Label>{decision === "rejected" ? "Reason (required)" : "Review note (optional)"}</Label><Textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={3} /></div>
-      <DialogFooter><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant={decision === "rejected" ? "destructive" : "primary"} loading={review.isPending} disabled={decision === "approved" && (overBudget || (drawdown && balanceLoading))}>{decision === "approved" ? "Approve funds" : "Reject request"}</Button></DialogFooter>
-    </form>
-  </DialogContent></Dialog>;
-}
-
-function StatusPill({ status }: { status: FundingRequest["status"] }) {
-  const styles = status === "approved" ? "bg-emerald-500/10 text-emerald-700" : status === "rejected" ? "bg-red-500/10 text-red-700" : "bg-amber-500/10 text-amber-700";
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize ${styles}`}>{status}</span>;
-}
-
 export default function BudgetsPage() {
   const can = useCan();
   const { baseCurrency } = useCurrency();
@@ -154,7 +110,9 @@ export default function BudgetsPage() {
   const { data: requestsResult, isLoading: requestsLoading } = useFundingRequests(query);
   const summary = summaryResult?.data ?? [];
   const allocations = allocationsResult?.data ?? [];
-  const requests = requestsResult?.data ?? [];
+  // Waiting ones first — they are the reason to open this page — then newest.
+  const requests = useMemo(() => [...(requestsResult?.data ?? [])].sort((a, b) =>
+    Number(b.status === "submitted") - Number(a.status === "submitted") || b.requestedAt.localeCompare(a.requestedAt)), [requestsResult]);
   const currentPeriod = month === "all" ? thisMonth.slice(0, 4) === year ? thisMonth : `${year}-01` : month;
 
   const rows = useMemo(() => {
@@ -200,6 +158,12 @@ export default function BudgetsPage() {
       {can.can("budget:manage") && <Button variant="outline" className="ml-auto" onClick={() => openAllocation()}><Plus className="h-4 w-4" />Set allocation</Button>}
     </Card>
 
+    <section className="space-y-3"><div><h2 className="text-base font-semibold">Funding requests</h2><p className="text-sm text-foreground-muted">An approved top-up adds to the department&apos;s month; an approved drawdown (from Media ERP) comes off it. Pending requests change nothing.</p></div>
+      <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead><tr className="border-b bg-surface-muted/60 text-left text-xs uppercase tracking-wide text-foreground-muted"><th className="px-4 py-3">Department / request</th><th className="px-4 py-3">Period</th><th className="px-4 py-3">Requested by</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Review</th></tr></thead><tbody className="divide-y divide-border">
+        {requestsLoading ? <tr><td colSpan={6} className="px-4 py-12 text-center text-foreground-muted">Loading requests…</td></tr> : requests.length === 0 ? <tr><td colSpan={6} className="px-4 py-12 text-center text-foreground-muted">No funding requests for this period.</td></tr> : requests.map((r) => <tr key={r.id} className="align-top hover:bg-surface-muted/40"><td className="px-4 py-3"><p className="font-medium">{r.departmentName} · {r.title}</p><FundingRequestTags request={r} /><p className="mt-1 max-w-md text-xs text-foreground-muted">{r.purpose}</p>{r.reviewNote && <p className="mt-1 text-xs text-foreground-muted">Review: {r.reviewNote}</p>}</td><td className="px-4 py-3 text-foreground-muted">{periodLabel(r.period)}</td><td className="px-4 py-3">{r.requestedByName}{r.requestedByEmail && <span className="block text-xs text-foreground-muted">{r.requestedByEmail}</span>}<span className="mt-1 block text-xs text-foreground-muted">{new Date(r.requestedAt).toLocaleDateString()}</span></td><td className="px-4 py-3 text-right font-medium"><MoneyDisplay minor={r.amountMinor} currency={r.currency} /></td><td className="px-4 py-3"><FundingStatusPill status={r.status} /></td><td className="px-4 py-3 text-right">{can.can("budget:approve") && r.status === "submitted" ? <Button size="sm" variant="outline" onClick={() => setReviewTarget(r)}>Review</Button> : r.reviewedByName ? <span className="text-xs text-foreground-muted">Reviewed by {r.reviewedByName}</span> : <span className="text-xs text-foreground-muted">—</span>}</td></tr>)}
+      </tbody></table></div></Card>
+    </section>
+
     {summaryLoading ? <div className="py-16 text-center text-sm text-foreground-muted">Loading budget data…</div> : currencyTotals.length > 0 && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {currencyTotals.map(([currency, total]) => <Card key={currency} className="p-4"><p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{month === "all" ? `${year} · ${currency}` : `${periodLabel(month)} · ${currency}`}</p><p className="mt-1 text-xl font-semibold"><MoneyDisplay minor={total.available} currency={currency} /></p><p className="mt-1 text-xs text-foreground-muted">Available · <MoneyDisplay minor={total.allocation} currency={currency} /> allocated · <MoneyDisplay minor={total.additions} currency={currency} /> top-ups · <MoneyDisplay minor={total.drawn} currency={currency} /> drawn · <MoneyDisplay minor={total.expenses} currency={currency} /> approved expenses</p></Card>)}
     </div>}
@@ -210,14 +174,9 @@ export default function BudgetsPage() {
       </tbody></table></div></Card>
     </section>
 
-    <section className="space-y-3"><div><h2 className="text-base font-semibold">Funding requests</h2><p className="text-sm text-foreground-muted">An approved top-up adds to the department&apos;s month; an approved drawdown (from Media ERP) comes off it. Pending requests change nothing.</p></div>
-      <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead><tr className="border-b bg-surface-muted/60 text-left text-xs uppercase tracking-wide text-foreground-muted"><th className="px-4 py-3">Department / request</th><th className="px-4 py-3">Period</th><th className="px-4 py-3">Requested by</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Review</th></tr></thead><tbody className="divide-y divide-border">
-        {requestsLoading ? <tr><td colSpan={6} className="px-4 py-12 text-center text-foreground-muted">Loading requests…</td></tr> : requests.length === 0 ? <tr><td colSpan={6} className="px-4 py-12 text-center text-foreground-muted">No funding requests for this period.</td></tr> : requests.map((r) => <tr key={r.id} className="align-top hover:bg-surface-muted/40"><td className="px-4 py-3"><p className="font-medium">{r.departmentName} · {r.title}</p><div className="mt-1 flex flex-wrap gap-1.5">{r.kind === "drawdown" ? <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700">Drawdown</span> : <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Top-up</span>}{r.source !== "finance" && <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700">{sourceLabel(r.source)}</span>}{r.platform && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{r.platform}</span>}</div><p className="mt-1 max-w-md text-xs text-foreground-muted">{r.purpose}</p>{r.reviewNote && <p className="mt-1 text-xs text-foreground-muted">Review: {r.reviewNote}</p>}</td><td className="px-4 py-3 text-foreground-muted">{periodLabel(r.period)}</td><td className="px-4 py-3">{r.requestedByName}{r.requestedByEmail && <span className="block text-xs text-foreground-muted">{r.requestedByEmail}</span>}<span className="mt-1 block text-xs text-foreground-muted">{new Date(r.requestedAt).toLocaleDateString()}</span></td><td className="px-4 py-3 text-right font-medium"><MoneyDisplay minor={r.amountMinor} currency={r.currency} /></td><td className="px-4 py-3"><StatusPill status={r.status} /></td><td className="px-4 py-3 text-right">{can.can("budget:approve") && r.status === "submitted" ? <Button size="sm" variant="outline" onClick={() => setReviewTarget(r)}>Review</Button> : r.reviewedByName ? <span className="text-xs text-foreground-muted">Reviewed by {r.reviewedByName}</span> : <span className="text-xs text-foreground-muted">—</span>}</td></tr>)}
-      </tbody></table></div></Card>
-    </section>
 
     <FundingRequestDialog open={requestOpen} onOpenChange={setRequestOpen} currency={baseCurrency} defaultPeriod={month === "all" ? currentPeriod : month} />
     <AllocationDialog open={allocationOpen} onOpenChange={closeAllocation} initial={allocationTarget} period={currentPeriod} currency={allocationTarget?.currency ?? baseCurrency} departments={departments} history={allocationTarget ? allocations.find((a) => a.departmentId === allocationTarget.departmentId && a.period === allocationTarget.period && a.currency === allocationTarget.currency)?.changes ?? [] : []} />
-    <ReviewDialog request={reviewTarget} onClose={() => setReviewTarget(null)} />
+    <FundingReviewDialog request={reviewTarget} onClose={() => setReviewTarget(null)} />
   </div>;
 }

@@ -41,6 +41,7 @@ import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import payrollMappingRoutes from "./modules/payroll-mapping/mapping.routes";
 import payrollRoutes from "./modules/payroll/payroll.routes";
 import budgetRoutes from "./modules/budget/budget.routes";
+import approvalsRoutes from "./modules/approvals/approvals.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
@@ -117,6 +118,7 @@ async function bootstrap() {
   api.use("/payroll-mapping", payrollMappingRoutes);
   api.use("/payroll", payrollRoutes);
   api.use("/budgets", budgetRoutes);
+  api.use("/approvals", approvalsRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);

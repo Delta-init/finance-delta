@@ -15,6 +15,8 @@ declare module "next-auth" {
       orgs?: OrgChoiceItem[];
       pendingToken?: string;
       baseCurrency: string;
+      /** When this sign-in happened (ms). A new sign-in resets the approvals pop-up. */
+      signedInAt: number;
     } & DefaultSession["user"];
     error?: string;
   }
@@ -51,6 +53,7 @@ declare module "next-auth/jwt" {
     orgs?: OrgChoiceItem[];
     pendingToken?: string;
     baseCurrency: string;
+    signedInAt?: number;
     error?: string;
   }
 }

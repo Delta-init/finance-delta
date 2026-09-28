@@ -15,13 +15,22 @@ import { Customer } from "../modules/customer/customer.model";
  * requiring Redis — would mean an installation without it silently provisions
  * nobody, which is the failure the reminders already have and nobody noticed
  * for months.
+ *
+ * Sent straight after an approval or a payment (kickLmsProvisioning), in the
+ * background, so the student is in the LMS and in Tetra Commission within
+ * seconds; the timer is the safety net that retries whatever that could not
+ * deliver.
  */
 
 const EVERY_MS = 60_000;
 const BATCH = 20;
-const MAX_ATTEMPTS = 8;
 
-/** Backs off to roughly a quarter of an hour, then stays there. */
+/**
+ * Backs off to roughly a quarter of an hour, then stays there — and keeps
+ * trying. An outage is waited out however long it lasts: giving up after a
+ * few minutes left students who were never created unless somebody re-queued
+ * them by hand. Only a refusal that cannot come right (a 4xx) stops.
+ */
 function backoffMs(attempts: number): number {
   return Math.min(2 ** attempts * 1000, 15 * 60_000);
 }
@@ -75,8 +84,8 @@ export async function drainLmsProvisions(): Promise<number> {
         lastError: (err as Error).message?.slice(0, 500),
         // A malformed payload or an unknown course fails identically forever.
         // Somebody has to map it; retrying every minute only buries the rows
-        // that would have worked.
-        status: permanent || attempts >= MAX_ATTEMPTS ? "failed" : "pending",
+        // that would have worked. Anything else is waited out.
+        status: permanent ? "failed" : "pending",
         nextAttemptAt: new Date(Date.now() + backoffMs(attempts)),
       });
       await row.save();
@@ -125,7 +134,7 @@ export async function drainLmsAccessUpdates(): Promise<number> {
       const message = (err as Error).message?.slice(0, 500);
       await LmsProvision.updateOne(
         { _id: row._id, "access.pending": status },
-        permanent || attempts >= MAX_ATTEMPTS
+        permanent
           ? { $set: { "access.lastError": message, "access.attempts": attempts }, $unset: { "access.pending": 1 } }
           : { $set: { "access.lastError": message, "access.attempts": attempts, "access.nextAttemptAt": new Date(Date.now() + backoffMs(attempts)) } },
       );
@@ -195,9 +204,9 @@ export async function drainCommissionStudents(): Promise<number> {
       const notReady = err instanceof CommissionNotReadyError;
       const attempts = (row.commission?.attempts ?? 0) + 1;
       const message = (err as Error).message?.slice(0, 500);
-      // Not deployed or not configured there yet waits for as long as that
-      // takes; anything else gets the LMS step's allowance.
-      const giveUp = permanent || (!notReady && attempts >= MAX_ATTEMPTS);
+      // Down, not deployed, or not configured there yet: waited out, however
+      // long that takes. Only a refusal that cannot come right stops.
+      const giveUp = permanent;
       await LmsProvision.updateOne(
         { _id: row._id, "commission.state": "pending" },
         {
@@ -223,25 +232,57 @@ async function customerCountry(invoiceId: unknown): Promise<string> {
   return customer?.country?.trim() ?? "";
 }
 
+/*
+ * One pass at a time in this process, whether the timer or a kick started it:
+ * a slow LMS or Tetra Commission must not let a second pass start on the same
+ * rows while one is still sending them. A kick that lands mid-pass asks for
+ * one more, so what it was kicked for goes out now, not on the next tick.
+ */
+let started = false;
+let running = false;
+let again = false;
+
+async function runPass(): Promise<void> {
+  if (running) {
+    again = true;
+    return;
+  }
+  running = true;
+  try {
+    do {
+      again = false;
+      await drainLmsProvisions();
+      await drainLmsAccessUpdates();
+      await drainCommissionStudents();
+    } while (again);
+  } catch (err) {
+    logger.error({ err }, "LMS provisioning pass failed");
+  } finally {
+    running = false;
+  }
+}
+
+/**
+ * Deliver what was just queued — an approved enrolment, or a payment that
+ * opens more of a course — now, in the background, instead of on the next
+ * tick. Only in the process that runs the worker (RUN_SCHEDULERS): a second
+ * process sending the same rows would be caught by the far side's
+ * idempotency, but there is no reason to lean on it, and the worker's own
+ * timer picks the row up within the minute. Never awaited, never throws.
+ */
+export function kickLmsProvisioning(): void {
+  if (!started) return;
+  setImmediate(() => void runPass());
+}
+
 export function startLmsProvisionWorker(): void {
   if (!lmsConfigured()) {
     logger.info("LMS provisioning is not configured — approvals will not create students");
     return;
   }
   logCommissionConfig();
-  // One pass at a time: a slow LMS or Tetra Commission must not let the next
-  // tick start on the same rows while this one is still sending them.
-  let running = false;
-  const run = () => {
-    if (running) return;
-    running = true;
-    void drainLmsProvisions()
-      .then(() => drainLmsAccessUpdates())
-      .then(() => drainCommissionStudents())
-      .catch((err) => logger.error({ err }, "LMS provisioning pass failed"))
-      .finally(() => { running = false; });
-  };
-  setTimeout(run, 10_000);
-  setInterval(run, EVERY_MS);
+  started = true;
+  setTimeout(() => void runPass(), 10_000);
+  setInterval(() => void runPass(), EVERY_MS);
   logger.info("LMS provisioning worker started");
 }

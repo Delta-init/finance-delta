@@ -803,6 +803,9 @@ export async function syncLmsAccess(doc: InvoiceDoc): Promise<void> {
         { _id: row._id },
         { $set: { "access.pending": status, "access.attempts": 0, "access.nextAttemptAt": new Date() }, $unset: { "access.lastError": 1 } },
       );
+      // Opens the course now rather than on the next tick; the timer retries if it cannot.
+      const { kickLmsProvisioning } = await import("../../jobs/lms-provision.worker");
+      kickLmsProvisioning();
     } else {
       // Not in the LMS yet, or waiting for somebody to map its course: the
       // provisioning itself will carry the newer status.
@@ -904,6 +907,11 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
       },
       status: "pending",
     });
+
+    // Into the LMS — and on to Tetra Commission — now, rather than on the next
+    // tick. The approval does not wait for it; the timer retries if it cannot.
+    const { kickLmsProvisioning } = await import("../../jobs/lms-provision.worker");
+    kickLmsProvisioning();
   } catch (err) {
     const { logger } = await import("../../lib/logger");
     logger.error({ err, invoiceId: String(doc._id) }, "Could not queue the LMS provisioning");

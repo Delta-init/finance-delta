@@ -28,7 +28,7 @@ for (const [name, value] of [["MONGODB_URI", uri], ["COMMISSION_MONGO_URI", `${c
 
 const { env } = await import("../config/env");
 const { LmsProvision } = await import("../modules/integrations/lms-provision.model");
-const { drainLmsProvisions, drainCommissionStudents } = await import("../jobs/lms-provision.worker");
+const { drainLmsProvisions, drainCommissionStudents, kickLmsProvisioning, startLmsProvisionWorker } = await import("../jobs/lms-provision.worker");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -100,7 +100,8 @@ async function enrol(email?: string) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
-  await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, name: `Student ${n}`, country: "India" });
+  // Customer codes are unique per organization, so each stand-in carries its own.
+  await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
   await mongoose.connection.db!.collection("invoices").insertOne({ _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}` });
   return LmsProvision.create({
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
@@ -183,6 +184,10 @@ let d = await row(down._id);
 check("down: the LMS step is untouched", d.status === "sent");
 check("...and the student waits to be retried, later", d.commission?.state === "pending" && d.commission?.attempts === 1 &&
   !!d.commission?.lastError && new Date(d.commission?.nextAttemptAt) > new Date(), JSON.stringify(d.commission));
+await LmsProvision.updateOne({ _id: down._id }, { $set: { "commission.attempts": 12, "commission.nextAttemptAt": new Date() } });
+await drainCommissionStudents();
+d = await row(down._id);
+check("...down past eight tries: still waiting, never given up", d.commission?.state === "pending" && d.commission?.attempts === 13, JSON.stringify(d.commission));
 env.COMMISSION_API_URL = COMMISSION_URL;
 await LmsProvision.updateOne({ _id: down._id }, { $set: { "commission.nextAttemptAt": new Date() } });
 await drainCommissionStudents();
@@ -218,6 +223,32 @@ await drainLmsProvisions();
 await drainCommissionStudents();
 const g = await row(lmsDown._id);
 check("the LMS refusing: nothing goes to Tetra Commission", g.status === "pending" && !g.commission?.state && !(await students.findOne({ email: "lmsdown@e2e-test.com" })));
+await LmsProvision.updateOne({ _id: lmsDown._id }, { $set: { attempts: 12, nextAttemptAt: new Date() } });
+await drainLmsProvisions();
+const g2 = await row(lmsDown._id);
+check("the LMS down past eight tries: still waiting, never given up", g2.status === "pending" && g2.attempts === 13, JSON.stringify({ status: g2.status, attempts: g2.attempts }));
+
+step("Sent the moment it is approved");
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const until = async (ok: () => Promise<boolean>, ms = 3000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (await ok()) return true; await wait(50); }
+  return false;
+};
+const quiet = await enrol();
+kickLmsProvisioning();
+await wait(700);
+check("a process that does not run the worker sends nothing on a kick (its timer elsewhere will)", (await row(quiet._id)).status === "pending");
+startLmsProvisionWorker();
+const t0 = Date.now();
+kickLmsProvisioning();
+const both = await until(async () => { const r = await row(quiet._id); return r.status === "sent" && r.commission?.state === "sent"; });
+check("in the process that runs it, a kick alone takes it into the LMS and Tetra Commission within seconds",
+  both && Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
+const another = await enrol();
+const t1 = Date.now();
+kickLmsProvisioning();
+check("...and the next one the same way", await until(async () => (await row(another._id)).commission?.state === "sent") && Date.now() - t1 < 3000, `${Date.now() - t1} ms`);
 
 await tc.db!.dropDatabase();
 await tc.close();

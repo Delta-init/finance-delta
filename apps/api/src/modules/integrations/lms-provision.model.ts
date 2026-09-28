@@ -37,9 +37,24 @@ const lmsProvisionSchema = new Schema(
     lmsCourseSlug: { type: String },
     studentCreated: { type: Boolean },
     sentAt: { type: Date },
+
+    /**
+     * How much of the fee is paid, as the LMS last acknowledged it — and the
+     * newer status waiting to be sent after accounts record more of the fee.
+     * The LMS opens half the modules for partial and all for paid, and only
+     * ever opens, so this only ever moves up.
+     */
+    access: {
+      sent: { type: String, enum: ["unpaid", "partial", "paid"] },
+      pending: { type: String, enum: ["unpaid", "partial", "paid"] },
+      attempts: { type: Number, default: 0 },
+      nextAttemptAt: { type: Date },
+      lastError: { type: String },
+    },
   },
   { timestamps: true },
 );
+lmsProvisionSchema.index({ status: 1, "access.pending": 1, "access.nextAttemptAt": 1 });
 
 export type LmsProvisionDoc = InferSchemaType<typeof lmsProvisionSchema> & {
   _id: Types.ObjectId;

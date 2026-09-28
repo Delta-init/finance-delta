@@ -89,6 +89,40 @@ export async function provisionEnrolment(input: {
   }
 }
 
+export type LmsPaymentStatus = "paid" | "partial" | "unpaid";
+
+/**
+ * Tell the LMS more of an enrolment's fee is paid, so it opens more of the
+ * course (half for partial, all for paid). Only ever opens on that side.
+ * 4xx — including "no enrolment came from that invoice" — is permanent.
+ */
+export async function updateEnrolmentAccess(input: { invoiceId: string; paymentStatus: LmsPaymentStatus }): Promise<{ changed: boolean; openModules: number; totalModules: number }> {
+  const baseUrl = env.LMS_API_URL.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/enrolment/access`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.LMS_S2S_SECRET },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      data?: { changed: boolean; openModules: number; totalModules: number };
+      error?: { message?: string };
+    };
+    if (!res.ok) {
+      const message = body.error?.message ?? `LMS refused with ${res.status}`;
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new LmsPermanentError(message);
+      throw new Error(message);
+    }
+    if (!body.data) throw new Error("LMS returned no result");
+    return body.data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Said once at boot, so a silent integration is visible without digging. */
 export function logLmsConfig(): void {
   if (lmsConfigured()) logger.info("LMS provisioning is configured");

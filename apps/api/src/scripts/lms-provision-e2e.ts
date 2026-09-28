@@ -306,6 +306,153 @@ async function main() {
     check("an unknown course is refused as permanent, not retried", unknown.status === 422, `got ${unknown.status}`);
   }
 
+  // ── Paid in part: half the course ─────────────────────────────────────────
+  step("Paid in part opens half the course; paying the balance opens the rest");
+  {
+    const { drainLmsAccessUpdates } = await import("../jobs/lms-provision.worker");
+    const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
+    const now = () => new Date();
+    const courseWith = async (slug: string, title: string, modules: number) => {
+      const c = await lms.db!.collection("courses").insertOne({
+        title, slug, organizationId: lmsOrg.insertedId, price: 4500, isPublished: true, createdAt: now(), updatedAt: now(),
+      });
+      const ids: string[] = [];
+      for (let i = 0; i < modules; i++) {
+        const s = await lms.db!.collection("sections").insertOne({
+          courseId: c.insertedId, title: `Module ${i + 1}`, description: "", order: i, createdAt: now(), updatedAt: now(),
+        });
+        ids.push(String(s.insertedId));
+      }
+      return { id: c.insertedId, modules: ids };
+    };
+    const dwt = await courseWith("delta-wave-theory-trading-programme", "DELTA WAVE THEORY TRADING PROGRAMME", 10);
+    const odd = await courseWith("seven-module-course", "SEVEN MODULE COURSE", 7);
+    const dwtItem = await Item.create({
+      organizationId: org._id, itemNumber: "ITM-0103", name: "Delta Wave Theory Trading Programme", sku: "DWTP",
+      type: "service", trackStock: false, sellingPriceMinor: 450_000, lmsCourseSlug: "delta-wave-theory-trading-programme",
+    });
+    const oddItem = await Item.create({
+      organizationId: org._id, itemNumber: "ITM-0104", name: "Seven Module Course", sku: "SMC",
+      type: "service", trackStock: false, sellingPriceMinor: 450_000, lmsCourseSlug: "seven-module-course",
+    });
+
+    const enrol = (externalId: string, itemId: string, email: string, name: string, declaredPaidMinor: number) =>
+      intakeEnrolment(orgId, {
+        externalId, source: "crm",
+        customer: { name, email, phone: "+971500000000" },
+        course: { name, itemId, amountMinor: 450_000 },
+        enrolledOn: today, declaredPaidMinor,
+        modeOfStudy: "online", language: "English",
+      } as never);
+    const approveAndSend = async (invoiceId: string) => {
+      await post(`/invoices/${invoiceId}/approval/approve`, undefined, token);
+      await settle();
+      await drainLmsProvisions();
+    };
+    const pay = (invoiceId: string, amountMinor: number) =>
+      post(`/invoices/${invoiceId}/payments`, { method: "bank_transfer", amountMinor, paidOn: today }, token);
+    // Raw rows from the LMS database: typed loosely on purpose.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enrolmentOf = async (email: string, courseId: unknown): Promise<any> => {
+      const u = await lms.db!.collection("users").findOne({ email });
+      return u ? lms.db!.collection("enrollments").findOne({ userId: u._id, courseId }) : null;
+    };
+    const locked = (e: { blockedLessons?: unknown[] } | null) => (e?.blockedLessons ?? []).map(String).sort().join(",");
+    const lockedOf = (ids: string[]) => [...ids].sort().join(",");
+
+    // Ananya pays AED 2,000 of 4,500 at the close.
+    const ananya = await enrol("crm-part-1", String(dwtItem._id), "ananya@e2e-test.com", "Ananya", 200_000);
+    await post(`/invoices/${ananya.invoiceId}/approval/approve`, undefined, token);
+    await settle();
+    const queued = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(ananya.invoiceId) }).lean();
+    check("a part-paid enrolment is handed over as partial",
+      (queued?.payload as { paymentStatus?: string })?.paymentStatus === "partial", JSON.stringify(queued?.payload));
+    await drainLmsProvisions();
+    let e = await enrolmentOf("ananya@e2e-test.com", dwt.id);
+    check("modules 1–5 open, 6–10 locked", locked(e) === lockedOf(dwt.modules.slice(5)), `locked ${(e?.blockedLessons ?? []).length}`);
+    check("...and the enrolment says partial", (e as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "partial");
+
+    // Accounts record the AED 2,000 she paid: still partial, nothing to send.
+    const first = await pay(ananya.invoiceId, 200_000);
+    check("accounts record her first payment", first.status === 200 || first.status === 201, `${first.status} ${JSON.stringify(first.body).slice(0, 200)}`);
+    await settle();
+    check("...which changes nothing in the LMS", (await drainLmsAccessUpdates()) === 0);
+
+    // Then the AED 2,500 balance: paid in full.
+    const balance = await pay(ananya.invoiceId, 250_000);
+    check("accounts record the balance", balance.status === 200 || balance.status === 201, `${balance.status}`);
+    await settle();
+    check("the update goes to the LMS", (await drainLmsAccessUpdates()) === 1);
+    e = await enrolmentOf("ananya@e2e-test.com", dwt.id);
+    check("every module is open now", locked(e) === "", `still locked ${(e?.blockedLessons ?? []).length}`);
+    check("...and the enrolment says paid", (e as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "paid");
+    const row = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(ananya.invoiceId) }).lean();
+    check("finance records that the LMS was told", (row as { access?: { sent?: string; pending?: string } } | null)?.access?.sent === "paid"
+      && !(row as { access?: { pending?: string } } | null)?.access?.pending);
+
+    // Taking a payment back never locks anything again.
+    const inv = await (await import("../modules/invoice/invoice.model")).Invoice.findById(ananya.invoiceId).lean();
+    const lastPayment = (inv?.payments as unknown as { _id: unknown }[] | undefined)?.at(-1)?._id;
+    await request("DELETE", `/invoices/${ananya.invoiceId}/payments/${String(lastPayment)}`, undefined, token);
+    await settle();
+    await drainLmsAccessUpdates();
+    e = await enrolmentOf("ananya@e2e-test.com", dwt.id);
+    check("a payment deleted afterwards locks nothing again", locked(e) === "");
+
+    // Rahul pays in full at the close.
+    const rahul = await enrol("crm-full-1", String(dwtItem._id), "rahul@e2e-test.com", "Rahul", 450_000);
+    await approveAndSend(rahul.invoiceId);
+    e = await enrolmentOf("rahul@e2e-test.com", dwt.id);
+    check("paid in full at the close: all 10 open", Boolean(e) && locked(e) === "");
+
+    // Sara is approved with nothing paid yet.
+    const sara = await enrol("crm-none-1", String(dwtItem._id), "sara@e2e-test.com", "Sara", 0);
+    await approveAndSend(sara.invoiceId);
+    e = await enrolmentOf("sara@e2e-test.com", dwt.id);
+    check("nothing paid: a login, but no module open", Boolean(e) && locked(e) === lockedOf(dwt.modules));
+    await pay(sara.invoiceId, 100_000);
+    await settle();
+    await drainLmsAccessUpdates();
+    e = await enrolmentOf("sara@e2e-test.com", dwt.id);
+    check("her first payment opens half", locked(e) === lockedOf(dwt.modules.slice(5)), `locked ${(e?.blockedLessons ?? []).length}`);
+
+    // An odd number of modules rounds up.
+    const omar = await enrol("crm-odd-1", String(oddItem._id), "omar@e2e-test.com", "Omar", 100_000);
+    await approveAndSend(omar.invoiceId);
+    e = await enrolmentOf("omar@e2e-test.com", odd.id);
+    check("7 modules, partial: modules 1–4 open, 5–7 locked", locked(e) === lockedOf(odd.modules.slice(4)), `locked ${(e?.blockedLessons ?? []).length}`);
+
+    // Somebody already on the course keeps exactly what they have.
+    const existingUser = await lms.db!.collection("users").insertOne({
+      email: "already@e2e-test.com", name: "Already Enrolled", role: "student", enrollmentStatus: "approved",
+      organizationId: lmsOrg.insertedId, isActive: true, createdAt: now(), updatedAt: now(),
+    });
+    await lms.db!.collection("enrollments").insertOne({
+      userId: existingUser.insertedId, courseId: dwt.id, status: "active", source: "admin", progressPercent: 0,
+      blockedLessons: [], enrolledAt: now(), createdAt: now(), updatedAt: now(),
+    });
+    const already = await enrol("crm-existing-1", String(dwtItem._id), "already@e2e-test.com", "Already Enrolled", 100_000);
+    await approveAndSend(already.invoiceId);
+    e = await enrolmentOf("already@e2e-test.com", dwt.id);
+    check("already enrolled before: nothing locked", locked(e) === "");
+    check("...and not put under the payment rule", !(e as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status);
+
+    // The follow-up door is finance's alone.
+    const accessUrl = `${process.env.LMS_API_URL}/api/v1/integrations/finance/enrolment/access`;
+    const wrongSecret = await fetch(accessUrl, {
+      method: "POST", headers: { "content-type": "application/json", "x-finance-secret": "not-the-secret" },
+      body: JSON.stringify({ invoiceId: sara.invoiceId, paymentStatus: "paid" }),
+    });
+    check("an access update with the wrong secret is refused", wrongSecret.status === 401, `got ${wrongSecret.status}`);
+    const unknownInvoice = await fetch(accessUrl, {
+      method: "POST", headers: { "content-type": "application/json", "x-finance-secret": process.env.LMS_S2S_SECRET! },
+      body: JSON.stringify({ invoiceId: "no-such-invoice", paymentStatus: "paid" }),
+    });
+    check("an invoice the LMS never saw is a 404, not retried", unknownInvoice.status === 404, `got ${unknownInvoice.status}`);
+    e = await enrolmentOf("sara@e2e-test.com", dwt.id);
+    check("...and neither changed anybody's access", locked(e) === lockedOf(dwt.modules.slice(5)));
+  }
+
   await lms.close();
   await mongoose.disconnect();
   console.log("");

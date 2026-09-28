@@ -82,6 +82,11 @@ if ! grep -qE "^[[:space:]]*DATABASE_URL:" "$LMS_REPO/src/config/env.ts"; then
   exit 1
 fi
 
+# No .env reaches either server. The LMS loads its own with `import
+# 'dotenv/config'`, which --no-env-file does not stop — so it is pointed at a
+# file that does not exist. Its .env holds a real mailbox (the SMTP_BACKUP_*
+# pair, blanked here as well), and a run once sent real login-link mail from it
+# to the made-up addresses below. Scheduled jobs are off: nothing here needs them.
 echo "Starting the LMS on :$LMS_PORT"
 (
   cd "$LMS_REPO"
@@ -95,7 +100,11 @@ echo "Starting the LMS on :$LMS_PORT"
   FINANCE_S2S_SECRET="$SECRET" \
   CLIENT_URL="http://127.0.0.1:3000" \
   SMTP_HOST="" SMTP_USER="" SMTP_PASS="" RESEND_API_KEY="" \
-  bun src/index.ts > "$WORK/log/lms.log" 2>&1 &
+  SMTP_BACKUP_HOST="" SMTP_BACKUP_USER="" SMTP_BACKUP_PASS="" \
+  JWT_ACCESS_SECRET="$LONG" \
+  ENABLE_CRON=false \
+  DOTENV_CONFIG_PATH="$WORK/no-such-dotenv" \
+  bun --no-env-file src/index.ts > "$WORK/log/lms.log" 2>&1 &
 )
 
 for _ in $(seq 1 80); do
@@ -135,7 +144,7 @@ export RUN_SCHEDULERS=false
 
 echo "Starting the finance API on :$API_PORT"
 cd "$REPO/apps/api"
-bun src/index.ts > "$WORK/log/api.log" 2>&1 &
+bun --no-env-file src/index.ts > "$WORK/log/api.log" 2>&1 &
 
 for _ in $(seq 1 80); do
   curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1 && break
@@ -148,11 +157,21 @@ curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null || {
 }
 
 echo "Provisioning enrolments"
-if ! bun src/scripts/lms-provision-e2e.ts; then
+if ! bun --no-env-file src/scripts/lms-provision-e2e.ts; then
   echo
   echo "--- last 40 lines of the finance log ---" >&2
   tail -40 "$WORK/log/api.log" >&2
   echo "--- last 40 lines of the LMS log ---" >&2
   tail -40 "$WORK/log/lms.log" >&2
+  grep -q "messageId" "$WORK/log/lms.log" && echo "!!! The scratch LMS also sent real mail during this run." >&2
   exit 1
 fi
+
+# Nothing may have left the building. A real send logs a messageId; the
+# console sender the LMS falls back to without a mailbox does not.
+if grep -q "messageId" "$WORK/log/lms.log"; then
+  echo "The scratch LMS sent real mail — it must not. Check what it read its mail settings from:" >&2
+  grep -n "messageId\|email sent" "$WORK/log/lms.log" >&2
+  exit 1
+fi
+echo "Confirmed: no mail left the scratch LMS"

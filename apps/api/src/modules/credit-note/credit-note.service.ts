@@ -117,6 +117,8 @@ export async function applyCreditNote(orgId: string, id: string, input: ApplyCre
   if (invoice.balanceMinor <= 0) invoice.status = "paid";
   else if (invoice.amountPaidMinor > 0) invoice.status = "partial";
   await invoice.save();
+  // Credit that settles an enrolment opens the rest of its course in the LMS.
+  void import("../invoice/invoice.service").then((m) => m.syncLmsAccess(invoice as never));
 
   cn.amountAppliedMinor = (cn.amountAppliedMinor ?? 0) + applyAmount;
   if (cn.amountAppliedMinor >= (cn.totalMinor ?? 0)) cn.status = "applied";

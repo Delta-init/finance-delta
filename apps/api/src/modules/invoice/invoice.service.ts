@@ -761,6 +761,59 @@ async function _reconcileInventory(
  * Never throws. Approving is the approver's act; it does not fail because
  * another system is unreachable, unmapped or switched off.
  */
+/**
+ * How much of an enrolment is paid, the way the LMS opens its modules: every
+ * module when paid, the first half when partial, none when nothing is paid.
+ *
+ * The larger of what the salesperson declared at the close and what accounts
+ * have recorded — at approval the declared payment is what was checked against
+ * the receipt; afterwards recorded payments grow past it. An invoice for
+ * nothing counts as paid.
+ */
+export function lmsPaymentStatus(doc: InvoiceDoc): "paid" | "partial" | "unpaid" {
+  const d = doc as unknown as { totalMinor?: number; amountPaidMinor?: number; enrolment?: { declaredPaidMinor?: number } };
+  const total = d.totalMinor ?? 0;
+  const paid = Math.max(d.amountPaidMinor ?? 0, d.enrolment?.declaredPaidMinor ?? 0);
+  if (total <= 0 || paid >= total) return "paid";
+  return paid > 0 ? "partial" : "unpaid";
+}
+
+const LMS_RANK = { unpaid: 0, partial: 1, paid: 2 } as const;
+type LmsStatus = keyof typeof LMS_RANK;
+
+/**
+ * After a payment: when the enrolment now counts as more paid than the LMS
+ * was last told, queue the news so the LMS opens more of the course. Only ever
+ * moves up — a payment deleted or edited down never locks anything again.
+ * Never fails the payment it follows.
+ */
+export async function syncLmsAccess(doc: InvoiceDoc): Promise<void> {
+  try {
+    const { LmsProvision } = await import("../integrations/lms-provision.model");
+    // No row: not an LMS enrolment, or not approved yet — approval carries it.
+    const row = await LmsProvision.findOne({ invoiceId: doc._id }).lean();
+    if (!row) return;
+    const status = lmsPaymentStatus(doc);
+    const access = (row as { access?: { pending?: LmsStatus; sent?: LmsStatus } }).access;
+    const known = access?.pending ?? access?.sent ?? (row.payload as { paymentStatus?: LmsStatus } | undefined)?.paymentStatus;
+    if (known && LMS_RANK[status] <= LMS_RANK[known]) return;
+
+    if (row.status === "sent") {
+      await LmsProvision.updateOne(
+        { _id: row._id },
+        { $set: { "access.pending": status, "access.attempts": 0, "access.nextAttemptAt": new Date() }, $unset: { "access.lastError": 1 } },
+      );
+    } else {
+      // Not in the LMS yet, or waiting for somebody to map its course: the
+      // provisioning itself will carry the newer status.
+      await LmsProvision.updateOne({ _id: row._id }, { $set: { "payload.paymentStatus": status } });
+    }
+  } catch (err) {
+    const { logger } = await import("../../lib/logger");
+    logger.error({ err, invoiceId: String(doc._id) }, "Could not queue an LMS access update");
+  }
+}
+
 export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise<void> {
   try {
     const { lmsConfigured } = await import("../../lib/lms-client");
@@ -846,6 +899,8 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         invoiceNumber: doc.invoiceNumber,
         // Whole units: the LMS records orders the way its own gateways do.
         amount: Math.round((doc.totalMinor ?? 0) / 100),
+        // Paid opens every module, partial the first half, unpaid none.
+        paymentStatus: lmsPaymentStatus(doc),
       },
       status: "pending",
     });
@@ -1412,6 +1467,7 @@ export async function updatePayment(
 
   await doc.save();
   await doc.populate("tagIds", "name color");
+  void syncLmsAccess(doc);
 
   if (doc.balanceMinor <= 0) {
     const org = await Organization.findById(orgId);
@@ -1546,6 +1602,8 @@ export async function recordPayment(
 
   await doc.save();
   await doc.populate("tagIds", "name color");
+  // More of an enrolment paid opens more of its course in the LMS.
+  void syncLmsAccess(doc);
 
   if (newBalance <= 0) {
     const org = await Organization.findById(orgId);

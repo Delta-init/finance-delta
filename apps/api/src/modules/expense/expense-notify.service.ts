@@ -4,6 +4,7 @@ import { sendNotice } from "../../lib/email";
 import { logger } from "../../lib/logger";
 import { User } from "../user/user.model";
 import type { ExpenseDoc } from "./expense.model";
+import { withAccountants } from "../../lib/approval-recipients";
 
 /**
  * Telling somebody what happened to the claim they sent.
@@ -102,20 +103,25 @@ export async function notifyApproversOfSubmission(doc: ExpenseDoc): Promise<void
       organizationId: orgId,
       $or: [{ permissions: "expense:approve" }, { permissions: "*" }],
     }).select("_id");
-    if (roles.length === 0) return;
 
-    const approvers = await User.find({
-      status: "active",
-      memberships: {
-        $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) } },
-      },
-    }).select("email");
+    const approvers = roles.length
+      ? await User.find({
+          status: "active",
+          memberships: {
+            $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) } },
+          },
+        }).select("email")
+      : [];
 
-    // Not the person who submitted it: they know.
-    const recipients = approvers
-      .filter((u) => String(u._id) !== String(doc.submittedById))
-      .map((u) => u.email as string)
-      .filter(Boolean);
+    // Not the person who submitted it: they know. The accountants are told too.
+    const recipients = await withAccountants(
+      orgId,
+      approvers
+        .filter((u) => String(u._id) !== String(doc.submittedById))
+        .map((u) => u.email as string)
+        .filter(Boolean),
+      [String(doc.submittedById ?? "")],
+    );
 
     if (recipients.length === 0) {
       // Worth a line in the log. A claim nobody can approve will otherwise sit

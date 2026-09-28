@@ -5,7 +5,7 @@ import { Department } from "../department/department.model";
 import { Expense } from "../expense/expense.model";
 import { User } from "../user/user.model";
 import { BudgetAllocationModel, FundingRequestModel } from "./budget.model";
-import { notifyFundingApprovers } from "./budget-notify.service";
+import { notifyFundRequestWaiting } from "./budget-notify.service";
 
 function refId(value: unknown): string { return String(value ?? ""); }
 
@@ -141,7 +141,11 @@ export async function upsertAllocation(organizationId: string, userId: string, i
 export async function createFundingRequest(organizationId: string, userId: string, input: CreateFundingRequestInput) {
   const { user, departmentId, departmentName } = await userAndDepartment(userId, organizationId);
   const row = await FundingRequestModel.create({ organizationId: new Types.ObjectId(organizationId), departmentId: new Types.ObjectId(departmentId), period: input.period, currency: input.currency, amountMinor: input.amountMinor, title: input.title, purpose: input.purpose, requestedById: new Types.ObjectId(userId), requestedByName: user.name, status: "submitted" });
-  return requestDTO({ ...row.toObject(), departmentId: { _id: departmentId, name: departmentName } });
+  const dto = requestDTO({ ...row.toObject(), departmentId: { _id: departmentId, name: departmentName } });
+  // The accountants hear about every request; nobody else was told of a
+  // top-up before, and still is not.
+  void notifyFundRequestWaiting(organizationId, dto, { includeApprovers: false, requesterId: userId });
+  return dto;
 }
 
 export async function listFundingRequests(organizationId: string, userId: string, query: BudgetQuery, allDepartments: boolean) {
@@ -268,7 +272,7 @@ export async function intakeFundingRequest(organizationId: string, input: Inboun
   const dto = requestDTO({ ...row.toObject(), departmentId: { _id: department._id, name: department.name } });
   // Nobody in finance would otherwise know it arrived: the requester has no
   // login here to chase it with.
-  void notifyFundingApprovers(organizationId, dto);
+  void notifyFundRequestWaiting(organizationId, dto, { includeApprovers: true });
   return dto;
 }
 

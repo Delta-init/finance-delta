@@ -6,6 +6,7 @@ import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Bill, type BillDoc } from "./bill.model";
 import { Vendor } from "../vendor/vendor.model";
 import { nextNumber } from "../sequence/sequence.service";
+import { notifyBillWaiting } from "./bill-notify.service";
 
 function lineTotal(l: { quantity: number; unitPriceMinor: number; discountPct: number; taxPct: number }) {
   const sub = l.quantity * l.unitPriceMinor;
@@ -178,6 +179,13 @@ export async function createBill(orgId: string, input: CreateBillInput): Promise
     status,
     approvalStatus,
   });
+  // Held for approval: the accountants are told, as for every approval request.
+  if (status === "pending_approval") {
+    void notifyBillWaiting(orgId, {
+      id: String(doc._id), billNumber, vendorName: doc.vendorName as string, totalMinor,
+      currency: (doc.currency as string) ?? "AED", dueDate: doc.dueDate as Date,
+    });
+  }
   return toDTO(doc as unknown as BillDoc);
 }
 

@@ -6,6 +6,7 @@ import { sendNotice } from "../lib/email";
 import { hrmsClient } from "../lib/hrms-client";
 import { PayrollOrgLink } from "../modules/payroll-mapping/org-link.model";
 import { payrollRecipients } from "../modules/payroll/notify.service";
+import { withAccountants } from "../lib/approval-recipients";
 
 /**
  * Purchase requests waiting on finance, found by asking.
@@ -65,7 +66,8 @@ export async function checkProcurementWaiting(): Promise<number> {
 
   for (const [orgId, rows] of byOrg) {
     try {
-      const to = await payrollRecipients(orgId, "po:create");
+      // Whoever may approve a purchase, and the accountants.
+      const to = await withAccountants(orgId, await payrollRecipients(orgId, "po:create"));
       if (!to.length) continue;
       await sendNotice({
         to,

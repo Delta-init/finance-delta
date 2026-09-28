@@ -3,6 +3,7 @@ import { env } from "../../config/env";
 import { sendNotice } from "../../lib/email";
 import { logger } from "../../lib/logger";
 import { User } from "../user/user.model";
+import { withAccountants } from "../../lib/approval-recipients";
 import type { InvoiceDoc } from "./invoice.model";
 
 /**
@@ -87,18 +88,23 @@ export async function notifyApprovers(doc: InvoiceDoc): Promise<void> {
       organizationId: orgId,
       $or: [{ permissions: "invoice:write" }, { permissions: "*" }],
     }).select("_id");
-    if (roles.length === 0) return;
 
-    const approvers = await User.find({
-      status: "active",
-      memberships: { $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) } } },
-    }).select("email");
+    const approvers = roles.length
+      ? await User.find({
+          status: "active",
+          memberships: { $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) } } },
+        }).select("email")
+      : [];
 
-    // Not the person who raised it: they know.
-    const to = approvers
-      .filter((u) => String(u._id) !== String(doc.salespersonId))
-      .map((u) => u.email as string)
-      .filter(Boolean);
+    // Not the person who raised it: they know. The accountants are told too.
+    const to = await withAccountants(
+      orgId,
+      approvers
+        .filter((u) => String(u._id) !== String(doc.salespersonId))
+        .map((u) => u.email as string)
+        .filter(Boolean),
+      [String(doc.salespersonId ?? "")],
+    );
 
     if (to.length === 0) {
       // A line in the log, because an enrolment nobody can approve otherwise

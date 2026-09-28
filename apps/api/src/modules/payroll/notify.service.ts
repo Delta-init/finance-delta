@@ -6,6 +6,7 @@ import { User } from "../user/user.model";
 import { Role } from "../role/role.model";
 import { Organization } from "../organization/organization.model";
 import { formatMinor } from "./money";
+import { withAccountants } from "../../lib/approval-recipients";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -68,7 +69,8 @@ export async function notifyPayrollWaiting(
 ): Promise<void> {
   try {
     if (!batches.length) return;
-    const to = await payrollRecipients(orgId, "payroll:write");
+    // Whoever imports payroll, and the accountants.
+    const to = await withAccountants(orgId, await payrollRecipients(orgId, "payroll:write"));
     if (!to.length) return;
 
     const org = await Organization.findById(oid(orgId)).select("name").lean();

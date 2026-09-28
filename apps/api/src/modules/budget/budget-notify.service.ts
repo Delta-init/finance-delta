@@ -5,13 +5,15 @@ import { sendNotice } from "../../lib/email";
 import { logger } from "../../lib/logger";
 import { Role } from "../role/role.model";
 import { User } from "../user/user.model";
+import { withAccountants } from "../../lib/approval-recipients";
 
 /**
- * Telling finance a fund request arrived from another system.
+ * Telling people a fund request is waiting.
  *
  * A request raised inside finance is seen by whoever opens Budgets. One handed
  * over by Media ERP comes from somebody with no login here and no way to chase
- * it, so without a notice it waits until someone happens to look.
+ * it, so without a notice it waits until someone happens to look. And the
+ * accountants are told of every request, wherever it came from.
  *
  * Nothing here may fail the request it reports: a mail outage must not turn
  * into Media ERP being told its request was refused.
@@ -28,17 +30,27 @@ function monthName(period: string): string {
 const SOURCE_LABELS: Record<string, string> = { "media-erp": "Media ERP" };
 
 /**
- * Everyone who can approve it, found by the permission rather than by role
- * names — a custom role granting `budget:approve` is included without anybody
- * having to remember to.
+ * Tell people a fund request is waiting.
+ *
+ * One from another system (Media ERP) goes to everyone who can approve it —
+ * found by the permission rather than by role names, so a custom role granting
+ * `budget:approve` is included without anybody having to remember to. Every
+ * request, from anywhere, also goes to the accountants; for a top-up raised
+ * here they are the only ones told, as nobody was before.
  */
-export async function notifyFundingApprovers(organizationId: string, request: FundingRequest): Promise<void> {
+export async function notifyFundRequestWaiting(
+  organizationId: string,
+  request: FundingRequest,
+  opts: { includeApprovers: boolean; requesterId?: string },
+): Promise<void> {
   try {
     const orgId = new Types.ObjectId(organizationId);
-    const roles = await Role.find({
-      organizationId: orgId,
-      $or: [{ permissions: "budget:approve" }, { permissions: "*" }],
-    }).select("_id");
+    const roles = opts.includeApprovers
+      ? await Role.find({
+          organizationId: orgId,
+          $or: [{ permissions: "budget:approve" }, { permissions: "*" }],
+        }).select("_id")
+      : [];
 
     const approvers = roles.length
       ? await User.find({
@@ -48,11 +60,18 @@ export async function notifyFundingApprovers(organizationId: string, request: Fu
           },
         }).select("email")
       : [];
-    const to = approvers.map((u) => u.email as string).filter(Boolean);
+    const excluded = opts.requesterId ? [opts.requesterId] : [];
+    const to = await withAccountants(
+      orgId,
+      approvers.filter((u) => !excluded.includes(String(u._id))).map((u) => u.email as string).filter(Boolean),
+      excluded,
+    );
 
     if (to.length === 0) {
       // A line in the log, because a request nobody can approve otherwise sits
-      // pending forever with nothing to say why.
+      // pending forever with nothing to say why. A top-up in an organization
+      // with no accountants is not that: its approvers were never mailed.
+      if (!opts.includeApprovers) return;
       logger.warn(
         { organizationId, fundingRequestId: request.id },
         "Fund request received but the organization has nobody who can approve it",
@@ -60,19 +79,24 @@ export async function notifyFundingApprovers(organizationId: string, request: Fu
       return;
     }
 
-    const from = SOURCE_LABELS[request.source] ?? request.source;
+    const from = SOURCE_LABELS[request.source] ?? (request.source === "finance" ? "" : request.source);
+    const drawdown = request.kind === "drawdown";
     await sendNotice({
       to,
       subject: `Fund request: ${request.title}`,
-      title: "A fund request is waiting for you",
+      title: "A fund request is waiting for approval",
       lines: [
-        `${request.requestedByName} (${from}) asked for ${money(request.amountMinor, request.currency)} from ${request.departmentName}'s ${monthName(request.period)} budget.`,
+        drawdown
+          ? `${request.requestedByName}${from ? ` (${from})` : ""} asked for ${money(request.amountMinor, request.currency)} from ${request.departmentName}'s ${monthName(request.period)} budget.`
+          : `${request.requestedByName} asked for ${money(request.amountMinor, request.currency)} more for ${request.departmentName}'s ${monthName(request.period)} budget.`,
         ...(request.platform ? [`Platform: ${request.platform}`] : []),
         request.purpose.length > 300 ? `${request.purpose.slice(0, 297)}…` : request.purpose,
-        "Approving it takes the amount off what the department has left for that month.",
+        drawdown
+          ? "Approving it takes the amount off what the department has left for that month."
+          : "Approving it adds the amount to the department's month.",
       ],
       actionLabel: "Review it",
-      actionUrl: `${env.WEB_ORIGIN}/budgets`,
+      actionUrl: `${env.WEB_ORIGIN}/approvals`,
     });
   } catch (err) {
     logger.error({ err, fundingRequestId: request.id }, "Could not notify fund request approvers");

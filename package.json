@@ -24,6 +24,7 @@
     "test:invoice-e2e": "./scripts/invoice-e2e.sh",
     "test:lms-e2e": "./scripts/lms-provision-e2e.sh",
     "test:fund-request-e2e": "./scripts/fund-request-e2e.sh",
+    "test:approvals-e2e": "./scripts/approvals-e2e.sh",
     "test:sso-e2e": "./scripts/sso-e2e.sh",
     "payroll-demo": "./scripts/payroll-demo.sh"
   },

@@ -4,8 +4,11 @@
  * `seedDefaultRoles` runs when an organization is created, so an organization
  * that predates a new system role never gets it. This backfills them.
  *
- * Adds missing roles and only adds the new standard budget permissions to
- * built-in manager, accountant, and employee roles. Existing grants are kept.
+ * Adds missing roles, and the standard permissions added since — budget ones
+ * to the built-in manager, accountant and employee roles, approving Tetra
+ * Commission deposits to the accountant — to roles that predate them.
+ * Existing grants are kept; nothing is taken away. (The administrator role
+ * holds everything already.)
  *
  * Run with:  bun apps/api/src/scripts/seed-system-roles.ts [--apply]
  */
@@ -16,9 +19,9 @@ import { Role } from "../modules/role/role.model";
 import { seedDefaultRoles } from "../modules/role/role.service";
 
 const APPLY = process.argv.includes("--apply");
-const BUDGET_ROLE_PERMISSIONS: Record<string, string[]> = {
+const ADDED_ROLE_PERMISSIONS: Record<string, string[]> = {
   manager: ["budget:read", "budget:approve"],
-  accountant: ["budget:read", "budget:manage", "budget:approve"],
+  accountant: ["budget:read", "budget:manage", "budget:approve", "tetra_deposit:approve"],
   employee: ["budget:read:own", "budget:request"],
 };
 
@@ -34,7 +37,7 @@ async function run() {
     const have = new Set(roles.map((r) => r.key));
     const missing = SYSTEM_ROLES.filter((r) => !have.has(r.key)).map((r) => r.key);
     missingTotal += missing.length;
-    const permissionAdds = roles.flatMap((role) => (BUDGET_ROLE_PERMISSIONS[role.key] ?? []).filter((p) => !role.permissions.includes(p)).map((p) => ({ role, permission: p })));
+    const permissionAdds = roles.flatMap((role) => (ADDED_ROLE_PERMISSIONS[role.key] ?? []).filter((p) => !role.permissions.includes(p)).map((p) => ({ role, permission: p })));
     permissionTotal += permissionAdds.length;
     console.log(`  ${String(org.name)}: ${missing.length ? `missing roles ${missing.join(", ")}` : "roles complete"}${permissionAdds.length ? ` · add ${permissionAdds.map((p) => `${p.role.key}:${p.permission}`).join(", ")}` : ""}`);
     if (APPLY && missing.length) await seedDefaultRoles(String(org._id));
@@ -44,8 +47,8 @@ async function run() {
   }
 
   if (missingTotal === 0 && permissionTotal === 0) console.log("\nNothing to add.");
-  else if (!APPLY) console.log(`\nDry run — nothing written. Re-run with --apply to add ${missingTotal} role(s) and ${permissionTotal} budget permission(s).`);
-  else console.log(`\nAdded ${missingTotal} role(s) and ${permissionTotal} budget permission(s).`);
+  else if (!APPLY) console.log(`\nDry run — nothing written. Re-run with --apply to add ${missingTotal} role(s) and ${permissionTotal} permission(s).`);
+  else console.log(`\nAdded ${missingTotal} role(s) and ${permissionTotal} permission(s).`);
 
   await mongoose.disconnect();
 }

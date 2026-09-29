@@ -89,7 +89,7 @@ interface NavGroup {
 }
 
 /** Deciding any one of these makes somebody an approver. */
-const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "expense:approve", "bill:approve", "payroll:approve", "po:create"] as const satisfies readonly Permission[];
+const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "tetra_deposit:approve", "expense:approve", "bill:approve", "payroll:approve", "po:create"] as const satisfies readonly Permission[];
 
 const NAV: NavGroup[] = [
   {

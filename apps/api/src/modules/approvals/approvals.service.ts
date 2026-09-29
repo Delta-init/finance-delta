@@ -9,6 +9,7 @@ import { Bill } from "../bill/bill.model";
 import { PayrollRun } from "../payroll/payroll-run.model";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { FundingRequestModel } from "../budget/budget.model";
+import { TetraDepositModel } from "../tetra-deposit/tetra-deposit.model";
 
 /**
  * What is waiting on this person, across every kind of approval.
@@ -85,6 +86,30 @@ const KINDS: Kind[] = [
           ].filter(Boolean).join(" · "),
           amountMinor: r.amountMinor, currency: r.currency,
           at: iso(r.createdAt), href: "/approvals",
+        })),
+      };
+    },
+  },
+  {
+    type: "tetra_deposit",
+    label: "Tetra Commission deposits",
+    href: "/approvals",
+    allowed: (can) => can("tetra_deposit:approve"),
+    read: async (org) => {
+      const filter = { organizationId: org, status: "pending" };
+      const [count, rows] = await Promise.all([
+        TetraDepositModel.countDocuments(filter),
+        TetraDepositModel.find(filter).sort({ requestedAt: -1, createdAt: -1 }).limit(LATEST)
+          .select("student amountMinor currency paymentMethod requestedBy initiatingMentor team requestedAt createdAt").lean(),
+      ]);
+      return {
+        count,
+        items: rows.map((r: any) => ({
+          id: String(r._id),
+          title: r.student?.name ?? "Deposit",
+          subtitle: [r.student?.code, r.paymentMethod, r.requestedBy || r.initiatingMentor, r.team].filter(Boolean).join(" · "),
+          amountMinor: r.amountMinor, currency: r.currency ?? "USD",
+          at: iso(r.requestedAt ?? r.createdAt), href: "/approvals",
         })),
       };
     },

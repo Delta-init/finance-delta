@@ -118,6 +118,13 @@ export const PERMISSIONS = [
   "commission:write",
   "commission:approve",
 
+  /**
+   * Deciding the deposit requests Tetra Commission sends for approval, and
+   * reading them. One permission for both: the queue is only ever read in
+   * order to decide it.
+   */
+  "tetra_deposit:approve",
+
   // Loans & Credit
   "loan:read",
   "loan:write",

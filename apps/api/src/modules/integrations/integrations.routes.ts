@@ -30,4 +30,8 @@ router.post("/funding-requests", c.takeFundingRequest);
 // What became of them, by the caller's own ids.
 router.post("/funding-requests/status", c.fundingRequestStatuses);
 
+// Tetra Commission handing over a deposit request for the accountants to
+// approve. Idempotent on its own id; the decision is sent back to it.
+router.post("/tetra-deposits", c.takeTetraDeposit);
+
 export default router;

@@ -103,6 +103,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "budget:read",
       "budget:manage",
       "budget:approve",
+      "tetra_deposit:approve",
     ] satisfies Permission[],
     isSystem: true,
   },

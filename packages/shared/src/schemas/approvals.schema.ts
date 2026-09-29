@@ -11,7 +11,7 @@ import { z } from "zod";
  * read (procurement lives in HRMS) says so in `unavailable` and counts nothing,
  * rather than reporting a confident zero.
  */
-export const approvalTypeSchema = z.enum(["invoice", "fund_request", "expense", "bill", "payroll", "procurement"]);
+export const approvalTypeSchema = z.enum(["invoice", "fund_request", "tetra_deposit", "expense", "bill", "payroll", "procurement"]);
 export type ApprovalType = z.infer<typeof approvalTypeSchema>;
 
 export const approvalItemSchema = z.object({

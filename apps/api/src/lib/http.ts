@@ -7,7 +7,9 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "CONFLICT"
   | "RATE_LIMITED"
-  | "INTERNAL";
+  | "INTERNAL"
+  /** Switched off or not connected yet — a caller should wait it out, not give up. */
+  | "UNAVAILABLE";
 
 const STATUS: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
@@ -17,6 +19,7 @@ const STATUS: Record<ErrorCode, number> = {
   CONFLICT: 409,
   RATE_LIMITED: 429,
   INTERNAL: 500,
+  UNAVAILABLE: 503,
 };
 
 export class AppError extends Error {

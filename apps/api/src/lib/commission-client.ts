@@ -88,6 +88,87 @@ export async function sendStudentToCommission(input: {
   }
 }
 
+/* ── Decisions on the deposit requests Tetra Commission sent for approval ── */
+
+export interface CommissionFundingDecision {
+  /** Tetra Commission's own id for the request. */
+  fundingId: string;
+  /** Ours. */
+  financeId: string;
+  decision: "approved" | "rejected";
+  amountMinor?: number;
+  transactionId?: string;
+  paymentMethod?: string;
+  mt5Login?: string;
+  note?: string;
+  reason?: string;
+  decidedBy: { name: string; email: string };
+  decidedAt: string;
+}
+
+export interface CommissionFundingDecisionResult {
+  fundingId: string;
+  status: string;
+  amountUsd: number;
+  transactionId: string;
+  /** It had this decision already — a repeat. */
+  already: boolean;
+  credited: number;
+  levelUpgraded: boolean;
+}
+
+/**
+ * Tetra Commission will not take this decision, and sending it again will not
+ * change that: the request is gone (410), decided there already, not sent to
+ * us, or approved under a transaction ID another request has (409), or the
+ * decision is malformed (400/422). `code` says which.
+ */
+export class CommissionRefusedError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) {
+    super(message);
+  }
+}
+
+/**
+ * Send an accountant's decision on a deposit request back to Tetra Commission
+ * (backend/src/finance/funding.ts there), on the same secret as the students.
+ *
+ * Anything but a refusal is thrown as a plain Error and waited out — a
+ * decision is never dropped because Tetra Commission was down, not yet
+ * deployed, or holding a different secret for a while.
+ */
+export async function sendFundingDecisionToCommission(input: CommissionFundingDecision): Promise<CommissionFundingDecisionResult> {
+  const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/funding-decisions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.COMMISSION_S2S_SECRET },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      data?: CommissionFundingDecisionResult;
+      error?: { code?: string; message?: string } | string;
+    };
+    if (!res.ok) {
+      const code = typeof body.error === "object" ? body.error?.code ?? "" : "";
+      const message =
+        (typeof body.error === "object" ? body.error?.message : body.error) ?? `Tetra Commission refused with ${res.status}`;
+      if ([400, 409, 410, 422].includes(res.status)) throw new CommissionRefusedError(message, res.status, code);
+      throw new Error(message);
+    }
+    if (!body.data) throw new Error("Tetra Commission returned no result");
+    return body.data;
+  } catch (err) {
+    if ((err as Error).name === "AbortError") throw new Error("Tetra Commission did not answer in time");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Said once at boot, so a silent link is visible without digging. */
 export function logCommissionConfig(): void {
   if (commissionConfigured()) logger.info("Tetra Commission is configured — new LMS students are sent there");

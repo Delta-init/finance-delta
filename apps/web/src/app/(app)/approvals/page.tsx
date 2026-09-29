@@ -18,6 +18,7 @@ import { useInvoices } from "@/features/invoices/api";
 import { useFundingRequests } from "@/features/budgets/api";
 import { FundingRequestTags, FundingReviewDialog, periodLabel } from "@/features/budgets/review-dialog";
 import { useApprovalSummary } from "@/features/approvals/api";
+import { TetraDepositQueue } from "@/features/tetra-deposits/queue";
 
 /**
  * Everything waiting on an approver, in one place — every kind, not only
@@ -25,6 +26,7 @@ import { useApprovalSummary } from "@/features/approvals/api";
  *
  * Fund requests are decided right here, with the same dialog Budgets uses: it
  * shows everything a decision needs, including what the department has left.
+ * So are Tetra Commission's deposits, whose decision goes straight back there.
  * Claims, bills, payroll and purchase requests are listed and linked instead,
  * because what a decision on them needs — the receipt, the figures — is on
  * their own pages.
@@ -264,7 +266,8 @@ export default function ApprovalsPage() {
   const { can } = useCan();
   const invoices = can("invoice:write") && can("invoice:read");
   const funds = can("budget:approve");
-  const approver = invoices || funds || can("expense:approve") || can("bill:approve") || can("payroll:approve") || can("po:create");
+  const deposits = can("tetra_deposit:approve");
+  const approver = invoices || funds || deposits || can("expense:approve") || can("bill:approve") || can("payroll:approve") || can("po:create");
   const { data: summary } = useApprovalSummary(approver);
 
   if (!approver) {
@@ -275,14 +278,14 @@ export default function ApprovalsPage() {
     );
   }
 
-  const linked = (summary?.groups ?? []).filter((g) => g.type !== "invoice" && g.type !== "fund_request");
+  const linked = (summary?.groups ?? []).filter((g) => g.type !== "invoice" && g.type !== "fund_request" && g.type !== "tetra_deposit");
 
   return (
     <div className="space-y-6 p-4 md:p-6">
       <PageHeader
         icon={ClipboardCheck}
         title="Approvals"
-        description="Everything waiting on your decision — fund requests, enrolment invoices, claims, bills, payroll and purchase requests — newest first."
+        description="Everything waiting on your decision — fund requests, Tetra Commission deposits, enrolment invoices, claims, bills, payroll and purchase requests — newest first."
       />
 
       {summary && summary.total === 0 && (
@@ -292,6 +295,7 @@ export default function ApprovalsPage() {
       )}
 
       {funds && <FundRequestQueue />}
+      {deposits && <TetraDepositQueue />}
       {invoices && <InvoiceQueue />}
       {linked.map((group) => <LinkedQueue key={group.type} group={group} />)}
     </div>

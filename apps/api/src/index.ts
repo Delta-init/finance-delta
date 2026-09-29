@@ -42,11 +42,13 @@ import payrollMappingRoutes from "./modules/payroll-mapping/mapping.routes";
 import payrollRoutes from "./modules/payroll/payroll.routes";
 import budgetRoutes from "./modules/budget/budget.routes";
 import approvalsRoutes from "./modules/approvals/approvals.routes";
+import tetraDepositRoutes from "./modules/tetra-deposit/tetra-deposit.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
 import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
 import { startProcurementWaitingWorker } from "./jobs/procurement-waiting.worker";
+import { startTetraDepositWorker } from "./jobs/tetra-deposit.worker";
 
 async function bootstrap() {
   // Before anything else: a mail misconfiguration that only shows up per-email,
@@ -119,6 +121,7 @@ async function bootstrap() {
   api.use("/payroll", payrollRoutes);
   api.use("/budgets", budgetRoutes);
   api.use("/approvals", approvalsRoutes);
+  api.use("/tetra-deposits", tetraDepositRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);
@@ -137,6 +140,7 @@ async function bootstrap() {
     void startPayrollWaitingWorker();
     void startProcurementWaitingWorker();
     startLmsProvisionWorker();
+    startTetraDepositWorker();
   } else {
     logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");
   }

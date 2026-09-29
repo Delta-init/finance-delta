@@ -1,11 +1,12 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema, inboundFundingRequestSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
 import { Invoice } from "../invoice/invoice.model";
 import { intakeEnrolment } from "./enrolment-intake.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
+import { intakeTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 
 /**
  * A signed machine call carries no session, so it carries no organization
@@ -137,4 +138,15 @@ export const fundingRequestStatuses = asyncHandler(async (req: Request, res: Res
   if (externalIds.length === 0) return ok(res, []);
 
   ok(res, await statusesOfFundingRequests(orgId, source, externalIds));
+});
+
+/**
+ * A deposit request from Tetra Commission, for an accountant to approve or
+ * reject. The decision goes back to Tetra Commission on its own link; see
+ * modules/tetra-deposit.
+ */
+export const takeTetraDeposit = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const parsed = inboundTetraDepositSchema.parse(req.body);
+  ok(res, await intakeTetraDeposit(orgId, parsed));
 });

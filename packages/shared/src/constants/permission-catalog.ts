@@ -26,6 +26,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   ledger: "Ledger",
   payroll: "Payroll",
   commission: "Commissions",
+  tetra_deposit: "Tetra Commission deposits",
   loan: "Loans & credit",
   report: "Reports",
   user: "Users",
@@ -64,7 +65,7 @@ export const ACTION_NOTES: Record<string, string> = {
 export const PERMISSION_SECTIONS: { label: string; resources: string[] }[] = [
   { label: "Sales", resources: ["customer", "quotation", "salesorder", "invoice", "tag"] },
   { label: "Purchasing", resources: ["vendor", "po", "bill", "expense"] },
-  { label: "Money", resources: ["banking", "inventory", "ledger", "payroll", "commission", "loan"] },
+  { label: "Money", resources: ["banking", "inventory", "ledger", "payroll", "commission", "tetra_deposit", "loan"] },
   { label: "Reporting", resources: ["report"] },
   { label: "Administration", resources: ["user", "role", "department", "organization"] },
 ];

@@ -12,7 +12,7 @@ import type {
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { nextNumber } from "../sequence/sequence.service";
-import { Item, type ItemDoc } from "./item.model";
+import { Item, itemLmsCourses, lmsCourseFields, type ItemDoc } from "./item.model";
 import { Warehouse, type WarehouseDoc } from "./warehouse.model";
 import { StockLevel, type StockLevelDoc } from "./stock-level.model";
 import { StockMovement, type StockMovementDoc } from "./stock-movement.model";
@@ -47,6 +47,7 @@ function itemToDTO(doc: ItemDoc, totalStock = 0): ItemDTO {
     unitPriceMinor: (doc.unitPriceMinor as number) ?? 0,
     hsnSac: (doc.hsnSac as string) ?? "",
     lmsCourseSlug: ((doc as unknown as { lmsCourseSlug?: string }).lmsCourseSlug) ?? "",
+    lmsCourseSlugs: itemLmsCourses(doc as unknown as { lmsCourseSlug?: string; lmsCourseSlugs?: string[] }),
     costPriceMinor: (doc.costPriceMinor as number) ?? 0,
     trackStock: (doc.trackStock as boolean) ?? true,
     reorderPoint: (doc.reorderPoint as number) ?? 0,
@@ -238,12 +239,13 @@ export async function createItem(
   if (existing) throw new AppError("CONFLICT", `SKU "${input.sku}" already exists`);
 
   const itemNumber = await nextNumber(orgId, "item", "ITEM-");
-  const { departmentId, ...rest } = input;
+  const { departmentId, lmsCourseSlug, lmsCourseSlugs, ...rest } = input;
   const dept = departmentId ? await requireOrgDepartment(orgId, departmentId) : null;
   const doc = await Item.create({
     organizationId: new Types.ObjectId(orgId),
     itemNumber,
     ...rest,
+    ...(lmsCourseFields({ lmsCourseSlug, lmsCourseSlugs }) ?? {}),
     photoUrl: input.photoUrl || undefined,
     departmentId: dept?._id,
   });
@@ -264,8 +266,10 @@ export async function updateItem(
     });
     if (conflict) throw new AppError("CONFLICT", `SKU "${input.sku}" already exists`);
   }
-  const { departmentId, ...rest } = input;
-  const update: Record<string, unknown> = { $set: { ...rest, photoUrl: input.photoUrl || undefined } };
+  const { departmentId, lmsCourseSlug, lmsCourseSlugs, ...rest } = input;
+  const update: Record<string, unknown> = {
+    $set: { ...rest, ...(lmsCourseFields({ lmsCourseSlug, lmsCourseSlugs }) ?? {}), photoUrl: input.photoUrl || undefined },
+  };
   if (departmentId !== undefined) {
     if (departmentId) {
       const dept = await requireOrgDepartment(orgId, departmentId);

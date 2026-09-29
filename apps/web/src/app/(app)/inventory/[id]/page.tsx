@@ -195,6 +195,8 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const unit = ITEM_UNIT_LABELS[item.unit as ItemUnit] ?? item.unit;
+  // Every LMS course it opens; a single mapping from before the list reads the same.
+  const lmsCourses = item.lmsCourseSlugs?.length ? item.lmsCourseSlugs : item.lmsCourseSlug ? [item.lmsCourseSlug] : [];
 
   return (
     <div className="space-y-6 p-6">
@@ -284,20 +286,22 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
             </div>
           )}
         </div>
-        {/* Which course this is in the LMS.
+        {/* Which course this is in the LMS — or courses, for a bundle.
             An approved enrolment gives the student their course by this slug,
             and by nothing else: the invoice's own course name is free text and
             this organization has nine spellings of three courses. Unmapped, the
             approval provisions nobody and says so rather than guessing. */}
         <div className="rounded-lg border border-border bg-surface p-4">
-          <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">LMS Course</p>
+          <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">
+            {lmsCourses.length > 1 ? "LMS Courses" : "LMS Course"}
+          </p>
           {lmsDraft === null ? (
             <button
               type="button"
-              onClick={() => setLmsDraft(item.lmsCourseSlug ?? "")}
+              onClick={() => setLmsDraft(lmsCourses.join(", "))}
               className="mt-1 flex items-baseline gap-2 text-left text-sm font-semibold hover:underline"
             >
-              {item.lmsCourseSlug || <span className="text-foreground-muted">Not mapped</span>}
+              {lmsCourses.length ? lmsCourses.join(" + ") : <span className="text-foreground-muted">Not mapped</span>}
               <Edit className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
             </button>
           ) : (
@@ -309,14 +313,14 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
                 className="h-8 text-sm"
               />
               <p className="text-[11px] text-foreground-muted">
-                The course&apos;s slug in the LMS, from its address bar.
+                The course&apos;s slug in the LMS, from its address bar. For a bundle, every course it opens, separated by commas.
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
                   loading={updateItem.isPending}
                   onClick={async () => {
-                    await updateItem.mutateAsync({ lmsCourseSlug: lmsDraft.trim() });
+                    await updateItem.mutateAsync({ lmsCourseSlugs: lmsDraft.split(",").map((v) => v.trim()).filter(Boolean) });
                     setLmsDraft(null);
                   }}
                 >

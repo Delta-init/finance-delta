@@ -453,6 +453,107 @@ async function main() {
     check("...and neither changed anybody's access", locked(e) === lockedOf(dwt.modules.slice(5)));
   }
 
+  // ── Every course a sale opens ─────────────────────────────────────────────
+  step("Every course a sale opens: a bundle, a second course, and Draw's enrolments");
+  {
+    const { drainLmsExtraCourses, drainLmsAccessUpdates } = await import("../jobs/lms-provision.worker");
+    const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
+    const { extraCourseKey } = await import("../modules/integrations/lms-provision.model");
+    const { env } = await import("../config/env");
+    const now = () => new Date();
+    const MBT = "market-break-out-trading-program";
+    const DWT = "delta-wave-theory-trading-programme";
+    const HADC = "hadc-heikin-ashi-decisive-candle";
+    await lms.db!.collection("courses").insertOne({
+      title: "HADC - HEIKIN ASHI DECISIVE CANDLE", slug: HADC, organizationId: lmsOrg.insertedId,
+      price: 1000, isPublished: true, createdAt: now(), updatedAt: now(),
+    });
+    const courseId = async (slug: string) => (await lms.db!.collection("courses").findOne({ slug }))!._id;
+
+    // Draw's bundle: one product to sell, two courses to study.
+    const bundle = await Item.create({
+      organizationId: org._id, itemNumber: "ITM-0201", name: "MBT + DWT (with credit)", sku: "DRAW-C2-WC",
+      type: "service", trackStock: false, sellingPriceMinor: 550_000,
+      lmsCourseSlug: MBT, lmsCourseSlugs: [MBT, DWT],
+    });
+    // A product nobody here has mapped — Draw's CRM names its course.
+    const addOn = await Item.create({
+      organizationId: org._id, itemNumber: "ITM-0202", name: "HADC add-on", sku: "DRAW-HADC",
+      type: "service", trackStock: false, sellingPriceMinor: 100_000,
+    });
+
+    const draw = await intakeEnrolment(orgId, {
+      externalId: "draw-1", source: "draw-crm",
+      customer: { name: "Priya Draw", email: "priya.draw@e2e-test.com", phone: "+971500000001" },
+      courses: [
+        { name: "COURSE 2 - MBT + DWT (WITH CREDIT)", itemId: String(bundle._id), amountMinor: 550_000, lmsCourseSlug: MBT, lmsCourseSlugs: [MBT, DWT] },
+        { name: "HADC add-on", itemId: String(addOn._id), amountMinor: 100_000, lmsCourseSlug: HADC },
+      ],
+      enrolledOn: today, declaredPaidMinor: 100_000,
+      modeOfStudy: "online", language: "English",
+    } as never);
+    const taught = await Item.findById(addOn._id).lean<{ lmsCourseSlug?: string; lmsCourseSlugs?: string[] }>();
+    check("an unmapped product learns its course from the enrolment", taught?.lmsCourseSlug === HADC
+      && JSON.stringify(taught?.lmsCourseSlugs) === JSON.stringify([HADC]), JSON.stringify(taught));
+
+    // Tetra Commission switched on for this part: Delta's students go on to it, Draw's do not.
+    const saved = { url: env.COMMISSION_API_URL, secret: env.COMMISSION_S2S_SECRET };
+    env.COMMISSION_API_URL = "http://127.0.0.1:1";
+    env.COMMISSION_S2S_SECRET = "e2e-not-sent";
+    const delta = await crmEnrolment("crm-commission-1", String(mapped._id), "delta.student@e2e-test.com", "Delta Student");
+    for (const id of [draw.invoiceId, delta.invoiceId]) await post(`/invoices/${id}/approval/approve`, undefined, token);
+    await settle();
+
+    const queued = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(draw.invoiceId) }).lean();
+    check("a Draw enrolment is queued for the LMS", queued?.status === "pending" && (queued as { source?: string })?.source === "draw-crm",
+      `status=${queued?.status} source=${(queued as { source?: string })?.source}`);
+    check("...its first course the bundle's first", (queued?.payload as { courseSlug?: string })?.courseSlug === MBT);
+    check("...and the others after it, each once",
+      JSON.stringify((queued?.extraCourses ?? []).map((e) => e.slug)) === JSON.stringify([DWT, HADC]),
+      JSON.stringify(queued?.extraCourses));
+
+    await drainLmsProvisions();
+    env.COMMISSION_API_URL = saved.url;
+    env.COMMISSION_S2S_SECRET = saved.secret;
+    const drawRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(draw.invoiceId) }).lean();
+    const deltaRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(delta.invoiceId) }).lean();
+    check("Delta's student goes on to Tetra Commission, as before", deltaRow?.commission?.state === "pending");
+    check("...Draw's does not, until that is decided", drawRow?.status === "sent" && !drawRow?.commission?.state,
+      JSON.stringify(drawRow?.commission));
+
+    const extras = await drainLmsExtraCourses();
+    check("the worker opens the other two courses", extras === 2, `${extras} opened`);
+    const student = await lms.db!.collection("users").findOne({ email: "priya.draw@e2e-test.com" });
+    const on = (await lms.db!.collection("enrollments").find({ userId: student?._id }).toArray()).map((e) => String(e.courseId));
+    check("the student is on all three courses",
+      [MBT, DWT, HADC].every(Boolean) && (await Promise.all([MBT, DWT, HADC].map(courseId))).every((id) => on.includes(String(id))),
+      `enrolled on ${on.length}`);
+    const orders = await lms.db!.collection("orders").find({
+      "externalRef.id": { $in: [draw.invoiceId, extraCourseKey(draw.invoiceId, DWT), extraCourseKey(draw.invoiceId, HADC)] },
+    }).toArray();
+    const amountOf = (key: string) => orders.find((o) => o.externalRef?.id === key)?.amount;
+    check("one order per course, each under its own key; the sale's total is counted once",
+      orders.length === 3 && amountOf(draw.invoiceId) === 6500
+        && amountOf(extraCourseKey(draw.invoiceId, DWT)) === 0 && amountOf(extraCourseKey(draw.invoiceId, HADC)) === 0,
+      JSON.stringify(orders.map((o) => [o.externalRef?.id, o.amount])));
+    const dwtEnrolment = async () => lms.db!.collection("enrollments").findOne({ userId: student?._id, courseId: await courseId(DWT) });
+    check("the second course follows the payment rule too: part paid, half open",
+      (await dwtEnrolment() as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "partial");
+    check("drained again, nothing is sent twice", (await drainLmsExtraCourses()) === 0);
+
+    // Paying the balance opens every course the sale bought, not only the first.
+    const paid = await post(`/invoices/${draw.invoiceId}/payments`, { method: "bank_transfer", amountMinor: 650_000, paidOn: today }, token);
+    check("accounts record the payment", paid.status === 200 || paid.status === 201, `${paid.status}`);
+    await settle();
+    await drainLmsAccessUpdates();
+    check("...and every course opens in full, the further ones too",
+      (await dwtEnrolment() as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "paid");
+    const after = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(draw.invoiceId) }).lean();
+    check("finance records that each was told",
+      after?.access?.sent === "paid" && (after?.extraCourses ?? []).every((e) => e.accessSent === "paid"),
+      JSON.stringify(after?.extraCourses?.map((e) => [e.slug, e.accessSent])));
+  }
+
   await lms.close();
   await mongoose.disconnect();
   console.log("");

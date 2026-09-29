@@ -27,6 +27,13 @@ const itemSchema = new Schema(
      * approval for an unmapped item provisions nothing and says so.
      */
     lmsCourseSlug: { type: String, default: "", trim: true },
+    /**
+     * Every LMS course it opens, in order, where it opens more than one — a
+     * bundle is one product to sell and two courses to study. `lmsCourseSlug`
+     * is kept as the first, so whatever reads a single course still reads the
+     * right one. Read both through `itemLmsCourses`.
+     */
+    lmsCourseSlugs: { type: [String], default: [] },
     costPriceMinor: { type: Number, default: 0 },
     trackStock: { type: Boolean, default: true },
     reorderPoint: { type: Number, default: 0 },
@@ -45,3 +52,29 @@ itemSchema.index({ organizationId: 1, isActive: 1 });
 
 export type ItemDoc = InferSchemaType<typeof itemSchema> & { _id: Types.ObjectId };
 export const Item = model<ItemDoc>("Item", itemSchema);
+
+/** The LMS courses an item opens, in order — none when it is not mapped. */
+export function itemLmsCourses(item: { lmsCourseSlug?: string | null; lmsCourseSlugs?: string[] | null } | null | undefined): string[] {
+  const many = (item?.lmsCourseSlugs ?? []).map((s) => String(s).trim()).filter(Boolean);
+  if (many.length) return [...new Set(many)];
+  const one = item?.lmsCourseSlug?.trim();
+  return one ? [one] : [];
+}
+
+/**
+ * What to store for an item's LMS courses, from whichever of the two fields a
+ * caller sent: the list decides when given, the single slug otherwise. Nothing
+ * when neither was sent, so an update that says nothing about the LMS leaves
+ * it alone.
+ */
+export function lmsCourseFields(input: { lmsCourseSlug?: string; lmsCourseSlugs?: string[] }): { lmsCourseSlug: string; lmsCourseSlugs: string[] } | null {
+  if (input.lmsCourseSlugs !== undefined) {
+    const list = [...new Set(input.lmsCourseSlugs.map((s) => s.trim()).filter(Boolean))];
+    return { lmsCourseSlug: list[0] ?? "", lmsCourseSlugs: list };
+  }
+  if (input.lmsCourseSlug !== undefined) {
+    const one = input.lmsCourseSlug.trim();
+    return { lmsCourseSlug: one, lmsCourseSlugs: one ? [one] : [] };
+  }
+  return null;
+}

@@ -94,6 +94,22 @@ async function resolveSalesperson(
 }
 
 /**
+ * The LMS courses a line says it opens, in order: the list when the caller
+ * sent one (a bundle), its single slug otherwise, none when it named none.
+ */
+function declaredLmsCourses(course: InboundEnrolmentCourse): string[] {
+  const many = (course.lmsCourseSlugs ?? []).map((s) => s.trim()).filter(Boolean);
+  if (many.length) return [...new Set(many)];
+  const one = course.lmsCourseSlug?.trim();
+  return one ? [one] : [];
+}
+
+/** Each course sold, with the LMS courses it opens — kept on the enrolment for the approval to fall back to. */
+function enrolmentCourses(lines: InboundEnrolmentCourse[]) {
+  return lines.map((line) => ({ name: line.name, lmsCourseSlugs: declaredLmsCourses(line) }));
+}
+
+/**
  * The catalogue item behind the course, where the caller has mapped one.
  *
  * A course that has not been mapped still enrols; the line simply carries the
@@ -209,12 +225,20 @@ export async function intakeEnrolment(
    */
   for (let i = 0; i < lines.length; i++) {
     const itemId = itemIds[i];
-    const slug = lines[i]!.lmsCourseSlug?.trim();
-    if (!itemId || !slug) continue;
+    const slugs = declaredLmsCourses(lines[i]!);
+    if (!itemId || !slugs.length) continue;
     const { Item } = await import("../inventory/item.model");
     await Item.updateOne(
-      { _id: new Types.ObjectId(itemId), organizationId: orgId, $or: [{ lmsCourseSlug: "" }, { lmsCourseSlug: { $exists: false } }] },
-      { $set: { lmsCourseSlug: slug } },
+      {
+        _id: new Types.ObjectId(itemId),
+        organizationId: orgId,
+        $and: [
+          { $or: [{ lmsCourseSlug: "" }, { lmsCourseSlug: { $exists: false } }] },
+          { $or: [{ lmsCourseSlugs: { $size: 0 } }, { lmsCourseSlugs: { $exists: false } }] },
+        ],
+      },
+      // Every course it opens — a bundle's too — with the first where a single one is read.
+      { $set: { lmsCourseSlug: slugs[0], lmsCourseSlugs: slugs } },
     ).catch(() => {});
   }
 
@@ -278,9 +302,8 @@ export async function intakeEnrolment(
          *
          * This block is what a notification quotes and what a report groups
          * by — a summary, not the bill. The bill is the line items above,
-         * which already carry every course in full. LMS provisioning also
-         * follows this one course only; see the schema's own note on
-         * `courses` for why enrolling on more than one is not automatic yet.
+         * which already carry every course in full, and `courses` below is
+         * what the approval opens in the LMS: every one of them.
          */
         course: lines[0]!.name,
         modeOfStudy: input.modeOfStudy,
@@ -293,7 +316,8 @@ export async function intakeEnrolment(
         meetingBy: input.salespersonName ?? "",
         // Recorded whether or not a catalogue item was resolved — the case
         // this exists for is the one where none was.
-        lmsCourseSlug: lines[0]!.lmsCourseSlug?.trim() ?? "",
+        lmsCourseSlug: declaredLmsCourses(lines[0]!)[0] ?? "",
+        courses: enrolmentCourses(lines),
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },
@@ -399,7 +423,8 @@ async function resubmitReturned(
         meetingBy: input.salespersonName ?? "",
         // Recorded whether or not a catalogue item was resolved — the case
         // this exists for is the one where none was.
-        lmsCourseSlug: lines[0]!.lmsCourseSlug?.trim() ?? "",
+        lmsCourseSlug: declaredLmsCourses(lines[0]!)[0] ?? "",
+        courses: enrolmentCourses(lines),
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
       },
@@ -423,6 +448,12 @@ async function resubmitReturned(
     doc.set("approval.submittedAt", new Date());
     doc.set("approval.returnedReason", "");
     doc.set("external.flags", flags);
+    // The courses as corrected, so the approval opens what was resent, not
+    // what was first sent. (updateInvoice leaves the enrolment block alone.)
+    if (doc.get("enrolment")) {
+      doc.set("enrolment.lmsCourseSlug", declaredLmsCourses(lines[0]!)[0] ?? "");
+      doc.set("enrolment.courses", enrolmentCourses(lines));
+    }
     await doc.save();
     void notifyApprovers(doc as never);
   }

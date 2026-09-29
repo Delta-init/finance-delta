@@ -3,7 +3,7 @@ import { lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentE
 import {
   commissionConfigured, sendStudentToCommission, CommissionPermanentError, CommissionNotReadyError, logCommissionConfig,
 } from "../lib/commission-client";
-import { LmsProvision } from "../modules/integrations/lms-provision.model";
+import { LmsProvision, extraCourseKey } from "../modules/integrations/lms-provision.model";
 import { Invoice } from "../modules/invoice/invoice.model";
 import { Customer } from "../modules/customer/customer.model";
 
@@ -24,6 +24,15 @@ import { Customer } from "../modules/customer/customer.model";
 
 const EVERY_MS = 60_000;
 const BATCH = 20;
+
+/**
+ * Whose students go on to Tetra Commission: Delta's sales CRM's, as they
+ * always have. Draw's enrolments reach the LMS too, but whether their students
+ * join Tetra Commission's teams is not decided yet — so they do not, until it
+ * is. A row from before `source` was kept is Delta's.
+ */
+const COMMISSION_SOURCES = new Set(["crm"]);
+const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(source ?? "crm"));
 
 /**
  * Backs off to roughly a quarter of an hour, then stays there — and keeps
@@ -58,7 +67,7 @@ export async function drainLmsProvisions(): Promise<number> {
         ...(sentStatus ? { "access.sent": sentStatus } : {}),
         // On to Tetra Commission, if it is switched on now. New students only:
         // one the LMS took before this, or while it was off, is never sent.
-        ...(commissionConfigured() && !row.commission?.state
+        ...(commissionConfigured() && !row.commission?.state && sendsToCommission(row.source)
           ? { "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() }
           : {}),
       });
@@ -101,6 +110,66 @@ export async function drainLmsProvisions(): Promise<number> {
 const RANK: Record<LmsPaymentStatus, number> = { unpaid: 0, partial: 1, paid: 2 };
 
 /**
+ * The invoice's other courses — a bundle's second, or a second course sold on
+ * the same invoice — once the first has made the student. Each goes under its
+ * own key, as much of it open as the fee now pays for, and is retried or
+ * stopped on its own, exactly as the first is.
+ */
+export async function drainLmsExtraCourses(): Promise<number> {
+  if (!lmsConfigured()) return 0;
+  const now = new Date();
+  const due = await LmsProvision.find({
+    status: "sent",
+    extraCourses: { $elemMatch: { status: "pending", nextAttemptAt: { $lte: now } } },
+  }).limit(BATCH);
+
+  let sent = 0;
+  for (const row of due) {
+    const payload = (row.payload ?? {}) as Record<string, unknown> & { paymentStatus?: LmsPaymentStatus };
+    // As paid as the first course was last told, or is about to be.
+    const known = [row.access?.pending, row.access?.sent, payload.paymentStatus].filter(Boolean) as LmsPaymentStatus[];
+    const paymentStatus = known.sort((a, b) => RANK[b] - RANK[a])[0];
+    for (const extra of (row.extraCourses ?? []).filter((e) => e.status === "pending" && (!e.nextAttemptAt || e.nextAttemptAt <= now))) {
+      const at = { arrayFilters: [{ "e.slug": extra.slug }] };
+      try {
+        const result = await provisionEnrolment({
+          ...(payload as never as { email: string }),
+          courseSlug: extra.slug,
+          invoiceId: extraCourseKey(row.invoiceId, extra.slug),
+          // The invoice's total is the first course's order; counted again here it would be revenue twice.
+          amount: 0,
+          ...(paymentStatus ? { paymentStatus } : {}),
+        } as never);
+        await LmsProvision.updateOne({ _id: row._id }, {
+          $set: {
+            "extraCourses.$[e].status": "sent",
+            "extraCourses.$[e].sentAt": new Date(),
+            "extraCourses.$[e].lmsCourseTitle": result.courseTitle,
+            ...(paymentStatus ? { "extraCourses.$[e].accessSent": paymentStatus } : {}),
+          },
+          $unset: { "extraCourses.$[e].lastError": 1 },
+        }, at);
+        sent++;
+        logger.info({ invoice: row.invoiceNumber, course: result.courseSlug, repeat: result.alreadyProcessed }, "Further course of an enrolment provisioned in the LMS");
+      } catch (err) {
+        const permanent = err instanceof LmsPermanentError;
+        const attempts = (extra.attempts ?? 0) + 1;
+        await LmsProvision.updateOne({ _id: row._id }, {
+          $set: {
+            "extraCourses.$[e].status": permanent ? "failed" : "pending",
+            "extraCourses.$[e].attempts": attempts,
+            "extraCourses.$[e].lastError": (err as Error).message?.slice(0, 500),
+            "extraCourses.$[e].nextAttemptAt": new Date(Date.now() + backoffMs(attempts)),
+          },
+        }, at);
+        logger.warn({ invoice: row.invoiceNumber, course: extra.slug, attempts, permanent, err: (err as Error).message }, "Could not provision a further course in the LMS");
+      }
+    }
+  }
+  return sent;
+}
+
+/**
  * Sends the follow-ups: an enrolment already in the LMS whose fee is now more
  * paid. The LMS opens more of the course; this only records that it was told.
  * Cleared only when nothing newer arrived while the call was on its way.
@@ -119,6 +188,22 @@ export async function drainLmsAccessUpdates(): Promise<number> {
     const status = row.access!.pending as LmsPaymentStatus;
     try {
       const result = await updateEnrolmentAccess({ invoiceId: String(row.invoiceId), paymentStatus: status });
+      /*
+       * Then the invoice's other courses already in the LMS. The LMS only ever
+       * opens, so telling the first course again on a retry changes nothing —
+       * which is what lets one that could not be reached keep the whole row
+       * waiting rather than need a queue of its own. One the LMS will never
+       * take the news for is noted on the course and let go.
+       */
+      for (const extra of (row.extraCourses ?? []).filter((e) => e.status === "sent" && (!e.accessSent || RANK[e.accessSent as LmsPaymentStatus] < RANK[status]))) {
+        try {
+          await updateEnrolmentAccess({ invoiceId: extraCourseKey(row.invoiceId, extra.slug), paymentStatus: status });
+          await LmsProvision.updateOne({ _id: row._id }, { $set: { "extraCourses.$[e].accessSent": status }, $unset: { "extraCourses.$[e].lastError": 1 } }, { arrayFilters: [{ "e.slug": extra.slug }] });
+        } catch (err) {
+          if (!(err instanceof LmsPermanentError)) throw err;
+          await LmsProvision.updateOne({ _id: row._id }, { $set: { "extraCourses.$[e].lastError": (err as Error).message?.slice(0, 500) } }, { arrayFilters: [{ "e.slug": extra.slug }] });
+        }
+      }
       await LmsProvision.updateOne(
         { _id: row._id, "access.pending": status },
         { $set: { "access.sent": status, "access.attempts": 0 }, $unset: { "access.pending": 1, "access.lastError": 1, "access.nextAttemptAt": 1 } },
@@ -252,6 +337,7 @@ async function runPass(): Promise<void> {
     do {
       again = false;
       await drainLmsProvisions();
+      await drainLmsExtraCourses();
       await drainLmsAccessUpdates();
       await drainCommissionStudents();
     } while (again);

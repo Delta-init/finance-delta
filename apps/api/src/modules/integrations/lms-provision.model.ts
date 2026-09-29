@@ -11,7 +11,8 @@ import { Schema, model, Types, type InferSchemaType } from "mongoose";
  *
  * One row per invoice, which is what makes a retry safe on this side — and the
  * LMS is idempotent on the same id on the other, so neither end depends on the
- * other being careful.
+ * other being careful. An invoice that opens more than one course carries the
+ * others in `extraCourses`, each under its own key.
  */
 const lmsProvisionSchema = new Schema(
   {
@@ -31,6 +32,32 @@ const lmsProvisionSchema = new Schema(
     attempts: { type: Number, default: 0 },
     lastError: { type: String },
     nextAttemptAt: { type: Date, default: Date.now, index: true },
+
+    /** The system that raised the enrolment — "crm" (Delta's) or "draw-crm". Absent on rows from before; those were all "crm". */
+    source: { type: String },
+
+    /**
+     * The other courses the same approval opens, after the first (`payload`)
+     * has gone: a bundle's second course, or a second course sold on the same
+     * invoice. Each sent once the student exists, under its own key
+     * (`<invoice>:<course>`), because the LMS keeps one enrolment per key and
+     * the invoice alone is the first course's. `accessSent` is how much of the
+     * fee it was last told was paid.
+     */
+    extraCourses: {
+      type: [{
+        _id: false,
+        slug: { type: String, required: true },
+        status: { type: String, enum: ["pending", "sent", "failed"], default: "pending" },
+        attempts: { type: Number, default: 0 },
+        nextAttemptAt: { type: Date, default: Date.now },
+        lastError: { type: String },
+        lmsCourseTitle: { type: String },
+        sentAt: { type: Date },
+        accessSent: { type: String, enum: ["unpaid", "partial", "paid"] },
+      }],
+      default: undefined,
+    },
 
     /** What the LMS made of it, once it took it. */
     lmsUserId: { type: String },
@@ -79,6 +106,10 @@ const lmsProvisionSchema = new Schema(
 );
 lmsProvisionSchema.index({ status: 1, "access.pending": 1, "access.nextAttemptAt": 1 });
 lmsProvisionSchema.index({ "commission.state": 1, "commission.nextAttemptAt": 1 });
+lmsProvisionSchema.index({ status: 1, "extraCourses.status": 1, "extraCourses.nextAttemptAt": 1 });
+
+/** The key a further course of an invoice is sent under — the LMS keeps one enrolment per key. */
+export const extraCourseKey = (invoiceId: unknown, slug: string) => `${String(invoiceId)}:${slug}`;
 
 export type LmsProvisionDoc = InferSchemaType<typeof lmsProvisionSchema> & {
   _id: Types.ObjectId;

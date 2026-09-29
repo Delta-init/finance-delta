@@ -746,17 +746,20 @@ async function _reconcileInventory(
 /**
  * Put an approved enrolment in the queue for the LMS.
  *
- * Deliberately narrow. Only an enrolment the sales CRM raised reaches the LMS:
- * an invoice accounts typed here themselves is a billing document, not a sale
- * of a course to a student, and giving somebody access to a course because a
- * bookkeeper raised an invoice would be a surprise of the worst kind. So the
- * test is where it came from, not what it looks like.
+ * Deliberately narrow. Only an enrolment a sales CRM raised — Delta's or
+ * Draw's — reaches the LMS: an invoice accounts typed here themselves is a
+ * billing document, not a sale of a course to a student, and giving somebody
+ * access to a course because a bookkeeper raised an invoice would be a
+ * surprise of the worst kind. So the test is where it came from, not what it
+ * looks like.
  *
- * The course arrives as a slug from the mapped item, because the enrolment's
- * own `course` is free text and this database holds nine spellings of three
- * courses. Unmapped, nothing is sent and the row says why, so the invoice can
- * be found and the item mapped — rather than guessing at a name and enrolling
- * somebody on the wrong course.
+ * Every course the invoice sold is opened (lmsCoursesForInvoice): the first
+ * exactly as a single-course enrolment always was, the rest after it. Each
+ * arrives as a slug from the mapped item, because the enrolment's own `course`
+ * is free text and this database holds nine spellings of three courses.
+ * Unmapped, nothing is sent and the row says why, so the invoice can be found
+ * and the item mapped — rather than guessing at a name and enrolling somebody
+ * on the wrong course.
  *
  * Never throws. Approving is the approver's act; it does not fail because
  * another system is unreachable, unmapped or switched off.
@@ -817,6 +820,47 @@ export async function syncLmsAccess(doc: InvoiceDoc): Promise<void> {
   }
 }
 
+/** The systems whose enrolments reach the LMS: Delta's sales CRM and Draw's. */
+const LMS_SOURCES = new Set(["crm", "draw-crm"]);
+
+/**
+ * The LMS courses an approved enrolment opens, in order and each once.
+ *
+ * Line by line: the line's catalogue item's courses where it has a mapping —
+ * a mapping somebody set here is this system's own answer and wins — or else
+ * the courses the raising system said that line opens. That second half is
+ * what a line of plain text relies on, which is what a course nobody has added
+ * to the catalogue produces; it is only trusted while the line is still the
+ * course that was sold, so a line somebody has since rewritten is not guessed
+ * at. An enrolment from before the per-course list falls back, as it always
+ * did, to the one slug the enrolment named.
+ */
+export async function lmsCoursesForInvoice(doc: InvoiceDoc): Promise<string[]> {
+  const { Item, itemLmsCourses } = await import("../inventory/item.model");
+  const lines = (doc.lineItems as unknown as { itemId?: unknown; description?: string }[]) ?? [];
+  const enrolment = (doc as unknown as { enrolment?: { lmsCourseSlug?: string; courses?: { name?: string; lmsCourseSlugs?: string[] }[] } }).enrolment;
+  const sold = enrolment?.courses ?? [];
+  const courses: string[] = [];
+  const add = (slugs: string[]) => {
+    for (const slug of slugs.map((s) => String(s).trim()).filter(Boolean)) if (!courses.includes(slug)) courses.push(slug);
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const item = line.itemId
+      ? await Item.findById(line.itemId).select("lmsCourseSlug lmsCourseSlugs").lean<{ lmsCourseSlug?: string; lmsCourseSlugs?: string[] } | null>()
+      : null;
+    const mapped = itemLmsCourses(item);
+    if (mapped.length) {
+      add(mapped);
+      continue;
+    }
+    const course = sold[i];
+    if (course && (course.name ?? "").trim() === (line.description ?? "").trim()) add(course.lmsCourseSlugs ?? []);
+  }
+  if (!courses.length) add([enrolment?.lmsCourseSlug ?? ""]);
+  return courses;
+}
+
 export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise<void> {
   try {
     const { lmsConfigured } = await import("../../lib/lms-client");
@@ -824,47 +868,24 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
 
     const d = doc as unknown as Record<string, unknown>;
     const external = d.external as { source?: string } | undefined;
-    if (external?.source !== "crm") return;
+    if (!external?.source || !LMS_SOURCES.has(external.source)) return;
     if (!(d.enrolment as { course?: string } | undefined)?.course) return;
 
     const { LmsProvision } = await import("../integrations/lms-provision.model");
     if (await LmsProvision.exists({ invoiceId: doc._id })) return;
 
-    const [customer, { Item }] = await Promise.all([
+    const [customer, courses] = await Promise.all([
       Customer.findById(doc.customerId).lean(),
-      import("../inventory/item.model"),
+      lmsCoursesForInvoice(doc),
     ]);
-
-    // The first line that names an item we have mapped. An enrolment is one
-    // course on one invoice, so there is no question of choosing between two.
-    const lines = (doc.lineItems as unknown as { itemId?: string }[]) ?? [];
-    let courseSlug = "";
-    for (const line of lines) {
-      if (!line.itemId) continue;
-      const item = await Item.findById(line.itemId).select("lmsCourseSlug").lean<{ lmsCourseSlug?: string } | null>();
-      const slug = item?.lmsCourseSlug?.trim();
-      if (slug) { courseSlug = slug; break; }
-    }
+    const courseSlug = courses[0] ?? "";
 
     const base = {
       organizationId: doc.organizationId,
       invoiceId: doc._id,
       invoiceNumber: doc.invoiceNumber,
+      source: external.source,
     };
-
-    /*
-     * Failing that, what the system that raised the enrolment said it was.
-     *
-     * The item is asked first because a mapping somebody set here is this
-     * system's own answer and should win. But an invoice whose line is plain
-     * text — which is what a course nobody has added to the catalogue produces
-     * — has no item to ask, and until now that ended the matter, despite the
-     * enrolment having arrived carrying the slug all along.
-     */
-    if (!courseSlug) {
-      const declared = (d.enrolment as { lmsCourseSlug?: string } | undefined)?.lmsCourseSlug?.trim();
-      if (declared) courseSlug = declared;
-    }
 
     if (!courseSlug) {
       // Recorded rather than dropped: an enrolment nobody provisioned is worth
@@ -906,6 +927,10 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         paymentStatus: lmsPaymentStatus(doc),
       },
       status: "pending",
+      // The rest of what was sold, sent once the first has made the student.
+      ...(courses.length > 1
+        ? { extraCourses: courses.slice(1).map((slug) => ({ slug, status: "pending", attempts: 0, nextAttemptAt: new Date() })) }
+        : {}),
     });
 
     // Into the LMS — and on to Tetra Commission — now, rather than on the next

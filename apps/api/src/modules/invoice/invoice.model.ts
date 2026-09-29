@@ -141,6 +141,13 @@ const invoiceSchema = new Schema(
               it. What provisioning falls back to when no catalogue item on the
               invoice carries a mapping of its own. */
           lmsCourseSlug: { type: String, default: "", trim: true },
+          /** Each course sold, in the order of the lines, with the LMS
+              courses the raising system said it opens — what provisioning
+              falls back to, line by line, where an item has no mapping. */
+          courses: {
+            type: [{ _id: false, name: { type: String, default: "" }, lmsCourseSlugs: { type: [String], default: [] } }],
+            default: undefined,
+          },
           /** What the counsellor says was collected. An approver records it. */
           declaredPaidMinor: { type: Number, default: 0 },
           declaredPaymentMethod: {

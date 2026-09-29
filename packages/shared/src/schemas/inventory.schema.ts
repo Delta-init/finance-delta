@@ -68,6 +68,11 @@ export const createItemSchema = z.object({
    * would oblige every creator to say something about it.
    */
   lmsCourseSlug: z.string().max(200).optional(),
+  /**
+   * Every LMS course the item opens, in order — more than one for a bundle.
+   * When given, it decides, and `lmsCourseSlug` becomes its first.
+   */
+  lmsCourseSlugs: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
   trackStock: z.boolean().default(true),
   reorderPoint: z.number().min(0).default(0),
   reorderQty: z.number().min(0).default(0),
@@ -92,6 +97,8 @@ export const itemSchema = z.object({
   costPriceMinor: z.number(),
   hsnSac: z.string(),
   lmsCourseSlug: z.string().default(""),
+  /** Every LMS course it opens; `lmsCourseSlug` is the first. */
+  lmsCourseSlugs: z.array(z.string()).default([]),
   trackStock: z.boolean(),
   reorderPoint: z.number(),
   reorderQty: z.number(),

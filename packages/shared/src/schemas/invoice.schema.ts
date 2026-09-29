@@ -237,6 +237,20 @@ export const enrolmentInputSchema = z.object({
    * back to, not what it prefers.
    */
   lmsCourseSlug: z.string().trim().max(200).optional().default(""),
+  /*
+   * Each course the calling system sold on this enrolment, in the order of the
+   * invoice's lines, with the LMS courses it said each one opens. What an
+   * approval falls back to, line by line, for a line whose catalogue item has
+   * no mapping of its own — so every course sold is opened, not only the
+   * first. Absent on enrolments typed here, and on those from before.
+   */
+  courses: z
+    .array(z.object({
+      name: z.string().max(160),
+      lmsCourseSlugs: z.array(z.string().trim().max(200)).max(10).default([]),
+    }))
+    .max(20)
+    .optional(),
 });
 export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
 
@@ -476,6 +490,12 @@ export const inboundEnrolmentCourseSchema = z.object({
    * own learns it from the first enrolment that carries one.
    */
   lmsCourseSlug: z.string().max(200).optional(),
+  /**
+   * Every LMS course this one opens, in order, where it is more than one — a
+   * bundle ("MBT + DWT") is one course to sell and two to study. The first is
+   * `lmsCourseSlug`. Taught to an unmapped item the same way.
+   */
+  lmsCourseSlugs: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
 });
 
 export const inboundEnrolmentSchema = z.object({
@@ -506,10 +526,9 @@ export const inboundEnrolmentSchema = z.object({
    * several documents an approver has to find and reconcile separately.
    * Billed as one line each, on one invoice, to one customer.
    *
-   * LMS provisioning still follows the first course only. Enrolling a
-   * student in more than one course automatically from one approval is a
-   * real extension of that pipeline's own assumptions and is not done here;
-   * every course still appears on the bill.
+   * The approval opens every course in the LMS — each line's catalogue
+   * item's courses, or the ones the line itself names — the first exactly as
+   * a single-course enrolment always has been, the rest after it.
    */
   courses: z.array(inboundEnrolmentCourseSchema).min(1).max(20).optional(),
 

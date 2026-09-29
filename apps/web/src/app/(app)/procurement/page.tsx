@@ -5,8 +5,11 @@ import Link from "next/link";
 import { ClipboardList, Check, X, Loader2, Send, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import {
@@ -33,23 +36,28 @@ export default function ProcurementPage() {
   const rows = requests ?? [];
 
   return (
-    <div>
+    <div className="space-y-4 p-4 md:p-6">
       <PageHeader
+        icon={ClipboardList}
         title="Procurement"
         description="Purchase requests HR has approved, waiting on the money decision. Approving one records it as an expense."
+        action={rows.length > 0 ? <Badge tone="warning">{rows.length} waiting</Badge> : undefined}
       />
 
       {isLoading ? (
-        <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        <Card className="flex justify-center py-16">
+          <Loader2 className="h-5 w-5 animate-spin text-foreground-muted" />
+        </Card>
       ) : error ? (
-        <div className="rounded-lg border border-border p-12 text-center text-muted-foreground">
+        <Card className="px-5 py-12 text-center text-sm text-foreground-muted">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-danger" />
           Could not reach HRMS. Check the integration settings and try again.
-        </div>
+        </Card>
       ) : !rows.length ? (
-        <div className="rounded-lg border border-border p-16 text-center text-muted-foreground">
-          <ClipboardList className="mx-auto mb-3 h-8 w-8 opacity-50" />
+        <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
+          <ClipboardList className="mx-auto mb-3 h-8 w-8 opacity-40" />
           Nothing is waiting for a decision.
-        </div>
+        </Card>
       ) : (
         <div className="space-y-4">
           {rows.map((r) => <RequestCard key={`${r.hrmsOrgId}:${r._id}`} request={r} />)}
@@ -88,6 +96,7 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
   // that is left is telling HR — or, once voided, turning the request down.
   const made = r.expense && r.expense.status !== "voided" ? r.expense : null;
   const voided = r.expense?.status === "voided" ? r.expense : null;
+  const id = (field: string) => `procurement-${r._id}-${field}`;
 
   const onApprove = async () => {
     const res = await approve.mutateAsync({
@@ -110,28 +119,42 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
     toast.success("Rejected — HR has been told");
   };
 
+  const facts = [
+    r.department?.name,
+    r.requestedBy?.name ? `Asked by ${r.requestedBy.name}` : null,
+    r.neededBy ? `Needed by ${String(r.neededBy).slice(0, 10)}` : null,
+  ].filter(Boolean);
+
   return (
-    <div className="rounded-lg border border-border p-4">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-semibold">{r.quantity} × {r.item}</h3>
-          {r.resubmitCount > 0 && <Badge tone="warning">resubmitted ×{r.resubmitCount}</Badge>}
+    <Card className="overflow-hidden">
+      {/* What was asked for */}
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">{r.quantity} × {r.item}</h3>
+            {r.resubmitCount > 0 && <Badge tone="warning">Resubmitted ×{r.resubmitCount}</Badge>}
+          </div>
+          {facts.length > 0 && <p className="text-sm text-foreground-muted">{facts.join(" · ")}</p>}
+          {r.justification && <p className="text-sm">{r.justification}</p>}
+          {(r.vendor || r.hrNote) && (
+            <div className="flex flex-wrap gap-x-5 gap-y-1 pt-1 text-xs text-foreground-muted">
+              {r.vendor && <span>Suggested vendor: <span className="text-foreground">{r.vendor}</span></span>}
+              {r.hrNote && <span>HR&apos;s note: <span className="text-foreground">{r.hrNote}</span></span>}
+            </div>
+          )}
         </div>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          {[
-            `${r.currency} ${(r.estimatedCost || 0).toLocaleString("en-US")}${r.estimatedCost ? " estimated" : ", no estimate"}`,
-            r.department?.name,
-            r.requestedBy?.name ? `asked by ${r.requestedBy.name}` : null,
-            r.neededBy ? `needed by ${String(r.neededBy).slice(0, 10)}` : null,
-          ].filter(Boolean).join(" · ")}
-        </p>
-        {r.justification && <p className="mt-1 text-sm">{r.justification}</p>}
-        {r.vendor && <p className="mt-1 text-xs text-muted-foreground">Suggested vendor: {r.vendor}</p>}
-        {r.hrNote && <p className="mt-1 text-xs text-muted-foreground">HR: {r.hrNote}</p>}
+        <div className="shrink-0 sm:text-right">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">HR&apos;s estimate</p>
+          {r.estimatedCost > 0 ? (
+            <MoneyDisplay minor={Math.round(r.estimatedCost * 100)} currency={r.currency} className="text-lg font-semibold" />
+          ) : (
+            <p className="text-sm font-medium text-warning">None given</p>
+          )}
+        </div>
       </div>
 
       {made && (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+        <div className="mx-5 mb-5 flex items-start gap-2 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
           <Send className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>
             <Link href={`/expenses/${made.id}`} className="font-medium text-primary underline-offset-2 hover:underline">
@@ -143,8 +166,8 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
         </div>
       )}
       {voided && (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <div className="mx-5 mb-5 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
           <span>
             {voided.expenseNumber} was recorded for this request and then voided. Reject it instead — HR can revise it
             and send it back.
@@ -152,75 +175,81 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-end gap-3">
+      {/* The decision */}
+      <div className="space-y-4 border-t border-border bg-surface-muted/50 p-5">
         {!made && !voided && (
-          <>
-            <div className="w-[150px]">
-              <label className="mb-1 block text-xs text-muted-foreground">Amount ({r.currency}) *</label>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label htmlFor={id("amount")}>Amount ({r.currency})</Label>
               <Input
-                type="number" inputMode="decimal" min="0" step="0.01" value={amount} placeholder="0.00"
+                id={id("amount")} type="number" inputMode="decimal" min="0" step="0.01" value={amount} placeholder="0.00"
                 aria-invalid={amount !== "" && !amountValid}
                 onChange={(e) => setAmount(e.target.value)}
               />
+              {!amountValid && (
+                <p className={r.estimatedCost > 0 ? "text-xs text-foreground-muted" : "text-xs text-warning"}>
+                  {r.estimatedCost > 0 ? "Enter an amount above 0." : "HR gave no estimate — enter the amount being approved."}
+                </p>
+              )}
             </div>
-            <div className="min-w-[180px]">
-              <label className="mb-1 block text-xs text-muted-foreground">Category *</label>
+            <div className="space-y-1.5">
+              <Label htmlFor={id("category")}>Category</Label>
               <Select value={chosenCategory} onValueChange={setCategory} disabled={categories.isLoading}>
-                <SelectTrigger><SelectValue placeholder={categories.isLoading ? "Loading…" : "Choose a category"} /></SelectTrigger>
+                <SelectTrigger id={id("category")}>
+                  <SelectValue placeholder={categories.isLoading ? "Loading…" : "Choose a category"} />
+                </SelectTrigger>
                 <SelectContent>
                   {categoryList.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             {chosenCategory === "other" && (
-              <div className="min-w-[160px]">
-                <label className="mb-1 block text-xs text-muted-foreground">What it is</label>
-                <Input value={categoryOther} maxLength={60} placeholder="e.g. Office equipment"
+              <div className="space-y-1.5">
+                <Label htmlFor={id("other")}>What it is</Label>
+                <Input id={id("other")} value={categoryOther} maxLength={60} placeholder="e.g. Office equipment"
                   onChange={(e) => setCategoryOther(e.target.value)} />
               </div>
             )}
-            <div className="min-w-[180px]">
-              <label className="mb-1 block text-xs text-muted-foreground">Department</label>
+            <div className="space-y-1.5">
+              <Label htmlFor={id("department")}>Department (optional)</Label>
               <Select value={chosenDepartment} onValueChange={setDepartment} disabled={departments.isLoading}>
-                <SelectTrigger><SelectValue placeholder="No department" /></SelectTrigger>
+                <SelectTrigger id={id("department")}><SelectValue placeholder="No department" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_DEPARTMENT}>No department</SelectItem>
                   {departmentList.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-          </>
+          </div>
         )}
-        <div className="min-w-[220px] flex-1">
-          <label className="mb-1 block text-xs text-muted-foreground">Note</label>
-          <Input value={note} maxLength={500} placeholder="Optional — sent back to HR"
-            onChange={(e) => setNote(e.target.value)} />
-        </div>
-        <div className="flex gap-2">
-          {!voided && (
+
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Label htmlFor={id("note")}>Note to HR (optional)</Label>
+            <Input id={id("note")} value={note} maxLength={500} placeholder="Sent back to HR with the decision"
+              onChange={(e) => setNote(e.target.value)} />
+          </div>
+          <div className="flex shrink-0 gap-2">
+            {!voided && (
+              <Button
+                onClick={() => void onApprove().catch(() => undefined)}
+                disabled={busy || (!made && (!amountValid || !chosenCategory))}
+              >
+                {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                {made ? "Send approval to HR" : "Approve as expense"}
+              </Button>
+            )}
             <Button
-              onClick={() => void onApprove().catch(() => undefined)}
-              disabled={busy || (!made && (!amountValid || !chosenCategory))}
+              variant="outline"
+              onClick={() => void onReject().catch(() => undefined)}
+              disabled={busy || !!made}
+              title={made ? `Void ${made.expenseNumber} before rejecting` : undefined}
             >
-              {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-              {made ? "Send approval to HR" : "Approve as expense"}
+              {reject.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}Reject
             </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => void onReject().catch(() => undefined)}
-            disabled={busy || !!made}
-            title={made ? `Void ${made.expenseNumber} before rejecting` : undefined}
-          >
-            {reject.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}Reject
-          </Button>
+          </div>
         </div>
       </div>
-      {!made && !voided && !amountValid && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {r.estimatedCost > 0 ? "Enter an amount above 0." : "HR gave no estimate — enter the amount being approved."}
-        </p>
-      )}
-    </div>
+    </Card>
   );
 }

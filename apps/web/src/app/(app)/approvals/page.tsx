@@ -267,7 +267,7 @@ export default function ApprovalsPage() {
   const invoices = can("invoice:write") && can("invoice:read");
   const funds = can("budget:approve");
   const deposits = can("tetra_deposit:approve");
-  const approver = invoices || funds || deposits || can("expense:approve") || can("bill:approve") || can("payroll:approve") || can("po:create");
+  const approver = invoices || funds || deposits || can("expense:approve") || can("bill:approve") || can("payroll:approve");
   const { data: summary } = useApprovalSummary(approver);
 
   if (!approver) {

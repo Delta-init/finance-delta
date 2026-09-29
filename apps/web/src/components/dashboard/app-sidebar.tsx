@@ -90,7 +90,7 @@ interface NavGroup {
 }
 
 /** Deciding any one of these makes somebody an approver. */
-const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "tetra_deposit:approve", "expense:approve", "bill:approve", "payroll:approve", "po:create"] as const satisfies readonly Permission[];
+const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "tetra_deposit:approve", "expense:approve", "bill:approve", "payroll:approve"] as const satisfies readonly Permission[];
 
 const NAV: NavGroup[] = [
   {
@@ -126,7 +126,7 @@ const NAV: NavGroup[] = [
     label: "Purchases",
     items: [
       { href: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList, enabled: true, permission: "po:read" },
-      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "po:read", badge: "procurement" },
+      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "expense:approve", badge: "procurement" },
       { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read", badge: "bill" },
       { href: "/vendor-credits", label: "Vendor Credits", icon: FileX2, enabled: true, permission: "bill:read" },
       { href: "/vendors", label: "Vendors", icon: Truck, enabled: true, permission: "vendor:read" },

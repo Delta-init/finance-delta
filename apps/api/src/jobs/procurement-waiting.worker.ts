@@ -66,8 +66,8 @@ export async function checkProcurementWaiting(): Promise<number> {
 
   for (const [orgId, rows] of byOrg) {
     try {
-      // Whoever may approve a purchase, and the accountants.
-      const to = await withAccountants(orgId, await payrollRecipients(orgId, "po:create"));
+      // Whoever may approve spending — an approval records an expense — and the accountants.
+      const to = await withAccountants(orgId, await payrollRecipients(orgId, "expense:approve"));
       if (!to.length) continue;
       await sendNotice({
         to,

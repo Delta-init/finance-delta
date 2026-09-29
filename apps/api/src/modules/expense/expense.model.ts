@@ -42,6 +42,28 @@ const expenseAttachmentSchema = new Schema(
   { _id: false },
 );
 
+/**
+ * Where an expense came from, when it was not typed in here.
+ *
+ * Set on a purchase request from HRMS approved on the Procurement page. `key`
+ * names the request and the round it is on — one finance rejects can be
+ * revised and sent back, and that is a new decision — and is unique, so a
+ * retry or a second approver finds the expense a first attempt made rather
+ * than making another. `deliveredAt` is when HRMS took the answer: without
+ * it, the expense exists and HR has not been told yet.
+ */
+const expenseSourceSchema = new Schema(
+  {
+    kind: { type: String, enum: ["hrms_procurement"], required: true },
+    key: { type: String, required: true },
+    hrmsOrgId: { type: String, required: true },
+    requestId: { type: String, required: true },
+    round: { type: Number, default: 0 },
+    deliveredAt: { type: Date },
+  },
+  { _id: false },
+);
+
 const expenseSchema = new Schema(
   {
     organizationId: {
@@ -107,6 +129,7 @@ const expenseSchema = new Schema(
      */
     costCentre: { type: String, default: "" },
     notes: { type: String, default: "" },
+    source: { type: expenseSourceSchema },
   },
   { timestamps: true },
 );
@@ -117,6 +140,8 @@ expenseSchema.index({ organizationId: 1, submittedById: 1 });
 expenseSchema.index({ organizationId: 1, category: 1 });
 // Listing the unpaid and the overdue, which is what the payment filter asks for.
 expenseSchema.index({ organizationId: 1, paidOn: 1, dueDate: 1 });
+// One expense per purchase request and round, however many times it is approved.
+expenseSchema.index({ "source.key": 1 }, { unique: true, partialFilterExpression: { "source.key": { $exists: true } } });
 
 export type ExpenseDoc = InferSchemaType<typeof expenseSchema> & {
   _id: Types.ObjectId;

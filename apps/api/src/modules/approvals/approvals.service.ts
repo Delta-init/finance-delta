@@ -193,7 +193,7 @@ const KINDS: Kind[] = [
     type: "procurement",
     label: "Purchase requests",
     href: "/procurement",
-    allowed: (can) => can("po:create"),
+    allowed: (can) => can("expense:approve"),
     read: async (org) => {
       const links = await PayrollOrgLink.find({ organizationId: org, isActive: true }).select("hrmsOrgId hrmsOrgName").lean();
       const rows: Array<HrmsProcurementRequest & { from: string }> = [];
@@ -232,6 +232,11 @@ const KINDS: Kind[] = [
  */
 const PROCUREMENT_TTL_MS = 2 * 60 * 1000;
 const procurementCache = new Map<string, { at: number; value: Promise<HrmsProcurementRequest[]> }>();
+
+/** A decision was just made: the next count asks HRMS again rather than showing it still waiting. */
+export function forgetProcurementRequests(hrmsOrgId: string): void {
+  procurementCache.delete(hrmsOrgId);
+}
 
 function procurementRequests(hrmsOrgId: string): Promise<HrmsProcurementRequest[]> {
   const hit = procurementCache.get(hrmsOrgId);

@@ -28,7 +28,7 @@ export function ApprovalsModal() {
   const router = useRouter();
   const { data: session } = useSession();
   const { can } = useCan();
-  const approver = can("invoice:write") || can("budget:approve") || can("tetra_deposit:approve") || can("expense:approve") || can("bill:approve") || can("payroll:approve") || can("po:create");
+  const approver = can("invoice:write") || can("budget:approve") || can("tetra_deposit:approve") || can("expense:approve") || can("bill:approve") || can("payroll:approve");
   const { data } = useApprovalSummary(approver);
   const [open, setOpen] = useState(false);
 

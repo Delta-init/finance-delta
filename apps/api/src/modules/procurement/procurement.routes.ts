@@ -1,19 +1,21 @@
 import { Router } from "express";
+import { approveProcurementSchema, rejectProcurementSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
+import { validateBody } from "../../middleware/validate";
 import * as c from "./procurement.controller";
 
 /**
- * Approving a purchase request is the same authority as raising the order it
- * becomes, so it is gated on `po:create` rather than a permission of its own —
- * anyone who may commit the company to a purchase order may approve the
- * request that produces one.
+ * Approving a purchase request records an approved expense, so it is gated on
+ * `expense:approve` rather than a permission of its own — anyone who may
+ * approve the company's spending may approve the request that becomes some.
+ * The list is only for them too: it is a queue of decisions, not a report.
  */
 const router = Router();
 router.use(authenticate);
 
-router.get("/", requirePermission("po:read"), c.list);
-router.post("/:id/approve", requirePermission("po:create"), c.approve);
-router.post("/:id/reject", requirePermission("po:create"), c.reject);
+router.get("/", requirePermission("expense:approve"), c.list);
+router.post("/:id/approve", requirePermission("expense:approve"), validateBody(approveProcurementSchema), c.approve);
+router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectProcurementSchema), c.reject);
 
 export default router;

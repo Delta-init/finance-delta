@@ -1,11 +1,13 @@
 import { Types } from "mongoose";
 import type {
-  DecideTetraDepositInput, InboundTetraDeposit, TetraDeposit, TetraDepositDecisionResult, TetraDepositView,
+  DecideTetraDepositInput, InboundTetraDeposit, PageMeta, TetraDeposit, TetraDepositCounts, TetraDepositDecisionResult,
+  TetraDepositListQuery, TetraDepositView,
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
 import { env } from "../../config/env";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
+import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { sendNotice } from "../../lib/email";
 import { withAccountants } from "../../lib/approval-recipients";
 import {
@@ -34,7 +36,7 @@ const iso = (value: unknown) => (value ? new Date(value as string).toISOString()
 const money = (minor: number, currency: string) =>
   `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function tetraDepositDTO(r: any): TetraDeposit {
+export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
   return {
     id: String(r._id),
     externalId: String(r.externalId),
@@ -82,6 +84,13 @@ export function tetraDepositDTO(r: any): TetraDeposit {
         }
       : {}),
     ...(r.closedReason ? { closedReason: r.closedReason } : {}),
+    ...(withEvents
+      ? {
+          events: (r.events ?? []).map((e: any) => ({
+            at: iso(e.at), kind: String(e.kind ?? ""), byName: String(e.byName ?? ""), text: String(e.text ?? ""),
+          })),
+        }
+      : {}),
   };
 }
 
@@ -201,7 +210,53 @@ export async function listTetraDeposits(organizationId: string, view: TetraDepos
         }).sort({ "decision.decidedAt": -1 }).limit(100).lean()
       : await TetraDepositModel.find({ organizationId: org, status: { $in: ["approved", "rejected", "closed"] } })
           .sort({ "decision.decidedAt": -1, updatedAt: -1 }).limit(50).lean();
-  return rows.map(tetraDepositDTO);
+  return rows.map((r) => tetraDepositDTO(r));
+}
+
+/**
+ * Every deposit Tetra Commission sent, for the deposits page: by status,
+ * searched, between two instants of being raised, sorted and paged — with how
+ * many there are of each status under the same search and dates, for its tabs.
+ */
+const LIST_SORTS = {
+  requestedAt: "requestedAt", student: "student.name", amount: "amountMinor", decidedAt: "decision.decidedAt", status: "status",
+};
+
+export async function listTetraDepositPage(
+  organizationId: string,
+  query: TetraDepositListQuery,
+): Promise<{ data: TetraDeposit[]; meta: PageMeta & { counts: TetraDepositCounts } }> {
+  const base: Record<string, unknown> = { organizationId: new Types.ObjectId(organizationId) };
+  const or = searchOr(query.q, [
+    "student.name", "student.code", "student.email", "decision.transactionId", "mt5Login", "decision.mt5Login",
+    "requestedBy", "initiatingMentor", "primaryMentor", "team", "paymentMethod",
+  ]);
+  if (or) base.$or = or;
+  if (query.from || query.to) {
+    base.requestedAt = { ...(query.from ? { $gte: new Date(query.from) } : {}), ...(query.to ? { $lt: new Date(query.to) } : {}) };
+  }
+  const filter = query.status === "all" ? base : { ...base, status: query.status };
+  const sort = buildSort(LIST_SORTS, query.sort, query.dir, { requestedAt: -1, createdAt: -1 });
+
+  const [rows, total, groups] = await Promise.all([
+    TetraDepositModel.find(filter).sort({ ...sort, _id: -1 }).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize).lean(),
+    TetraDepositModel.countDocuments(filter),
+    TetraDepositModel.aggregate<{ _id: string; n: number }>([{ $match: base }, { $group: { _id: "$status", n: { $sum: 1 } } }]),
+  ]);
+  const counts: TetraDepositCounts = { all: 0, pending: 0, approved: 0, rejected: 0, closed: 0 };
+  for (const g of groups) {
+    if (g._id in counts) counts[g._id as keyof TetraDepositCounts] = g.n;
+    counts.all += g.n;
+  }
+  return { data: rows.map((r) => tetraDepositDTO(r)), meta: { ...pageMeta(total, query.page, query.pageSize), counts } };
+}
+
+/** One deposit, with what happened to it here. */
+export async function getTetraDeposit(organizationId: string, id: string): Promise<TetraDeposit> {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
+  const row = await TetraDepositModel.findOne({ _id: id, organizationId: new Types.ObjectId(organizationId) }).lean();
+  if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
+  return tetraDepositDTO(row, true);
 }
 
 /* ── Decided, and sent back ──────────────────────────────────────────────── */

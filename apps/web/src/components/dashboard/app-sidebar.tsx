@@ -28,6 +28,7 @@ import {
   Wallet,
   WalletCards,
   ClipboardCheck,
+  Coins,
   type LucideIcon,
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
@@ -136,6 +137,8 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"], badge: "expense" },
       { href: "/budgets", label: "Budgets & Funds", icon: WalletCards, enabled: true, permission: ["budget:read", "budget:read:own", "budget:manage", "budget:request", "budget:approve"], badge: "fund_request" },
+      // Every deposit Tetra Commission sent — the record; they are decided on Approvals.
+      { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
       { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
       { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
       // A tin is a bank account underneath, and finding it meant knowing that.

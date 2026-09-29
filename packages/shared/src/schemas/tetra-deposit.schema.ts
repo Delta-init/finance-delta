@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { listQuerySchema } from "./query.schema";
 
 /**
  * Deposit requests from Tetra Commission, approved here.
@@ -120,8 +121,31 @@ export const tetraDepositSchema = z.object({
     deliveredAt: z.string().optional(),
   }).optional(),
   closedReason: z.string().optional(),
+  /** What happened to it here, oldest first — on a single deposit only. */
+  events: z.array(z.object({ at: z.string(), kind: z.string(), byName: z.string(), text: z.string() })).optional(),
 });
 export type TetraDeposit = z.infer<typeof tetraDepositSchema>;
+
+/**
+ * The Tetra Commission deposits page: every request, whatever became of it.
+ *
+ * `from` and `to` are instants, not dates: the page turns the days somebody
+ * picks into the start of the first and the start of the day after the last,
+ * in their own timezone, so "the 29th" means their 29th. Compared with when
+ * the deposit was raised.
+ */
+export const tetraDepositListStatusSchema = z.enum(["all", "pending", "approved", "rejected", "closed"]);
+export type TetraDepositListStatus = z.infer<typeof tetraDepositListStatusSchema>;
+
+export const tetraDepositListQuerySchema = listQuerySchema.extend({
+  status: tetraDepositListStatusSchema.default("all"),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+});
+export type TetraDepositListQuery = z.infer<typeof tetraDepositListQuerySchema>;
+
+/** How many there are of each, under the same search and dates — the page's tab counts. */
+export type TetraDepositCounts = Record<TetraDepositListStatus, number>;
 
 /** What deciding one answers: the deposit, and whether Tetra Commission has the decision yet. */
 export const tetraDepositDecisionResultSchema = z.object({

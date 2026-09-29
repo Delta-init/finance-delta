@@ -64,3 +64,29 @@ export function exportToPdf<T>(title: string, filename: string, columns: ExportC
   });
   doc.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
 }
+
+/**
+ * CSV, for opening in anything, or feeding on to another system.
+ *
+ * UTF-8 with a byte-order mark, so Excel reads names in any script. A text
+ * cell that would start a formula is prefixed with ', so opening the file can
+ * never run one — some of what is exported arrived from other systems.
+ */
+export function exportToCsv<T>(filename: string, columns: ExportColumn<T>[], rows: T[]): void {
+  const { headers, body } = matrix(columns, rows);
+  const cell = (value: string | number) => {
+    if (typeof value === "number") return String(value);
+    let text = String(value ?? "");
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const csv = [headers, ...body].map((row) => row.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

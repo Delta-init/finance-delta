@@ -1,8 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DecideTetraDepositInput, TetraDeposit, TetraDepositDecisionResult, TetraDepositView } from "@delta/shared";
-import { api } from "@/lib/api";
+import type {
+  DecideTetraDepositInput, PageMeta, TetraDeposit, TetraDepositCounts, TetraDepositDecisionResult, TetraDepositView,
+} from "@delta/shared";
+import { api, type QueryParams } from "@/lib/api";
 import { APPROVALS_KEY } from "@/features/approvals/api";
 
 const KEY = ["tetra-deposits"] as const;
@@ -15,6 +17,27 @@ export function useTetraDeposits(view: TetraDepositView, enabled = true) {
     enabled,
     // A request raised in Tetra Commission should turn up without a reload.
     refetchInterval: 60_000,
+  });
+}
+
+/** The deposits page: every deposit, by status, searched and paged, with each status's count. */
+export function useTetraDepositList(params: QueryParams, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, "list", params],
+    queryFn: async () => {
+      const { data, meta } = await api.getList<TetraDeposit>("tetra-deposits/list", params);
+      return { data, meta: meta as PageMeta & { counts?: TetraDepositCounts } };
+    },
+    enabled,
+  });
+}
+
+/** One deposit, with its history here. */
+export function useTetraDeposit(id: string | null) {
+  return useQuery({
+    queryKey: [...KEY, "one", id],
+    queryFn: () => api.get<TetraDeposit>(`tetra-deposits/${id}`),
+    enabled: !!id,
   });
 }
 

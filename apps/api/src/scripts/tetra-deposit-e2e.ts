@@ -13,6 +13,8 @@
  *   4. Tetra Commission down mid-approval: the decision is kept and delivered
  *      once it is back. Turned down in the background: shown, and reopened.
  *   5. A request gone from Tetra Commission is closed, not left waiting.
+ *   6. The deposits page lists every one — by status, searched, paged, dated
+ *      — with each status's count, and one deposit with its history.
  *
  * Run through scripts/tetra-deposit-e2e.sh. Scratch databases only.
  */
@@ -270,6 +272,36 @@ r = await approve(String((await inFinance(d5))._id), { amountMinor: 25000, trans
 row = await inFinance(d5);
 check("closed, with the reason", r.status === 200 && r.body?.data?.delivered === false && row.status === "closed" && /no longer/i.test(row.closedReason ?? ""), show(r));
 check("and out of the queue", !(await waiting()).body?.data?.some((d: any) => d.externalId === d5));
+
+step("The deposits page: every request, whatever became of it");
+const list = (params: Record<string, string>, h = asha) => http(`${API}/tetra-deposits/list?${new URLSearchParams(params)}`, "GET", undefined, h);
+r = await list({});
+check("all of them, with a count of each status", r.status === 200 && r.body?.meta?.total === 5 && r.body.meta.counts?.all === 5
+  && r.body.meta.counts.approved === 3 && r.body.meta.counts.rejected === 1 && r.body.meta.counts.closed === 1
+  && r.body.meta.counts.pending === 0, show(r));
+r = await list({ status: "approved" });
+check("approved: the three, each with its transaction ID", r.body?.data?.length === 3
+  && r.body.data.every((d: any) => d.status === "approved" && d.decision?.transactionId), show(r));
+r = await list({ status: "rejected" });
+check("rejected: the one, with the accountant's reason", r.body?.data?.length === 1
+  && r.body.data[0].decision?.reason === "Nothing arrived on the statement", show(r));
+r = await list({ q: "TXN-2004" });
+check("found by transaction ID", r.body?.data?.length === 1 && r.body.data[0].externalId === d4, show(r));
+r = await list({ q: "stu-0200" });
+check("and by student code, whatever the case", r.body?.meta?.total === 5, show(r));
+r = await list({ pageSize: "2", sort: "amount", dir: "asc" });
+check("paged, and sorted by amount", r.body?.data?.length === 2 && r.body.meta.pageCount === 3
+  && r.body.data[0].amountMinor === 25000 && r.body.data[1].amountMinor === 30000, show(r));
+r = await list({ from: new Date(Date.now() + 86_400_000).toISOString() });
+check("between dates: none raised tomorrow, and the counts agree", r.body?.meta?.total === 0 && r.body.meta.counts?.all === 0, show(r));
+r = await list({ status: "nonsense" });
+check("a status that does not exist is refused", r.status === 422, show(r));
+r = await list({}, evan);
+check("somebody without the permission is refused the page", r.status === 403, show(r));
+r = await http(`${API}/tetra-deposits/${f4}`, "GET", undefined, asha);
+const kinds = (r.body?.data?.events ?? []).map((e: any) => e.kind);
+check("one deposit, with its history: approved, turned down, reopened, approved again, delivered",
+  r.status === 200 && JSON.stringify(kinds) === JSON.stringify(["received", "approved", "failed", "reopened", "approved", "delivered"]), JSON.stringify(kinds));
 
 gate.stop(true);
 await tc.close();

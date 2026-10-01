@@ -196,6 +196,21 @@ export const invoiceApprovalSchema = z.object({
 });
 export type InvoiceApprovalState = z.infer<typeof invoiceApprovalSchema>;
 
+/**
+ * A bonus given with an enrolment: yes or no, and how much when yes.
+ *
+ * "No" is recorded as well as "yes" — a closed lead that answered the question
+ * is different from one that was never asked — and a "no" carries no amount.
+ */
+export const enrolmentBonusSchema = z
+  .object({
+    given: z.boolean(),
+    amountMinor: z.number().int().min(0).default(0),
+  })
+  .refine((b) => !b.given || b.amountMinor > 0, { message: "A bonus needs an amount", path: ["amountMinor"] })
+  .transform((b) => (b.given ? b : { given: false, amountMinor: 0 }));
+export type EnrolmentBonus = z.infer<typeof enrolmentBonusSchema>;
+
 export const enrolmentInputSchema = z.object({
   course: z.string().trim().min(1, "Course is required").max(120),
   modeOfStudy: z.enum(MODES_OF_STUDY),
@@ -223,6 +238,21 @@ export const enrolmentInputSchema = z.object({
    */
   declaredPaidMinor: z.number().int().min(0).optional().default(0),
   declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  /*
+   * Whether the client was given a bonus with this enrolment, and how much.
+   *
+   * Information, not money owed or taken: the bonus is not a line on the
+   * invoice, is not taxed, and is never part of the balance. It is recorded so
+   * the people approving, teaching and mentoring this client all see what the
+   * counsellor promised at the close. Absent on enrolments from before it was
+   * asked, and on those typed here.
+   */
+  bonus: enrolmentBonusSchema.optional(),
+  /**
+   * The balance the counsellor was shown at the close: the course fee less
+   * what was collected, the bonus never in it. Declared, like the payment.
+   */
+  declaredBalanceMinor: z.number().int().min(0).optional(),
   /*
    * Which LMS course this enrolment is for, as the calling system named it.
    *
@@ -540,6 +570,14 @@ export const inboundEnrolmentSchema = z.object({
   enrolledOn: z.string().optional(),
   declaredPaidMinor: z.number().int().min(0).default(0),
   declaredPaymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  /**
+   * Whether a bonus was given at the close, and how much — information only:
+   * never a line on the invoice and never part of the balance. Callers from
+   * before it was asked do not send it.
+   */
+  bonus: enrolmentBonusSchema.optional(),
+  /** The fee less what was collected, as the caller worked it out — the bonus never in it. */
+  balanceMinor: z.number().int().min(0).optional(),
   modeOfStudy: z.enum(MODES_OF_STUDY).default("online"),
   language: z.string().max(60).default(""),
   /**

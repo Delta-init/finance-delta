@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { logger } from "./logger";
+import type { EnrolmentFeeSummary } from "./lms-client";
 
 /**
  * Client for Tetra Commission's student intake.
@@ -58,6 +59,12 @@ export async function sendStudentToCommission(input: {
   country?: string;
   course?: string;
   lmsUserId?: string;
+  /**
+   * What the enrolment was at approval: fee, paid, balance, bonus and the
+   * receipt. For the mentors' information only — the bonus here is what the
+   * counsellor promised at the close, not a BONUS request, and creates none.
+   */
+  feeSummary?: EnrolmentFeeSummary;
 }): Promise<CommissionStudentResult> {
   const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
   const controller = new AbortController();

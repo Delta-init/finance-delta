@@ -497,6 +497,81 @@ async function main() {
     (await Customer.countDocuments({ email: "e2e-1@student-e2e.com" })) === 1,
   );
 
+  // ── D. The bonus and the balance ──────────────────────────────────────────
+  //
+  // Asked at every close: whether a bonus was given, and how much. Information
+  // beside the money — never a line, never taxed, never in the balance, which
+  // is the fee less what was collected.
+  step("D. The bonus and the balance a close now carries");
+  {
+    const withBonus = {
+      ...enrolment("e2e-bonus", "driftone@e2e-test.com", "Bonus Student"),
+      declaredPaidMinor: 50_000,
+      balanceMinor: 80_000,
+      bonus: { given: true, amountMinor: 25_000 },
+    };
+    const res = await signedPost(orgId, "/api/v1/integrations/enrolments", withBonus);
+    check("Case 1 — a close with a bonus and a balance is accepted", res.status === 200, show(res));
+    const inv = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
+    const e = inv?.enrolment as { bonus?: { given?: boolean; amountMinor?: number }; declaredBalanceMinor?: number } | undefined;
+    check("...the bonus is kept, given and with its amount", e?.bonus?.given === true && e?.bonus?.amountMinor === 25_000, JSON.stringify(e?.bonus));
+    check("...the balance is kept as the CRM worked it out", e?.declaredBalanceMinor === 80_000, `balance=${e?.declaredBalanceMinor}`);
+    check("...and the bonus is not billed: the total is the fee alone", inv?.totalMinor === 130_000 && (inv?.lineItems as unknown[]).length === 1, `total=${inv?.totalMinor}`);
+
+    const dto = await request("GET", `/invoices/${inv?._id}`, undefined, adminAuth.token);
+    const de = (dto.body?.data as unknown as { enrolment?: { bonus?: { given: boolean; amountMinor: number }; declaredBalanceMinor?: number } })?.enrolment;
+    check("...an approver reading the invoice sees both", dto.status === 200 && de?.bonus?.amountMinor === 25_000 && de?.declaredBalanceMinor === 80_000, show(dto));
+
+    const noBonus = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-nobonus", "driftone@e2e-test.com", "No Bonus Student"),
+      bonus: { given: false, amountMinor: 9_900 },
+      balanceMinor: 130_000,
+    });
+    const invNo = await Invoice.findOne({ "external.externalId": "e2e-nobonus" }).lean();
+    const eNo = invNo?.enrolment as { bonus?: { given?: boolean; amountMinor?: number } } | undefined;
+    check("Case 2 — \"no bonus\" is recorded as no, with no amount beside it",
+      noBonus.status === 200 && eNo?.bonus?.given === false && eNo?.bonus?.amountMinor === 0, JSON.stringify(eNo?.bonus));
+
+    const old = await Invoice.findOne({ "external.externalId": "e2e-1" }).lean();
+    const eOld = old?.enrolment as { bonus?: unknown; declaredBalanceMinor?: unknown } | undefined;
+    check("Case 2 — a caller from before the question records neither, rather than \"no\"",
+      eOld?.bonus === undefined && eOld?.declaredBalanceMinor === undefined, JSON.stringify(eOld));
+
+    const yesNoAmount = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-bonus-bad", "driftone@e2e-test.com"),
+      bonus: { given: true, amountMinor: 0 },
+    });
+    check("Case 3 — a bonus given without an amount is refused", yesNoAmount.status === 422, show(yesNoAmount));
+    const negative = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-balance-bad", "driftone@e2e-test.com"),
+      balanceMinor: -100,
+    });
+    check("Case 3 — a negative balance is refused", negative.status === 422, show(negative));
+    check("...and neither made an invoice",
+      (await Invoice.countDocuments({ "external.externalId": { $in: ["e2e-bonus-bad", "e2e-balance-bad"] } })) === 0);
+
+    // Edits after the close reach finance only through a send-back, so the
+    // corrected resend must replace the money — the bonus with it.
+    const back = await request("POST", `/invoices/${inv?._id}/approval/return`, { reason: "Check the bonus" }, adminAuth.token);
+    check("Case 1 — the approver sends it back to be corrected", back.status === 200, show(back));
+    const corrected = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...withBonus,
+      declaredPaidMinor: 60_000,
+      balanceMinor: 70_000,
+      bonus: { given: true, amountMinor: 30_000 },
+    });
+    const invC = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
+    const eC = invC?.enrolment as { bonus?: { amountMinor?: number }; declaredBalanceMinor?: number; declaredPaidMinor?: number } | undefined;
+    check("...the corrected resend replaces the bonus, the balance and the payment",
+      corrected.status === 200 && eC?.bonus?.amountMinor === 30_000 && eC?.declaredBalanceMinor === 70_000 && eC?.declaredPaidMinor === 60_000,
+      JSON.stringify(eC));
+    check("...on the same invoice, back with the approver", invC?.approval?.state === "pending" && String(invC?._id) === String(inv?._id), JSON.stringify(invC?.approval));
+    const again = await signedPost(orgId, "/api/v1/integrations/enrolments", { ...withBonus, bonus: { given: true, amountMinor: 99_000 } });
+    const invA = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
+    check("...while one not sent back is never rewritten by a resend",
+      again.status === 200 && (invA?.enrolment as { bonus?: { amountMinor?: number } })?.bonus?.amountMinor === 30_000);
+  }
+
   console.log(
     failures
       ? `\n\x1b[31m${failures} of ${checks} checks failed\x1b[0m`

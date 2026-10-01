@@ -320,6 +320,7 @@ export async function intakeEnrolment(
         courses: enrolmentCourses(lines),
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
+        ...declaredBonusAndBalance(input),
       },
     } as never,
     // Scoped, so createInvoice treats it the way it treats a counsellor: the
@@ -365,6 +366,21 @@ export async function intakeEnrolment(
     customerId: customer.id,
     duplicate: false,
     flags,
+  };
+}
+
+/**
+ * The bonus and the balance as the caller sent them, for the enrolment block.
+ *
+ * Only what was sent: a caller from before these were asked sends neither, and
+ * an enrolment that says nothing is different from one that says "no bonus".
+ * Where the balance is missing the screens work it out from the fee and the
+ * declared payment, as they always have.
+ */
+function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { given: boolean; amountMinor: number }; declaredBalanceMinor?: number } {
+  return {
+    ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor } } : {}),
+    ...(input.balanceMinor !== undefined ? { declaredBalanceMinor: input.balanceMinor } : {}),
   };
 }
 
@@ -453,6 +469,18 @@ async function resubmitReturned(
     if (doc.get("enrolment")) {
       doc.set("enrolment.lmsCourseSlug", declaredLmsCourses(lines[0]!)[0] ?? "");
       doc.set("enrolment.courses", enrolmentCourses(lines));
+      /*
+       * And the money as corrected. Sending an enrolment back is how the CRM's
+       * edits after the close reach finance at all — a fee, a payment or a
+       * bonus fixed there is fixed here only by this — so the approver must see
+       * the figures that were resent, not the ones they sent back. A caller
+       * that says nothing about a bonus leaves the recorded one alone.
+       */
+      doc.set("enrolment.declaredPaidMinor", input.declaredPaidMinor);
+      doc.set("enrolment.declaredPaymentMethod", input.declaredPaymentMethod);
+      const { bonus, declaredBalanceMinor } = declaredBonusAndBalance(input);
+      if (bonus) doc.set("enrolment.bonus", bonus);
+      if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
     }
     await doc.save();
     void notifyApprovers(doc as never);

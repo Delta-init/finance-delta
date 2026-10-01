@@ -43,7 +43,9 @@ export function EnrolmentDetailsDialog({
     .filter(Boolean)
     .join(", ");
 
-  const outstanding = invoice.totalMinor - (e?.declaredPaidMinor ?? 0);
+  // The balance the CRM sent where it sent one — the fee less what was
+  // collected, the bonus never in it — and the same sum worked out here otherwise.
+  const outstanding = e?.declaredBalanceMinor ?? Math.max(0, invoice.totalMinor - (e?.declaredPaidMinor ?? 0));
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -111,12 +113,20 @@ export function EnrolmentDetailsDialog({
                 />
                 {/* Declared, not recorded: this is what the counsellor says
                     they took, against what the invoice asks for. */}
-                <Row label="Still to collect" value={formatMoney(outstanding, invoice.currency)} strong />
+                <Row label="Balance (still to collect)" value={formatMoney(outstanding, invoice.currency)} strong />
               </>
             ) : (
               <Row label="Collected by counsellor" value="Nothing declared" />
             )}
             <Row label="Recorded against the invoice" value={formatMoney(invoice.amountPaidMinor, invoice.currency)} />
+            {/* Asked at the close. Beside the money rather than in it: the
+                bonus is not billed, not taxed and not part of the balance. */}
+            {e?.bonus ? (
+              <Row
+                label="Bonus (not in the fee or balance)"
+                value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, invoice.currency)}` : "No"}
+              />
+            ) : null}
           </Section>
 
           <Link

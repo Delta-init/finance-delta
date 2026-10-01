@@ -169,6 +169,49 @@ async function main() {
     check("...and is enrolled on it", Boolean(enrolment), "no enrollment");
     const order = await lms.db!.collection("orders").findOne({ "externalRef.id": inv.invoiceId });
     check("...with the sale recorded against the invoice", Boolean(order), "no order carrying the invoice id");
+    // The fix: an order holds the smallest unit, like the gateways' do. AED
+    // 1,300 was stored as 1300 and shown as AED 13.00.
+    check("...in minor units, the way every other order is kept", order?.amount === 130_000 && order?.currency === "aed",
+      `amount=${order?.amount} currency=${order?.currency}`);
+    check("...and marked so, which is what keeps the one-off correction off it", order?.externalRef?.minorUnits === true,
+      JSON.stringify(order?.externalRef));
+  }
+
+  // ── What the enrolment cost, as finance approved it ──────────────────────
+  step("The fee, the payment, the balance, the bonus and the receipt reach the LMS");
+  {
+    const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
+    const inv = await intakeEnrolment(orgId, {
+      externalId: "crm-fees", source: "crm",
+      customer: { name: "Fees Student", email: "fees@e2e-test.com", phone: "+971500000001" },
+      course: { name: "Market Break out", itemId: String(mapped._id), amountMinor: 130_000 },
+      enrolledOn: today, declaredPaidMinor: 50_000, declaredPaymentMethod: "cash",
+      modeOfStudy: "online", language: "English",
+      balanceMinor: 80_000, bonus: { given: true, amountMinor: 25_000 },
+      receipt: { name: "receipt.jpg", url: "https://files.example.com/enrolment-receipts/lead-9/1-receipt.jpg", key: "enrolment-receipts/lead-9/1-receipt.jpg", mimeType: "image/jpeg" },
+    } as never);
+    await post(`/invoices/${inv.invoiceId}/approval/approve`, undefined, token);
+    await settle();
+    await drainLmsProvisions();
+    const user = await lms.db!.collection("users").findOne({ email: "fees@e2e-test.com" });
+    const enrolment = user ? await lms.db!.collection("enrollments").findOne({ userId: user._id }) : null;
+    const fees = enrolment?.feeSummary as Record<string, any> | undefined;
+    check("Case 1 — the enrolment carries the fee, what was paid and the balance",
+      fees?.feeMinor === 130_000 && fees?.paidMinor === 50_000 && fees?.balanceMinor === 80_000 && fees?.currency === "AED",
+      JSON.stringify(fees));
+    check("...the bonus beside them, not in them", fees?.bonus?.given === true && fees?.bonus?.amountMinor === 25_000, JSON.stringify(fees?.bonus));
+    check("...the receipt the counsellor took", fees?.receipt?.url === "https://files.example.com/enrolment-receipts/lead-9/1-receipt.jpg",
+      JSON.stringify(fees?.receipt));
+    check("...and the invoice it came from", fees?.invoiceId === inv.invoiceId && fees?.invoiceNumber === inv.invoiceNumber,
+      `${fees?.invoiceId} ${fees?.invoiceNumber}`);
+    check("Case 2 — a bonus never lowers the balance: fee − paid, whatever the bonus", fees?.balanceMinor === 130_000 - 50_000);
+
+    // Arriving again — finance retrying — records nothing new and changes nothing.
+    await LmsProvision.updateOne({ invoiceId: new Types.ObjectId(inv.invoiceId) }, { $set: { status: "pending", nextAttemptAt: new Date(0) } });
+    await drainLmsProvisions();
+    const again = await lms.db!.collection("enrollments").findOne({ userId: user!._id });
+    check("Case 2 — a repeat arrival leaves the summary as first recorded",
+      String((again?.feeSummary as { recordedAt?: Date })?.recordedAt) === String(fees?.recordedAt));
   }
 
   // ── The retry ─────────────────────────────────────────────────────────────
@@ -532,10 +575,17 @@ async function main() {
       "externalRef.id": { $in: [draw.invoiceId, extraCourseKey(draw.invoiceId, DWT), extraCourseKey(draw.invoiceId, HADC)] },
     }).toArray();
     const amountOf = (key: string) => orders.find((o) => o.externalRef?.id === key)?.amount;
+    // 650,000 fils, the invoice's total, in minor units — once the whole-unit
+    // bug was fixed; it used to be stored as 6500 and shown as AED 65.00.
     check("one order per course, each under its own key; the sale's total is counted once",
-      orders.length === 3 && amountOf(draw.invoiceId) === 6500
+      orders.length === 3 && amountOf(draw.invoiceId) === 650_000
         && amountOf(extraCourseKey(draw.invoiceId, DWT)) === 0 && amountOf(extraCourseKey(draw.invoiceId, HADC)) === 0,
       JSON.stringify(orders.map((o) => [o.externalRef?.id, o.amount])));
+    const feeOn = async (slug: string) =>
+      (await lms.db!.collection("enrollments").findOne({ userId: student?._id, courseId: await courseId(slug) }))?.feeSummary as { feeMinor?: number } | undefined;
+    check("Case 2 — the sale's fee summary is on the first course only, not repeated on the courses it also opens",
+      (await feeOn(MBT))?.feeMinor === 650_000 && !(await feeOn(DWT)) && !(await feeOn(HADC)),
+      JSON.stringify([await feeOn(MBT), await feeOn(DWT), await feeOn(HADC)]));
     const dwtEnrolment = async () => lms.db!.collection("enrollments").findOne({ userId: student?._id, courseId: await courseId(DWT) });
     check("the second course follows the payment rule too: part paid, half open",
       (await dwtEnrolment() as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "partial");

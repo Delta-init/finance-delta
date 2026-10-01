@@ -51,6 +51,15 @@ function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
 
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
 
+/** The bonus and the declared balance, where the enrolment recorded them — absent, not zero, where it did not. */
+function enrolmentBonusDTO(enrolment: unknown): { bonus?: { given: boolean; amountMinor: number }; declaredBalanceMinor?: number } {
+  const e = enrolment as { bonus?: { given?: boolean; amountMinor?: number } | null; declaredBalanceMinor?: number | null };
+  return {
+    ...(e.bonus ? { bonus: { given: Boolean(e.bonus.given), amountMinor: e.bonus.amountMinor ?? 0 } } : {}),
+    ...(typeof e.declaredBalanceMinor === "number" ? { declaredBalanceMinor: e.declaredBalanceMinor } : {}),
+  };
+}
+
 function toDTO(doc: InvoiceDoc): InvoiceDTO {
   const del = (doc as unknown as Record<string, unknown>).emailDelivery as
     | { state?: string; at?: Date; messageId?: string; error?: string }
@@ -80,6 +89,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           lmsCourseSlug: (doc.enrolment as { lmsCourseSlug?: string }).lmsCourseSlug ?? "",
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
+          ...enrolmentBonusDTO(doc.enrolment),
         }
       : undefined,
     approval: approvalDTO(doc),
@@ -781,6 +791,51 @@ export function lmsPaymentStatus(doc: InvoiceDoc): "paid" | "partial" | "unpaid"
   return paid > 0 ? "partial" : "unpaid";
 }
 
+/**
+ * An enrolment's money as the LMS and Tetra Commission are told it: the fee,
+ * what is paid, the balance, the bonus and the receipt the counsellor took.
+ *
+ * A snapshot taken at approval, for information — the people teaching and
+ * mentoring this client see what was agreed and collected without a login to
+ * finance. Finance stays the record: payments recorded later open more of the
+ * course through the access updates, and are not re-sent here.
+ *
+ * Paid is the larger of what was declared at the close and what accounts have
+ * recorded, the same figure the LMS opens modules by. The bonus is beside the
+ * money, never in it: the balance is the fee less what was paid, whatever the
+ * bonus.
+ */
+export function enrolmentFeeSummary(doc: InvoiceDoc): {
+  currency: string;
+  feeMinor: number;
+  paidMinor: number;
+  balanceMinor: number;
+  bonus: { given: boolean; amountMinor: number } | null;
+  receipt: { url: string; name: string; mimeType?: string } | null;
+} {
+  const d = doc as unknown as {
+    currency?: string;
+    totalMinor?: number;
+    amountPaidMinor?: number;
+    enrolment?: { declaredPaidMinor?: number; bonus?: { given?: boolean; amountMinor?: number } | null };
+    attachments?: { name?: string; url?: string; key?: string; mimeType?: string }[];
+  };
+  const fee = d.totalMinor ?? 0;
+  const paid = Math.max(d.amountPaidMinor ?? 0, d.enrolment?.declaredPaidMinor ?? 0);
+  const bonus = d.enrolment?.bonus;
+  // The receipt the CRM wrote at the close — under its own prefix, so a file
+  // somebody attached here later is never passed off as the client's receipt.
+  const receipt = (d.attachments ?? []).find((a) => String(a.key ?? "").startsWith("enrolment-receipts/") && a.url);
+  return {
+    currency: d.currency ?? "AED",
+    feeMinor: fee,
+    paidMinor: paid,
+    balanceMinor: Math.max(0, fee - paid),
+    bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0 } : null,
+    receipt: receipt ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) } : null,
+  };
+}
+
 const LMS_RANK = { unpaid: 0, partial: 1, paid: 2 } as const;
 type LmsStatus = keyof typeof LMS_RANK;
 
@@ -921,10 +976,20 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         courseSlug,
         invoiceId: String(doc._id),
         invoiceNumber: doc.invoiceNumber,
-        // Whole units: the LMS records orders the way its own gateways do.
+        /*
+         * The fee, exactly, in the currency's smallest unit — which is how the
+         * LMS records an order, the same as its own gateways do. `amount` is
+         * the same fee in whole units, kept only for an LMS from before it read
+         * `amountMinor`: that one stored whole units where it meant minor ones,
+         * and showed every order from here a hundred times too small.
+         */
+        amountMinor: doc.totalMinor ?? 0,
         amount: Math.round((doc.totalMinor ?? 0) / 100),
+        currency: doc.currency ?? "AED",
         // Paid opens every module, partial the first half, unpaid none.
         paymentStatus: lmsPaymentStatus(doc),
+        // What the enrolment was at approval, shown in the LMS and in Tetra Commission.
+        feeSummary: enrolmentFeeSummary(doc),
       },
       status: "pending",
       // The rest of what was sold, sent once the first has made the student.

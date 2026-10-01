@@ -154,6 +154,17 @@ const invoiceSchema = new Schema(
             type: String,
             enum: [...PAYMENT_METHODS],
           },
+          /** Whether a bonus was given at the close, and how much. Information
+              only — never a line, never taxed, never part of the balance. */
+          bonus: {
+            type: new Schema(
+              { given: { type: Boolean, default: false }, amountMinor: { type: Number, default: 0 } },
+              { _id: false },
+            ),
+            default: undefined,
+          },
+          /** The fee less what was collected, as the counsellor was shown it. */
+          declaredBalanceMinor: { type: Number },
         },
         { _id: false },
       ),

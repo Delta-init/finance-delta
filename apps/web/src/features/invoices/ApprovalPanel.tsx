@@ -95,6 +95,18 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
               }`}
             />
           ) : null}
+          {/* The fee less what was collected, as the counsellor was shown it.
+              Only where the CRM sent it; View details works it out otherwise. */}
+          {e.declaredBalanceMinor !== undefined ? (
+            <Detail label="Balance" value={formatMoney(e.declaredBalanceMinor, invoice.currency)} />
+          ) : null}
+          {/* Information, not money: never on the invoice, never in the balance. */}
+          {e.bonus ? (
+            <Detail
+              label="Bonus"
+              value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, invoice.currency)}` : "No"}
+            />
+          ) : null}
         </div>
       )}
 

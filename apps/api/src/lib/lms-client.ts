@@ -47,8 +47,17 @@ export async function provisionEnrolment(input: {
   courseSlug: string;
   invoiceId: string;
   invoiceNumber?: string;
-  /** Whole currency units, as the LMS records orders. */
+  /** The fee in the currency's smallest unit — how the LMS records an order. */
+  amountMinor?: number;
+  /**
+   * The same fee in whole units. Only for an LMS from before `amountMinor`,
+   * which recorded this figure as if it were minor units.
+   */
   amount?: number;
+  currency?: string;
+  paymentStatus?: LmsPaymentStatus;
+  /** What the enrolment was at approval — fee, paid, balance, bonus, receipt. Shown in the LMS, for information. */
+  feeSummary?: EnrolmentFeeSummary;
 }): Promise<LmsProvisionResult> {
   // The LMS mounts everything under /api/v1. Accepted with or without it, so a
   // base URL copied from a browser's address bar works either way rather than
@@ -90,6 +99,16 @@ export async function provisionEnrolment(input: {
 }
 
 export type LmsPaymentStatus = "paid" | "partial" | "unpaid";
+
+/** An enrolment's money at approval, as the LMS and Tetra Commission are told it. Minor units throughout. */
+export interface EnrolmentFeeSummary {
+  currency: string;
+  feeMinor: number;
+  paidMinor: number;
+  balanceMinor: number;
+  bonus: { given: boolean; amountMinor: number } | null;
+  receipt: { url: string; name: string; mimeType?: string } | null;
+}
 
 /**
  * Tell the LMS more of an enrolment's fee is paid, so it opens more of the

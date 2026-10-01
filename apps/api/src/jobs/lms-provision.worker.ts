@@ -1,5 +1,7 @@
 import { logger } from "../lib/logger";
-import { lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus } from "../lib/lms-client";
+import {
+  lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus, type EnrolmentFeeSummary,
+} from "../lib/lms-client";
 import {
   commissionConfigured, sendStudentToCommission, CommissionPermanentError, CommissionNotReadyError, logCommissionConfig,
 } from "../lib/commission-client";
@@ -132,12 +134,16 @@ export async function drainLmsExtraCourses(): Promise<number> {
     for (const extra of (row.extraCourses ?? []).filter((e) => e.status === "pending" && (!e.nextAttemptAt || e.nextAttemptAt <= now))) {
       const at = { arrayFilters: [{ "e.slug": extra.slug }] };
       try {
+        // The invoice's money is the first course's: its order and its fee
+        // summary. Repeated on every course it would be revenue twice, and a
+        // bundle's second course would show a fee nobody owes again.
+        const { feeSummary: _summary, amountMinor: _minor, ...first } = payload as Record<string, unknown>;
         const result = await provisionEnrolment({
-          ...(payload as never as { email: string }),
+          ...(first as never as { email: string }),
           courseSlug: extra.slug,
           invoiceId: extraCourseKey(row.invoiceId, extra.slug),
-          // The invoice's total is the first course's order; counted again here it would be revenue twice.
           amount: 0,
+          amountMinor: 0,
           ...(paymentStatus ? { paymentStatus } : {}),
         } as never);
         await LmsProvision.updateOne({ _id: row._id }, {
@@ -251,7 +257,9 @@ export async function drainCommissionStudents(): Promise<number> {
 
   let sent = 0;
   for (const row of due) {
-    const payload = (row.payload ?? {}) as { email?: string; name?: string; phone?: string; courseSlug?: string };
+    const payload = (row.payload ?? {}) as {
+      email?: string; name?: string; phone?: string; courseSlug?: string; feeSummary?: EnrolmentFeeSummary;
+    };
     try {
       const result = await sendStudentToCommission({
         invoiceId: String(row.invoiceId),
@@ -262,6 +270,8 @@ export async function drainCommissionStudents(): Promise<number> {
         country: await customerCountry(row.invoiceId),
         course: row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
         lmsUserId: row.lmsUserId ?? undefined,
+        // The same summary the LMS was given; absent on rows queued before it existed.
+        ...(payload.feeSummary ? { feeSummary: payload.feeSummary } : {}),
       });
       await LmsProvision.updateOne(
         { _id: row._id, "commission.state": "pending" },

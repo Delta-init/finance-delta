@@ -228,6 +228,72 @@ await drainLmsProvisions();
 const g2 = await row(lmsDown._id);
 check("the LMS down past eight tries: still waiting, never given up", g2.status === "pending" && g2.attempts === 13, JSON.stringify({ status: g2.status, attempts: g2.attempts }));
 
+step("The course's fees go with the student, for the mentors to see");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const summary = (feeMinor: number, paidMinor: number, extra: Record<string, unknown> = {}) => ({
+    currency: "AED", feeMinor, paidMinor, balanceMinor: Math.max(0, feeMinor - paidMinor),
+    bonus: { given: true, amountMinor: 25_000 },
+    receipt: { url: "https://files.example.com/enrolment-receipts/lead-7/1-receipt.jpg", name: "receipt.jpg", mimeType: "image/jpeg" },
+    ...extra,
+  });
+  /** An approved enrolment that carries its money, as the approval queues one now. */
+  const enrolWithFees = async (feeSummary: unknown, email?: string) => {
+    const r = await enrol(email);
+    await LmsProvision.updateOne({ _id: r._id }, { $set: { "payload.feeSummary": feeSummary } });
+    return r;
+  };
+
+  const first = await enrolWithFees(summary(130_000, 50_000), "fees@e2e-test.com");
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const created = await students.findOne({ email: "fees@e2e-test.com" }) as any;
+  const f0 = created?.course_fees?.[0];
+  check("Case 1 — a new student arrives with the course's fee, what was paid and the balance",
+    created?.course_fees?.length === 1 && f0?.fee_minor === 130_000 && f0?.paid_minor === 50_000 && f0?.balance_minor === 80_000 && f0?.currency === "AED",
+    JSON.stringify(created?.course_fees));
+  check("...the bonus given at the close, and the receipt", f0?.bonus_given === true && f0?.bonus_minor === 25_000 &&
+    f0?.receipt_url === "https://files.example.com/enrolment-receipts/lead-7/1-receipt.jpg", JSON.stringify(f0));
+  check("...against the invoice and the course it paid for",
+    f0?.invoice_id === String(first.invoiceId) && f0?.invoice_number === first.invoiceNumber && f0?.course === "Delta Wave Theory Trading Programme", JSON.stringify(f0));
+  check("...and the bonus is information only: no funding request is made for it",
+    (await tc.db!.collection("funding_transactions").countDocuments({})) === 0);
+
+  // Their second course: same person, their own mentor kept — the course is added.
+  const second = await enrolWithFees(summary(450_000, 0, { bonus: { given: false, amountMinor: 0 }, receipt: null }), "fees@e2e-test.com");
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const same = await students.findOne({ email: "fees@e2e-test.com" }) as any;
+  check("Case 1 — a second course adds its own entry to the student already there",
+    same?.course_fees?.length === 2 && same.course_fees[1]?.invoice_id === String(second.invoiceId) && same.course_fees[1]?.fee_minor === 450_000,
+    JSON.stringify(same?.course_fees));
+  check("...without touching who they are or who mentors them",
+    same?.primary_mentor_name === created?.primary_mentor_name && same?.student_code === created?.student_code && (await students.countDocuments({ email: "fees@e2e-test.com" })) === 1);
+  check("Case 2 — \"no bonus\" and no receipt are recorded as such",
+    same?.course_fees[1]?.bonus_given === false && same.course_fees[1]?.bonus_minor === 0 && same.course_fees[1]?.receipt_url === "", JSON.stringify(same?.course_fees[1]));
+
+  // Finance retrying the first: one entry still.
+  await LmsProvision.updateOne({ _id: first._id }, { $set: { "commission.state": "pending", "commission.nextAttemptAt": new Date() } });
+  await drainCommissionStudents();
+  check("Case 2 — a retry adds nothing twice",
+    ((await students.findOne({ email: "fees@e2e-test.com" })) as any)?.course_fees?.length === 2);
+
+  // What does not add up is dropped, never the student.
+  const bad = await enrolWithFees({ currency: "AED", feeMinor: -5, paidMinor: 0, balanceMinor: 0 }, "badfees@e2e-test.com");
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const badStudent = await students.findOne({ email: "badfees@e2e-test.com" }) as any;
+  check("Case 3 — a malformed summary is ignored, and the student still arrives",
+    (await row(bad._id)).commission?.state === "sent" && Boolean(badStudent) && (badStudent?.course_fees ?? []).length === 0,
+    JSON.stringify({ state: (await row(bad._id)).commission?.state, fees: badStudent?.course_fees }));
+  const sneaky = await enrolWithFees(summary(130_000, 0, { receipt: { url: "javascript:alert(1)", name: "x" } }), "sneaky@e2e-test.com");
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const sneakyStudent = await students.findOne({ email: "sneaky@e2e-test.com" }) as any;
+  check("Case 3 — a receipt that is not a web link is not kept as one",
+    (await row(sneaky._id)).commission?.state === "sent" && sneakyStudent?.course_fees?.[0]?.receipt_url === "", JSON.stringify(sneakyStudent?.course_fees));
+}
+
 step("Sent the moment it is approved");
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const until = async (ok: () => Promise<boolean>, ms = 3000) => {

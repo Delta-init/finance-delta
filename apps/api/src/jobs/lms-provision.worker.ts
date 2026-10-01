@@ -37,6 +37,18 @@ const COMMISSION_SOURCES = new Set(["crm"]);
 const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(source ?? "crm"));
 
 /**
+ * And only Forex students: Tetra Commission is the trading side's. The LMS
+ * names each course's programme when it takes the enrolment, and FOREX Trading
+ * is `4x-trading` there. Any other programme — Digital Marketing, AI, JURA — or
+ * none, and the student is not sent. An LMS too old to name it counts as none,
+ * which is why the LMS goes live with this before finance does.
+ */
+const FOREX_PROGRAMME = "4x-trading";
+const isForex = (program: unknown) => program === FOREX_PROGRAMME;
+const notForex = (program: string | null | undefined) =>
+  program === undefined ? "The LMS did not say which programme the course is in" : `Not a Forex course (${program || "no programme set"})`;
+
+/**
  * Backs off to roughly a quarter of an hour, then stays there — and keeps
  * trying. An outage is waited out however long it lasts: giving up after a
  * few minutes left students who were never created unless somebody re-queued
@@ -63,14 +75,18 @@ export async function drainLmsProvisions(): Promise<number> {
         lmsUserId: result.userId,
         lmsCourseSlug: result.courseSlug,
         lmsCourseTitle: result.courseTitle,
+        ...(result.courseProgram ? { lmsCourseProgram: result.courseProgram } : {}),
         studentCreated: result.created,
         sentAt: new Date(),
         lastError: undefined,
         ...(sentStatus ? { "access.sent": sentStatus } : {}),
-        // On to Tetra Commission, if it is switched on now. New students only:
-        // one the LMS took before this, or while it was off, is never sent.
+        // On to Tetra Commission, if it is switched on now and the course is
+        // Forex. New students only: one the LMS took before this, or while it
+        // was off, is never sent. One on another programme is marked, with why.
         ...(commissionConfigured() && !row.commission?.state && sendsToCommission(row.source)
-          ? { "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() }
+          ? isForex(result.courseProgram)
+            ? { "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() }
+            : { "commission.state": "skipped", "commission.reason": notForex(result.courseProgram) }
           : {}),
       });
       await row.save();
@@ -155,6 +171,18 @@ export async function drainLmsExtraCourses(): Promise<number> {
           },
           $unset: { "extraCourses.$[e].lastError": 1 },
         }, at);
+        // A Forex course after a first that was not: a Forex student after all,
+        // sent under this course. Only one passed over for its programme —
+        // never one from before Tetra Commission was switched on.
+        if (commissionConfigured() && isForex(result.courseProgram)) {
+          await LmsProvision.updateOne(
+            { _id: row._id, "commission.state": "skipped" },
+            {
+              $set: { "commission.state": "pending", "commission.course": result.courseTitle, "commission.attempts": 0, "commission.nextAttemptAt": new Date() },
+              $unset: { "commission.reason": 1 },
+            },
+          );
+        }
         sent++;
         logger.info({ invoice: row.invoiceNumber, course: result.courseSlug, repeat: result.alreadyProcessed }, "Further course of an enrolment provisioned in the LMS");
       } catch (err) {
@@ -236,8 +264,8 @@ export async function drainLmsAccessUpdates(): Promise<number> {
 }
 
 /**
- * Sends each new LMS student on to Tetra Commission, where the next team in
- * turn is given them (team 1, 2, 3, 4, then team 1 again).
+ * Sends each new Forex student the LMS took on to Tetra Commission, where the
+ * next team in turn is given them (team 1, 2, 3, 4, then team 1 again).
  *
  * Only rows the LMS has taken, oldest first, so the teams take turns in the
  * order the students arrived. Tetra Commission is idempotent on the invoice
@@ -268,7 +296,7 @@ export async function drainCommissionStudents(): Promise<number> {
         name: payload.name,
         phone: payload.phone,
         country: await customerCountry(row.invoiceId),
-        course: row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
+        course: row.commission?.course || row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
         lmsUserId: row.lmsUserId ?? undefined,
         // The same summary the LMS was given; absent on rows queued before it existed.
         ...(payload.feeSummary ? { feeSummary: payload.feeSummary } : {}),

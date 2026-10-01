@@ -63,6 +63,8 @@ const lmsProvisionSchema = new Schema(
     lmsUserId: { type: String },
     lmsCourseSlug: { type: String },
     lmsCourseTitle: { type: String },
+    /** The course's programme as the LMS named it (`4x-trading` is FOREX Trading). */
+    lmsCourseProgram: { type: String },
     studentCreated: { type: Boolean },
     sentAt: { type: Date },
 
@@ -81,16 +83,21 @@ const lmsProvisionSchema = new Schema(
     },
 
     /**
-     * The student, sent on to Tetra Commission once the LMS has them.
+     * The student, sent on to Tetra Commission once the LMS has them — Forex
+     * students only.
      *
      * Only set when the LMS takes the enrolment while Tetra Commission is
      * configured, so enrolments from before — and from any time it was
-     * switched off — are never sent: new students only. What came back is
-     * kept, including when somebody with that email was already there and so
-     * was left as they were (`alreadyThere`).
+     * switched off — are never sent: new students only. A course that is not
+     * FOREX Trading is `skipped`, with the `reason`; a Forex course among the
+     * invoice's other courses still sends them, under that course (`course`).
+     * What came back is kept, including when somebody with that email was
+     * already there and so was left as they were (`alreadyThere`).
      */
     commission: {
-      state: { type: String, enum: ["pending", "sent", "failed"] },
+      state: { type: String, enum: ["pending", "sent", "failed", "skipped"] },
+      reason: { type: String },
+      course: { type: String },
       attempts: { type: Number },
       nextAttemptAt: { type: Date },
       lastError: { type: String },

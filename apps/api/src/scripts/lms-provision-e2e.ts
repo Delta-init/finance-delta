@@ -82,6 +82,7 @@ async function main() {
   await lms.db!.collection("courses").insertOne({
     title: "MARKET BREAK-OUT TRADING PROGRAM",
     slug: "market-break-out-trading-program",
+    program: "4x-trading",
     organizationId: lmsOrg.insertedId,
     price: 1300, isPublished: true, createdAt: new Date(), updatedAt: new Date(),
   });
@@ -158,6 +159,8 @@ async function main() {
     const row = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(inv.invoiceId) }).lean();
     check("...and records what the LMS made of it", row?.status === "sent", `status=${row?.status} err=${row?.lastError}`);
     check("...naming the student it created", Boolean(row?.lmsUserId), "no lmsUserId");
+    // What decides whether the student goes on to Tetra Commission: Forex students only.
+    check("...and the course's programme, as the LMS names it", row?.lmsCourseProgram === "4x-trading", `program=${row?.lmsCourseProgram}`);
 
     // The far side: a real student, really enrolled.
     const user = await lms.db!.collection("users").findOne({ email: "student@e2e-test.com" });

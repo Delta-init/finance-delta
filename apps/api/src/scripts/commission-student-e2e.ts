@@ -11,6 +11,9 @@
  *   4. An email Tetra Commission already has is left alone and uses no turn.
  *   5. Down, not deployed yet, or refusing: retried, waited for, or stopped —
  *      and a retry never makes a second student.
+ *   6. Forex students only: a close on another programme's course, or one
+ *      the LMS names no programme for, is passed over and says why; a Forex
+ *      course later on the same invoice sends the student after all.
  *
  * Run through scripts/commission-student-e2e.sh. Scratch databases only.
  */
@@ -28,7 +31,7 @@ for (const [name, value] of [["MONGODB_URI", uri], ["COMMISSION_MONGO_URI", `${c
 
 const { env } = await import("../config/env");
 const { LmsProvision } = await import("../modules/integrations/lms-provision.model");
-const { drainLmsProvisions, drainCommissionStudents, kickLmsProvisioning, startLmsProvisionWorker } = await import("../jobs/lms-provision.worker");
+const { drainLmsProvisions, drainLmsExtraCourses, drainCommissionStudents, kickLmsProvisioning, startLmsProvisionWorker } = await import("../jobs/lms-provision.worker");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -38,7 +41,9 @@ function check(label: string, ok: boolean, detail = "") {
 }
 function step(s: string) { console.log(`\n\x1b[1m${s}\x1b[0m`); }
 
-/* ── A stand-in LMS: takes every enrolment, except for addresses that say it is down. ── */
+/* ── A stand-in LMS: takes every enrolment, except for addresses that say it is down. Names each
+   course's programme as the LMS does — Digital Marketing's is not Forex — except for a course
+   that stands for an LMS older than the field, which names none. ── */
 let lmsCalls = 0;
 const lms = Bun.serve({
   port: Number(process.env.E2E_FAKE_LMS_PORT),
@@ -51,11 +56,14 @@ const lms = Bun.serve({
     lmsCalls++;
     const body = (await req.json()) as { email: string; courseSlug: string };
     if (body.email.includes("lmsdown")) return Response.json({ success: false, error: { message: "LMS is down" } }, { status: 503 });
+    const dm = body.courseSlug.startsWith("digital-marketing");
     return Response.json({
       success: true,
       data: {
         userId: new Types.ObjectId().toString(), created: true, alreadyProcessed: false,
-        courseSlug: body.courseSlug, courseTitle: "Delta Wave Theory Trading Programme", organizationSlug: null,
+        courseSlug: body.courseSlug, courseTitle: dm ? "Digital Marketing" : "Delta Wave Theory Trading Programme",
+        ...(body.courseSlug === "from-an-older-lms" ? {} : { courseProgram: dm ? "digital-marketing" : "4x-trading" }),
+        organizationSlug: null,
       },
     });
   },
@@ -95,8 +103,8 @@ await students.insertOne({
 });
 const orgId = new Types.ObjectId();
 let n = 0;
-/** An approved CRM enrolment, queued the way the approval queues it. */
-async function enrol(email?: string) {
+/** An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`. */
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[] } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -107,9 +115,10 @@ async function enrol(email?: string) {
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
     payload: {
       email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
-      courseSlug: "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
+      courseSlug: opts.courseSlug ?? "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
       amount: 4500, paymentStatus: "partial",
     },
+    ...(opts.extra ? { extraCourses: opts.extra.map((slug) => ({ slug, status: "pending", nextAttemptAt: new Date() })) } : {}),
   });
 }
 const row = async (id: unknown) => (await LmsProvision.findById(id).lean()) as any;
@@ -292,6 +301,40 @@ step("The course's fees go with the student, for the mentors to see");
   const sneakyStudent = await students.findOne({ email: "sneaky@e2e-test.com" }) as any;
   check("Case 3 — a receipt that is not a web link is not kept as one",
     (await row(sneaky._id)).commission?.state === "sent" && sneakyStudent?.course_fees?.[0]?.receipt_url === "", JSON.stringify(sneakyStudent?.course_fees));
+}
+
+step("Forex students only");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  check("a Forex close keeps the programme the LMS named", (await row(five[0]!._id)).lmsCourseProgram === "4x-trading");
+  const dmClose = await enrol("dm@e2e-test.com", { courseSlug: "digital-marketing" });
+  const oldLms = await enrol("oldlms@e2e-test.com", { courseSlug: "from-an-older-lms" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const dmRow = await row(dmClose._id), oldRow = await row(oldLms._id);
+  check("a Digital Marketing close: in the LMS, not in Tetra Commission — passed over, and says why",
+    dmRow.status === "sent" && dmRow.commission?.state === "skipped" && dmRow.commission?.reason === "Not a Forex course (digital-marketing)" &&
+    dmRow.lmsCourseProgram === "digital-marketing" && !(await students.findOne({ email: "dm@e2e-test.com" })), JSON.stringify(dmRow.commission));
+  check("an LMS that names no programme: not sent either, and said so",
+    oldRow.status === "sent" && oldRow.commission?.state === "skipped" && /did not say/.test(oldRow.commission?.reason ?? "") &&
+    !(await students.findOne({ email: "oldlms@e2e-test.com" })), JSON.stringify(oldRow.commission));
+
+  const bundle = await enrol("bundle@e2e-test.com", { courseSlug: "digital-marketing", extra: ["delta-wave-theory"] });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  check("Digital Marketing first and a Forex course second: passed over at first",
+    (await row(bundle._id)).commission?.state === "skipped" && !(await students.findOne({ email: "bundle@e2e-test.com" })));
+  await drainLmsExtraCourses();
+  await drainCommissionStudents();
+  const br = await row(bundle._id);
+  const bs = await students.findOne({ email: "bundle@e2e-test.com" }) as any;
+  check("...then sent once the Forex course is in, under that course",
+    br.commission?.state === "sent" && br.commission?.course === "Delta Wave Theory Trading Programme" && !br.commission?.reason &&
+    /Delta Wave Theory Trading Programme/.test(bs?.notes ?? ""), JSON.stringify({ commission: br.commission, notes: bs?.notes }));
+  const count = await students.countDocuments();
+  await drainLmsExtraCourses();
+  await drainCommissionStudents();
+  check("...once", (await students.countDocuments()) === count && (await students.countDocuments({ email: "bundle@e2e-test.com" })) === 1);
 }
 
 step("Sent the moment it is approved");

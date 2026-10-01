@@ -27,6 +27,12 @@ export interface LmsProvisionResult {
   alreadyProcessed: boolean;
   courseSlug: string;
   courseTitle: string;
+  /**
+   * The course's programme in the LMS — `4x-trading` is FOREX Trading, the one
+   * whose students go on to Tetra Commission. Null for a course with none set;
+   * absent from an LMS older than it.
+   */
+  courseProgram?: string | null;
   organizationSlug: string | null;
 }
 

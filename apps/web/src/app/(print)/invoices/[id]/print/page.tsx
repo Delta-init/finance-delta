@@ -109,7 +109,7 @@ export default function PrintInvoicePage({
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid #e2e8f0" }}>
           <div style={{ maxWidth: 380 }}>
-            <PrintBrandMark branding={invoice.branding} footerText={invoice.branding?.footerText} />
+            <PrintBrandMark branding={invoice.branding} fallbackBranding={org?.branding} footerText={invoice.branding?.footerText} />
             <PrintSellerBlock org={org} />
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>

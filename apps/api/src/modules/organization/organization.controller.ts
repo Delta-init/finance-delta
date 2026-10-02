@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { asyncHandler, ok } from "../../lib/http";
+import { AppError, asyncHandler, ok } from "../../lib/http";
 import * as orgService from "./organization.service";
 
 export const getSettings = asyncHandler(async (req: Request, res: Response) => {
@@ -20,4 +20,9 @@ export const getTaxConfig = asyncHandler(async (req: Request, res: Response) => 
 
 export const upsertTaxConfig = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await orgService.upsertTaxConfig(req.auth!.organizationId, req.body));
+});
+
+export const uploadLogo = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await orgService.uploadLogo(req.auth!.organizationId, req.file));
 });

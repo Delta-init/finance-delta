@@ -56,7 +56,7 @@ export default function PaymentReceiptPage({
       <div style={{ maxWidth: 520, margin: "40px auto", padding: "40px 32px", border: "1px solid #e2e8f0", borderRadius: 12 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-          <PrintBrandMark branding={invoice.branding} footerText={invoice.branding?.footerText} />
+          <PrintBrandMark branding={invoice.branding} fallbackBranding={org?.branding} footerText={invoice.branding?.footerText} />
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.5 }}>RECEIPT</div>
             <div style={{ fontSize: 12, color: "#64748b" }}>Ref: {invoice.invoiceNumber}</div>
@@ -101,7 +101,7 @@ export default function PaymentReceiptPage({
 
         <div className="no-print" style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={() => downloadReceiptPdf({ invoice, paymentId, org })}
+            onClick={() => void downloadReceiptPdf({ invoice, paymentId, org })}
             style={{ padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
           >
             Download PDF

@@ -421,6 +421,23 @@ export async function getInvoice(orgId: string, id: string, scope: Scope): Promi
   return toDTO(doc as unknown as InvoiceDoc);
 }
 
+/**
+ * The logo an invoice's PDF is drawn with, loaded: the one it was made under,
+ * else the organization's now — an invoice made before there was one should
+ * not go out bare — else Delta's. Null when none can be loaded, and the PDF is
+ * drawn with the name alone.
+ */
+export async function invoiceLogo(orgId: string, id: string, scope: Scope): Promise<{ dataUrl: string | null }> {
+  const doc = await Invoice.findOne({ _id: id, organizationId: orgId }).select("branding salespersonId").lean();
+  if (!doc) throw new AppError("NOT_FOUND", "Invoice not found");
+  assertOwned(scope, (doc as { salespersonId?: unknown }).salespersonId, "Invoice");
+  const org = await Organization.findById(orgId).select("branding").lean();
+  const { logoDataUrl, DEFAULT_LOGO_URL } = await import("../../lib/logo");
+  const own = (doc as { branding?: { logoUrl?: string } }).branding?.logoUrl;
+  const current = (org as { branding?: { logoUrl?: string } } | null)?.branding?.logoUrl;
+  return { dataUrl: await logoDataUrl([own, current, DEFAULT_LOGO_URL]) };
+}
+
 export async function createInvoice(
   orgId: string,
   input: CreateInvoiceInput,
@@ -1650,7 +1667,8 @@ export async function recordPayment(
 
   const currentBalance = doc.balanceMinor ?? 0;
   if (input.amountMinor > currentBalance) {
-    throw new AppError("CONFLICT", `Payment of ${input.amountMinor} exceeds balance of ${currentBalance}`);
+    const currency = doc.currency ?? "AED";
+    throw new AppError("CONFLICT", `${formatMoney(input.amountMinor, currency)} is more than the balance due of ${formatMoney(currentBalance, currency)}`);
   }
 
   if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {

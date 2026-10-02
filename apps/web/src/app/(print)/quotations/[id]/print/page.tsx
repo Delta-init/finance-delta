@@ -65,7 +65,7 @@ export default function PrintQuotationPage({
       <div style={{ maxWidth: 740, margin: "0 auto", padding: "40px 32px" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "2px solid #e2e8f0" }}>
-          <PrintBrandMark />
+          <PrintBrandMark fallbackBranding={org?.branding} />
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{L.quotation}</div>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#2563eb" }}>{q.quoteNumber}</div>

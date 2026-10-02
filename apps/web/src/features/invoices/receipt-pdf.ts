@@ -1,11 +1,13 @@
 import { jsPDF } from "jspdf";
 import {
+  drawPdfLogo,
   formatMoney,
   formatOrgAddress,
   taxNumberLabel,
   type Invoice,
   type OrganizationSettings,
 } from "@delta/shared";
+import { loadInvoiceLogo } from "./invoice-pdf";
 
 /**
  * A payment receipt as a file.
@@ -18,9 +20,9 @@ import {
  * that money arrived. It keeps the shape of the card on screen so the two are
  * recognisably the same document.
  *
- * The organisation's name is written out here where the screen shows a logo.
- * That is not the two drifting apart: a file leaves the application and has to
- * say who issued it, and text is how a drawn page says it.
+ * The logo heads it, as it does the invoice, with the organisation's name under
+ * it — written out, because a file leaves the application and has to say who
+ * issued it, and text is how a drawn page says it.
  */
 
 /** "bank transfer" -> "Bank Transfer". */
@@ -32,12 +34,14 @@ const W = 210; // A4 portrait, mm
 const M = 22;
 const LINE = 5;
 
-export function downloadReceiptPdf(opts: {
+export async function downloadReceiptPdf(opts: {
   invoice: Invoice;
   paymentId: string;
   org?: OrganizationSettings | null;
-}): boolean {
+}): Promise<boolean> {
   const { invoice, paymentId, org } = opts;
+  // The same logo as the invoice it is a receipt for.
+  const logo = await loadInvoiceLogo(invoice.id);
   const payment = invoice.payments.find((p) => p.id === paymentId);
   if (!payment) return false;
 
@@ -50,6 +54,9 @@ export function downloadReceiptPdf(opts: {
   doc.text("RECEIPT", W - M, y + 4, { align: "right" });
   doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(100, 116, 139);
   doc.text(`Ref: ${invoice.invoiceNumber}`, W - M, y + 10, { align: "right" });
+
+  const logoH = drawPdfLogo(doc, logo, M, y, 55, 14);
+  if (logoH) y += logoH + 2;
 
   doc.setFont("helvetica", "bold").setFontSize(12).setTextColor(17);
   doc.text(org?.legalName?.trim() || org?.name || "", M, y + 4);

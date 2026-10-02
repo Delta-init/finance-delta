@@ -36,6 +36,36 @@ const MARGIN = 14;
 const PAGE_W = 210; // A4 portrait, mm
 const LINE = 4.4;
 
+/**
+ * A logo at the head of a drawn page: a PNG or JPEG data URL, at most `maxW`
+ * wide and `maxH` high, keeping its own shape. Returns how far down it
+ * reaches, or 0 when there is none to draw — or it cannot be drawn, in which
+ * case the page is drawn as it always was, with the name and no logo.
+ *
+ * Only PNG and JPEG, because those are what jsPDF draws; the logo upload takes
+ * nothing else for that reason. The caller loads it: drawing is synchronous,
+ * fetching is not, and the browser and the server fetch differently.
+ */
+export function drawPdfLogo(doc: jsPDF, dataUrl: string | null | undefined, x: number, y: number, maxW = 60, maxH = 14): number {
+  if (!dataUrl) return 0;
+  const format = /^data:image\/png/i.test(dataUrl) ? "PNG" : /^data:image\/jpe?g/i.test(dataUrl) ? "JPEG" : null;
+  if (!format) return 0;
+  try {
+    const { width, height } = doc.getImageProperties(dataUrl);
+    const ratio = width > 0 && height > 0 ? width / height : 1;
+    let h = maxH;
+    let w = h * ratio;
+    if (w > maxW) {
+      w = maxW;
+      h = w / ratio;
+    }
+    doc.addImage(dataUrl, format, x, y, w, h);
+    return h;
+  } catch {
+    return 0;
+  }
+}
+
 interface BankAccount {
   accountName?: string;
   bankName?: string;
@@ -51,6 +81,8 @@ export function buildInvoicePdf(opts: {
   org?: OrganizationSettings | null;
   customer?: Customer | null;
   bankAccount?: BankAccount | null;
+  /** The logo, loaded: a PNG or JPEG data URL. Without one the name heads the page alone. */
+  logo?: string | null;
 }): jsPDF {
   const { invoice, org, customer, bankAccount } = opts;
   const L = getPrintLabels(invoice.locale, org?.taxLabel);
@@ -75,6 +107,10 @@ export function buildInvoicePdf(opts: {
   doc.text(title, PAGE_W - MARGIN, y + 4, { align: "right" });
   doc.setFont("helvetica", "bold").setFontSize(11).setTextColor(37, 99, 235);
   doc.text(invoice.invoiceNumber, PAGE_W - MARGIN, y + 10, { align: "right" });
+
+  // The logo first, where there is one, with the name under it.
+  const logoH = drawPdfLogo(doc, opts.logo, MARGIN, y);
+  if (logoH) y += logoH + 2;
 
   doc.setTextColor(17).setFontSize(11);
   doc.text(org?.legalName?.trim() || org?.name || "", MARGIN, y + 4);

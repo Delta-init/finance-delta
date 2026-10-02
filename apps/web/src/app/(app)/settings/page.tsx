@@ -1,21 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
+import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   updateOrganizationSchema,
   taxNumberLabel,
   defaultInvoiceTitle,
+  logoFor,
+  type OrganizationSettings,
   type UpdateOrganizationInput,
 } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useOrganization, useUpdateOrganization, useTaxConfig } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
-import { Plus, X, Receipt, ChevronRight } from "lucide-react";
+import { Plus, X, Receipt, ChevronRight, Upload } from "lucide-react";
 
 const FIELD = "h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30";
 
@@ -36,10 +39,65 @@ export default function SettingsPage() {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors, isSubmitting, isDirty },
   } = useForm<UpdateOrganizationInput>({
     resolver: zodResolver(updateOrganizationSchema),
   });
+
+  /*
+   * The logo, uploaded or removed on the spot rather than with Save — the file
+   * is on the server the moment it is picked. Only the logo field is put right
+   * afterwards: refetching the organization would reset the whole form, and
+   * with it anything else somebody had changed and not saved yet. The cached
+   * copy is marked stale instead, for the next page that reads it.
+   */
+  const qc = useQueryClient();
+  const logoInput = useRef<HTMLInputElement>(null);
+  const [logoBusy, setLogoBusy] = useState<"upload" | "remove" | null>(null);
+  const logoUrl = watch("branding.logoUrl") ?? "";
+
+  function logoSaved(url: string) {
+    setValue("branding.logoUrl", url, { shouldDirty: false });
+    void qc.invalidateQueries({ queryKey: ["organization"], refetchType: "none" });
+  }
+
+  async function uploadLogo(file: File) {
+    if (!["image/png", "image/jpeg"].includes(file.type)) {
+      toast.error("The logo must be a PNG or JPG image");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("The logo must be 2 MB or smaller");
+      return;
+    }
+    setLogoBusy("upload");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const saved = await api.postForm<OrganizationSettings>("organizations/logo", form);
+      logoSaved(saved.branding.logoUrl);
+      toast.success("Logo uploaded — your invoices, quotations and receipts carry it from now on");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not upload the logo");
+    } finally {
+      setLogoBusy(null);
+    }
+  }
+
+  async function removeLogo() {
+    setLogoBusy("remove");
+    try {
+      await api.patch<OrganizationSettings>("organizations/settings", { branding: { logoUrl: "" } });
+      logoSaved("");
+      toast.success("Logo removed — documents carry Delta's until you add another");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not remove the logo");
+    } finally {
+      setLogoBusy(null);
+    }
+  }
 
   useEffect(() => {
     if (org) {
@@ -340,16 +398,49 @@ export default function SettingsPage() {
             These appear on printed invoices and quotations.
           </p>
 
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-foreground">Logo URL</label>
-            <input
-              {...register("branding.logoUrl")}
-              className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-              placeholder="https://example.com/logo.png"
-            />
-            {errors.branding?.logoUrl && (
-              <p className="text-xs text-danger">{errors.branding.logoUrl.message}</p>
-            )}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Logo</label>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex h-16 w-44 items-center justify-center rounded-md border border-border bg-background p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logoFor({ logoUrl })} alt="Logo" className="max-h-12 max-w-full object-contain" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={logoInput}
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void uploadLogo(file);
+                  }}
+                />
+                <Button type="button" variant="outline" size="sm" loading={logoBusy === "upload"} disabled={!!logoBusy} onClick={() => logoInput.current?.click()}>
+                  <Upload className="h-3.5 w-3.5" /> Upload logo
+                </Button>
+                {logoUrl && (
+                  <Button type="button" variant="ghost" size="sm" loading={logoBusy === "remove"} disabled={!!logoBusy} onClick={() => void removeLogo()}>
+                    <X className="h-3.5 w-3.5" /> Remove
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-foreground-muted">
+              PNG or JPG, up to 2 MB, for invoices, receipts, quotations and credit notes. {logoUrl ? "" : "Until you add one, they carry Delta's logo."}
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs text-foreground-muted">Or a link to one</label>
+              <input
+                {...register("branding.logoUrl")}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                placeholder="https://example.com/logo.png"
+              />
+              {errors.branding?.logoUrl && (
+                <p className="text-xs text-danger">{errors.branding.logoUrl.message}</p>
+              )}
+            </div>
           </div>
 
           <div className="space-y-1">

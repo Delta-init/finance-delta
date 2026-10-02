@@ -50,6 +50,8 @@ import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
+  // The PDF waits for its logo to load; one click is one download.
+  const [pdfBusy, setPdfBusy] = useState(false);
   const { data: invoice, isLoading } = useInvoice(id);
   // Everything the PDF prints beyond the invoice itself. Cheap here: all three
   // are already cached by the time somebody reaches for the download.
@@ -145,9 +147,15 @@ export function InvoiceDetail({ id }: { id: string }) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() =>
-              downloadInvoicePdf({ invoice, org, customer, bankAccount })
-            }
+            loading={pdfBusy}
+            onClick={async () => {
+              setPdfBusy(true);
+              try {
+                await downloadInvoicePdf({ invoice, org, customer, bankAccount });
+              } finally {
+                setPdfBusy(false);
+              }
+            }}
             title="Download this invoice as a PDF"
           >
             <Download className="h-3.5 w-3.5" /> PDF
@@ -537,6 +545,7 @@ export function PaymentDialog({
     register,
     handleSubmit,
     setValue,
+    setError,
     watch,
     reset,
     formState: { errors, isSubmitting },
@@ -583,6 +592,14 @@ export function PaymentDialog({
 
   const method = watch("method");
 
+  // The most this payment may be: what is still due — and, when it is being
+  // edited, what it already counts towards that. Said here, as it is typed,
+  // rather than by the server after Save.
+  const allowedMinor = balanceMinor + (editing?.amountMinor ?? 0);
+  const typedMinor = Math.round((Number(watch("amount")) || 0) * 100);
+  const overBalance = typedMinor > allowedMinor;
+  const overBalanceMessage = `More than the balance due of ${formatMoney(allowedMinor, currency)}`;
+
   function handleClose() {
     reset();
     setProofFile(null);
@@ -599,6 +616,10 @@ export function PaymentDialog({
   }
 
   async function onSubmit(data: PaymentFormValues) {
+    if (Math.round(data.amount * 100) > allowedMinor) {
+      setError("amount", { message: overBalanceMessage });
+      return;
+    }
     const input: RecordPaymentInput = {
       method: data.method,
       amountMinor: Math.round(data.amount * 100),
@@ -696,9 +717,11 @@ export function PaymentDialog({
                 min="0.01"
                 {...register("amount", { valueAsNumber: true })}
               />
-              {errors.amount && (
+              {errors.amount ? (
                 <p className="mt-1 text-xs text-danger">{errors.amount.message}</p>
-              )}
+              ) : overBalance ? (
+                <p className="mt-1 text-xs text-danger">{overBalanceMessage}</p>
+              ) : null}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">Date</label>

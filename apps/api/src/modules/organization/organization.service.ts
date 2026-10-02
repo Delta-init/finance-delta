@@ -1,5 +1,6 @@
 import type { UpdateOrganizationInput, OrganizationSettings, UpsertTaxConfigInput, TaxConfig } from "@delta/shared";
 import { AppError } from "../../lib/http";
+import { LOGO_MAX_BYTES, logoKind } from "../../lib/logo";
 import { Organization, type OrganizationDoc } from "./organization.model";
 
 type AnyDoc = OrganizationDoc & { _id: unknown; updatedAt: Date };
@@ -64,6 +65,35 @@ export interface OrgMembershipItem {
 }
 
 /** Returns all orgs the current user is an active member of. */
+/**
+ * A logo uploaded from the settings page, rather than linked to.
+ *
+ * Kept with the rest of finance's files and made the organization's logo at
+ * once — so it heads printed documents and their PDFs from then on. PNG or JPEG
+ * only, because that is what a PDF can draw, and checked by its first bytes.
+ * The file it replaces is left where it is: an invoice made under it still
+ * points at it.
+ */
+export async function uploadLogo(orgId: string, file: { buffer: Buffer }): Promise<OrganizationSettings> {
+  if (file.buffer.byteLength > LOGO_MAX_BYTES) throw new AppError("VALIDATION_ERROR", "The logo must be 2 MB or smaller");
+  const kind = logoKind(file.buffer);
+  if (!kind) throw new AppError("VALIDATION_ERROR", "The logo must be a PNG or JPG image");
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) {
+    throw new AppError("VALIDATION_ERROR", "File storage is not set up on this server, so a logo cannot be uploaded — give a link to one instead");
+  }
+  const ext = kind === "png" ? "png" : "jpg";
+  const uploaded = await uploadFile({
+    key: `branding/${orgId}/logo-${Date.now()}.${ext}`,
+    buffer: file.buffer,
+    mimeType: `image/${kind}`,
+    originalName: `logo.${ext}`,
+  });
+  const doc = await Organization.findByIdAndUpdate(orgId, { $set: { "branding.logoUrl": uploaded.url } }, { new: true, runValidators: true });
+  if (!doc) throw new AppError("NOT_FOUND", "Organization not found");
+  return toDTO(doc as unknown as AnyDoc);
+}
+
 export async function getMyOrganizations(userId: string): Promise<OrgMembershipItem[]> {
   const { User } = await import("../user/user.model");
   const { Role } = await import("../role/role.model");

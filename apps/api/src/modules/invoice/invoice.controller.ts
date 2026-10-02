@@ -26,6 +26,11 @@ export const get = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.getInvoice(orgId(req), req.params.id!, readScope(req)));
 });
 
+/** The logo its PDF is drawn with, loaded — see invoiceLogo. */
+export const logo = asyncHandler(async (req, res) => {
+  ok(res, await invoiceService.invoiceLogo(orgId(req), req.params.id!, readScope(req)));
+});
+
 export const create = asyncHandler(async (req, res) => {
   const invoice = await invoiceService.createInvoice(orgId(req), req.body, writeScope(req));
   void autoCalculate(orgId(req), invoice.id, "invoice_raised").catch(() => undefined);

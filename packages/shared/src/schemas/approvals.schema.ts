@@ -44,3 +44,79 @@ export const approvalSummarySchema = z.object({
   groups: z.array(approvalGroupSchema),
 });
 export type ApprovalSummary = z.infer<typeof approvalSummarySchema>;
+
+/**
+ * Every approval, decided or not, in one list — the Approvals page's table.
+ *
+ * The summary above answers "what is waiting on me"; this answers that and
+ * "what was decided, by whom, and what came of it", across every kind the
+ * reader may decide, newest first. A row's `at` is when it last happened to
+ * it: when it was decided, or while it waits, when it was sent for a decision.
+ * The date range and the newest-first order are both on `at`.
+ */
+export const approvalListStatusSchema = z.enum(["pending", "approved", "rejected", "all"]);
+export type ApprovalListStatus = z.infer<typeof approvalListStatusSchema>;
+
+export const approvalListQuerySchema = z.object({
+  status: approvalListStatusSchema.default("pending"),
+  type: approvalTypeSchema.optional(),
+  /**
+   * Instants, not dates, as on the Tetra deposits page: the page turns the days
+   * somebody picks into the start of the first and of the day after the last,
+   * in their own timezone. `from` is included, `to` is not.
+   */
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type ApprovalListQuery = z.infer<typeof approvalListQuerySchema>;
+
+/** Where a row stands. "returned" is an enrolment invoice sent back; "closed" a Tetra deposit closed at Tetra's end. */
+export const approvalRowStatusSchema = z.enum(["pending", "approved", "rejected", "returned", "closed"]);
+export type ApprovalRowStatus = z.infer<typeof approvalRowStatusSchema>;
+
+/** An approved enrolment's student in the LMS. */
+export const approvalLmsSchema = z.object({
+  state: z.enum(["waiting", "created", "existing", "failed", "unmapped"]),
+  detail: z.string().optional(),
+});
+export type ApprovalLms = z.infer<typeof approvalLmsSchema>;
+
+/** The same student on Tetra Commission's portal — Forex students only. */
+export const approvalCommissionSchema = z.object({
+  state: z.enum(["waiting", "created", "existing", "skipped", "failed", "not_sent"]),
+  detail: z.string().optional(),
+  /** The student's code there, once they have one. */
+  code: z.string().optional(),
+});
+export type ApprovalCommission = z.infer<typeof approvalCommissionSchema>;
+
+export const approvalRowSchema = z.object({
+  id: z.string(),
+  type: approvalTypeSchema,
+  title: z.string(),
+  subtitle: z.string(),
+  amountMinor: z.number().optional(),
+  currency: z.string().optional(),
+  raisedBy: z.string().optional(),
+  status: approvalRowStatusSchema,
+  /** When it last happened: decided, or while it waits, sent for a decision. ISO. */
+  at: z.string().optional(),
+  submittedAt: z.string().optional(),
+  decidedAt: z.string().optional(),
+  decidedBy: z.string().optional(),
+  /** Why it was turned down or sent back, where that was written down. */
+  reason: z.string().optional(),
+  /** Where it is decided, or where it lives once decided. */
+  href: z.string(),
+  /** Decided on the Approvals page itself (fund requests, Tetra deposits) rather than on a page of its own. */
+  decideHere: z.boolean().optional(),
+  /** The reader's own request: somebody else decides it. */
+  own: z.boolean().optional(),
+  /** A decided Tetra deposit: whether Tetra Commission has the decision yet. */
+  delivery: z.object({ state: z.string(), error: z.string().optional() }).optional(),
+  lms: approvalLmsSchema.optional(),
+  commission: approvalCommissionSchema.optional(),
+});
+export type ApprovalRow = z.infer<typeof approvalRowSchema>;

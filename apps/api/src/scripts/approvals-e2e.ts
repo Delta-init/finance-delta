@@ -10,7 +10,18 @@
  *   - another organization's queue never leaks in;
  *   - an unreadable HRMS is reported on purchase requests alone, and does not
  *     take the other counts down with it;
- *   - deciding something takes it off the count.
+ *   - deciding something takes it off the count;
+ *
+ * and GET /approvals/list, the Approvals page's one table:
+ *   - Pending is what the summary counts, plus the reader's own requests,
+ *     marked as theirs; fund requests and deposits are decided right there;
+ *   - Approved and Rejected list what was decided, by whom and why — an
+ *     invoice sent back among the rejected, a purchase request's expense as
+ *     the purchase request;
+ *   - an approved enrolment says whether the LMS made the student's account
+ *     and whether Tetra Commission's portal did, or why not;
+ *   - filtered by type and by date, paged, newest first, never another
+ *     organization's, and only the kinds the reader may decide.
  *
  * Run through scripts/approvals-e2e.sh (throwaway mongod + API, no .env).
  */
@@ -29,6 +40,8 @@ import { Bill } from "../modules/bill/bill.model";
 import { PayrollRun } from "../modules/payroll/payroll-run.model";
 import { PayrollOrgLink } from "../modules/payroll-mapping/org-link.model";
 import { FundingRequestModel } from "../modules/budget/budget.model";
+import { TetraDepositModel } from "../modules/tetra-deposit/tetra-deposit.model";
+import { LmsProvision } from "../modules/integrations/lms-provision.model";
 import { accountantEmails, withAccountants } from "../lib/approval-recipients";
 
 const uri = process.env.MONGODB_URI ?? "";
@@ -165,8 +178,10 @@ async function main() {
   await exp("EX-1", "submitted"); await exp("EX-2", "submitted"); await exp("EX-3", "submitted"); await exp("EX-4", "approved");
   await Bill.collection.insertOne({ organizationId: org._id, billNumber: "BL-1", vendorName: "Printer Co", totalMinor: 900_00, currency: "AED", status: "pending_approval", dueDate: when(-60 * 24), createdAt: when(15), updatedAt: when(15) });
   await Bill.collection.insertOne({ organizationId: org._id, billNumber: "BL-2", vendorName: "Paid Co", totalMinor: 900_00, currency: "AED", status: "approved", dueDate: when(0), createdAt: when(15), updatedAt: when(15) });
+  // Each from its own HRMS organization: a month is imported once per HRMS
+  // organization (a unique index), so three runs of one month need three.
   const run = (n: string, status: string) => PayrollRun.collection.insertOne({
-    organizationId: org._id, runNumber: n, period: "2026-09", status, currency: "AED", payableMinor: 10_000_00, hrmsOrgName: "Delta HRMS", importedAt: when(40),
+    organizationId: org._id, runNumber: n, period: "2026-09", status, currency: "AED", payableMinor: 10_000_00, hrmsOrgId: `hrms-${n}`, hrmsOrgName: "Delta HRMS", importedAt: when(40),
   });
   await run("PR-1", "imported"); await run("PR-2", "additions"); await run("PR-3", "approved");
 
@@ -253,6 +268,127 @@ async function main() {
     lineItems: [{ description: "Paper", quantity: 1, unitPriceMinor: 100_00 }],
   }, tAdmin);
   check("a bill that needs no approval mails nobody", plain.status === 201 && (await recipientsOf(`Bill ${plain.body?.data?.billNumber} needs approval`)).length === 0);
+
+  step("The table: every approval, waiting and decided");
+  const show = (v: unknown) => JSON.stringify(v).slice(0, 300);
+  const decidedInvoice = (n: string, state: string, minutesAgo: number, extra: Record<string, unknown> = {}) => Invoice.collection.insertOne({
+    organizationId: org._id, invoiceNumber: n, customerName: `Client ${n}`, salespersonName: "Rep", totalMinor: 200_00, currency: "AED",
+    approval: { state, submittedAt: when(minutesAgo + 60), at: when(minutesAgo), byName: "Approver A", ...extra },
+    enrolment: { course: "Forex Pro" }, createdAt: when(minutesAgo + 60),
+  });
+  const in5 = (await decidedInvoice("IN-5", "approved", 3)).insertedId;
+  const in6 = (await decidedInvoice("IN-6", "approved", 4)).insertedId;
+  const in7 = (await decidedInvoice("IN-7", "approved", 6)).insertedId;
+  const in8 = (await decidedInvoice("IN-8", "approved", 7)).insertedId;
+  await decidedInvoice("IN-9", "approved", 8);
+  await decidedInvoice("IN-10", "returned", 2, { byName: "Approver B", returnedReason: "Wrong fee" });
+  const provision = (invoiceId: unknown, rest: Record<string, unknown>) => LmsProvision.collection.insertOne({
+    organizationId: org._id, invoiceId, invoiceNumber: "", payload: {}, attempts: 1, createdAt: new Date(), updatedAt: new Date(), ...rest,
+  });
+  await provision(in5, { status: "sent", studentCreated: true, lmsCourseTitle: "Forex Pro", source: "crm", commission: { state: "sent", studentCode: "STU-9001", team: "Team A", mentorName: "Mentor M" } });
+  await provision(in6, { status: "sent", studentCreated: false, source: "crm", commission: { state: "skipped", reason: "Not a Forex course (digital-marketing)" } });
+  await provision(in7, { status: "failed", lastError: "Course not found in the LMS", source: "crm" });
+  await provision(in8, { status: "sent", studentCreated: true, source: "draw-crm" });
+  await Expense.collection.insertOne({
+    organizationId: org._id, expenseNumber: "EX-5", category: "Travel", description: "Claim EX-5", submittedByName: "Staff", totalMinor: 30_00,
+    currency: "AED", status: "rejected", approvedByName: "Approver C", approvedAt: when(1), rejectedReason: "No receipt", createdAt: when(30), updatedAt: when(1),
+  });
+  await Expense.collection.insertOne({
+    organizationId: org._id, expenseNumber: "EX-P", category: "Office", description: "2 × Chairs", submittedByName: "Admin", totalMinor: 400_00,
+    currency: "AED", status: "approved", approvedByName: "Admin", approvedAt: when(9), createdAt: when(9), updatedAt: when(9),
+    source: { kind: "hrms_procurement", key: "hrms-org-e2e:req-1:0", hrmsOrgId: "hrms-org-e2e", requestId: "req-1", round: 0 },
+  });
+  await PayrollRun.collection.insertOne({
+    organizationId: org._id, runNumber: "PR-4", hrmsOrgId: "hrms-PR-4", period: "2026-08", status: "paid", currency: "AED", payableMinor: 5_000_00, hrmsOrgName: "Delta HRMS",
+    importedAt: when(100), approvedById: admin._id, approvedAt: when(10), updatedAt: when(10),
+  });
+  await PayrollRun.collection.insertOne({
+    organizationId: org._id, runNumber: "PR-5", hrmsOrgId: "hrms-PR-5", period: "2026-07", status: "returned", currency: "AED", payableMinor: 5_000_00, hrmsOrgName: "Delta HRMS",
+    importedAt: when(100), returnedReason: "Wrong month", updatedAt: when(11),
+  });
+  await Bill.collection.insertOne({ organizationId: org._id, billNumber: "BL-3", vendorName: "Rejected Co", totalMinor: 300_00, currency: "AED", status: "draft", approvalStatus: "rejected", createdAt: when(30), updatedAt: when(12) });
+  const deposit = (externalId: string, status: string, minutesAgo: number, extra: Record<string, unknown> = {}) => TetraDepositModel.collection.insertOne({
+    organizationId: org._id, externalId, amountMinor: 1_000_00, currency: "USD", student: { name: `Student ${externalId}`, code: `ST-${externalId}` },
+    paymentMethod: "Bank", status, requestedAt: when(minutesAgo + 30), createdAt: when(minutesAgo + 30), updatedAt: when(minutesAgo), ...extra,
+  });
+  await deposit("D1", "pending", 0);
+  await deposit("D2", "approved", 13, { decision: { decidedByName: "Admin", decidedAt: when(13), approvedAmountMinor: 900_00 }, delivery: { state: "failed", lastError: "Student not found" } });
+  await deposit("D3", "rejected", 14, { decision: { decidedByName: "Admin", decidedAt: when(14), reason: "Proof unreadable" }, delivery: { state: "delivered" } });
+  await deposit("D4", "closed", 15, { closedReason: "Withdrawn at Tetra" });
+
+  const listOf = async (token: string, params: Record<string, string | number> = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).map(([k, v]): [string, string] => [k, String(v)])).toString();
+    const r = await request("GET", `/approvals/list${qs ? `?${qs}` : ""}`, undefined, token);
+    return { status: r.status, rows: (r.body?.data ?? []) as any[], meta: r.body?.meta };
+  };
+  const rowOf = (l: { rows: any[] }, type: string, title: string) => l.rows.find((r) => r.type === type && r.title === title);
+  const newestFirst = (rows: any[]) => rows.every((r, i) => i === 0 || String(rows[i - 1].at ?? "") >= String(r.at ?? ""));
+
+  const pendingList = await listOf(tAdmin, { pageSize: 100 });
+  s = await summaryOf(tAdmin);
+  check("Pending by default: only what waits, newest first", pendingList.status === 200 && pendingList.rows.length > 0
+    && pendingList.rows.every((r) => r.status === "pending") && newestFirst(pendingList.rows), show(pendingList.rows.map((r) => [r.type, r.status])));
+  check("everything the summary counts, and the reader's own request besides — marked as theirs",
+    pendingList.meta?.total === s.total + 1 && rowOf(pendingList, "fund_request", "Admin's own top-up")?.own === true, `${pendingList.meta?.total} / summary ${s?.total}`);
+  check("fund requests and deposits waiting are decided right here",
+    rowOf(pendingList, "fund_request", "Drawdown for the mail check")?.decideHere === true && rowOf(pendingList, "tetra_deposit", "Student D1")?.decideHere === true);
+  check("purchase requests HRMS cannot answer for are named, the rest still listed",
+    (pendingList.meta?.unavailable ?? []).some((u: string) => /Purchase requests/.test(u)), show(pendingList.meta?.unavailable));
+  check("another organization's never", !pendingList.rows.some((r) => r.title === "Client IN-X"));
+
+  const approvedList = await listOf(tAdmin, { status: "approved", pageSize: 100 });
+  const a5 = rowOf(approvedList, "invoice", "Client IN-5");
+  check("Approved: an enrolment the LMS made an account for, and the commission portal too — with the code, and who approved it",
+    a5?.lms?.state === "created" && a5?.commission?.state === "created" && a5?.commission?.code === "STU-9001" && a5?.decidedBy === "Approver A", show(a5));
+  const a6 = rowOf(approvedList, "invoice", "Client IN-6");
+  check("…a student who already had an LMS account, on a course that is not Forex, so not sent to the portal",
+    a6?.lms?.state === "existing" && a6?.commission?.state === "skipped" && /Not a Forex/.test(a6?.commission?.detail ?? ""), show(a6));
+  const a7 = rowOf(approvedList, "invoice", "Client IN-7");
+  check("…one the LMS turned down, saying why, the portal waiting on it",
+    a7?.lms?.state === "failed" && /Course not found/.test(a7?.lms?.detail ?? "") && a7?.commission?.state === "waiting", show(a7));
+  check("…one of Draw's, which does not go to the portal", rowOf(approvedList, "invoice", "Client IN-8")?.commission?.state === "not_sent");
+  check("…and an invoice with no enrolment to follow, with nothing to report",
+    !rowOf(approvedList, "invoice", "Client IN-9")?.lms && !rowOf(approvedList, "invoice", "Client IN-9")?.commission);
+  check("a purchase request approved here is listed as the purchase request, not as a claim",
+    rowOf(approvedList, "procurement", "2 × Chairs")?.decidedBy === "Admin" && !approvedList.rows.some((r) => r.type === "expense" && r.title === "2 × Chairs"));
+  check("a paid payroll run counts as approved, with who approved it", rowOf(approvedList, "payroll", "PR-4 · August 2026")?.decidedBy === "Admin",
+    show(rowOf(approvedList, "payroll", "PR-4 · August 2026")));
+  const d2 = rowOf(approvedList, "tetra_deposit", "Student D2");
+  check("an approved deposit Tetra Commission did not take says so, at the amount approved",
+    d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00, show(d2));
+  check("nothing waiting or turned down among them, newest first",
+    approvedList.rows.every((r) => r.status === "approved") && newestFirst(approvedList.rows));
+
+  const rejectedList = await listOf(tAdmin, { status: "rejected", pageSize: 100 });
+  const r10 = rowOf(rejectedList, "invoice", "Client IN-10");
+  check("Rejected: an invoice sent back, why, and by whom", r10?.status === "returned" && r10?.reason === "Wrong fee" && r10?.decidedBy === "Approver B", show(r10));
+  check("…the fund request rejected earlier, with its note, and who rejected it",
+    rowOf(rejectedList, "fund_request", "Ads for October")?.reason === "Not this month" && rowOf(rejectedList, "fund_request", "Ads for October")?.decidedBy === "Admin");
+  check("…a claim, a payroll run sent back, a bill and a deposit",
+    rowOf(rejectedList, "expense", "Claim EX-5")?.reason === "No receipt" && rowOf(rejectedList, "payroll", "PR-5 · July 2026")?.reason === "Wrong month"
+    && !!rowOf(rejectedList, "bill", "Rejected Co") && rowOf(rejectedList, "tetra_deposit", "Student D3")?.reason === "Proof unreadable", show(rejectedList.rows.map((r) => r.title)));
+  check("nothing else", rejectedList.rows.every((r) => r.status === "rejected" || r.status === "returned"));
+
+  const everything = await listOf(tAdmin, { status: "all", pageSize: 100 });
+  check("All: waiting, approved and rejected together — and a deposit closed at Tetra's end",
+    everything.meta?.total === pendingList.meta.total + approvedList.meta.total + rejectedList.meta.total + 1
+    && rowOf(everything, "tetra_deposit", "Student D4")?.status === "closed", `${everything.meta?.total}`);
+
+  const enrolments = await listOf(tAdmin, { status: "approved", type: "invoice" });
+  check("by type: approved enrolment invoices alone", enrolments.rows.every((r) => r.type === "invoice") && enrolments.meta?.total === 6, `${enrolments.meta?.total}`);
+  const inRange = await listOf(tAdmin, { status: "approved", type: "invoice", from: when(6.5).toISOString(), to: when(3.5).toISOString() });
+  check("by date: only what was decided inside the range, newest first",
+    show(inRange.rows.map((r) => r.title)) === show(["Client IN-6", "Client IN-3", "Client IN-7"]), show(inRange.rows.map((r) => r.title)));
+  const second = await listOf(tAdmin, { status: "approved", type: "invoice", pageSize: 2, page: 2 });
+  check("paged: the second two of six", show(second.rows.map((r) => r.title)) === show(["Client IN-3", "Client IN-7"]) && second.meta?.pageCount === 3,
+    show([second.rows.map((r) => r.title), second.meta]));
+
+  const funderList = await listOf(tFunder, { status: "all", pageSize: 100 });
+  check("somebody who decides only fund requests sees only fund requests", funderList.rows.length > 0 && funderList.rows.every((r) => r.type === "fund_request"));
+  const employeeList = await listOf(tEmployee, { status: "all" });
+  check("somebody who decides nothing sees nothing", employeeList.status === 200 && employeeList.meta?.total === 0, show(employeeList));
+  check("not signed in is refused", (await request("GET", "/approvals/list")).status === 401);
+  check("a status that does not exist is refused", (await listOf(tAdmin, { status: "maybe" })).status === 422);
 
   console.log(`\n${checks - failures}/${checks} checks passed`);
   await mongoose.disconnect();

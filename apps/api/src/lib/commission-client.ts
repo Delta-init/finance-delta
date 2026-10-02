@@ -60,6 +60,8 @@ export async function sendStudentToCommission(input: {
   course?: string;
   /** The language they study in, as the sales CRM asked it at the close: English, Malayalam, Hindi/Urdu or Tamil. */
   language?: string;
+  /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM) or "draw". */
+  crm?: string;
   lmsUserId?: string;
   /**
    * What the enrolment was at approval: fee, paid, balance, bonus and the

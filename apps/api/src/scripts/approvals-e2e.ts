@@ -289,6 +289,11 @@ async function main() {
   await provision(in6, { status: "sent", studentCreated: false, source: "crm", commission: { state: "skipped", reason: "Not a Forex course (digital-marketing)" } });
   await provision(in7, { status: "failed", lastError: "Course not found in the LMS", source: "crm" });
   await provision(in8, { status: "sent", studentCreated: true, source: "draw-crm" });
+  // Which sales CRM sold them: one that said (the Remote CRM), one that only has
+  // the Sales CRM's source, one from Draw by its source; IN-9 was typed here.
+  await Invoice.collection.updateOne({ _id: in5 }, { $set: { "enrolment.crm": "remote", external: { source: "crm", externalId: "crm-in5" } } });
+  await Invoice.collection.updateOne({ _id: in6 }, { $set: { external: { source: "crm", externalId: "crm-in6" } } });
+  await Invoice.collection.updateOne({ _id: in8 }, { $set: { external: { source: "draw-crm", externalId: "draw-in8" } } });
   await Expense.collection.insertOne({
     organizationId: org._id, expenseNumber: "EX-5", category: "Travel", description: "Claim EX-5", submittedByName: "Staff", totalMinor: 30_00,
     currency: "AED", status: "rejected", approvedByName: "Approver C", approvedAt: when(1), rejectedReason: "No receipt", createdAt: when(30), updatedAt: when(1),
@@ -349,6 +354,10 @@ async function main() {
   check("…one of Draw's, which does not go to the portal", rowOf(approvedList, "invoice", "Client IN-8")?.commission?.state === "not_sent");
   check("…and an invoice with no enrolment to follow, with nothing to report",
     !rowOf(approvedList, "invoice", "Client IN-9")?.lms && !rowOf(approvedList, "invoice", "Client IN-9")?.commission);
+  check("each enrolment says which sales CRM sold it: as the CRM said, else by its source, and none for one typed here",
+    a5?.crm === "remote" && a6?.crm === "delta" && rowOf(approvedList, "invoice", "Client IN-8")?.crm === "draw"
+    && rowOf(approvedList, "invoice", "Client IN-9")?.crm === undefined,
+    show(["IN-5", "IN-6", "IN-8", "IN-9"].map((n) => rowOf(approvedList, "invoice", `Client ${n}`)?.crm ?? null)));
   check("a purchase request approved here is listed as the purchase request, not as a claim",
     rowOf(approvedList, "procurement", "2 × Chairs")?.decidedBy === "Admin" && !approvedList.rows.some((r) => r.type === "expense" && r.title === "2 × Chairs"));
   check("a paid payroll run counts as approved, with who approved it", rowOf(approvedList, "payroll", "PR-4 · August 2026")?.decidedBy === "Admin",

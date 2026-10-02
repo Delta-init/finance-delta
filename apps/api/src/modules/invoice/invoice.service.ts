@@ -6,6 +6,7 @@ import {
   toBaseMinor,
   approvalBlocksSending,
   approvalBlocksEditing,
+  enrolmentCrm,
   type CreateInvoiceInput,
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
@@ -90,6 +91,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
           ...enrolmentBonusDTO(doc.enrolment),
+          // The CRM that sold it, worked out from the source where it never said.
+          crm: enrolmentCrm((doc.enrolment as { crm?: string }).crm, (doc as { external?: { source?: string } }).external?.source) ?? undefined,
         }
       : undefined,
     approval: approvalDTO(doc),
@@ -974,6 +977,7 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
     }
 
     const email = (customer as { email?: string } | null)?.email?.trim();
+    const saleCrm = enrolmentCrm((d.enrolment as { crm?: string } | undefined)?.crm, external.source);
     if (!email) {
       await LmsProvision.create({
         ...base,
@@ -1007,6 +1011,8 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         paymentStatus: lmsPaymentStatus(doc),
         // What the enrolment was at approval, shown in the LMS and in Tetra Commission.
         feeSummary: enrolmentFeeSummary(doc),
+        // The sales CRM that sold it, as a tag on the enrolment there too.
+        ...(saleCrm ? { crm: saleCrm } : {}),
       },
       status: "pending",
       // The rest of what was sold, sent once the first has made the student.

@@ -6,6 +6,7 @@ import { AlertTriangle, ClipboardCheck, RefreshCw, X } from "lucide-react";
 import { describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
+import { CrmTag } from "@/components/crm-tag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -225,7 +226,11 @@ export default function ApprovalsPage() {
       // narrow badge was costing the width the student's accounts need.
       cell: (r) => (
         <div className="min-w-[160px] max-w-[230px]">
-          <Badge tone="primary" className="mb-1 whitespace-nowrap text-[11px]">{TYPE_LABEL[r.type]}</Badge>
+          {/* An enrolment says which sales CRM sold it, beside what it is. */}
+          <div className="mb-1 flex flex-wrap items-center gap-1">
+            <Badge tone="primary" className="whitespace-nowrap text-[11px]">{TYPE_LABEL[r.type]}</Badge>
+            <CrmTag crm={r.crm} />
+          </div>
           <p className="truncate font-medium">{r.title}</p>
           {r.subtitle && <p className="truncate text-xs text-foreground-muted">{r.subtitle}</p>}
         </div>

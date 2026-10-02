@@ -572,6 +572,64 @@ async function main() {
       again.status === 200 && (invA?.enrolment as { bonus?: { amountMinor?: number } })?.bonus?.amountMinor === 30_000);
   }
 
+  step("E. Which sales CRM sold it");
+  {
+    /** What is stored, and what an approver reading the invoice is told. */
+    const crmOf = async (externalId: string) => {
+      const inv = await Invoice.findOne({ "external.externalId": externalId }).lean();
+      const dto = inv ? await request("GET", `/invoices/${inv._id}`, undefined, adminAuth.token) : null;
+      return {
+        inv,
+        stored: (inv?.enrolment as { crm?: string } | undefined)?.crm,
+        shown: (dto?.body?.data as unknown as { enrolment?: { crm?: string } } | undefined)?.enrolment?.crm,
+        source: (inv?.external as { source?: string } | undefined)?.source,
+      };
+    };
+
+    const remote = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-remote", "driftone@e2e-test.com", "Remote Student"),
+      crm: "remote",
+    });
+    const r = await crmOf("e2e-remote");
+    check("Case 1 — a close from the Remote CRM is kept as the Remote CRM's", remote.status === 200 && r.stored === "remote", show(remote));
+    check("...an approver reading the invoice is told so", r.shown === "remote", `shown=${r.shown}`);
+    check("...under the same source as the Sales CRM's, so the idempotency key is untouched", r.source === "crm", `source=${r.source}`);
+
+    const draw = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-draw", "driftone@e2e-test.com", "Draw Student"),
+      source: "draw-crm",
+      crm: "draw",
+    });
+    const d = await crmOf("e2e-draw");
+    check("Case 1 — a close from Draw is Draw's", draw.status === 200 && d.stored === "draw" && d.shown === "draw", `${d.stored}/${d.shown}`);
+
+    const old = await crmOf("e2e-1");
+    check("Case 2 — an enrolment from before the CRMs said stores nothing, and reads as the Sales CRM by its source",
+      old.stored === undefined && old.shown === "delta", `${old.stored}/${old.shown}`);
+    const oldDraw = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-draw-old", "driftone@e2e-test.com", "Older Draw Student"),
+      source: "draw-crm",
+    });
+    const od = await crmOf("e2e-draw-old");
+    check("Case 2 — one from Draw that says nothing still reads as Draw, by its source",
+      oldDraw.status === 200 && od.stored === undefined && od.shown === "draw", `${od.stored}/${od.shown}`);
+
+    const bad = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-crm-bad", "driftone@e2e-test.com"),
+      crm: "facebook",
+    });
+    check("Case 3 — a CRM finance does not know is refused", bad.status === 422, show(bad));
+    check("...and made no invoice", (await Invoice.countDocuments({ "external.externalId": "e2e-crm-bad" })) === 0);
+
+    // Sent back, and resent by a CRM still on code that does not say which it is.
+    const back = await request("POST", `/invoices/${r.inv?._id}/approval/return`, { reason: "Check the course" }, adminAuth.token);
+    const resent = await signedPost(orgId, "/api/v1/integrations/enrolments", enrolment("e2e-remote", "driftone@e2e-test.com", "Remote Student"));
+    const rr = await crmOf("e2e-remote");
+    check("Case 2 — a correction that does not say which CRM leaves the one recorded",
+      back.status === 200 && resent.status === 200 && rr.stored === "remote" && rr.inv?.approval?.state === "pending",
+      `${rr.stored} ${JSON.stringify(rr.inv?.approval)}`);
+  }
+
   console.log(
     failures
       ? `\n\x1b[31m${failures} of ${checks} checks failed\x1b[0m`

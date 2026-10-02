@@ -80,7 +80,9 @@ export NODE_ENV=development
 
 echo "Starting the finance API on :$API_PORT"
 cd "$REPO/apps/api"
-bun src/index.ts > "$WORK/log/api.log" 2>&1 &
+# No .env: apps/api/.env can hold the live LMS's address and secret, and file
+# storage keys — a scratch run must see only what is exported above.
+bun --no-env-file src/index.ts > "$WORK/log/api.log" 2>&1 &
 
 for _ in $(seq 1 60); do
   curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1 && break
@@ -93,7 +95,7 @@ curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null || {
 }
 
 echo "Driving the handover"
-if ! bun src/scripts/crm-handover-e2e.ts; then
+if ! bun --no-env-file src/scripts/crm-handover-e2e.ts; then
   echo
   echo "--- last 40 lines of the API log ---" >&2
   tail -40 "$WORK/log/api.log" >&2

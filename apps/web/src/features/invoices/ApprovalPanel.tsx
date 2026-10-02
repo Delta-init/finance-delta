@@ -5,6 +5,7 @@ import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye } fro
 import { formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CrmTag } from "@/components/crm-tag";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -69,6 +70,8 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
         )}
         <h2 className="text-sm font-semibold">{e ? "Enrolment" : "Approval"}</h2>
         <Badge tone={tone}>{label}</Badge>
+        {/* Which sales CRM sold it — the same tag the LMS and Tetra Commission show. */}
+        {e && <CrmTag crm={e.crm} />}
         {approval.byName && (
           <span className="text-xs text-foreground-muted">
             {approved ? "by" : "sent back by"} {approval.byName}

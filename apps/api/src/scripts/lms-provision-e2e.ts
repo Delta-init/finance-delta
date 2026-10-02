@@ -537,6 +537,7 @@ async function main() {
       ],
       enrolledOn: today, declaredPaidMinor: 100_000,
       modeOfStudy: "online", language: "English",
+      crm: "draw",
     } as never);
     const taught = await Item.findById(addOn._id).lean<{ lmsCourseSlug?: string; lmsCourseSlugs?: string[] }>();
     check("an unmapped product learns its course from the enrolment", taught?.lmsCourseSlug === HADC
@@ -557,6 +558,8 @@ async function main() {
     check("...and the others after it, each once",
       JSON.stringify((queued?.extraCourses ?? []).map((e) => e.slug)) === JSON.stringify([DWT, HADC]),
       JSON.stringify(queued?.extraCourses));
+    check("...carrying the CRM that sold it, for the LMS to tag", (queued?.payload as { crm?: string })?.crm === "draw",
+      JSON.stringify((queued?.payload as { crm?: string })?.crm));
 
     await drainLmsProvisions();
     env.COMMISSION_API_URL = saved.url;
@@ -564,6 +567,8 @@ async function main() {
     const drawRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(draw.invoiceId) }).lean();
     const deltaRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(delta.invoiceId) }).lean();
     check("Delta's student goes on to Tetra Commission, as before", deltaRow?.commission?.state === "pending");
+    check("Case 2 — Delta's, from a CRM that said nothing, is tagged the Sales CRM's by its source",
+      (deltaRow?.payload as { crm?: string })?.crm === "delta", JSON.stringify((deltaRow?.payload as { crm?: string })?.crm));
     check("...Draw's does not, until that is decided", drawRow?.status === "sent" && !drawRow?.commission?.state,
       JSON.stringify(drawRow?.commission));
 
@@ -589,6 +594,11 @@ async function main() {
     check("Case 2 — the sale's fee summary is on the first course only, not repeated on the courses it also opens",
       (await feeOn(MBT))?.feeMinor === 650_000 && !(await feeOn(DWT)) && !(await feeOn(HADC)),
       JSON.stringify([await feeOn(MBT), await feeOn(DWT), await feeOn(HADC)]));
+    const crmOn = async (slug: string) =>
+      (await lms.db!.collection("enrollments").findOne({ userId: student?._id, courseId: await courseId(slug) }))?.salesCrm as string | undefined;
+    check("Case 1 — but every course it opens is tagged with the CRM that sold it",
+      (await crmOn(MBT)) === "draw" && (await crmOn(DWT)) === "draw" && (await crmOn(HADC)) === "draw",
+      JSON.stringify([await crmOn(MBT), await crmOn(DWT), await crmOn(HADC)]));
     const dwtEnrolment = async () => lms.db!.collection("enrollments").findOne({ userId: student?._id, courseId: await courseId(DWT) });
     check("the second course follows the payment rule too: part paid, half open",
       (await dwtEnrolment() as { paymentAccess?: { status?: string } } | null)?.paymentAccess?.status === "partial");

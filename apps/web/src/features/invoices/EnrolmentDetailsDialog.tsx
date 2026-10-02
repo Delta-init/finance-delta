@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, GraduationCap, Mail, Phone } from "lucide-react";
-import { formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -87,6 +87,7 @@ export function EnrolmentDetailsDialog({
 
           {e && (
             <Section title="Enrolment">
+              <Row label="Sold through" value={e.crm ? ENROLMENT_CRM_LABELS[e.crm] : undefined} />
               <Row label="Course" value={e.course} />
               <Row label="Mode of study" value={MODE_LABELS[e.modeOfStudy] ?? e.modeOfStudy} />
               <Row label="Language" value={e.language} />

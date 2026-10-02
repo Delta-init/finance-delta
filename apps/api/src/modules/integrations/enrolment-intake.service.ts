@@ -321,6 +321,9 @@ export async function intakeEnrolment(
         declaredPaidMinor: input.declaredPaidMinor,
         declaredPaymentMethod: input.declaredPaymentMethod,
         ...declaredBonusAndBalance(input),
+        // Which sales CRM sold it, as it said — not guessed from the source,
+        // which two CRMs share. Read through enrolmentCrm for the fallback.
+        ...(input.crm ? { crm: input.crm } : {}),
       },
     } as never,
     // Scoped, so createInvoice treats it the way it treats a counsellor: the
@@ -481,6 +484,8 @@ async function resubmitReturned(
       const { bonus, declaredBalanceMinor } = declaredBonusAndBalance(input);
       if (bonus) doc.set("enrolment.bonus", bonus);
       if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
+      // A CRM that says which it is says so again; one that does not leaves it.
+      if (input.crm) doc.set("enrolment.crm", input.crm);
     }
     await doc.save();
     void notifyApprovers(doc as never);

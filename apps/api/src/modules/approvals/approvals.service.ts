@@ -1,5 +1,6 @@
 import { Types, type Model, type PipelineStage } from "mongoose";
 import {
+  enrolmentCrm,
   hasPermission,
   type ApprovalCommission, type ApprovalGroup, type ApprovalItem, type ApprovalListQuery, type ApprovalListStatus,
   type ApprovalLms, type ApprovalRow, type ApprovalSummary, type ApprovalType, type Permission,
@@ -356,7 +357,7 @@ const LIST_KINDS: ListKind[] = [
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
-        "invoiceNumber customerName salespersonName totalMinor currency approval enrolment.course createdAt",
+        "invoiceNumber customerName salespersonName totalMinor currency approval enrolment.course enrolment.crm external.source createdAt",
         ctx,
       );
       return {
@@ -369,6 +370,8 @@ const LIST_KINDS: ListKind[] = [
             type: "invoice",
             title: r.customerName ?? r.invoiceNumber,
             subtitle: [r.enrolment?.course, r.invoiceNumber].filter(Boolean).join(" · "),
+            // Which sales CRM sold it; absent for an enrolment typed here.
+            crm: enrolmentCrm(r.enrolment?.crm, r.external?.source) ?? undefined,
             amountMinor: r.totalMinor ?? 0,
             currency: r.currency ?? "AED",
             raisedBy: r.salespersonName || undefined,

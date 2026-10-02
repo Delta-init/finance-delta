@@ -148,6 +148,33 @@ export const MODES_OF_STUDY = ["online", "offline", "hybrid"] as const;
 export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
 
 /**
+ * The sales CRM an enrolment was sold in, by the codes the Root portal gives
+ * them: Delta's Sales CRM, the Remote CRM, Draw. Shown as a tag on the
+ * enrolment here, and passed on with it to the LMS and Tetra Commission.
+ */
+export const ENROLMENT_CRMS = ["delta", "remote", "draw"] as const;
+export type EnrolmentCrm = (typeof ENROLMENT_CRMS)[number];
+export const ENROLMENT_CRM_LABELS: Record<EnrolmentCrm, string> = {
+  delta: "Sales CRM",
+  remote: "Remote CRM",
+  draw: "Draw",
+};
+
+/**
+ * Which CRM an enrolment came from: what the CRM said, or — for one from
+ * before they said — what its source shows. "draw-crm" is only ever Draw;
+ * "crm" is Delta's Sales CRM, but also the Remote CRM's source (it began as a
+ * copy), so an older Remote enrolment reads as the Sales CRM until corrected.
+ * Null for an enrolment typed in finance: no CRM sold it.
+ */
+export function enrolmentCrm(crm: string | null | undefined, source: string | null | undefined): EnrolmentCrm | null {
+  if (crm && (ENROLMENT_CRMS as readonly string[]).includes(crm)) return crm as EnrolmentCrm;
+  if (source === "draw-crm") return "draw";
+  if (source === "crm") return "delta";
+  return null;
+}
+
+/**
  * Whether an invoice may go out.
  *
  * Held on the invoice rather than inside its enrolment, because the question is
@@ -281,6 +308,12 @@ export const enrolmentInputSchema = z.object({
     }))
     .max(20)
     .optional(),
+  /**
+   * The sales CRM that sold it, as that CRM said. Absent on enrolments typed
+   * here and on those from before the CRMs said — read it through
+   * `enrolmentCrm`, which works those out from the source.
+   */
+  crm: z.enum(ENROLMENT_CRMS).optional(),
 });
 export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
 
@@ -538,6 +571,12 @@ export const inboundEnrolmentSchema = z.object({
   externalId: z.string().min(1).max(120),
   /** What the caller calls itself, for the audit trail. */
   source: z.string().min(1).max(40).default("crm"),
+  /**
+   * Which sales CRM sold it — Delta's Sales CRM, the Remote CRM or Draw.
+   * Separate from `source` because two CRMs share "crm" there, and `source` is
+   * part of the idempotency key, so it cannot change for what was already sent.
+   */
+  crm: z.enum(ENROLMENT_CRMS).optional(),
 
   customer: z.object({
     name: z.string().min(1).max(120),

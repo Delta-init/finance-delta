@@ -1,5 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
-import { PAYMENT_METHODS } from "@delta/shared";
+import { ENROLMENT_CRMS, PAYMENT_METHODS } from "@delta/shared";
 
 const taxRateSchema = new Schema(
   { code: { type: String, required: true }, rate: { type: Number, required: true }, amountMinor: { type: Number, required: true } },
@@ -165,6 +165,10 @@ const invoiceSchema = new Schema(
           },
           /** The fee less what was collected, as the counsellor was shown it. */
           declaredBalanceMinor: { type: Number },
+          /** The sales CRM that sold it, as that CRM said ("delta", "remote",
+              "draw"). Absent before the CRMs said; read through enrolmentCrm,
+              which falls back on the source. */
+          crm: { type: String, enum: [...ENROLMENT_CRMS] },
         },
         { _id: false },
       ),

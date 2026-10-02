@@ -1,3 +1,4 @@
+import { enrolmentCrm, type EnrolmentCrm } from "@delta/shared";
 import { logger } from "../lib/logger";
 import {
   lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus, type EnrolmentFeeSummary,
@@ -290,6 +291,7 @@ export async function drainCommissionStudents(): Promise<number> {
     };
     try {
       const language = await enrolmentLanguage(row.invoiceId);
+      const crm = await enrolmentSaleCrm(row.invoiceId);
       const result = await sendStudentToCommission({
         invoiceId: String(row.invoiceId),
         invoiceNumber: row.invoiceNumber ?? "",
@@ -299,6 +301,8 @@ export async function drainCommissionStudents(): Promise<number> {
         country: await customerCountry(row.invoiceId),
         course: row.commission?.course || row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
         ...(language ? { language } : {}),
+        // Which sales CRM sold it — shown as a tag on the student there.
+        ...(crm ? { crm } : {}),
         lmsUserId: row.lmsUserId ?? undefined,
         // The same summary the LMS was given; absent on rows queued before it existed.
         ...(payload.feeSummary ? { feeSummary: payload.feeSummary } : {}),
@@ -375,6 +379,14 @@ function closeLanguage(raw: unknown): string {
 async function enrolmentLanguage(invoiceId: unknown): Promise<string> {
   const invoice = await Invoice.findById(invoiceId).select("enrolment.language").lean<{ enrolment?: { language?: string } } | null>();
   return closeLanguage(invoice?.enrolment?.language);
+}
+
+/** The sales CRM that sold the enrolment on the invoice — read when sent, like the language. */
+async function enrolmentSaleCrm(invoiceId: unknown): Promise<EnrolmentCrm | null> {
+  const invoice = await Invoice.findById(invoiceId)
+    .select("enrolment.crm external.source")
+    .lean<{ enrolment?: { crm?: string }; external?: { source?: string } } | null>();
+  return enrolmentCrm(invoice?.enrolment?.crm, invoice?.external?.source);
 }
 
 /*

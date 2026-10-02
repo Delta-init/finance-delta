@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ENROLMENT_CRMS } from "./invoice.schema";
 
 /**
  * Everything waiting on one approver, across every kind of approval.
@@ -114,6 +115,8 @@ export const approvalRowSchema = z.object({
   decideHere: z.boolean().optional(),
   /** The reader's own request: somebody else decides it. */
   own: z.boolean().optional(),
+  /** An enrolment invoice: the sales CRM that sold it. Absent for one typed in finance. */
+  crm: z.enum(ENROLMENT_CRMS).optional(),
   /** A decided Tetra deposit: whether Tetra Commission has the decision yet. */
   delivery: z.object({ state: z.string(), error: z.string().optional() }).optional(),
   lms: approvalLmsSchema.optional(),

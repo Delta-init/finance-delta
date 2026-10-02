@@ -107,7 +107,7 @@ let n = 0;
  * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
  * language the close recorded on the invoice's enrolment in `language`.
  */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string } = {}) {
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -115,7 +115,11 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
   await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
   await mongoose.connection.db!.collection("invoices").insertOne({
     _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
-    ...(opts.language !== undefined ? { enrolment: { language: opts.language } } : {}),
+    ...(opts.language !== undefined || opts.crm
+      ? { enrolment: { ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}) } }
+      : {}),
+    // The CRM's own source, which the tag falls back on where the CRM said nothing.
+    ...(opts.source ? { external: { source: opts.source } } : {}),
   });
   return LmsProvision.create({
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
@@ -365,6 +369,21 @@ step("The language they study in, from the close");
   check("a second close in English: they study in English now, and their history says so",
     now?.language === "English" && /Language: Malayalam → English/.test(line?.text ?? "") && line?.by_name === "Delta finance",
     JSON.stringify({ language: now?.language, history: line?.text }));
+}
+
+step("Which sales CRM sold it");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const remote = await enrol("remote.crm@e2e-test.com", { crm: "remote", source: "crm" });
+  await LmsProvision.updateOne({ _id: remote._id }, { $set: { "payload.feeSummary": { currency: "AED", feeMinor: 100_000, paidMinor: 100_000, balanceMinor: 0 } } });
+  await enrol("older.crm@e2e-test.com", { source: "crm" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const r = await students.findOne({ email: "remote.crm@e2e-test.com" }) as any;
+  check("Case 1 — a student the Remote CRM sold arrives tagged so, on the student and on the course's fees",
+    r?.sales_crm === "remote" && r?.course_fees?.[0]?.sales_crm === "remote", JSON.stringify({ crm: r?.sales_crm, fees: r?.course_fees }));
+  const o = await students.findOne({ email: "older.crm@e2e-test.com" }) as any;
+  check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
 }
 
 step("Sent the moment it is approved");

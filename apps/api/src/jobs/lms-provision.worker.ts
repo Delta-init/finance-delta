@@ -289,6 +289,7 @@ export async function drainCommissionStudents(): Promise<number> {
       email?: string; name?: string; phone?: string; courseSlug?: string; feeSummary?: EnrolmentFeeSummary;
     };
     try {
+      const language = await enrolmentLanguage(row.invoiceId);
       const result = await sendStudentToCommission({
         invoiceId: String(row.invoiceId),
         invoiceNumber: row.invoiceNumber ?? "",
@@ -297,6 +298,7 @@ export async function drainCommissionStudents(): Promise<number> {
         phone: payload.phone,
         country: await customerCountry(row.invoiceId),
         course: row.commission?.course || row.lmsCourseTitle || row.lmsCourseSlug || payload.courseSlug,
+        ...(language ? { language } : {}),
         lmsUserId: row.lmsUserId ?? undefined,
         // The same summary the LMS was given; absent on rows queued before it existed.
         ...(payload.feeSummary ? { feeSummary: payload.feeSummary } : {}),
@@ -353,6 +355,26 @@ async function customerCountry(invoiceId: unknown): Promise<string> {
   if (!invoice?.customerId) return "";
   const customer = await Customer.findById(invoice.customerId).select("country").lean<{ country?: string } | null>();
   return customer?.country?.trim() ?? "";
+}
+
+/** The four languages the sales CRMs ask at a close. */
+const CLOSE_LANGUAGES = ["English", "Malayalam", "Hindi/Urdu", "Tamil"];
+
+/**
+ * The language the student studies in, from the enrolment on the invoice — one of the CRMs' four, or "" for none.
+ * Older enrolments were typed by hand ("MALAYALAM", "hindi", "Hindi / Urdu") and are matched to the four; "Not
+ * specified" (a close from before the CRMs asked) and anything else is none.
+ */
+function closeLanguage(raw: unknown): string {
+  const key = String(raw ?? "").toLowerCase().replace(/\s+/g, "");
+  if (!key) return "";
+  if (key === "hindi" || key === "urdu" || key === "urdu/hindi") return "Hindi/Urdu";
+  return CLOSE_LANGUAGES.find((l) => l.toLowerCase().replace(/\s+/g, "") === key) ?? "";
+}
+
+async function enrolmentLanguage(invoiceId: unknown): Promise<string> {
+  const invoice = await Invoice.findById(invoiceId).select("enrolment.language").lean<{ enrolment?: { language?: string } } | null>();
+  return closeLanguage(invoice?.enrolment?.language);
 }
 
 /*

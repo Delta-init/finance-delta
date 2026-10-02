@@ -103,14 +103,20 @@ await students.insertOne({
 });
 const orgId = new Types.ObjectId();
 let n = 0;
-/** An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`. */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[] } = {}) {
+/**
+ * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
+ * language the close recorded on the invoice's enrolment in `language`.
+ */
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
   // Customer codes are unique per organization, so each stand-in carries its own.
   await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
-  await mongoose.connection.db!.collection("invoices").insertOne({ _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}` });
+  await mongoose.connection.db!.collection("invoices").insertOne({
+    _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
+    ...(opts.language !== undefined ? { enrolment: { language: opts.language } } : {}),
+  });
   return LmsProvision.create({
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
     payload: {
@@ -335,6 +341,30 @@ step("Forex students only");
   await drainLmsExtraCourses();
   await drainCommissionStudents();
   check("...once", (await students.countDocuments()) === count && (await students.countDocuments({ email: "bundle@e2e-test.com" })) === 1);
+}
+
+step("The language they study in, from the close");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const ml = await enrol("lang@e2e-test.com", { language: "MALAYALAM" });
+  await LmsProvision.updateOne({ _id: ml._id }, { $set: { "payload.feeSummary": { currency: "AED", feeMinor: 100_000, paidMinor: 100_000, balanceMinor: 0 } } });
+  await enrol("nolang@e2e-test.com", { language: "Not specified" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const first = await students.findOne({ email: "lang@e2e-test.com" }) as any;
+  check("a close in Malayalam, typed the old way: the student studies in Malayalam", first?.language === "Malayalam", JSON.stringify(first?.language));
+  check("...and that course says so on its fees", first?.course_fees?.[0]?.language === "Malayalam", JSON.stringify(first?.course_fees));
+  const none = await students.findOne({ email: "nolang@e2e-test.com" }) as any;
+  check("\"Not specified\": no language", !!none && !none.language, JSON.stringify(none?.language));
+  // Their next course, closed in English: their latest close.
+  await enrol("lang@e2e-test.com", { language: "English" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const now = await students.findOne({ email: "lang@e2e-test.com" }) as any;
+  const line = await tc.db!.collection("student_history").findOne({ student_id: String(now?._id), type: "details_changed" }) as any;
+  check("a second close in English: they study in English now, and their history says so",
+    now?.language === "English" && /Language: Malayalam → English/.test(line?.text ?? "") && line?.by_name === "Delta finance",
+    JSON.stringify({ language: now?.language, history: line?.text }));
 }
 
 step("Sent the moment it is approved");

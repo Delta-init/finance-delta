@@ -19,6 +19,7 @@ import departmentRoutes from "./modules/department/department.routes";
 import invoiceRoutes from "./modules/invoice/invoice.routes";
 import integrationRoutes from "./modules/integrations/integrations.routes";
 import portalRoutes from "./modules/integrations/portal.routes";
+import lmsRoutes from "./modules/integrations/lms.routes";
 import organizationRoutes from "./modules/organization/organization.routes";
 import searchRoutes from "./modules/search/search.routes";
 import suggestionsRoutes from "./modules/suggestions/suggestions.routes";
@@ -98,6 +99,9 @@ async function bootstrap() {
   // The Root portal, which authenticates with its own shared secret rather
   // than the signed scheme the CRM integration uses.
   api.use("/service", portalRoutes);
+  // The Delta LMS, asking before it approves a student — with the secret
+  // finance already uses to call it.
+  api.use("/lms", lmsRoutes);
   api.use("/organizations", organizationRoutes);
   api.use("/search", searchRoutes);
   api.use("/suggestions", suggestionsRoutes);

@@ -543,7 +543,7 @@ async function main() {
     check("an unmapped product learns its course from the enrolment", taught?.lmsCourseSlug === HADC
       && JSON.stringify(taught?.lmsCourseSlugs) === JSON.stringify([HADC]), JSON.stringify(taught));
 
-    // Tetra Commission switched on for this part: Delta's students go on to it, Draw's do not.
+    // Tetra Commission switched on for this part: Delta's students go on to it, and since 2026-10-03 Draw's too.
     const saved = { url: env.COMMISSION_API_URL, secret: env.COMMISSION_S2S_SECRET };
     env.COMMISSION_API_URL = "http://127.0.0.1:1";
     env.COMMISSION_S2S_SECRET = "e2e-not-sent";
@@ -569,7 +569,7 @@ async function main() {
     check("Delta's student goes on to Tetra Commission, as before", deltaRow?.commission?.state === "pending");
     check("Case 2 — Delta's, from a CRM that said nothing, is tagged the Sales CRM's by its source",
       (deltaRow?.payload as { crm?: string })?.crm === "delta", JSON.stringify((deltaRow?.payload as { crm?: string })?.crm));
-    check("...Draw's does not, until that is decided", drawRow?.status === "sent" && !drawRow?.commission?.state,
+    check("...and so does Draw's, its Forex course the same as Delta's", drawRow?.status === "sent" && drawRow?.commission?.state === "pending",
       JSON.stringify(drawRow?.commission));
 
     const extras = await drainLmsExtraCourses();

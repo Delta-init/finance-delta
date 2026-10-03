@@ -29,12 +29,12 @@ const EVERY_MS = 60_000;
 const BATCH = 20;
 
 /**
- * Whose students go on to Tetra Commission: Delta's sales CRM's, as they
- * always have. Draw's enrolments reach the LMS too, but whether their students
- * join Tetra Commission's teams is not decided yet — so they do not, until it
- * is. A row from before `source` was kept is Delta's.
+ * Whose students go on to Tetra Commission: the sales CRMs' — Delta's and the
+ * Remote CRM's ("crm") and, since 2026-10-03, Draw's ("draw-crm"), whose
+ * students join the same round of teams and get a CS like anybody else's. A
+ * row from before `source` was kept is Delta's.
  */
-const COMMISSION_SOURCES = new Set(["crm"]);
+const COMMISSION_SOURCES = new Set(["crm", "draw-crm"]);
 const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(source ?? "crm"));
 
 /**

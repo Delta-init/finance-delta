@@ -107,7 +107,7 @@ let n = 0;
  * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
  * language the close recorded on the invoice's enrolment in `language`.
  */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string } = {}) {
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -118,11 +118,14 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
     ...(opts.language !== undefined || opts.crm
       ? { enrolment: { ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}) } }
       : {}),
-    // The CRM's own source, which the tag falls back on where the CRM said nothing.
-    ...(opts.source ? { external: { source: opts.source } } : {}),
+    // The CRM's own source, which the tag falls back on where the CRM said nothing — and its own id, by
+    // which it asks after the enrolment (My Enrolments).
+    ...(opts.source ? { organizationId: orgId, external: { source: opts.source, ...(opts.externalId ? { externalId: opts.externalId } : {}) } } : {}),
   });
   return LmsProvision.create({
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
+    // Whose enrolment it is, as the approval records it: which decides whether Tetra Commission gets the student.
+    ...(opts.source ? { source: opts.source } : {}),
     payload: {
       email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
       courseSlug: opts.courseSlug ?? "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
@@ -384,6 +387,62 @@ step("Which sales CRM sold it");
     r?.sales_crm === "remote" && r?.course_fees?.[0]?.sales_crm === "remote", JSON.stringify({ crm: r?.sales_crm, fees: r?.course_fees }));
   const o = await students.findOne({ email: "older.crm@e2e-test.com" }) as any;
   check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
+}
+
+step("What a sales CRM's My Enrolments sees — the LMS, and who looks after them");
+{
+  const { enrolmentStatusesFor } = await import("../modules/integrations/enrolment-status.service");
+  const ask = async (id: string) => (await enrolmentStatusesFor(orgId, "draw-crm", [id]))[0];
+  const drawSale = await enrol("draw.buyer@e2e-test.com", { crm: "draw", source: "draw-crm", externalId: "draw-enrol-1" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const there = await students.findOne({ email: "draw.buyer@e2e-test.com" }) as any;
+  check("Case 1 — Draw's Forex student goes on to Tetra Commission now, like Delta's",
+    (await row(drawSale._id)).commission?.state === "sent" && there?.student_code === (await row(drawSale._id)).commission?.studentCode,
+    JSON.stringify((await row(drawSale._id)).commission));
+  const st = await ask("draw-enrol-1");
+  check("Case 1 — in the LMS: a new account, on the course", st?.lms?.state === "created" && st.lms.courses[0] === "Delta Wave Theory Trading Programme",
+    JSON.stringify(st?.lms));
+  // Given to a CS there, as the round or a CS Manager would — whatever the teams above made of it.
+  await students.updateOne({ _id: there._id }, { $set: { assignment_status: "assigned", primary_mentor_name: "Asha CS", team_name: "Team Asha" } });
+  const assigned = await ask("draw-enrol-1");
+  check("...their code, CS and CS team, as Tetra Commission has them now",
+    assigned?.commission?.state === "sent" && assigned.commission.code === there?.student_code && assigned.commission.cs === "Asha CS"
+      && assigned.commission.team === "Team Asha" && assigned.commission.live === true, JSON.stringify(assigned?.commission));
+  await students.updateOne({ _id: there._id }, { $set: { primary_mentor_name: "Another CS", team_name: "Another Team" } });
+  const moved = await ask("draw-enrol-1");
+  check("Case 1 — given to another CS there: said at once", moved?.commission?.cs === "Another CS" && moved.commission.team === "Another Team",
+    JSON.stringify(moved?.commission));
+  await students.updateOne({ _id: there._id }, { $set: { assignment_status: "open_pool", primary_mentor_name: "", team_name: "" } });
+  const pooled = await ask("draw-enrol-1");
+  check("Case 2 — back in Delta Open Students: no CS, still their code", pooled?.commission?.cs === "" && pooled.commission.code === there?.student_code
+    && pooled.commission.live === true, JSON.stringify(pooled?.commission));
+  env.COMMISSION_API_URL = "http://127.0.0.1:1";
+  const offline = await ask("draw-enrol-1");
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const told = (await row(drawSale._id)).commission;
+  check("Case 2 — Tetra Commission not answering: what finance was told when it sent them, marked so",
+    offline?.commission?.live === false && offline.commission.cs === (told?.mentorName ?? "") && offline.commission.team === (told?.team ?? "")
+      && offline.commission.code === there?.student_code, JSON.stringify(offline?.commission));
+  await students.deleteOne({ _id: there._id });
+  const gone = await ask("draw-enrol-1");
+  check("Case 3 — taken out of Tetra Commission since: said so, with no CS", gone?.commission?.live === true && gone.commission.cs === ""
+    && /no longer/i.test(gone.commission.detail ?? ""), JSON.stringify(gone?.commission));
+  await mongoose.connection.db!.collection("invoices").insertOne({ organizationId: orgId, invoiceNumber: "INV-WAIT", external: { source: "draw-crm", externalId: "draw-enrol-2" } });
+  const waiting = await ask("draw-enrol-2");
+  check("Case 2 — not approved yet: nothing asked of the LMS or Tetra Commission", !!waiting && waiting.lms === null && waiting.commission === null,
+    JSON.stringify(waiting));
+  const marketing = await enrol("draw.marketing@e2e-test.com", { courseSlug: "digital-marketing", crm: "draw", source: "draw-crm", externalId: "draw-enrol-3" });
+  await drainLmsProvisions();
+  const dm = await ask("draw-enrol-3");
+  check("Case 2 — not a Forex course: in the LMS, and Tetra Commission says why not",
+    dm?.lms?.state === "created" && dm.commission?.state === "skipped" && /forex/i.test(dm.commission.detail ?? ""), JSON.stringify(dm));
+  await LmsProvision.updateOne({ _id: marketing._id }, { $set: { status: "unmapped", lastError: "No LMS course" } });
+  const unmapped = await ask("draw-enrol-3");
+  check("Case 3 — on a course no LMS course is linked to: said so, rather than waiting for ever",
+    unmapped?.lms?.state === "unmapped" && /not linked/i.test(unmapped.lms.detail ?? ""), JSON.stringify(unmapped?.lms));
+  check("Case 3 — another CRM's ids, or none: nothing", (await enrolmentStatusesFor(orgId, "crm", ["draw-enrol-1"])).length === 0
+    && (await enrolmentStatusesFor(orgId, "draw-crm", [])).length === 0);
 }
 
 step("Sent the moment it is approved");

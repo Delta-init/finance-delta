@@ -702,7 +702,7 @@ function commissionOf(p: any): ApprovalCommission {
   if (!c?.state) {
     // Only Delta's own enrolments go on, and only once the LMS has the student.
     if (p.status !== "sent") return { state: "waiting", detail: "After the LMS" };
-    return { state: "not_sent", detail: p.source && p.source !== "crm" ? "Not sent: Draw's students do not go to Tetra Commission" : "Not sent to Tetra Commission" };
+    return { state: "not_sent", detail: "Not sent to Tetra Commission" };
   }
   switch (c.state) {
     case "sent":

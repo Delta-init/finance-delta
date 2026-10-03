@@ -3,8 +3,8 @@ import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDeposi
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
-import { Invoice } from "../invoice/invoice.model";
 import { intakeEnrolment } from "./enrolment-intake.service";
+import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 import { intakeTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 
@@ -70,8 +70,10 @@ export const listItems = asyncHandler(async (req: Request, res: Response) => {
  * a page of twenty enrolments should cost one call, not twenty.
  *
  * Deliberately narrow: the approval state, the status, the number and the
- * total. A calling system needs enough to show somebody where their sale got
- * to; it has no business reading the rest of the ledger.
+ * total — and, once approved, what became of the student in the LMS and in
+ * Tetra Commission, with their CS and CS team there (enrolment-status.service).
+ * A calling system needs enough to show somebody where their sale got to; it
+ * has no business reading the rest of the ledger.
  */
 export const enrolmentStatuses = asyncHandler(async (req: Request, res: Response) => {
   const orgId = await organizationOf(req);
@@ -82,36 +84,7 @@ export const enrolmentStatuses = asyncHandler(async (req: Request, res: Response
   const externalIds = rawIds.map((v: unknown) => String(v).trim()).filter(Boolean).slice(0, 200);
   if (externalIds.length === 0) return ok(res, []);
 
-  const invoices = await Invoice.find({
-    organizationId: orgId,
-    "external.source": source,
-    "external.externalId": { $in: externalIds },
-  })
-    .select("invoiceNumber status approval totalMinor amountPaidMinor balanceMinor currency external issueDate")
-    .lean();
-
-  ok(
-    res,
-    invoices.map((i) => {
-      const ext = i.external as { externalId?: string } | undefined;
-      const approval = i.approval as { state?: string; returnedReason?: string } | undefined;
-      return {
-        externalId: ext?.externalId ?? "",
-        invoiceId: String(i._id),
-        invoiceNumber: (i.invoiceNumber as string) ?? "",
-        status: (i.status as string) ?? "",
-        // "not_required" for an invoice raised by somebody trusted with the
-        // whole ledger, which is not the same as "nobody has looked yet".
-        approval: approval?.state ?? "not_required",
-        returnedReason: approval?.returnedReason ?? "",
-        issueDate: i.issueDate ? new Date(i.issueDate as unknown as string).toISOString().slice(0, 10) : "",
-        currency: (i.currency as string) ?? "",
-        totalMinor: (i.totalMinor as number) ?? 0,
-        amountPaidMinor: (i.amountPaidMinor as number) ?? 0,
-        balanceMinor: (i.balanceMinor as number) ?? 0,
-      };
-    }),
-  );
+  ok(res, await enrolmentStatusesFor(orgId, source, externalIds));
 });
 
 /**

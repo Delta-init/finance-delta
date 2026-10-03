@@ -180,6 +180,53 @@ export async function sendFundingDecisionToCommission(input: CommissionFundingDe
   }
 }
 
+/** Who looks after a student there now, as Tetra Commission answers it. */
+export interface CommissionStudentLookup {
+  /** The code or email asked about, as Tetra Commission read it. */
+  asked: string;
+  found: boolean;
+  code: string;
+  /** Their CS — their primary mentor; "" while they wait in Delta Open Students. */
+  cs: string;
+  team: string;
+  assignment: "assigned" | "open_pool" | "";
+}
+
+const LOOKUP_TIMEOUT_MS = 5_000;
+
+/**
+ * Who looks after these students now, by their Tetra Commission code — for the
+ * sales CRMs' My Enrolments. Read-only, on the same secret as the students
+ * finance sends.
+ *
+ * Never throws: null when Tetra Commission cannot be asked (switched off, down,
+ * slow, or on code from before the route), so whoever asked can fall back on
+ * what finance was told when it sent them. A page of enrolments must not wait
+ * on a second system to say what finance already knows.
+ */
+export async function lookupCommissionStudents(codes: string[]): Promise<Map<string, CommissionStudentLookup> | null> {
+  const wanted = [...new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
+  if (!wanted.length) return new Map();
+  if (!commissionConfigured()) return null;
+  const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/students/lookup`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.COMMISSION_S2S_SECRET },
+      body: JSON.stringify({ codes: wanted }),
+      signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { data?: { students?: CommissionStudentLookup[] } };
+    const list = body.data?.students;
+    if (!Array.isArray(list)) return null;
+    return new Map(list.map((s) => [String(s.asked ?? "").toUpperCase(), s]));
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "Tetra Commission could not be asked who looks after students");
+    return null;
+  }
+}
+
 /** Said once at boot, so a silent link is visible without digging. */
 export function logCommissionConfig(): void {
   if (commissionConfigured()) logger.info("Tetra Commission is configured — new LMS students are sent there");

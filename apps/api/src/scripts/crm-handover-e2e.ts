@@ -376,6 +376,14 @@ async function main() {
 
   const inv1 = await Invoice.findOne({ "external.externalId": "e2e-1" }).lean();
   check("an invoice was created", !!inv1);
+  // What the CRM's My Enrolments asks: the invoice as before, and — until accounts approve it — nothing yet of the
+  // LMS or Tetra Commission (enrolment-status.service).
+  const status = await signedPost(orgId, "/api/v1/integrations/enrolments/status", { source: "crm", externalIds: ["e2e-1", "not-ours"] });
+  const st1 = (status.body as { data?: Record<string, unknown>[] })?.data?.[0];
+  check("My Enrolments: the enrolment's invoice, waiting for approval", status.status === 200 && (status.body as { data?: unknown[] })?.data?.length === 1
+    && st1?.externalId === "e2e-1" && st1?.invoiceNumber === inv1?.invoiceNumber && st1?.approval === "pending", show(status));
+  check("...and no LMS or Tetra Commission yet, said as null rather than left out", st1 !== undefined && "lms" in st1 && st1.lms === null
+    && "commission" in st1 && st1.commission === null, JSON.stringify(st1));
   const driftOne = await User.findOne({ email: "driftone@e2e-test.com" }).lean();
   check(
     "it is attributed to the realigned salesperson, not the fallback approver",

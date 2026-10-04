@@ -40,9 +40,21 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
   return {
     id: String(r._id),
     externalId: String(r.externalId),
+    type: r.type === "BONUS" ? "BONUS" : "DEPOSIT",
     status: r.status,
     amountMinor: r.amountMinor,
     currency: r.currency ?? "USD",
+    ...(typeof r.amountOriginal === "number" && r.amountCurrency ? { amountOriginal: r.amountOriginal, amountCurrency: r.amountCurrency } : {}),
+    ...(r.coursePayment
+      ? {
+          coursePayment: {
+            product: r.coursePayment.product ?? "", kind: r.coursePayment.kind ?? "", withBonus: r.coursePayment.withBonus === true,
+            bonusUsd: r.coursePayment.bonusUsd ?? null, holdAed: r.coursePayment.holdAed ?? null, balanceAed: r.coursePayment.balanceAed ?? null,
+            paidTodayAed: r.coursePayment.paidTodayAed ?? null, paidBeforeAed: r.coursePayment.paidBeforeAed ?? null,
+            price: r.coursePayment.price ?? null, priceCurrency: r.coursePayment.priceCurrency ?? "",
+          },
+        }
+      : {}),
     student: {
       id: r.student?.id ?? "", code: r.student?.code ?? "", name: r.student?.name ?? "",
       email: r.student?.email ?? "", level: r.student?.level ?? "",
@@ -122,14 +134,18 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
       return;
     }
     const by = d.requestedBy || d.initiatingMentor;
+    const bonus = d.type === "BONUS";
+    const what = bonus ? "bonus (course payment)" : "deposit";
     await sendNotice({
       to,
-      subject: `Deposit to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
-      title: "A Tetra Commission deposit is waiting for approval",
+      subject: `${bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
+      title: `A Tetra Commission ${what} is waiting for approval`,
       lines: [
-        `${by ? `${by} raised` : "Tetra Commission sent"} a deposit of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
-        [d.paymentMethod && `Paid by ${d.paymentMethod}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
-        "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
+        `${by ? `${by} raised` : "Tetra Commission sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
+        [d.coursePayment?.product, d.paymentMethod && `Paid by ${d.paymentMethod}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
+        bonus
+          ? "Approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first."
+          : "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
       ].filter(Boolean),
       actionLabel: "Review it",
       actionUrl: `${env.WEB_ORIGIN}/approvals`,
@@ -165,6 +181,9 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       currency: input.currency,
       student: input.student,
       team: input.team,
+      type: input.type,
+      ...(input.amountOriginal && input.amountCurrency ? { amountOriginal: input.amountOriginal, amountCurrency: input.amountCurrency } : {}),
+      ...(input.type === "BONUS" && input.coursePayment ? { coursePayment: input.coursePayment } : {}),
       paymentMethod: input.paymentMethod,
       mt5Login: input.mt5Login,
       mt5Accounts: input.mt5Accounts,
@@ -175,7 +194,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       initiatingMentor: input.initiatingMentor,
       primaryMentor: input.primaryMentor,
       meetingMentor: input.meetingMentor,
-      events: [{ at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor, text: "Raised in Tetra Commission" }],
+      events: [{ at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor, text: input.type === "BONUS" ? "Bonus raised in Tetra Commission" : "Raised in Tetra Commission" }],
     });
   } catch (error) {
     // Two deliveries of the same request racing past the lookup: the unique

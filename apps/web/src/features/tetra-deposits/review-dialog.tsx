@@ -28,9 +28,34 @@ import { useDecideTetraDeposit } from "./api";
 const PAYMENT_METHODS = ["AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Other"];
 
 const levelLabel = (level: string) => (level === "LEVEL_1" ? "Level 1" : level === "LEVEL_2" ? "Level 2" : level);
+const amount = (v: number | null | undefined, currency: string) =>
+  v === null || v === undefined ? "" : `${currency} ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in Tetra Commission. */
+export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
+
+/** "Bonus" beside a request that is one. */
+export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
+  if (!isBonus(deposit)) return null;
+  return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title="A course payment — approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus">Bonus</span>;
+}
 
 export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
+  const cp = deposit.coursePayment;
   const rows: [string, string][] = [
+    ["Type", isBonus(deposit) ? "Bonus — a course payment" : ""],
+    ["As typed", deposit.amountOriginal && deposit.amountCurrency && deposit.amountCurrency !== deposit.currency ? amount(deposit.amountOriginal, deposit.amountCurrency) : ""],
+    ...(isBonus(deposit) && cp
+      ? ([
+          ["Course", cp.product],
+          ["Payment", cp.kind === "full" ? "Full payment" : cp.kind === "partial" ? "Partial payment (instalment)" : ""],
+          ["Paid today", amount(cp.paidTodayAed, "AED")],
+          ["Paid before", cp.paidBeforeAed ? amount(cp.paidBeforeAed, "AED") : ""],
+          ["MT5 bonus to credit", cp.withBonus ? amount(cp.bonusUsd ?? 0, "USD") : "No bonus on this course"],
+          ["On hold", cp.holdAed ? amount(cp.holdAed, "AED") : ""],
+          ["Balance", amount(cp.balanceAed, "AED")],
+        ] as [string, string][])
+      : []),
     ["Student", [deposit.student.name, deposit.student.code].filter(Boolean).join(" · ")],
     ["Email", deposit.student.email],
     ["Level", levelLabel(deposit.student.level)],
@@ -122,8 +147,12 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
     <Dialog open={!!deposit} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Review deposit</DialogTitle>
-          <DialogDescription>From Tetra Commission — approving it records it there and credits the mentors&apos; commission.</DialogDescription>
+          <DialogTitle>Review {isBonus(deposit) ? "bonus" : "deposit"}</DialogTitle>
+          <DialogDescription>
+            {isBonus(deposit)
+              ? "From Tetra Commission — a course payment. Approving it confirms the payment; a broker admin there then credits the bonus in MT5 and approves it."
+              : <>From Tetra Commission — approving it records it there and credits the mentors&apos; commission.</>}
+          </DialogDescription>
         </DialogHeader>
         {deposit && <TetraDepositFacts deposit={deposit} />}
         <form onSubmit={submit} className="space-y-4">
@@ -184,7 +213,7 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant={decision === "rejected" ? "destructive" : "primary"} loading={decide.isPending}>
-              {decision === "approved" ? "Approve deposit" : "Reject deposit"}
+              {decision === "approved" ? `Approve ${isBonus(deposit) ? "bonus" : "deposit"}` : `Reject ${isBonus(deposit) ? "bonus" : "deposit"}`}
             </Button>
           </DialogFooter>
         </form>

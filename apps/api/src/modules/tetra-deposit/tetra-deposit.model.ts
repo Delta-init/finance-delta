@@ -13,6 +13,27 @@ const tetraDepositSchema = new Schema({
   /** The funding request's id in Tetra Commission. */
   externalId: { type: String, required: true },
   status: { type: String, enum: ["pending", "approved", "rejected", "closed"], default: "pending", index: true },
+  /** A deposit, or a bonus — a course payment, whose approval here is the first of two (@delta/shared). */
+  type: { type: String, enum: ["DEPOSIT", "BONUS"], default: "DEPOSIT", index: true },
+  /** The amount as typed in Tetra Commission, when another currency (AED). */
+  amountOriginal: { type: Number },
+  amountCurrency: { type: String, uppercase: true },
+  /** A bonus's course payment, as Tetra Commission worked it out. */
+  coursePayment: {
+    type: new Schema({
+      product: { type: String, default: "" },
+      kind: { type: String, default: "" },
+      withBonus: { type: Boolean, default: false },
+      bonusUsd: { type: Number, default: null },
+      holdAed: { type: Number, default: null },
+      balanceAed: { type: Number, default: null },
+      paidTodayAed: { type: Number, default: null },
+      paidBeforeAed: { type: Number, default: null },
+      price: { type: Number, default: null },
+      priceCurrency: { type: String, default: "" },
+    }, { _id: false }),
+    default: undefined,
+  },
   /** As requested; an approval may settle on another amount (decision.approvedAmountMinor). */
   amountMinor: { type: Number, required: true, min: 1 },
   currency: { type: String, required: true, uppercase: true, default: "USD" },

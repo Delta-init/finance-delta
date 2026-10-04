@@ -15,6 +15,9 @@
  *   5. A request gone from Tetra Commission is closed, not left waiting.
  *   6. The deposits page lists every one — by status, searched, paged, dated
  *      — with each status's count, and one deposit with its history.
+ *   7. A bonus — a course payment — comes here too, said to be one, with its
+ *      course payment, MT5 login and receipt; approved here, it waits in Tetra
+ *      Commission for a broker admin, nobody's commission credited yet.
  *
  * Run through scripts/tetra-deposit-e2e.sh. Scratch databases only.
  */
@@ -302,6 +305,37 @@ r = await http(`${API}/tetra-deposits/${f4}`, "GET", undefined, asha);
 const kinds = (r.body?.data?.events ?? []).map((e: any) => e.kind);
 check("one deposit, with its history: approved, turned down, reopened, approved again, delivered",
   r.status === 200 && JSON.stringify(kinds) === JSON.stringify(["received", "approved", "failed", "reopened", "approved", "delivered"]), JSON.stringify(kinds));
+
+step("A bonus — a course payment — approved here first, then by a broker admin in Tetra Commission");
+const br = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
+  type: "BONUS", status: "PENDING", tags: ["Course"], student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
+  amount_usd: 544.96, amount_original: 2000, amount_currency: "AED", payment_method: "AED TRANSFER", mt5_login: "7770001",
+  screenshot_url: "https://files.e2e-deposit.test/receipt.pdf",
+  course_payment: { product: "DWT", kind: "partial", with_bonus: true, bonus_usd: 500, hold_aed: 0, balance_aed: 1250, paid_today_aed: 2000, paid_before_aed: 0, price: 3250, price_currency: "AED" },
+  primary_mentor_id: String(mentor._id), primary_mentor_name: mentor.full_name, requested_by_id: String(mentor._id),
+  requested_by_name: mentor.full_name, requested_at: new Date().toISOString(),
+  initiating_mentor_id: String(mentor._id), initiating_mentor_name: mentor.full_name,
+}, meera);
+const b1 = String(br.body?.id ?? "");
+check("raised in Tetra Commission, with the accountants within seconds", br.status === 200 && (await reachesFinance(b1)), show(br));
+const brow = await inFinance(b1);
+check("as a bonus: the amount as typed, its course payment, the MT5 login and the receipt",
+  brow?.type === "BONUS" && brow.amountMinor === 54496 && brow.amountOriginal === 2000 && brow.amountCurrency === "AED"
+    && brow.coursePayment?.product === "DWT" && brow.coursePayment.kind === "partial" && brow.coursePayment.withBonus === true
+    && brow.coursePayment.bonusUsd === 500 && brow.coursePayment.balanceAed === 1250 && brow.mt5Login === "7770001"
+    && String(brow.screenshotUrl).endsWith("receipt.pdf"), JSON.stringify(brow).slice(0, 500));
+r = await waiting();
+const queued = r.body?.data?.find((d: any) => d.externalId === b1);
+check("in the queue, said to be a bonus, its course payment with it", queued?.type === "BONUS" && queued.coursePayment?.paidTodayAed === 2000, JSON.stringify(queued).slice(0, 300));
+r = await approve(String(brow._id), { amountMinor: 54496, transactionId: "TXN-B2001", paymentMethod: "AED TRANSFER", note: "On the AED statement" });
+check("approved here, and delivered", r.status === 200 && r.body?.data?.delivered === true && r.body.data.deposit?.status === "approved", show(r));
+const tb = await txOf(b1);
+check("there: still pending — a broker admin's to approve — with the payment approved here",
+  tb?.status === "PENDING" && tb.finance_approval?.state === "decided" && tb.finance_approval?.decision === "approved" && tb.transaction_id === "TXN-B2001"
+    && !tb.approved_by_name, JSON.stringify({ status: tb?.status, fa: tb?.finance_approval, tx: tb?.transaction_id }));
+check("and nobody's commission credited yet", (await tc.db!.collection("commission_credits").countDocuments({ transaction_id: b1 })) === 0);
+r = await http(`${API}/tetra-deposits/${String(brow._id)}`, "GET", undefined, asha);
+check("its history here says it is a bonus", r.status === 200 && r.body?.data?.type === "BONUS" && r.body.data.events?.[0]?.text === "Bonus raised in Tetra Commission", show(r));
 
 gate.stop(true);
 await tc.close();

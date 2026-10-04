@@ -2,7 +2,7 @@ import { z } from "zod";
 import { listQuerySchema } from "./query.schema";
 
 /**
- * Deposit requests from Tetra Commission, approved here.
+ * Deposit and bonus requests from Tetra Commission, approved here.
  *
  * A mentor there raises a deposit for a student; Tetra Commission hands it
  * over through the signed integration API the moment it is raised. An
@@ -13,15 +13,46 @@ import { listQuerySchema } from "./query.schema";
  *
  * Money in cents of the request's currency, which is USD: Tetra Commission
  * keeps its deposits in dollars.
+ *
+ * A BONUS is a course payment (the user, 2026-10-04): the money in, and what it
+ * earns the student in MT5 — `coursePayment`. Approving one here confirms the
+ * payment; a broker admin in Tetra Commission then credits the bonus and
+ * approves it there, which is the second of its two approvals.
  */
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
+const optionalAmount = z.number().finite().nullable().optional().default(null);
+
+export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS"]);
+export type TetraDepositType = z.infer<typeof tetraDepositTypeSchema>;
+
+/** A bonus's course payment, as Tetra Commission worked it out at the request (amounts in AED, the bonus in USD). */
+export const tetraCoursePaymentSchema = z.object({
+  product: optionalText(160),
+  /** "full" or "partial" payment of the course; "" when it did not say. */
+  kind: z.enum(["full", "partial", ""]).optional().default(""),
+  withBonus: z.boolean().optional().default(false),
+  bonusUsd: optionalAmount,
+  holdAed: optionalAmount,
+  balanceAed: optionalAmount,
+  paidTodayAed: optionalAmount,
+  paidBeforeAed: optionalAmount,
+  price: optionalAmount,
+  priceCurrency: optionalText(3),
+});
+export type TetraCoursePayment = z.infer<typeof tetraCoursePaymentSchema>;
 
 /** Idempotent on Tetra Commission's own id, so a retry after a timeout is the same request. */
 export const inboundTetraDepositSchema = z.object({
   externalId: z.string().trim().min(1).max(64),
+  /** Absent from a Tetra Commission from before bonuses came here: a deposit. */
+  type: tetraDepositTypeSchema.optional().default("DEPOSIT"),
   amountMinor: z.number().int().positive().max(9_000_000_000_000),
   currency: z.string().length(3).default("USD").transform((v) => v.toUpperCase()),
+  /** The amount as the mentor typed it, when that was another currency (AED) — for the accountant to match. */
+  amountOriginal: z.number().positive().max(90_000_000_000).optional(),
+  amountCurrency: z.string().length(3).optional().transform((v) => v?.toUpperCase()),
+  coursePayment: tetraCoursePaymentSchema.optional(),
   student: z.object({
     id: optionalText(64),
     code: optionalText(40),
@@ -88,9 +119,13 @@ export type TetraDepositView = z.infer<typeof tetraDepositViewSchema>;
 export const tetraDepositSchema = z.object({
   id: z.string(),
   externalId: z.string(),
+  type: tetraDepositTypeSchema,
   status: tetraDepositStatusSchema,
   amountMinor: z.number(),
   currency: z.string(),
+  amountOriginal: z.number().optional(),
+  amountCurrency: z.string().optional(),
+  coursePayment: tetraCoursePaymentSchema.optional(),
   student: z.object({ id: z.string(), code: z.string(), name: z.string(), email: z.string(), level: z.string() }),
   team: z.string(),
   paymentMethod: z.string(),

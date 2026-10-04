@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTetraDeposit } from "./api";
-import { TetraDepositFacts } from "./review-dialog";
+import { TetraDepositFacts, TetraTypeTag } from "./review-dialog";
 import { TetraDepositStatusBadge, deliveryText, formatWhen } from "./status";
 
 /**
@@ -41,8 +41,9 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
           <DialogTitle className="flex items-center gap-2">
             {deposit ? deposit.student.name : "Deposit"}
             {deposit && <TetraDepositStatusBadge status={deposit.status} />}
+            {deposit && <TetraTypeTag deposit={deposit} />}
           </DialogTitle>
-          <DialogDescription>A deposit request from Tetra Commission.</DialogDescription>
+          <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from Tetra Commission." : "A deposit request from Tetra Commission."}</DialogDescription>
         </DialogHeader>
 
         {isLoading || !deposit ? (

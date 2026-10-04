@@ -15,6 +15,7 @@ import { useCan } from "@/lib/use-can";
 import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
 import { TetraDepositDetailsDialog } from "@/features/tetra-deposits/details-dialog";
+import { TetraTypeTag } from "@/features/tetra-deposits/review-dialog";
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -41,6 +42,7 @@ const approvedAmount = (d: TetraDeposit) =>
 
 const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Requested", value: (d) => formatWhen(d.requestedAt) },
+  { header: "Type", value: (d) => (d.type === "BONUS" ? "Bonus" : "Deposit") },
   { header: "Student", value: (d) => d.student.name },
   { header: "Student code", value: (d) => d.student.code },
   { header: "Student email", value: (d) => d.student.email },
@@ -109,8 +111,8 @@ export default function TetraDepositsPage() {
       sortable: true,
       cell: (d) => (
         <div className="min-w-0">
-          <p className="truncate font-medium">{d.student.name}</p>
-          <p className="truncate text-xs text-foreground-muted">{[d.student.code, d.team].filter(Boolean).join(" · ")}</p>
+          <p className="flex items-center gap-1.5 truncate font-medium">{d.student.name}<TetraTypeTag deposit={d} /></p>
+          <p className="truncate text-xs text-foreground-muted">{[d.student.code, d.team, d.coursePayment?.product].filter(Boolean).join(" · ")}</p>
         </div>
       ),
     },
@@ -193,7 +195,7 @@ export default function TetraDepositsPage() {
       <PageHeader
         icon={Coins}
         title="Tetra Commission deposits"
-        description="Every deposit request Tetra Commission sent for approval — pending, approved and rejected. They are decided on the Approvals page."
+        description="Every deposit and bonus request Tetra Commission sent for approval — pending, approved and rejected. They are decided on the Approvals page."
         action={
           <ExportButton
             resource="tetra-deposits/list"

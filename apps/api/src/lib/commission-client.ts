@@ -192,6 +192,26 @@ export interface CommissionStudentLookup {
   cs: string;
   team: string;
   assignment: "assigned" | "open_pool" | "";
+  /** Their welcome went (absent from a Tetra Commission before it said). */
+  onboarded?: boolean;
+  onboarded_at?: string | null;
+  onboarded_by?: string;
+  /** Onboarding verification: none (no bonus promised), else where its broker-admin approval stands. */
+  verification?: "none" | "pending" | "rejected" | "approved";
+  /** Each MT5 bonus promised at a sales close, by our invoice id. */
+  bonuses?: CommissionBonusCheck[];
+}
+
+/** One sales-close MT5 bonus, as Tetra Commission's broker admins decide it. */
+export interface CommissionBonusCheck {
+  invoice_id: string;
+  amount: number;
+  currency: string;
+  state: "not_requested" | "pending" | "approved" | "rejected";
+  requested_at?: string;
+  decided_at?: string;
+  decided_by?: string;
+  reason?: string;
 }
 
 const LOOKUP_TIMEOUT_MS = 5_000;

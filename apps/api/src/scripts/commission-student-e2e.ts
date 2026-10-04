@@ -107,7 +107,7 @@ let n = 0;
  * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
  * language the close recorded on the invoice's enrolment in `language`.
  */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string; meetingBy?: string; meetingByEmail?: string } = {}) {
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string; meetingBy?: string; meetingByEmail?: string; bonus?: { given: boolean; amountMinor: number } } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -115,10 +115,12 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
   await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
   await mongoose.connection.db!.collection("invoices").insertOne({
     _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
-    ...(opts.language !== undefined || opts.crm || opts.meetingBy
+    ...(opts.language !== undefined || opts.crm || opts.meetingBy || opts.bonus
       ? {
         enrolment: {
           ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}),
+          // Whether the close promised a bonus, as the CRM said it.
+          ...(opts.bonus ? { bonus: opts.bonus } : {}),
           // The CRM's rep, as the close kept them: their name, and their email there when it was kept.
           ...(opts.meetingBy ? { meetingBy: opts.meetingBy } : {}), ...(opts.meetingByEmail ? { meetingByEmail: opts.meetingByEmail } : {}),
         },
@@ -136,6 +138,8 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
       email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
       courseSlug: opts.courseSlug ?? "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
       amount: 4500, paymentStatus: "partial",
+      // The money at approval, as Tetra Commission is told it — with the bonus the close promised.
+      ...(opts.bonus ? { feeSummary: { currency: "AED", feeMinor: 450_000, paidMinor: 200_000, balanceMinor: 250_000, bonus: opts.bonus, receipt: null } } : {}),
     },
     ...(opts.extra ? { extraCourses: opts.extra.map((slug) => ({ slug, status: "pending", nextAttemptAt: new Date() })) } : {}),
   });
@@ -463,6 +467,50 @@ step("What a sales CRM's My Enrolments sees — the LMS, and who looks after the
     unmapped?.lms?.state === "unmapped" && /not linked/i.test(unmapped.lms.detail ?? ""), JSON.stringify(unmapped?.lms));
   check("Case 3 — another CRM's ids, or none: nothing", (await enrolmentStatusesFor(orgId, "crm", ["draw-enrol-1"])).length === 0
     && (await enrolmentStatusesFor(orgId, "draw-crm", [])).length === 0);
+}
+
+step("Onboarded, and the MT5 bonus — the last steps before a sales CRM counts its commission");
+{
+  const { enrolmentStatusesFor } = await import("../modules/integrations/enrolment-status.service");
+  const ask = async (id: string) => (await enrolmentStatusesFor(orgId, "draw-crm", [id]))[0];
+  const funding = tc.db!.collection("funding_transactions");
+  const withBonus = await enrol("bonus.buyer@e2e-test.com", { crm: "draw", source: "draw-crm", externalId: "draw-bonus-1", bonus: { given: true, amountMinor: 50_000 } });
+  const noBonus = await enrol("plain.buyer@e2e-test.com", { crm: "draw", source: "draw-crm", externalId: "draw-bonus-2", bonus: { given: false, amountMinor: 0 } });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const s1 = await students.findOne({ email: "bonus.buyer@e2e-test.com" }) as any;
+  const s2 = await students.findOne({ email: "plain.buyer@e2e-test.com" }) as any;
+  let st = await ask("draw-bonus-1");
+  check("Case 1 — in Tetra Commission, not welcomed yet: not onboarded", st?.commission?.onboarded?.done === false, JSON.stringify(st?.commission));
+  check("Case 1 — the $500 promised at the close: not raised there yet", st?.commission?.bonus?.state === "not_requested" && st.commission.bonus.amount === 500,
+    JSON.stringify(st?.commission?.bonus));
+  await students.updateMany({ _id: { $in: [s1._id, s2._id] } }, { $set: { onboarded: true, onboarded_at: new Date().toISOString(), onboarded_by_name: "Asha CS" } });
+  st = await ask("draw-bonus-1");
+  check("Case 1 — welcomed: onboarded, by whom", st?.commission?.onboarded?.done === true && st.commission.onboarded.by === "Asha CS", JSON.stringify(st?.commission?.onboarded));
+  const invoiceId = String((await row(withBonus._id)).invoiceId);
+  const raised = await funding.insertOne({
+    type: "BONUS", status: "PENDING", bonus_credit: "sales_close", sales_close: { invoice_id: invoiceId, invoice_number: "INV-B" },
+    student_id: String(s1._id), amount_currency: "AED", amount_original: 500, requested_at: new Date().toISOString(),
+  } as any);
+  st = await ask("draw-bonus-1");
+  check("Case 1 — raised by the call log: pending for a broker admin", st?.commission?.bonus?.state === "pending" && !!st.commission.bonus.at, JSON.stringify(st?.commission?.bonus));
+  await funding.updateOne({ _id: raised.insertedId }, { $set: { status: "REJECTED", approved_by_name: "Bea Broker", approved_at: new Date().toISOString(), rejection_reason: "Wrong MT5" } });
+  st = await ask("draw-bonus-1");
+  check("Case 3 — rejected: said so, why, and by whom", st?.commission?.bonus?.state === "rejected" && st.commission.bonus.reason === "Wrong MT5" && st.commission.bonus.by === "Bea Broker",
+    JSON.stringify(st?.commission?.bonus));
+  await funding.updateOne({ _id: raised.insertedId }, { $set: { status: "APPROVED", approved_at: new Date().toISOString() }, $unset: { rejection_reason: "" } });
+  st = await ask("draw-bonus-1");
+  check("Case 1 — approved by the broker admin: the last step done", st?.commission?.bonus?.state === "approved" && st.commission.bonus.by === "Bea Broker",
+    JSON.stringify(st?.commission?.bonus));
+  const plain = await ask("draw-bonus-2");
+  check("Case 2 — no bonus promised: nothing to approve", plain?.commission?.bonus?.state === "none" && plain.commission.onboarded?.done === true,
+    JSON.stringify(plain?.commission));
+  env.COMMISSION_API_URL = "http://127.0.0.1:1";
+  const offline = await ask("draw-bonus-1");
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  check("Case 2 — Tetra Commission not answering: onboarding and the bonus left unsaid, not guessed",
+    offline?.commission?.live === false && offline.commission.onboarded === undefined && offline.commission.bonus === undefined, JSON.stringify(offline?.commission));
+  void noBonus;
 }
 
 step("Sent the moment it is approved");

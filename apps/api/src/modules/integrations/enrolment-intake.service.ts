@@ -314,6 +314,8 @@ export async function intakeEnrolment(
          */
         language: inboundEnrolmentLanguage(input.language),
         meetingBy: input.salespersonName ?? "",
+        // Who closed it, by their email in the CRM — kept even when nobody here has it.
+        ...(input.salespersonEmail?.trim() ? { meetingByEmail: input.salespersonEmail.trim().toLowerCase() } : {}),
         // Recorded whether or not a catalogue item was resolved — the case
         // this exists for is the one where none was.
         lmsCourseSlug: declaredLmsCourses(lines[0]!)[0] ?? "",
@@ -472,6 +474,11 @@ async function resubmitReturned(
     if (doc.get("enrolment")) {
       doc.set("enrolment.lmsCourseSlug", declaredLmsCourses(lines[0]!)[0] ?? "");
       doc.set("enrolment.courses", enrolmentCourses(lines));
+      // Who closed it, as resent — a correction may be to the person.
+      if (input.salespersonEmail?.trim()) {
+        doc.set("enrolment.meetingByEmail", input.salespersonEmail.trim().toLowerCase());
+        doc.set("enrolment.meetingBy", input.salespersonName ?? "");
+      }
       /*
        * And the money as corrected. Sending an enrolment back is how the CRM's
        * edits after the close reach finance at all — a fee, a payment or a

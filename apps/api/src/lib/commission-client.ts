@@ -62,6 +62,8 @@ export async function sendStudentToCommission(input: {
   language?: string;
   /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM) or "draw". */
   crm?: string;
+  /** Who closed it: the sales CRM's rep, by their email there — on the student there, for their Sales account. */
+  closedBy?: { email: string; name: string; crm: string };
   lmsUserId?: string;
   /**
    * What the enrolment was at approval: fee, paid, balance, bonus and the

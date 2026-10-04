@@ -137,6 +137,10 @@ const invoiceSchema = new Schema(
           // The name as it was when the enrolment was taken, so the record still
           // reads properly once somebody has left and their account has gone.
           meetingBy: { type: String, default: "" },
+          /** The sales CRM's rep who closed it, by their email there — as the CRM
+              said, whether or not they have an account here. Who closed the
+              student, for Tetra Commission. Absent before the CRMs' was kept. */
+          meetingByEmail: { type: String, trim: true, lowercase: true },
           /** Which LMS course, as the system that raised the enrolment named
               it. What provisioning falls back to when no catalogue item on the
               invoice carries a mapping of its own. */

@@ -376,6 +376,10 @@ async function main() {
 
   const inv1 = await Invoice.findOne({ "external.externalId": "e2e-1" }).lean();
   check("an invoice was created", !!inv1);
+  // Who closed it, by their email in the CRM — what Tetra Commission is told.
+  const met1 = inv1?.enrolment as { meetingBy?: string; meetingByEmail?: string } | undefined;
+  check("the rep who closed it is kept: their name and their email in the CRM",
+    met1?.meetingBy === "Drift One" && met1?.meetingByEmail === "driftone@e2e-test.com", JSON.stringify(met1));
   // What the CRM's My Enrolments asks: the invoice as before, and — until accounts approve it — nothing yet of the
   // LMS or Tetra Commission (enrolment-status.service).
   const status = await signedPost(orgId, "/api/v1/integrations/enrolments/status", { source: "crm", externalIds: ["e2e-1", "not-ours"] });
@@ -562,6 +566,8 @@ async function main() {
     // corrected resend must replace the money — the bonus with it.
     const back = await request("POST", `/invoices/${inv?._id}/approval/return`, { reason: "Check the bonus" }, adminAuth.token);
     check("Case 1 — the approver sends it back to be corrected", back.status === 200, show(back));
+    // As one from before the rep's email was kept: the resend brings it.
+    await Invoice.updateOne({ _id: inv?._id }, { $unset: { "enrolment.meetingByEmail": 1 } });
     const corrected = await signedPost(orgId, "/api/v1/integrations/enrolments", {
       ...withBonus,
       declaredPaidMinor: 60_000,
@@ -574,6 +580,7 @@ async function main() {
       corrected.status === 200 && eC?.bonus?.amountMinor === 30_000 && eC?.declaredBalanceMinor === 70_000 && eC?.declaredPaidMinor === 60_000,
       JSON.stringify(eC));
     check("...on the same invoice, back with the approver", invC?.approval?.state === "pending" && String(invC?._id) === String(inv?._id), JSON.stringify(invC?.approval));
+    check("...with who closed it, as resent", (invC?.enrolment as { meetingByEmail?: string })?.meetingByEmail === "driftone@e2e-test.com", JSON.stringify(invC?.enrolment));
     const again = await signedPost(orgId, "/api/v1/integrations/enrolments", { ...withBonus, bonus: { given: true, amountMinor: 99_000 } });
     const invA = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
     check("...while one not sent back is never rewritten by a resend",

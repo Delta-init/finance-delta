@@ -107,7 +107,7 @@ let n = 0;
  * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
  * language the close recorded on the invoice's enrolment in `language`.
  */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string } = {}) {
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string; meetingBy?: string; meetingByEmail?: string } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -115,8 +115,14 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
   await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
   await mongoose.connection.db!.collection("invoices").insertOne({
     _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
-    ...(opts.language !== undefined || opts.crm
-      ? { enrolment: { ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}) } }
+    ...(opts.language !== undefined || opts.crm || opts.meetingBy
+      ? {
+        enrolment: {
+          ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}),
+          // The CRM's rep, as the close kept them: their name, and their email there when it was kept.
+          ...(opts.meetingBy ? { meetingBy: opts.meetingBy } : {}), ...(opts.meetingByEmail ? { meetingByEmail: opts.meetingByEmail } : {}),
+        },
+      }
       : {}),
     // The CRM's own source, which the tag falls back on where the CRM said nothing — and its own id, by
     // which it asks after the enrolment (My Enrolments).
@@ -387,6 +393,20 @@ step("Which sales CRM sold it");
     r?.sales_crm === "remote" && r?.course_fees?.[0]?.sales_crm === "remote", JSON.stringify({ crm: r?.sales_crm, fees: r?.course_fees }));
   const o = await students.findOne({ email: "older.crm@e2e-test.com" }) as any;
   check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
+}
+
+step("Who closed it");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  await enrol("closed.remote@e2e-test.com", { crm: "remote", source: "crm", meetingBy: "Aisha Rep", meetingByEmail: "aisha.rep@crm.e2e-test.com" });
+  await enrol("closed.before@e2e-test.com", { crm: "delta", source: "crm", meetingBy: "Old Rep" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const a = await students.findOne({ email: "closed.remote@e2e-test.com" }) as any;
+  check("Case 1 — the student arrives with the rep who closed them: their email in the CRM, their name and the CRM",
+    JSON.stringify(a?.closed_by) === JSON.stringify([{ email: "aisha.rep@crm.e2e-test.com", name: "Aisha Rep", crm: "remote" }]), JSON.stringify(a?.closed_by));
+  const b = await students.findOne({ email: "closed.before@e2e-test.com" }) as any;
+  check("Case 2 — a close from before the rep's email was kept: the student, with nobody named", !!b && !b.closed_by, JSON.stringify(b?.closed_by));
 }
 
 step("What a sales CRM's My Enrolments sees — the LMS, and who looks after them");

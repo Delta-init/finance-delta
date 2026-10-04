@@ -292,6 +292,7 @@ export async function drainCommissionStudents(): Promise<number> {
     try {
       const language = await enrolmentLanguage(row.invoiceId);
       const crm = await enrolmentSaleCrm(row.invoiceId);
+      const closedBy = await enrolmentCloser(row.invoiceId, crm);
       const result = await sendStudentToCommission({
         invoiceId: String(row.invoiceId),
         invoiceNumber: row.invoiceNumber ?? "",
@@ -303,6 +304,8 @@ export async function drainCommissionStudents(): Promise<number> {
         ...(language ? { language } : {}),
         // Which sales CRM sold it — shown as a tag on the student there.
         ...(crm ? { crm } : {}),
+        // Who closed it: shown on the student there, and their Sales account sees the students they closed.
+        ...(closedBy ? { closedBy } : {}),
         lmsUserId: row.lmsUserId ?? undefined,
         // The same summary the LMS was given; absent on rows queued before it existed.
         ...(payload.feeSummary ? { feeSummary: payload.feeSummary } : {}),
@@ -387,6 +390,18 @@ async function enrolmentSaleCrm(invoiceId: unknown): Promise<EnrolmentCrm | null
     .select("enrolment.crm external.source")
     .lean<{ enrolment?: { crm?: string }; external?: { source?: string } } | null>();
   return enrolmentCrm(invoice?.enrolment?.crm, invoice?.external?.source);
+}
+
+/**
+ * Who closed the enrolment on the invoice: the sales CRM's rep, by their email there, as kept at the close. Read when
+ * sent, like the language; none for an enrolment from before the rep's email was kept.
+ */
+async function enrolmentCloser(invoiceId: unknown, crm: EnrolmentCrm | null): Promise<{ email: string; name: string; crm: string } | null> {
+  const invoice = await Invoice.findById(invoiceId)
+    .select("enrolment.meetingByEmail enrolment.meetingBy")
+    .lean<{ enrolment?: { meetingByEmail?: string; meetingBy?: string } } | null>();
+  const email = invoice?.enrolment?.meetingByEmail?.trim().toLowerCase() ?? "";
+  return email ? { email, name: invoice?.enrolment?.meetingBy?.trim() ?? "", crm: crm ?? "" } : null;
 }
 
 /*

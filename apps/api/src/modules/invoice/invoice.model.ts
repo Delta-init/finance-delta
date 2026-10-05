@@ -186,6 +186,20 @@ const invoiceSchema = new Schema(
                     ),
                     default: undefined,
                   },
+                  /** The payment as the client made it, when not in the invoice's
+                      currency — the CRM converted it; amountMinor is the result.
+                      rate: invoice currency per one unit of `currency`. */
+                  original: {
+                    type: new Schema(
+                      {
+                        currency: { type: String, required: true },
+                        amountMinor: { type: Number, required: true, min: 1 },
+                        rate: { type: Number, required: true, min: 0 },
+                      },
+                      { _id: false },
+                    ),
+                    default: undefined,
+                  },
                 },
                 { _id: false },
               ),

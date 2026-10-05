@@ -35,7 +35,7 @@ import { Invoice, type InvoiceDoc } from "./invoice.model";
 import { sendInvoiceEmail } from "../../lib/email";
 import { getExchangeRate } from "../../lib/exchange-rate";
 import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
-import { formatMoney } from "@delta/shared";
+import { formatMoney, formatOriginalPayment } from "@delta/shared";
 
 /** Lazily compute overdue: sent/viewed past due date with unpaid balance. */
 function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
@@ -67,6 +67,8 @@ type StoredDeclaredPayment = {
   amountMinor: number;
   paidOn?: string;
   receipt?: { name?: string; url?: string; key?: string; size?: number; mimeType?: string } | null;
+  /** Paid in another currency and converted at the close — see declaredPaymentSchema. */
+  original?: { currency: string; amountMinor: number; rate: number } | null;
 };
 
 /** Each payment declared at the close, and what the approval did with them — absent where the enrolment has none. */
@@ -84,6 +86,9 @@ function declaredPaymentsDTO(enrolment: unknown): Pick<NonNullable<InvoiceDTO["e
             ...(p.paidOn ? { paidOn: p.paidOn } : {}),
             ...(p.receipt?.url && p.receipt.key
               ? { receipt: { name: p.receipt.name ?? "Receipt", url: p.receipt.url, key: p.receipt.key, size: p.receipt.size, mimeType: p.receipt.mimeType } }
+              : {}),
+            ...(p.original?.currency
+              ? { original: { currency: p.original.currency, amountMinor: p.original.amountMinor, rate: p.original.rate } }
               : {}),
           })),
         }
@@ -1323,7 +1328,11 @@ function recordDeclaredPayments(doc: Awaited<ReturnType<typeof findDoc>>): numbe
       amountMinor: p.amountMinor,
       paidOn: new Date(p.paidOn || enrolledOn),
       reference: "",
-      notes: "Collected at the close — recorded on approval",
+      // A payment made in another currency is recorded in the invoice's, as the
+      // CRM converted it; the note keeps what the client actually handed over.
+      notes: `Collected at the close — recorded on approval${
+        p.original?.currency ? ` · paid ${formatOriginalPayment(p.original, currency)}` : ""
+      }`,
       accountName: "",
       chargesMinor: 0,
       proofUrl: p.receipt?.url ?? "",

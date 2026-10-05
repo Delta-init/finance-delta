@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, GraduationCap, Mail, Paperclip, Phone } from "lucide-react";
-import { ENROLMENT_CRM_LABELS, formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -120,7 +120,10 @@ export function EnrolmentDetailsDialog({
                   <Row
                     key={i}
                     label={`· ${paymentMethodLabel(p.method)}${p.paidOn ? `, ${p.paidOn.slice(0, 10)}` : ""}`}
-                    value={`${formatMoney(p.amountMinor, invoice.currency)}${p.receipt ? " · receipt" : " · no receipt"}`}
+                    value={`${formatMoney(p.amountMinor, invoice.currency)}${
+                      // Paid in another currency: what was handed over, and the rate the CRM converted at.
+                      p.original ? ` · paid ${formatOriginalPayment(p.original, invoice.currency)}` : ""
+                    }${p.receipt ? " · receipt" : " · no receipt"}`}
                     href={p.receipt?.url}
                     icon={p.receipt ? <Paperclip className="h-3 w-3" /> : undefined}
                     newTab

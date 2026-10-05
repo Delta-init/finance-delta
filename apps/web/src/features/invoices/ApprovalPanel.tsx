@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye } from "lucide-react";
-import { formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CrmTag } from "@/components/crm-tag";
@@ -95,9 +95,14 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
               label="Collected by counsellor"
               value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
                 // Paid in more than one way: each, briefly — receipts are under View details.
+                // One paid in another currency says what was handed over (converted at the close).
                 (e.declaredPayments?.length ?? 0) > 1
-                  ? ` · ${e.declaredPayments!.map((p) => `${paymentMethodLabel(p.method)} ${formatMoney(p.amountMinor, invoice.currency)}`).join(" + ")}`
-                  : e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
+                  ? ` · ${e.declaredPayments!.map((p) => `${paymentMethodLabel(p.method)} ${formatMoney(p.amountMinor, invoice.currency)}${
+                      p.original ? ` (${formatMoney(p.original.amountMinor, p.original.currency)})` : ""
+                    }`).join(" + ")}`
+                  : e.declaredPayments?.[0]?.original
+                    ? ` · ${paymentMethodLabel(e.declaredPayments[0].method)} · paid ${formatOriginalPayment(e.declaredPayments[0].original, invoice.currency)}`
+                    : e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
               }`}
             />
           ) : null}

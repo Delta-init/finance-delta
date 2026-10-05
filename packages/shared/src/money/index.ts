@@ -93,6 +93,19 @@ export function formatMoney(minor: number, currency = "AED"): string {
 }
 
 /**
+ * A payment as the client made it, before the sales CRM converted it:
+ * "INR 50,000 at 1 INR = 0.044 AED". `rate` is how much of `invoiceCurrency`
+ * one unit of the original bought, shown to six significant figures.
+ */
+export function formatOriginalPayment(
+  original: { currency: string; amountMinor: number; rate: number },
+  invoiceCurrency: string,
+): string {
+  const rate = Number(original.rate.toPrecision(6)).toLocaleString("en-US", { maximumFractionDigits: 10 });
+  return `${formatMoney(original.amountMinor, original.currency)} at 1 ${original.currency} = ${rate} ${invoiceCurrency}`;
+}
+
+/**
  * The figures to print for a set of taxes, in a currency shown whole.
  *
  * Rounding each part on its own does not stay honest: 1,000 inclusive of 18%

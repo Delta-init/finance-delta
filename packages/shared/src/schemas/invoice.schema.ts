@@ -263,6 +263,21 @@ export const declaredPaymentSchema = z.object({
   /** When it was taken (YYYY-MM-DD); the enrolment date when absent. */
   paidOn: z.string().max(40).optional(),
   receipt: storedReceiptSchema.optional(),
+  /**
+   * The money as the client handed it over, when that was not the invoice's
+   * currency (the owner, 2026-10-05). The sales CRM converts it at the close:
+   * `amountMinor` above is the converted figure — the one summed, recorded and
+   * owed against — and this is what the receipt shows. `rate` is how much of
+   * the invoice's currency one unit of `currency` bought: 1 INR = 0.044 AED is
+   * `{ currency: "INR", rate: 0.044 }`. Absent when paid in the invoice's own.
+   */
+  original: z
+    .object({
+      currency: z.string().regex(/^[A-Z]{3}$/, "A three-letter currency code"),
+      amountMinor: z.number().int().min(1),
+      rate: z.number().positive().max(1_000_000),
+    })
+    .optional(),
 });
 export type DeclaredPayment = z.infer<typeof declaredPaymentSchema>;
 

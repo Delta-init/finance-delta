@@ -8,6 +8,7 @@ import {
   approvalBlocksEditing,
   enrolmentCrm,
   type CreateInvoiceInput,
+  type DeclaredPayment,
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
   type InvoiceSummary,
@@ -61,6 +62,44 @@ function enrolmentBonusDTO(enrolment: unknown): { bonus?: { given: boolean; amou
   };
 }
 
+type StoredDeclaredPayment = {
+  method: DeclaredPayment["method"];
+  amountMinor: number;
+  paidOn?: string;
+  receipt?: { name?: string; url?: string; key?: string; size?: number; mimeType?: string } | null;
+};
+
+/** Each payment declared at the close, and what the approval did with them — absent where the enrolment has none. */
+function declaredPaymentsDTO(enrolment: unknown): Pick<NonNullable<InvoiceDTO["enrolment"]>, "declaredPayments" | "declaredPaymentsOnApproval"> {
+  const e = enrolment as {
+    declaredPayments?: StoredDeclaredPayment[] | null;
+    declaredPaymentsOnApproval?: { state?: "recorded" | "skipped"; reason?: string; at?: Date } | null;
+  };
+  return {
+    ...(e.declaredPayments?.length
+      ? {
+          declaredPayments: e.declaredPayments.map((p) => ({
+            method: p.method,
+            amountMinor: p.amountMinor,
+            ...(p.paidOn ? { paidOn: p.paidOn } : {}),
+            ...(p.receipt?.url && p.receipt.key
+              ? { receipt: { name: p.receipt.name ?? "Receipt", url: p.receipt.url, key: p.receipt.key, size: p.receipt.size, mimeType: p.receipt.mimeType } }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(e.declaredPaymentsOnApproval?.state
+      ? {
+          declaredPaymentsOnApproval: {
+            state: e.declaredPaymentsOnApproval.state,
+            ...(e.declaredPaymentsOnApproval.reason ? { reason: e.declaredPaymentsOnApproval.reason } : {}),
+            ...(e.declaredPaymentsOnApproval.at ? { at: new Date(e.declaredPaymentsOnApproval.at).toISOString() } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 function toDTO(doc: InvoiceDoc): InvoiceDTO {
   const del = (doc as unknown as Record<string, unknown>).emailDelivery as
     | { state?: string; at?: Date; messageId?: string; error?: string }
@@ -90,6 +129,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           lmsCourseSlug: (doc.enrolment as { lmsCourseSlug?: string }).lmsCourseSlug ?? "",
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
+          ...declaredPaymentsDTO(doc.enrolment),
           ...enrolmentBonusDTO(doc.enrolment),
           // The CRM that sold it, worked out from the source where it never said.
           crm: enrolmentCrm((doc.enrolment as { crm?: string }).crm, (doc as { external?: { source?: string } }).external?.source) ?? undefined,
@@ -1225,11 +1265,76 @@ export async function approveInvoice(
     returnedReason: undefined,
     submittedAt: a.submittedAt,
   });
+  // In the same save: an approval and the payments it records stand or fall together.
+  const recorded = recordDeclaredPayments(doc);
   await doc.save();
 
+  if (recorded && (doc.balanceMinor ?? 0) <= 0) {
+    const org = await Organization.findById(orgId);
+    const intervals: number[] = (org as unknown as { reminderIntervals?: number[] })?.reminderIntervals ?? [-3, 1, 7];
+    void cancelReminders(id, intervals);
+  }
   void notifyDecided(doc, actor.name, "approved");
   void queueLmsProvision(orgId, doc);
   return toDTO(doc as unknown as InvoiceDoc);
+}
+
+/**
+ * The payments the counsellor declared at the close, recorded against the
+ * invoice the moment it is approved (the user, 2026-10-05: "record
+ * automatically") — each with its own method, date and receipt, so accounts do
+ * not type them in again. One payment where the CRM sent only a total, a method
+ * and a receipt (its receipt is the invoice's first attachment).
+ *
+ * Left for accounts — the enrolment says why — when anything is recorded
+ * already (they got there first), when the payments come to more than the
+ * invoice, or when one is an EMI, whose terms the close does not ask. The
+ * approval never waits on this. Returns how many were recorded.
+ */
+function recordDeclaredPayments(doc: Awaited<ReturnType<typeof findDoc>>): number {
+  const e = (doc as unknown as {
+    enrolment?: { declaredPayments?: StoredDeclaredPayment[] | null; declaredPaidMinor?: number; declaredPaymentMethod?: DeclaredPayment["method"] | null } | null;
+  }).enrolment;
+  if (!e) return 0;
+  const external = Boolean((doc as unknown as { external?: { source?: string } }).external?.source);
+  const firstAttachment = ((doc as unknown as { attachments?: { url?: string; key?: string }[] }).attachments ?? [])[0];
+  const declared: StoredDeclaredPayment[] = e.declaredPayments?.length
+    ? e.declaredPayments
+    : (e.declaredPaidMinor ?? 0) > 0 && e.declaredPaymentMethod
+      ? [{ method: e.declaredPaymentMethod, amountMinor: e.declaredPaidMinor!, receipt: external ? firstAttachment : undefined }]
+      : [];
+  if (!declared.length) return 0;
+
+  const skip = (reason: string) => {
+    doc.set("enrolment.declaredPaymentsOnApproval", { state: "skipped", reason, at: new Date() });
+    return 0;
+  };
+  const currency = doc.currency ?? "AED";
+  const total = doc.totalMinor ?? 0;
+  const sum = declared.reduce((s, p) => s + p.amountMinor, 0);
+  if (((doc.payments as unknown[]) ?? []).length > 0) return skip("Payments were already recorded against the invoice");
+  if (sum > total) return skip(`The payments (${formatMoney(sum, currency)}) come to more than the invoice (${formatMoney(total, currency)})`);
+  if (declared.some((p) => p.method === "easebuzz_emi")) return skip("An EMI payment needs its terms — record the payments by hand");
+
+  const enrolledOn = doc.issueDate ? dateOnly(new Date(doc.issueDate as unknown as Date)) : dateOnly(new Date());
+  for (const p of declared) {
+    (doc.payments as unknown[]).push({
+      method: p.method,
+      amountMinor: p.amountMinor,
+      paidOn: new Date(p.paidOn || enrolledOn),
+      reference: "",
+      notes: "Collected at the close — recorded on approval",
+      accountName: "",
+      chargesMinor: 0,
+      proofUrl: p.receipt?.url ?? "",
+      proofKey: p.receipt?.key ?? "",
+    });
+  }
+  doc.amountPaidMinor = sum;
+  doc.balanceMinor = total - sum;
+  doc.status = doc.balanceMinor <= 0 ? "paid" : "partial";
+  doc.set("enrolment.declaredPaymentsOnApproval", { state: "recorded", at: new Date() });
+  return declared.length;
 }
 
 /** Send an invoice back to whoever raised it, with a reason they can act on. */

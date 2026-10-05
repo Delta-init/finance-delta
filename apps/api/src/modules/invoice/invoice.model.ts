@@ -169,6 +169,38 @@ const invoiceSchema = new Schema(
           },
           /** The fee less what was collected, as the counsellor was shown it. */
           declaredBalanceMinor: { type: Number },
+          /** Each payment taken at the close, with its own method and receipt —
+              adding up to declaredPaidMinor. Absent before the CRMs sent them
+              one by one. Recorded against the invoice on approval. */
+          declaredPayments: {
+            type: [
+              new Schema(
+                {
+                  method: { type: String, enum: [...PAYMENT_METHODS], required: true },
+                  amountMinor: { type: Number, required: true, min: 1 },
+                  paidOn: { type: String, default: "" },
+                  receipt: {
+                    type: new Schema(
+                      { name: String, url: String, key: String, size: Number, mimeType: String },
+                      { _id: false },
+                    ),
+                    default: undefined,
+                  },
+                },
+                { _id: false },
+              ),
+            ],
+            default: undefined,
+          },
+          /** What the approval did with the declared payments: recorded them,
+              or left them for accounts, and why. */
+          declaredPaymentsOnApproval: {
+            type: new Schema(
+              { state: { type: String, enum: ["recorded", "skipped"] }, reason: String, at: Date },
+              { _id: false },
+            ),
+            default: undefined,
+          },
           /** The sales CRM that sold it, as that CRM said ("delta", "remote",
               "draw"). Absent before the CRMs said; read through enrolmentCrm,
               which falls back on the source. */

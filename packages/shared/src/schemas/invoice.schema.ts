@@ -238,6 +238,34 @@ export const enrolmentBonusSchema = z
   .transform((b) => (b.given ? b : { given: false, amountMinor: 0 }));
 export type EnrolmentBonus = z.infer<typeof enrolmentBonusSchema>;
 
+/**
+ * A receipt another system already put in storage: a reference rather than the
+ * bytes (see `inboundEnrolmentSchema.receipt` for why the URL is trusted).
+ */
+export const storedReceiptSchema = z.object({
+  name: z.string().max(200),
+  url: z.string().url(),
+  key: z.string().max(500),
+  size: z.number().int().min(0).optional(),
+  mimeType: z.string().max(100).optional(),
+});
+export type StoredReceipt = z.infer<typeof storedReceiptSchema>;
+
+/**
+ * One payment the counsellor took at the close — a client may pay part in cash
+ * and part by card, each with its own receipt (the user, 2026-10-05). Declared,
+ * like `declaredPaidMinor`, which is their sum; recorded against the invoice
+ * when it is approved.
+ */
+export const declaredPaymentSchema = z.object({
+  method: z.enum(PAYMENT_METHODS),
+  amountMinor: z.number().int().min(1),
+  /** When it was taken (YYYY-MM-DD); the enrolment date when absent. */
+  paidOn: z.string().max(40).optional(),
+  receipt: storedReceiptSchema.optional(),
+});
+export type DeclaredPayment = z.infer<typeof declaredPaymentSchema>;
+
 export const enrolmentInputSchema = z.object({
   course: z.string().trim().min(1, "Course is required").max(120),
   modeOfStudy: z.enum(MODES_OF_STUDY),
@@ -314,6 +342,19 @@ export const enrolmentInputSchema = z.object({
    * `enrolmentCrm`, which works those out from the source.
    */
   crm: z.enum(ENROLMENT_CRMS).optional(),
+  /**
+   * Each payment the counsellor took at the close, when the CRM sent them one
+   * by one — they add up to `declaredPaidMinor`. Absent on enrolments typed
+   * here and on those from before (one total, one method, one receipt).
+   */
+  declaredPayments: z.array(declaredPaymentSchema).max(10).optional(),
+  /**
+   * What the approval did with the declared payments: recorded them against the
+   * invoice, or left them for accounts, and why. Set by the approval only.
+   */
+  declaredPaymentsOnApproval: z
+    .object({ state: z.enum(["recorded", "skipped"]), reason: z.string().max(300).optional(), at: z.string().optional() })
+    .optional(),
 });
 export type EnrolmentInput = z.infer<typeof enrolmentInputSchema>;
 
@@ -631,18 +672,21 @@ export const inboundEnrolmentSchema = z.object({
    * this endpoint is already authenticated per integration client, and a
    * client that can raise invoices can be believed about where it put a file.
    */
-  receipt: z
-    .object({
-      name: z.string().max(200),
-      url: z.string().url(),
-      key: z.string().max(500),
-      size: z.number().int().min(0).optional(),
-      mimeType: z.string().max(100).optional(),
-    })
-    .optional(),
+  receipt: storedReceiptSchema.optional(),
+  /**
+   * Each payment taken at the close, with its own method and receipt — for a
+   * client who paid in more than one way. They must add up to
+   * `declaredPaidMinor`, which callers still send (with `declaredPaymentMethod`
+   * and `receipt` from the first payment) for whatever reads only the total.
+   * Callers from before send none.
+   */
+  payments: z.array(declaredPaymentSchema).min(1).max(10).optional(),
   notes: z.string().max(2000).optional(),
 }).refine((v) => Boolean(v.course) !== Boolean(v.courses), {
   message: "Send exactly one of course or courses, not both and not neither",
+}).refine((v) => !v.payments || v.payments.reduce((sum, p) => sum + p.amountMinor, 0) === v.declaredPaidMinor, {
+  message: "The payments must add up to declaredPaidMinor",
+  path: ["payments"],
 });
 export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;
 export type InboundEnrolmentCourse = z.infer<typeof inboundEnrolmentCourseSchema>;

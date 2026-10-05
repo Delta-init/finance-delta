@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { inboundEnrolmentLanguage } from "@delta/shared";
-import type { InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse } from "@delta/shared";
+import type { InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, StoredReceipt } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
@@ -338,24 +338,15 @@ export async function intakeEnrolment(
     {
       $set: {
         external: { source: input.source, externalId: input.externalId, flags },
-        // The receipt the counsellor took at the close, recorded as an
-        // ordinary attachment so it appears where an approver already looks
-        // for one — beside the invoice they are deciding about, rather than in
-        // whatever system it was collected in.
-        ...(input.receipt
-          ? {
-              attachments: [
-                {
-                  name: input.receipt.name,
-                  url: input.receipt.url,
-                  key: input.receipt.key,
-                  size: input.receipt.size,
-                  mimeType: input.receipt.mimeType,
-                  uploadedAt: new Date(),
-                },
-              ],
-            }
-          : {}),
+        // The receipts the counsellor took at the close — one per payment when
+        // the client paid in more than one way — recorded as ordinary
+        // attachments so they appear where an approver already looks for one:
+        // beside the invoice they are deciding about, rather than in whatever
+        // system they were collected in.
+        ...(receiptsOf(input).length ? { attachments: receiptsOf(input).map(asAttachment) } : {}),
+        // Each payment on its own, set here rather than through createInvoice,
+        // which takes the enrolment block a counsellor types and no more.
+        ...(input.payments ? { "enrolment.declaredPayments": input.payments } : {}),
       },
     },
   );
@@ -387,6 +378,16 @@ function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { give
     ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor } } : {}),
     ...(input.balanceMinor !== undefined ? { declaredBalanceMinor: input.balanceMinor } : {}),
   };
+}
+
+/** Every receipt the caller sent — the enrolment's own and each payment's — once each. */
+function receiptsOf(input: InboundEnrolmentInput): StoredReceipt[] {
+  const all = [input.receipt, ...(input.payments ?? []).map((p) => p.receipt)].filter((r): r is StoredReceipt => Boolean(r));
+  return all.filter((r, i) => all.findIndex((o) => o.key === r.key) === i);
+}
+
+function asAttachment(r: StoredReceipt) {
+  return { name: r.name, url: r.url, key: r.key, size: r.size, mimeType: r.mimeType, uploadedAt: new Date() };
 }
 
 /** Whatever finance flagged about this enrolment last time, defaulted. */
@@ -488,12 +489,20 @@ async function resubmitReturned(
        */
       doc.set("enrolment.declaredPaidMinor", input.declaredPaidMinor);
       doc.set("enrolment.declaredPaymentMethod", input.declaredPaymentMethod);
+      // Each payment as resent — none from a caller that sends only the total,
+      // whose earlier list would no longer add up to it.
+      doc.set("enrolment.declaredPayments", input.payments ?? undefined);
       const { bonus, declaredBalanceMinor } = declaredBonusAndBalance(input);
       if (bonus) doc.set("enrolment.bonus", bonus);
       if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
       // A CRM that says which it is says so again; one that does not leaves it.
       if (input.crm) doc.set("enrolment.crm", input.crm);
     }
+    // A receipt the correction brought — a payment added or its proof replaced —
+    // goes beside the ones already there.
+    const attachments = ((doc.get("attachments") as { key?: string }[] | undefined) ?? []);
+    const added = receiptsOf(input).filter((r) => !attachments.some((a) => a.key === r.key));
+    if (added.length) doc.set("attachments", [...attachments, ...added.map(asAttachment)]);
     await doc.save();
     void notifyApprovers(doc as never);
   }

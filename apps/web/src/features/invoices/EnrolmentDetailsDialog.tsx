@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, GraduationCap, Mail, Phone } from "lucide-react";
+import { ExternalLink, GraduationCap, Mail, Paperclip, Phone } from "lucide-react";
 import { ENROLMENT_CRM_LABELS, formatMoney, paymentMethodLabel, type Invoice } from "@delta/shared";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -46,6 +46,8 @@ export function EnrolmentDetailsDialog({
   // The balance the CRM sent where it sent one — the fee less what was
   // collected, the bonus never in it — and the same sum worked out here otherwise.
   const outstanding = e?.declaredBalanceMinor ?? Math.max(0, invoice.totalMinor - (e?.declaredPaidMinor ?? 0));
+  // More collected than the invoice asks for — a balance of zero would hide it.
+  const overMinor = (e?.declaredPaidMinor ?? 0) - invoice.totalMinor;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -109,17 +111,43 @@ export function EnrolmentDetailsDialog({
                 <Row
                   label="Collected by counsellor"
                   value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
-                    e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
+                    !e.declaredPayments?.length && e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
                   }`}
                 />
+                {/* Each payment, when the client paid in more than one way:
+                    how, how much, and its own receipt to check it against. */}
+                {e.declaredPayments?.map((p, i) => (
+                  <Row
+                    key={i}
+                    label={`· ${paymentMethodLabel(p.method)}${p.paidOn ? `, ${p.paidOn.slice(0, 10)}` : ""}`}
+                    value={`${formatMoney(p.amountMinor, invoice.currency)}${p.receipt ? " · receipt" : " · no receipt"}`}
+                    href={p.receipt?.url}
+                    icon={p.receipt ? <Paperclip className="h-3 w-3" /> : undefined}
+                    newTab
+                  />
+                ))}
                 {/* Declared, not recorded: this is what the counsellor says
                     they took, against what the invoice asks for. */}
                 <Row label="Balance (still to collect)" value={formatMoney(outstanding, invoice.currency)} strong />
+                {overMinor > 0 && (
+                  <p className="py-1 text-right text-xs font-medium text-danger">
+                    {formatMoney(overMinor, invoice.currency)} more than the total — check the course and the amounts
+                  </p>
+                )}
               </>
             ) : (
               <Row label="Collected by counsellor" value="Nothing declared" />
             )}
             <Row label="Recorded against the invoice" value={formatMoney(invoice.amountPaidMinor, invoice.currency)} />
+            {/* What the approval did with the payments declared at the close. */}
+            {e?.declaredPaymentsOnApproval && (
+              <Row
+                label="On approval"
+                value={e.declaredPaymentsOnApproval.state === "recorded"
+                  ? "The payments were recorded against the invoice"
+                  : `Left for accounts — ${e.declaredPaymentsOnApproval.reason ?? "record them by hand"}`}
+              />
+            )}
             {/* Asked at the close. Beside the money rather than in it: the
                 bonus is not billed, not taxed and not part of the balance. */}
             {e?.bonus ? (
@@ -163,6 +191,7 @@ function Row({
   icon,
   href,
   strong,
+  newTab,
 }: {
   label: string;
   value?: string;
@@ -170,6 +199,8 @@ function Row({
   icon?: React.ReactNode;
   href?: string;
   strong?: boolean;
+  /** Open the link beside the app — a receipt, not somewhere to go. */
+  newTab?: boolean;
 }) {
   const text = loading ? "…" : value?.trim() ? value : "—";
   return (
@@ -177,7 +208,11 @@ function Row({
       <dt className="text-xs text-foreground-muted">{label}</dt>
       <dd className={`text-right text-sm ${strong ? "font-semibold" : "font-medium"}`}>
         {href && !loading && value ? (
-          <a href={href} className="inline-flex items-center gap-1.5 text-primary-700 hover:underline">
+          <a
+            href={href}
+            {...(newTab ? { target: "_blank", rel: "noreferrer" } : {})}
+            className="inline-flex items-center gap-1.5 text-primary-700 hover:underline"
+          >
             {icon}
             {text}
           </a>

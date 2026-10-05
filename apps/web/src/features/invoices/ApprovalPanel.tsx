@@ -94,7 +94,10 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
             <Detail
               label="Collected by counsellor"
               value={`${formatMoney(e.declaredPaidMinor, invoice.currency)}${
-                e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
+                // Paid in more than one way: each, briefly — receipts are under View details.
+                (e.declaredPayments?.length ?? 0) > 1
+                  ? ` · ${e.declaredPayments!.map((p) => `${paymentMethodLabel(p.method)} ${formatMoney(p.amountMinor, invoice.currency)}`).join(" + ")}`
+                  : e.declaredPaymentMethod ? ` · ${paymentMethodLabel(e.declaredPaymentMethod)}` : ""
               }`}
             />
           ) : null}

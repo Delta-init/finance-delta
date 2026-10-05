@@ -6,6 +6,7 @@ import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
 import { Item } from "../inventory/item.model";
 import { User } from "../user/user.model";
+import { Customer } from "../customer/customer.model";
 import { findOrCreateCustomer } from "../customer/customer.service";
 import { createInvoice, updateInvoice } from "../invoice/invoice.service";
 import { notifyApprovers } from "../invoice/approval-notify.service";
@@ -197,7 +198,7 @@ export async function intakeEnrolment(
      */
     const state = (existing as unknown as { approval?: { state?: string } }).approval?.state;
     if (state === "returned") {
-      return await resubmitReturned(orgId, String(existing._id), input, flagsFor(existing));
+      return await resubmitReturned(orgId, String(existing._id), input, flagsFor(existing), String(existing.customerId));
     }
 
     return {
@@ -396,12 +397,49 @@ function flagsFor(doc: unknown): string[] {
 }
 
 /**
+ * The client as a correction sends them (the user, 2026-10-05: a sent-back
+ * enrolment corrected in the CRM corrects the client here too — email, name
+ * and phone).
+ *
+ * The email says who the client is, as it does at intake. A different one
+ * moves the invoice to that client — found, or made with the name and phone
+ * sent — because the sale was filed under the wrong person; a client already
+ * known here under that email keeps their own details, as at intake. The same
+ * email has its name and phone brought up to what was sent: the correction is
+ * somebody saying the spelling or the number was wrong.
+ *
+ * Returns the client the invoice is for now.
+ */
+async function correctedCustomer(
+  orgId: string,
+  currentId: string,
+  sent: InboundEnrolmentInput["customer"],
+): Promise<string> {
+  const email = sent.email.trim().toLowerCase();
+  const current = Types.ObjectId.isValid(currentId)
+    ? await Customer.findOne({ _id: new Types.ObjectId(currentId), organizationId: new Types.ObjectId(orgId) })
+    : null;
+  if (!current || current.email !== email) {
+    const { customer } = await findOrCreateCustomer(orgId, { name: sent.name, email, phone: sent.phone } as never);
+    return customer.id;
+  }
+  const name = sent.name.trim();
+  const phone = sent.phone.trim();
+  if (name && phone && (current.name !== name || current.phone !== phone)) {
+    current.name = name;
+    current.phone = phone;
+    await current.save();
+  }
+  return String(current._id);
+}
+
+/**
  * A corrected enrolment, put back in front of an approver.
  *
- * The same invoice, the same number, the same client — the figures replaced by
- * what the CRM has just sent and the approval returned to pending, so it
- * reappears in the queue the approver already watches rather than somewhere
- * new.
+ * The same invoice, the same number — the client, the figures and the courses
+ * replaced by what the CRM has just sent and the approval returned to pending,
+ * so it reappears in the queue the approver already watches rather than
+ * somewhere new.
  *
  * Scoped `all`, unlike the create path. An update is checked against who owns
  * the record, and the point of a correction may be that the enrolment was
@@ -413,9 +451,12 @@ async function resubmitReturned(
   invoiceId: string,
   input: InboundEnrolmentInput,
   priorFlags: string[],
+  customerIdBefore: string,
 ): Promise<InboundEnrolmentResult> {
   const flags: string[] = [];
   const salesperson = await resolveSalesperson(orgId, input, flags);
+  // The client as corrected; the invoice is put in their name below.
+  const customerId = await correctedCustomer(orgId, customerIdBefore, input.customer);
   const lines = linesOf(input);
   const itemIds = await Promise.all(lines.map((line) => resolveItem(orgId, line, flags)));
   const taxes = await defaultSalesTaxes(orgId);
@@ -425,6 +466,7 @@ async function resubmitReturned(
     orgId,
     invoiceId,
     {
+      customerId,
       salespersonId: String(salesperson._id),
       issueDate: enrolledOn,
       dueDate: enrolledOn,
@@ -473,6 +515,10 @@ async function resubmitReturned(
     // The courses as corrected, so the approval opens what was resent, not
     // what was first sent. (updateInvoice leaves the enrolment block alone.)
     if (doc.get("enrolment")) {
+      // The course and language as corrected — a sale moved to another course,
+      // or taught in another language, says so where the approval reads it.
+      doc.set("enrolment.course", lines[0]!.name);
+      doc.set("enrolment.language", inboundEnrolmentLanguage(input.language));
       doc.set("enrolment.lmsCourseSlug", declaredLmsCourses(lines[0]!)[0] ?? "");
       doc.set("enrolment.courses", enrolmentCourses(lines));
       // Who closed it, as resent — a correction may be to the person.

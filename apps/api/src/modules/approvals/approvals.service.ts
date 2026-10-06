@@ -30,6 +30,15 @@ import { LmsProvision } from "../integrations/lms-provision.model";
 
 const LATEST = 5;
 const iso = (value: unknown) => (value ? new Date(value as string).toISOString() : undefined);
+/**
+ * What an enrolment has brought in so far — the amount its approval shows (the
+ * user, 2026-10-06: the collected amount, not the course fee): the larger of
+ * what the counsellor declared at the close, every payment added up, and what
+ * accounts have recorded since; for an invoice typed here, what was recorded.
+ * The same figure the LMS is told is paid (enrolmentFeeSummary). The fee goes
+ * beside it, as `feeMinor`.
+ */
+const collectedOf = (r: any): number => Math.max(r.amountPaidMinor ?? 0, r.enrolment?.declaredPaidMinor ?? 0);
 /** A Tetra Commission deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
 const depositPaidBy = (r: any): string =>
   (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
@@ -59,7 +68,7 @@ const KINDS: Kind[] = [
       const [count, rows] = await Promise.all([
         Invoice.countDocuments(filter),
         Invoice.find(filter).sort({ "approval.submittedAt": -1, createdAt: -1 }).limit(LATEST)
-          .select("invoiceNumber customerName salespersonName totalMinor currency approval.submittedAt enrolment.course createdAt").lean(),
+          .select("invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval.submittedAt enrolment.course enrolment.declaredPaidMinor createdAt").lean(),
       ]);
       return {
         count,
@@ -67,7 +76,7 @@ const KINDS: Kind[] = [
           id: String(r._id),
           title: r.customerName ?? r.invoiceNumber,
           subtitle: [r.enrolment?.course, r.invoiceNumber, r.salespersonName].filter(Boolean).join(" · "),
-          amountMinor: r.totalMinor ?? 0, currency: r.currency ?? "AED",
+          amountMinor: collectedOf(r), feeMinor: r.totalMinor ?? 0, currency: r.currency ?? "AED",
           at: iso(r.approval?.submittedAt ?? r.createdAt), href: `/invoices/${r._id}`,
         })),
       };
@@ -360,7 +369,7 @@ const LIST_KINDS: ListKind[] = [
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
-        "invoiceNumber customerName salespersonName totalMinor currency approval enrolment.course enrolment.crm external.source createdAt",
+        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.declaredPaidMinor external.source createdAt",
         ctx,
       );
       return {
@@ -375,7 +384,9 @@ const LIST_KINDS: ListKind[] = [
             subtitle: [r.enrolment?.course, r.invoiceNumber].filter(Boolean).join(" · "),
             // Which sales CRM sold it; absent for an enrolment typed here.
             crm: enrolmentCrm(r.enrolment?.crm, r.external?.source) ?? undefined,
-            amountMinor: r.totalMinor ?? 0,
+            // What was collected, and the fee it is part of.
+            amountMinor: collectedOf(r),
+            feeMinor: r.totalMinor ?? 0,
             currency: r.currency ?? "AED",
             raisedBy: r.salespersonName || undefined,
             status: state === "returned" ? "returned" : state === "approved" ? "approved" : "pending",

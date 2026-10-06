@@ -20,6 +20,8 @@
  *     the purchase request;
  *   - an approved enrolment says whether the LMS made the student's account
  *     and whether Tetra Commission's portal did, or why not;
+ *   - an enrolment's amount is what was collected — at the close, or recorded
+ *     since when that is more — with its course fee beside it (summary too);
  *   - filtered by type and by date, paged, newest first, never another
  *     organization's, and only the kinds the reader may decide.
  *
@@ -157,6 +159,8 @@ async function main() {
   });
   await inv(org._id, "IN-1", "pending", 30);
   await inv(org._id, "IN-2", "pending", 10);
+  // Closed with 40 of its 100 collected; IN-1 has nothing collected.
+  await Invoice.collection.updateOne({ organizationId: org._id, invoiceNumber: "IN-2" }, { $set: { "enrolment.declaredPaidMinor": 40_00 } });
   await inv(org._id, "IN-3", "approved", 5);
   await inv(org._id, "IN-4", "returned", 5);
   await inv(other._id, "IN-X", "pending", 1);
@@ -190,6 +194,10 @@ async function main() {
   check("every kind is there", ["invoice", "fund_request", "expense", "bill", "payroll", "procurement"].every((t) => group(s, t)), JSON.stringify(s?.groups?.map((g: any) => g.type)));
   check("2 invoices waiting — not approved, not sent back, not the other organization's", group(s, "invoice")?.count === 2, JSON.stringify(group(s, "invoice")));
   check("newest invoice first", group(s, "invoice")?.items?.[0]?.title === "Client IN-2");
+  check("an enrolment shows what was collected at the close, its fee beside it",
+    group(s, "invoice")?.items?.[0]?.amountMinor === 40_00 && group(s, "invoice")?.items?.[0]?.feeMinor === 100_00, JSON.stringify(group(s, "invoice")?.items));
+  check("…and one with nothing collected, 0 of its fee",
+    group(s, "invoice")?.items?.[1]?.amountMinor === 0 && group(s, "invoice")?.items?.[1]?.feeMinor === 100_00);
   check("invoices link to the invoice", group(s, "invoice")?.items?.[0]?.href?.startsWith("/invoices/"));
   check("1 fund request — their own top-up is not waiting on them", group(s, "fund_request")?.count === 1, JSON.stringify(group(s, "fund_request")));
   check("and it says it came from Media ERP", /Media ERP/.test(group(s, "fund_request")?.items?.[0]?.subtitle ?? ""));
@@ -294,6 +302,10 @@ async function main() {
   await Invoice.collection.updateOne({ _id: in5 }, { $set: { "enrolment.crm": "remote", external: { source: "crm", externalId: "crm-in5" } } });
   await Invoice.collection.updateOne({ _id: in6 }, { $set: { external: { source: "crm", externalId: "crm-in6" } } });
   await Invoice.collection.updateOne({ _id: in8 }, { $set: { external: { source: "draw-crm", externalId: "draw-in8" } } });
+  // What they collected: IN-5 120 of 200 at the close, 180 recorded since; IN-6 all 200 at the close, recorded on
+  // approval; IN-9, typed here, nothing.
+  await Invoice.collection.updateOne({ _id: in5 }, { $set: { "enrolment.declaredPaidMinor": 120_00, amountPaidMinor: 180_00 } });
+  await Invoice.collection.updateOne({ _id: in6 }, { $set: { "enrolment.declaredPaidMinor": 200_00, amountPaidMinor: 200_00 } });
   await Expense.collection.insertOne({
     organizationId: org._id, expenseNumber: "EX-5", category: "Travel", description: "Claim EX-5", submittedByName: "Staff", totalMinor: 30_00,
     currency: "AED", status: "rejected", approvedByName: "Approver C", approvedAt: when(1), rejectedReason: "No receipt", createdAt: when(30), updatedAt: when(1),
@@ -365,6 +377,15 @@ async function main() {
     a5?.crm === "remote" && a6?.crm === "delta" && rowOf(approvedList, "invoice", "Client IN-8")?.crm === "draw"
     && rowOf(approvedList, "invoice", "Client IN-9")?.crm === undefined,
     show(["IN-5", "IN-6", "IN-8", "IN-9"].map((n) => rowOf(approvedList, "invoice", `Client ${n}`)?.crm ?? null)));
+  const p2 = rowOf(pendingList, "invoice", "Client IN-2");
+  check("a waiting enrolment's amount is what was collected at the close, its fee beside it",
+    p2?.amountMinor === 40_00 && p2?.feeMinor === 100_00, show(p2));
+  const a9 = rowOf(approvedList, "invoice", "Client IN-9");
+  check("…once approved, what accounts have recorded when that is more; all of it when paid in full; 0 for one typed here with nothing paid",
+    a5?.amountMinor === 180_00 && a5?.feeMinor === 200_00 && a6?.amountMinor === 200_00 && a9?.amountMinor === 0 && a9?.feeMinor === 200_00,
+    show([a5?.amountMinor, a6?.amountMinor, a9?.amountMinor, a9?.feeMinor]));
+  check("…and no other kind has a fee", pendingList.rows.some((r) => r.type !== "invoice")
+    && pendingList.rows.every((r) => r.type === "invoice" || r.feeMinor === undefined));
   check("a purchase request approved here is listed as the purchase request, not as a claim",
     rowOf(approvedList, "procurement", "2 × Chairs")?.decidedBy === "Admin" && !approvedList.rows.some((r) => r.type === "expense" && r.title === "2 × Chairs"));
   check("a paid payroll run counts as approved, with who approved it", rowOf(approvedList, "payroll", "PR-4 · August 2026")?.decidedBy === "Admin",

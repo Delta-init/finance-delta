@@ -80,7 +80,15 @@ export function ApprovalsModal() {
                         <p className="truncate text-xs text-foreground-muted">{item.subtitle}</p>
                       </div>
                       {item.amountMinor !== undefined && (
-                        <MoneyDisplay minor={item.amountMinor} currency={item.currency ?? "AED"} className="shrink-0 text-sm" />
+                        <div className="shrink-0 text-right">
+                          <MoneyDisplay minor={item.amountMinor} currency={item.currency ?? "AED"} className="text-sm" />
+                          {/* An enrolment: the amount is what was collected; its fee under it. */}
+                          {item.feeMinor !== undefined && (
+                            <p className="text-xs text-foreground-muted">
+                              of <MoneyDisplay minor={item.feeMinor} currency={item.currency ?? "AED"} /> fee
+                            </p>
+                          )}
+                        </div>
                       )}
                     </Link>
                   </li>

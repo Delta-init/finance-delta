@@ -241,7 +241,20 @@ export default function ApprovalsPage() {
       key: "amount",
       header: "Amount",
       align: "right",
-      cell: (r) => (r.amountMinor !== undefined ? <MoneyDisplay minor={r.amountMinor} currency={r.currency ?? "AED"} className="whitespace-nowrap" /> : "—"),
+      // An enrolment: what was collected at the close (or recorded since), its fee under it.
+      cell: (r) =>
+        r.amountMinor !== undefined ? (
+          <div>
+            <MoneyDisplay minor={r.amountMinor} currency={r.currency ?? "AED"} className="whitespace-nowrap" />
+            {r.feeMinor !== undefined && (
+              <p className="whitespace-nowrap text-xs text-foreground-muted">
+                of <MoneyDisplay minor={r.feeMinor} currency={r.currency ?? "AED"} /> fee
+              </p>
+            )}
+          </div>
+        ) : (
+          "—"
+        ),
     },
     {
       key: "status",

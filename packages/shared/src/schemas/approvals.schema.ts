@@ -20,6 +20,8 @@ export const approvalItemSchema = z.object({
   title: z.string(),
   subtitle: z.string(),
   amountMinor: z.number().optional(),
+  /** An enrolment: its course fee (the invoice total) — `amountMinor` is what was collected. */
+  feeMinor: z.number().optional(),
   currency: z.string().optional(),
   /** When it started waiting, ISO. */
   at: z.string().optional(),
@@ -99,6 +101,8 @@ export const approvalRowSchema = z.object({
   title: z.string(),
   subtitle: z.string(),
   amountMinor: z.number().optional(),
+  /** An enrolment: its course fee (the invoice total) — `amountMinor` is what was collected. */
+  feeMinor: z.number().optional(),
   currency: z.string().optional(),
   raisedBy: z.string().optional(),
   status: approvalRowStatusSchema,

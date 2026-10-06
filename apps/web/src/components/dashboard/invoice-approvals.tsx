@@ -67,7 +67,16 @@ export function InvoiceApprovals() {
                   {inv.invoiceNumber} · raised by {inv.salespersonName}
                 </p>
               </div>
-              <MoneyDisplay minor={inv.totalMinor} currency={inv.currency} />
+              {/* What was collected — at the close, or recorded since — and the fee under it, as on Approvals. */}
+              <div className="shrink-0 text-right">
+                <MoneyDisplay
+                  minor={Math.max(inv.amountPaidMinor ?? 0, inv.enrolment?.declaredPaidMinor ?? 0)}
+                  currency={inv.currency}
+                />
+                <p className="text-xs text-foreground-muted">
+                  of <MoneyDisplay minor={inv.totalMinor} currency={inv.currency} /> fee
+                </p>
+              </div>
             </Link>
           </li>
         ))}

@@ -15,7 +15,7 @@ import { useCan } from "@/lib/use-can";
 import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
 import { TetraDepositDetailsDialog } from "@/features/tetra-deposits/details-dialog";
-import { TetraTypeTag } from "@/features/tetra-deposits/review-dialog";
+import { TetraTypeTag, paidBy, receiptsOf } from "@/features/tetra-deposits/review-dialog";
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -39,6 +39,9 @@ const LEVELS: Record<string, string> = { LEVEL_1: "Level 1", LEVEL_2: "Level 2" 
 
 const approvedAmount = (d: TetraDeposit) =>
   d.status === "approved" || (d.status === "closed" && d.decision?.transactionId) ? d.decision?.approvedAmountMinor : undefined;
+/** How it was paid: the method an accountant set on approving it, else every payment's ("CARD PAYMENT + Cash deposit"). */
+const methodOf = (d: TetraDeposit) =>
+  d.decision?.paymentMethod && d.decision.paymentMethod !== d.paymentMethod ? d.decision.paymentMethod : paidBy(d);
 
 const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Requested", value: (d) => formatWhen(d.requestedAt) },
@@ -51,7 +54,7 @@ const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Raised by", value: (d) => d.requestedBy },
   { header: "Mentor", value: (d) => d.initiatingMentor },
   { header: "Primary mentor", value: (d) => d.primaryMentor },
-  { header: "Payment method", value: (d) => d.decision?.paymentMethod || d.paymentMethod },
+  { header: "Payment method", value: (d) => methodOf(d) },
   { header: "MT5 login", value: (d) => d.decision?.mt5Login || d.mt5Login },
   { header: "Currency", value: (d) => d.currency },
   { header: "Requested amount", value: (d) => d.amountMinor / 100 },
@@ -62,7 +65,7 @@ const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Decided", value: (d) => formatWhen(d.decision?.decidedAt) },
   { header: "Reason / note", value: (d) => d.decision?.reason || d.decision?.note || "" },
   { header: "Tetra Commission", value: (d) => deliveryText(d) },
-  { header: "Proof of payment", value: (d) => d.screenshotUrl },
+  { header: "Proof of payment", value: (d) => receiptsOf(d).join(" ") },
   { header: "Tetra Commission id", value: (d) => d.externalId },
 ];
 
@@ -121,7 +124,7 @@ export default function TetraDepositsPage() {
       header: "Payment",
       cell: (d) => (
         <div className="min-w-0 text-sm">
-          <p className="truncate">{d.decision?.paymentMethod || d.paymentMethod || "—"}</p>
+          <p className="truncate">{methodOf(d) || "—"}</p>
           {(d.decision?.mt5Login || d.mt5Login) && <p className="truncate text-xs text-foreground-muted">MT5 {d.decision?.mt5Login || d.mt5Login}</p>}
         </div>
       ),

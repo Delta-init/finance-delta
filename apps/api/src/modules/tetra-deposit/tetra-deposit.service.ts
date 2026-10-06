@@ -35,6 +35,8 @@ import { TetraDepositModel } from "./tetra-deposit.model";
 const iso = (value: unknown) => (value ? new Date(value as string).toISOString() : "");
 const money = (minor: number, currency: string) =>
   `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** How it was paid: every payment's method — "CARD PAYMENT + Cash deposit" — or its one. */
+const paidBy = (d: TetraDeposit) => (d.payments.length ? [...new Set(d.payments.map((p) => p.method))].join(" + ") : d.paymentMethod);
 
 export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
   return {
@@ -64,6 +66,10 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
     mt5Login: r.mt5Login ?? "",
     mt5Accounts: (r.mt5Accounts ?? []).map((a: any) => ({ login: String(a.login), platform: String(a.platform ?? "") })),
     screenshotUrl: r.screenshotUrl ?? "",
+    payments: (r.payments ?? []).map((p: any) => ({
+      method: String(p.method ?? ""), amountMinor: Number(p.amountMinor) || 0, currency: String(p.currency ?? ""),
+      receiptUrl: String(p.receiptUrl ?? ""), receiptName: String(p.receiptName ?? ""),
+    })),
     notes: r.notes ?? "",
     requestedAt: iso(r.requestedAt ?? r.createdAt),
     requestedBy: r.requestedBy ?? "",
@@ -142,7 +148,7 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
       title: `A Tetra Commission ${what} is waiting for approval`,
       lines: [
         `${by ? `${by} raised` : "Tetra Commission sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
-        [d.coursePayment?.product, d.paymentMethod && `Paid by ${d.paymentMethod}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
+        [d.coursePayment?.product, paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
         bonus
           ? "Approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first."
           : "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
@@ -188,6 +194,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       mt5Login: input.mt5Login,
       mt5Accounts: input.mt5Accounts,
       screenshotUrl: input.screenshotUrl,
+      ...(input.payments.length ? { payments: input.payments } : {}),
       notes: input.notes,
       requestedAt,
       requestedBy: input.requestedBy,

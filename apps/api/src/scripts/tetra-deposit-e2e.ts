@@ -18,6 +18,10 @@
  *   7. A bonus — a course payment — comes here too, said to be one, with its
  *      course payment, MT5 login and receipt; approved here, it waits in Tetra
  *      Commission for a broker admin, nobody's commission credited yet.
+ *   8. Paid more than one way — part by card, part by a payment link — each
+ *      payment comes here with its own method, amount and receipt, listed for
+ *      the accountant; one paid one way has no list; a list that cannot be
+ *      read is dropped, never the deposit with it.
  *
  * Run through scripts/tetra-deposit-e2e.sh. Scratch databases only.
  */
@@ -336,6 +340,55 @@ check("there: still pending — a broker admin's to approve — with the payment
 check("and nobody's commission credited yet", (await tc.db!.collection("commission_credits").countDocuments({ transaction_id: b1 })) === 0);
 r = await http(`${API}/tetra-deposits/${String(brow._id)}`, "GET", undefined, asha);
 check("its history here says it is a bonus", r.status === 200 && r.body?.data?.type === "BONUS" && r.body.data.events?.[0]?.text === "Bonus raised in Tetra Commission", show(r));
+
+step("Paid more than one way: each payment reaches the accountants with its own receipt");
+const pr = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
+  type: "DEPOSIT", status: "PENDING", student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
+  amount_usd: 544.96, amount_aed: 2000, amount_original: 2000, amount_currency: "AED", mt5_login: "7770001",
+  // The first payment's method and receipt, as Tetra Commission keeps them for whatever reads only one.
+  payment_method: "CARD PAYMENT", screenshot_url: "https://files.e2e-deposit.test/card.png",
+  payments: [
+    { method: "CARD PAYMENT", amount: 1500, currency: "AED", receipt_url: "https://files.e2e-deposit.test/card.png", receipt_name: "card.png" },
+    { method: "Pay by link", amount: 500, currency: "AED", receipt_url: "https://files.e2e-deposit.test/link.pdf", receipt_name: "link.pdf" },
+  ],
+  primary_mentor_id: String(mentor._id), primary_mentor_name: mentor.full_name, requested_by_id: String(mentor._id),
+  requested_by_name: mentor.full_name, requested_at: new Date().toISOString(),
+  initiating_mentor_id: String(mentor._id), initiating_mentor_name: mentor.full_name,
+}, meera);
+const p1 = String(pr.body?.id ?? "");
+check("raised in Tetra Commission, with the accountants within seconds", pr.status === 200 && (await reachesFinance(p1)), show(pr));
+const prow = await inFinance(p1);
+const [card, link] = prow?.payments ?? [];
+check("each payment kept: its method, its amount in cents of AED, its receipt",
+  prow?.payments?.length === 2 && card.method === "CARD PAYMENT" && card.amountMinor === 150000 && card.currency === "AED"
+    && card.receiptUrl === "https://files.e2e-deposit.test/card.png" && card.receiptName === "card.png"
+    && link.method === "Pay by link" && link.amountMinor === 50000 && link.receiptUrl === "https://files.e2e-deposit.test/link.pdf",
+  JSON.stringify(prow?.payments));
+check("the first one's as its method and proof, as before", prow?.paymentMethod === "CARD PAYMENT" && prow.screenshotUrl === "https://files.e2e-deposit.test/card.png");
+check("and every payment in the notes too",
+  String(prow?.notes).includes("Paid in 2 payments:") && String(prow?.notes).includes("2. Pay by link · AED 500.00 · https://files.e2e-deposit.test/link.pdf"),
+  String(prow?.notes));
+r = await waiting();
+const pq = r.body?.data?.find((d: any) => d.externalId === p1);
+check("in the accountant's queue with them", pq?.payments?.length === 2 && pq.payments[1].method === "Pay by link" && pq.payments[1].receiptName === "link.pdf",
+  JSON.stringify(pq?.payments));
+r = await http(`${API}/tetra-deposits/${String(prow._id)}`, "GET", undefined, asha);
+check("and on the deposit itself", r.status === 200 && r.body?.data?.payments?.length === 2, show(r));
+r = await approve(String(prow._id), { amountMinor: 54496, transactionId: "TXN-P3001", paymentMethod: "CARD PAYMENT" });
+check("approved here, and delivered", r.status === 200 && r.body?.data?.delivered === true, show(r));
+const tp = await txOf(p1);
+check("there: approved, its payments as they were", tp?.status === "APPROVED" && tp.payments?.length === 2 && tp.payments[1].method === "Pay by link",
+  JSON.stringify({ status: tp?.status, payments: tp?.payments }));
+const one = await inFinance(d1);
+r = await http(`${API}/tetra-deposits/${String(one._id)}`, "GET", undefined, asha);
+check("a deposit paid one way has no list — its method and proof, as before",
+  (one?.payments ?? []).length === 0 && r.status === 200 && Array.isArray(r.body?.data?.payments) && r.body.data.payments.length === 0, show(r));
+r = await signed({
+  externalId: "e2e-unreadable-payments", amountMinor: 1000, currency: "USD", student: { name: "Student Sam" },
+  payments: [{ method: "", amountMinor: -5 }, { method: "Cash" }],
+});
+const unreadable = await TetraDepositModel.findOne({ externalId: "e2e-unreadable-payments" }).lean() as any;
+check("a list it cannot read is dropped — never the deposit with it", r.status === 200 && !!unreadable && (unreadable.payments ?? []).length === 0, show(r));
 
 gate.stop(true);
 await tc.close();

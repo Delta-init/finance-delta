@@ -317,6 +317,8 @@ async function main() {
     paymentMethod: "Bank", status, requestedAt: when(minutesAgo + 30), createdAt: when(minutesAgo + 30), updatedAt: when(minutesAgo), ...extra,
   });
   await deposit("D1", "pending", 0);
+  // Paid more than one way: its methods together, in the summary and the table.
+  await deposit("D5", "pending", 1, { payments: [{ method: "CARD PAYMENT", amountMinor: 600_00, currency: "USD" }, { method: "Pay by link", amountMinor: 400_00, currency: "USD" }] });
   await deposit("D2", "approved", 13, { decision: { decidedByName: "Admin", decidedAt: when(13), approvedAmountMinor: 900_00 }, delivery: { state: "failed", lastError: "Student not found" } });
   await deposit("D3", "rejected", 14, { decision: { decidedByName: "Admin", decidedAt: when(14), reason: "Proof unreadable" }, delivery: { state: "delivered" } });
   await deposit("D4", "closed", 15, { closedReason: "Withdrawn at Tetra" });
@@ -340,6 +342,11 @@ async function main() {
   check("purchase requests HRMS cannot answer for are named, the rest still listed",
     (pendingList.meta?.unavailable ?? []).some((u: string) => /Purchase requests/.test(u)), show(pendingList.meta?.unavailable));
   check("another organization's never", !pendingList.rows.some((r) => r.title === "Client IN-X"));
+  check("a deposit paid more than one way says every method, a deposit paid one way its one",
+    rowOf(pendingList, "tetra_deposit", "Student D5")?.subtitle === "ST-D5 · CARD PAYMENT + Pay by link"
+      && rowOf(pendingList, "tetra_deposit", "Student D1")?.subtitle === "ST-D1 · Bank"
+      && /CARD PAYMENT \+ Pay by link/.test(group(s, "tetra_deposit")?.items?.find((i: any) => i.title === "Student D5")?.subtitle ?? ""),
+    show([rowOf(pendingList, "tetra_deposit", "Student D5")?.subtitle, group(s, "tetra_deposit")?.items?.map((i: any) => i.subtitle)]));
 
   const approvedList = await listOf(tAdmin, { status: "approved", pageSize: 100 });
   const a5 = rowOf(approvedList, "invoice", "Client IN-5");

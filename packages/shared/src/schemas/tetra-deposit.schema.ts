@@ -42,6 +42,22 @@ export const tetraCoursePaymentSchema = z.object({
 });
 export type TetraCoursePayment = z.infer<typeof tetraCoursePaymentSchema>;
 
+/**
+ * One payment of a request paid more than one way (the user, 2026-10-06): part
+ * by card and part in cash, each with its own method, amount and receipt — as
+ * Tetra Commission takes them, the way the sales CRMs do at a close. In cents
+ * of the currency the mentor typed (AED, USD or INR); together they come to
+ * the amount as typed. `paymentMethod` and `screenshotUrl` are the first one's.
+ */
+export const tetraDepositPaymentSchema = z.object({
+  method: z.string().trim().min(1).max(60),
+  amountMinor: z.number().int().positive().max(9_000_000_000_000),
+  currency: z.string().length(3).transform((v) => v.toUpperCase()),
+  receiptUrl: optionalText(1000).refine((v) => !v || /^https?:\/\//i.test(v), "Must be a web address"),
+  receiptName: optionalText(200),
+});
+export type TetraDepositPayment = z.infer<typeof tetraDepositPaymentSchema>;
+
 /** Idempotent on Tetra Commission's own id, so a retry after a timeout is the same request. */
 export const inboundTetraDepositSchema = z.object({
   externalId: z.string().trim().min(1).max(64),
@@ -67,6 +83,12 @@ export const inboundTetraDepositSchema = z.object({
   mt5Accounts: z.array(z.object({ login: z.string().trim().min(1).max(60), platform: optionalText(40) })).max(20).optional().default([]),
   /** The proof of payment the mentor uploaded — a link, opened from the approval. */
   screenshotUrl: optionalText(1000).refine((v) => !v || /^https?:\/\//i.test(v), "Must be a web address"),
+  /**
+   * Paid more than one way: each payment with its receipt. Absent from a Tetra
+   * Commission from before, and for one payment. A list that cannot be read is
+   * dropped — never the deposit with it (the notes say every payment too).
+   */
+  payments: z.array(tetraDepositPaymentSchema).max(10).optional().default([]).catch([]),
   notes: optionalText(2000),
   requestedAt: optionalText(40),
   requestedBy: optionalText(120),
@@ -132,6 +154,8 @@ export const tetraDepositSchema = z.object({
   mt5Login: z.string(),
   mt5Accounts: z.array(z.object({ login: z.string(), platform: z.string() })),
   screenshotUrl: z.string(),
+  /** Paid more than one way: each payment with its receipt; empty for one payment (paymentMethod, screenshotUrl). */
+  payments: z.array(z.object({ method: z.string(), amountMinor: z.number(), currency: z.string(), receiptUrl: z.string(), receiptName: z.string() })),
   notes: z.string(),
   requestedAt: z.string(),
   requestedBy: z.string(),

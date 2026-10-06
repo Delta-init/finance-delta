@@ -49,6 +49,15 @@ const tetraDepositSchema = new Schema({
   mt5Login: { type: String, default: "" },
   mt5Accounts: [{ _id: false, login: { type: String, required: true }, platform: { type: String, default: "" } }],
   screenshotUrl: { type: String, default: "" },
+  /** Paid more than one way: each payment with its receipt, as Tetra Commission took it (@delta/shared). */
+  payments: [{
+    _id: false,
+    method: { type: String, required: true },
+    amountMinor: { type: Number, required: true },
+    currency: { type: String, uppercase: true, default: "USD" },
+    receiptUrl: { type: String, default: "" },
+    receiptName: { type: String, default: "" },
+  }],
   notes: { type: String, default: "" },
   requestedAt: { type: Date },
   requestedBy: { type: String, default: "" },

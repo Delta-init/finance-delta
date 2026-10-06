@@ -24,12 +24,24 @@ import { useDecideTetraDeposit } from "./api";
  * back at once, and the answer says whether Tetra Commission took it.
  */
 
-/** Tetra Commission's own list of deposit payment methods. */
-const PAYMENT_METHODS = ["AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Other"];
+/** Tetra Commission's own list of deposit payment methods — Pay by link and the sales CRMs' too (2026-10-06). */
+const PAYMENT_METHODS = [
+  "AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Pay by link",
+  "Cash", "Bank Transfer", "Cheque", "Card", "Easebuzz EMI", "Tabby", "Tamara", "BillExPro", "Other",
+];
 
 const levelLabel = (level: string) => (level === "LEVEL_1" ? "Level 1" : level === "LEVEL_2" ? "Level 2" : level);
 const amount = (v: number | null | undefined, currency: string) =>
   v === null || v === undefined ? "" : `${currency} ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Paid more than one way (the user, 2026-10-06): part by card and part in cash,
+ * each payment with its own receipt — `payments`, the first one's method and
+ * receipt also in `paymentMethod` and `screenshotUrl`. Its methods, "CARD
+ * PAYMENT + Cash deposit", or its one; and every receipt.
+ */
+export const paidBy = (d: TetraDeposit) => (d.payments?.length ? [...new Set(d.payments.map((p) => p.method))].join(" + ") : d.paymentMethod);
+export const receiptsOf = (d: TetraDeposit) => (d.payments?.length ? d.payments.map((p) => p.receiptUrl) : [d.screenshotUrl]).filter(Boolean);
 
 /** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in Tetra Commission. */
 export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
@@ -60,7 +72,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
     ["Email", deposit.student.email],
     ["Level", levelLabel(deposit.student.level)],
     ["Team", deposit.team],
-    ["Payment method", deposit.paymentMethod],
+    ["Payment method", paidBy(deposit)],
     ["MT5 login", deposit.mt5Login],
     ["Raised by", deposit.requestedBy],
     ["For mentor", deposit.initiatingMentor && deposit.initiatingMentor !== deposit.requestedBy ? deposit.initiatingMentor : ""],
@@ -80,7 +92,28 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
         ))}
       </dl>
       {deposit.notes && <p className="mt-2 whitespace-pre-wrap text-xs text-foreground-muted">{deposit.notes}</p>}
-      {deposit.screenshotUrl ? (
+      {deposit.payments?.length ? (
+        // Paid more than one way: each payment, and its own receipt.
+        <div className="mt-2">
+          <p className="text-xs font-medium">Paid in {deposit.payments.length} payments</p>
+          <ol className="mt-1 space-y-1 text-xs">
+            {deposit.payments.map((p, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-foreground-muted">{i + 1}.</span>
+                <span className="font-medium">{p.method}</span>
+                <span>{amount(p.amountMinor / 100, p.currency)}</span>
+                {p.receiptUrl ? (
+                  <a href={p.receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                    Open its receipt <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  <span className="text-foreground-muted">no receipt</span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : deposit.screenshotUrl ? (
         <a href={deposit.screenshotUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
           Open the proof of payment <ExternalLink className="h-3 w-3" />
         </a>

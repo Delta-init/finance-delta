@@ -30,6 +30,9 @@ import { LmsProvision } from "../integrations/lms-provision.model";
 
 const LATEST = 5;
 const iso = (value: unknown) => (value ? new Date(value as string).toISOString() : undefined);
+/** A Tetra Commission deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
+const depositPaidBy = (r: any): string =>
+  (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
 
 function monthName(period: string): string {
   return new Date(`${period}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -108,14 +111,14 @@ const KINDS: Kind[] = [
       const [count, rows] = await Promise.all([
         TetraDepositModel.countDocuments(filter),
         TetraDepositModel.find(filter).sort({ requestedAt: -1, createdAt: -1 }).limit(LATEST)
-          .select("student amountMinor currency paymentMethod requestedBy initiatingMentor team requestedAt createdAt").lean(),
+          .select("student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt").lean(),
       ]);
       return {
         count,
         items: rows.map((r: any) => ({
           id: String(r._id),
           title: r.student?.name ?? "Deposit",
-          subtitle: [r.student?.code, r.paymentMethod, r.requestedBy || r.initiatingMentor, r.team].filter(Boolean).join(" · "),
+          subtitle: [r.student?.code, depositPaidBy(r), r.requestedBy || r.initiatingMentor, r.team].filter(Boolean).join(" · "),
           amountMinor: r.amountMinor, currency: r.currency ?? "USD",
           at: iso(r.requestedAt ?? r.createdAt), href: "/approvals",
         })),
@@ -444,7 +447,7 @@ const LIST_KINDS: ListKind[] = [
         TetraDepositModel,
         { organizationId: ctx.org, status: { $in: states } },
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
-        "student amountMinor currency paymentMethod requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
+        "student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
         ctx,
       );
       return {
@@ -456,7 +459,7 @@ const LIST_KINDS: ListKind[] = [
             id: String(r._id),
             type: "tetra_deposit",
             title: r.student?.name ?? "Deposit",
-            subtitle: [r.student?.code, r.paymentMethod, r.team].filter(Boolean).join(" · "),
+            subtitle: [r.student?.code, depositPaidBy(r), r.team].filter(Boolean).join(" · "),
             amountMinor: r.decision?.approvedAmountMinor ?? r.amountMinor,
             currency: r.currency ?? "USD",
             raisedBy: r.requestedBy || r.initiatingMentor || undefined,

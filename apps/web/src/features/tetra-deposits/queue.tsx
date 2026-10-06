@@ -10,7 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useReopenTetraDeposit, useTetraDeposits } from "./api";
-import { TetraDepositReviewDialog, TetraTypeTag } from "./review-dialog";
+import { TetraDepositReviewDialog, TetraTypeTag, paidBy } from "./review-dialog";
 
 /**
  * Tetra Commission's deposits on the Approvals page: the ones waiting for a
@@ -32,7 +32,7 @@ function Waiting({ deposit, onReview }: { deposit: TetraDeposit; onReview: () =>
         <div className="mt-1 flex flex-wrap gap-1.5">
           <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700">Tetra Commission</span>
           <TetraTypeTag deposit={deposit} />
-          {deposit.paymentMethod && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{deposit.paymentMethod}</span>}
+          {paidBy(deposit) && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{paidBy(deposit)}</span>}
           {deposit.team && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{deposit.team}</span>}
         </div>
         <p className="mt-1 text-xs text-foreground-muted">

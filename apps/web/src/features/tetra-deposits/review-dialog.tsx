@@ -45,9 +45,16 @@ export const receiptsOf = (d: TetraDeposit) => (d.payments?.length ? d.payments.
 
 /** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in Tetra Commission. */
 export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
+/** One payment towards a student's CSE course upgrade, in AED: approving it confirms the money; Tetra Commission counts it. */
+export const isCourseUpgrade = (d: TetraDeposit | null | undefined) => d?.type === "COURSE_UPGRADE";
+/** "deposit", "bonus" or "course payment" — what the request is, in a sentence. */
+export const kindWord = (d: TetraDeposit | null | undefined) => (isCourseUpgrade(d) ? "course payment" : isBonus(d) ? "bonus" : "deposit");
 
-/** "Bonus" beside a request that is one. */
+/** "Bonus" or "Course payment" beside a request that is one. */
 export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
+  if (isCourseUpgrade(deposit)) {
+    return <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-800" title="A payment towards the student's course upgrade — approving it confirms the money; Tetra Commission counts it and raises the MT5 bonus it earns">Course payment</span>;
+  }
   if (!isBonus(deposit)) return null;
   return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title="A course payment — approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus">Bonus</span>;
 }
@@ -55,9 +62,9 @@ export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
 export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   const cp = deposit.coursePayment;
   const rows: [string, string][] = [
-    ["Type", isBonus(deposit) ? "Bonus — a course payment" : ""],
+    ["Type", isCourseUpgrade(deposit) ? "Course upgrade payment" : isBonus(deposit) ? "Bonus — a course payment" : ""],
     ["As typed", deposit.amountOriginal && deposit.amountCurrency && deposit.amountCurrency !== deposit.currency ? amount(deposit.amountOriginal, deposit.amountCurrency) : ""],
-    ...(isBonus(deposit) && cp
+    ...((isBonus(deposit) || isCourseUpgrade(deposit)) && cp
       ? ([
           ["Course", cp.product],
           ["Payment", cp.kind === "full" ? "Full payment" : cp.kind === "partial" ? "Partial payment (instalment)" : ""],
@@ -180,9 +187,11 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
     <Dialog open={!!deposit} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Review {isBonus(deposit) ? "bonus" : "deposit"}</DialogTitle>
+          <DialogTitle>Review {kindWord(deposit)}</DialogTitle>
           <DialogDescription>
-            {isBonus(deposit)
+            {isCourseUpgrade(deposit)
+              ? "From Tetra Commission — a payment towards the student's course upgrade. Approving it confirms the money; Tetra Commission then counts it and raises the MT5 bonus it earns."
+              : isBonus(deposit)
               ? "From Tetra Commission — a course payment. Approving it confirms the payment; a broker admin there then credits the bonus in MT5 and approves it."
               : <>From Tetra Commission — approving it records it there and credits the mentors&apos; commission.</>}
           </DialogDescription>
@@ -246,7 +255,7 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant={decision === "rejected" ? "destructive" : "primary"} loading={decide.isPending}>
-              {decision === "approved" ? `Approve ${isBonus(deposit) ? "bonus" : "deposit"}` : `Reject ${isBonus(deposit) ? "bonus" : "deposit"}`}
+              {decision === "approved" ? `Approve ${kindWord(deposit)}` : `Reject ${kindWord(deposit)}`}
             </Button>
           </DialogFooter>
         </form>

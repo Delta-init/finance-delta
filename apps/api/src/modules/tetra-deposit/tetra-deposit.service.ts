@@ -42,7 +42,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
   return {
     id: String(r._id),
     externalId: String(r.externalId),
-    type: r.type === "BONUS" ? "BONUS" : "DEPOSIT",
+    type: r.type === "BONUS" || r.type === "COURSE_UPGRADE" ? r.type : "DEPOSIT",
     status: r.status,
     amountMinor: r.amountMinor,
     currency: r.currency ?? "USD",
@@ -141,16 +141,19 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
     }
     const by = d.requestedBy || d.initiatingMentor;
     const bonus = d.type === "BONUS";
-    const what = bonus ? "bonus (course payment)" : "deposit";
+    const upgrade = d.type === "COURSE_UPGRADE";
+    const what = upgrade ? "course upgrade payment" : bonus ? "bonus (course payment)" : "deposit";
     await sendNotice({
       log: { organizationId: organizationId, kind: "tetra_deposit_notice" },
       to,
-      subject: `${bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
+      subject: `${upgrade ? "Course payment" : bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
       title: `A Tetra Commission ${what} is waiting for approval`,
       lines: [
         `${by ? `${by} raised` : "Tetra Commission sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
         [d.coursePayment?.product, paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
-        bonus
+        upgrade
+          ? "Approving it confirms the payment towards their course upgrade; Tetra Commission then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
+          : bonus
           ? "Approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first."
           : "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
       ].filter(Boolean),
@@ -190,7 +193,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       team: input.team,
       type: input.type,
       ...(input.amountOriginal && input.amountCurrency ? { amountOriginal: input.amountOriginal, amountCurrency: input.amountCurrency } : {}),
-      ...(input.type === "BONUS" && input.coursePayment ? { coursePayment: input.coursePayment } : {}),
+      ...(input.type !== "DEPOSIT" && input.coursePayment ? { coursePayment: input.coursePayment } : {}),
       paymentMethod: input.paymentMethod,
       mt5Login: input.mt5Login,
       mt5Accounts: input.mt5Accounts,
@@ -202,7 +205,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       initiatingMentor: input.initiatingMentor,
       primaryMentor: input.primaryMentor,
       meetingMentor: input.meetingMentor,
-      events: [{ at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor, text: input.type === "BONUS" ? "Bonus raised in Tetra Commission" : "Raised in Tetra Commission" }],
+      events: [{ at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor, text: input.type === "BONUS" ? "Bonus raised in Tetra Commission" : input.type === "COURSE_UPGRADE" ? "Course upgrade payment from Tetra Commission" : "Raised in Tetra Commission" }],
     });
   } catch (error) {
     // Two deliveries of the same request racing past the lookup: the unique
@@ -383,6 +386,8 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   const org = new Types.ObjectId(auth.organizationId);
   const me = await User.findById(auth.userId).select("name email").lean();
   const byName = String(me?.name ?? "An accountant");
+  // Its own currency in the history: a course payment is in AED, a deposit in USD.
+  const current = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("currency").lean();
   const now = new Date();
   const decided = { decidedById: new Types.ObjectId(auth.userId), decidedByName: byName, decidedByEmail: String(me?.email ?? ""), decidedAt: now };
   const decision = input.decision === "approved"
@@ -398,7 +403,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
         events: {
           at: now, kind: input.decision, byName,
           text: input.decision === "approved"
-            ? `Approved at ${money(input.amountMinor, "USD")}, transaction ${input.transactionId}`
+            ? `Approved at ${money(input.amountMinor, current?.currency ?? "USD")}, transaction ${input.transactionId}`
             : `Rejected: ${input.reason}`,
         },
       },

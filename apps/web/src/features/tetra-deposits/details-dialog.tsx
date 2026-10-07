@@ -43,7 +43,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
             {deposit && <TetraDepositStatusBadge status={deposit.status} />}
             {deposit && <TetraTypeTag deposit={deposit} />}
           </DialogTitle>
-          <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from Tetra Commission." : "A deposit request from Tetra Commission."}</DialogDescription>
+          <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from Tetra Commission." : deposit?.type === "COURSE_UPGRADE" ? "A course upgrade payment from Tetra Commission." : "A deposit request from Tetra Commission."}</DialogDescription>
         </DialogHeader>
 
         {isLoading || !deposit ? (

@@ -390,6 +390,33 @@ r = await signed({
 const unreadable = await TetraDepositModel.findOne({ externalId: "e2e-unreadable-payments" }).lean() as any;
 check("a list it cannot read is dropped — never the deposit with it", r.status === 200 && !!unreadable && (unreadable.payments ?? []).length === 0, show(r));
 
+step("A course upgrade payment recorded in Tetra Commission: approved here in AED, counted there");
+const tcFn = (name: string, body: unknown) => http(`${COMMISSION}/api/functions/${name}`, "POST", body, meera);
+await tcFn("setStudentCourses", { studentId: String(student._id), courses: [{ code: "MBT", paidAed: 2250 }, { code: "DWT", paidAed: 3250 }] });
+r = await tcFn("startCourseUpgrade", { studentId: String(student._id), course: "MSNR", plan: "installments" });
+const upgradeId = r.body?.upgrade?.id;
+r = await tcFn("recordCoursePayment", { upgradeId, amountAed: 2000, method: "Card", receiptUrl: "https://files.e2e-deposit.test/course.png", paidOn: "2026-10-07" });
+const cp1 = String(r.body?.id ?? "");
+check("recorded by the CS", r.status === 200 && !!cp1, show(r));
+check("reaches the accountants", await reachesFinance(cp1));
+const crow = await inFinance(cp1);
+check("as a course upgrade in AED: 2,000, the receipt, the course and where it stands",
+  crow?.type === "COURSE_UPGRADE" && crow.amountMinor === 200000 && crow.currency === "AED" && crow.screenshotUrl === "https://files.e2e-deposit.test/course.png"
+    && crow.coursePayment?.product === "MSNR" && crow.coursePayment?.balanceAed === 10000 && crow.status === "pending", JSON.stringify(crow).slice(0, 500));
+r = await approve(String(crow._id), { amountMinor: 200000, transactionId: "TXN-C4001", paymentMethod: "CARD PAYMENT" });
+check("approved here, and delivered", r.status === 200 && r.body?.data?.delivered === true, show(r));
+const cpay = await tc.db!.collection("course_payments").findOne({ _id: new Types.ObjectId(cp1) }) as any;
+check("there: approved at AED 2,000 with the transaction", cpay?.status === "approved" && cpay.approved_amount_aed === 2000 && cpay.transaction_id === "TXN-C4001", JSON.stringify(cpay).slice(0, 300));
+r = await tcFn("getStudentCourses", { studentId: String(student._id) });
+check("…counted: 2,000 paid, one step, 10,000 left", r.body?.active?.progress?.paidAed === 2000 && r.body.active.progress.bonusEarnedUsd === 500 && r.body.active.progress.balanceAed === 10000, show(r));
+check("no deposit or commission made of it there", !(await txOf(cp1)) && (await tc.db!.collection("commission_credits").countDocuments({ transaction_id: cp1 })) === 0);
+r = await tcFn("recordCoursePayment", { upgradeId, amountAed: 2000, method: "Cash", receiptUrl: "https://files.e2e-deposit.test/c2.png" });
+const cp2 = String(r.body?.id ?? "");
+check("a second reaches the accountants", await reachesFinance(cp2));
+r = await decide(String((await inFinance(cp2))._id), { decision: "rejected", reason: "No such payment on the statement" });
+check("rejected here: rejected there, with the reason", r.status === 200
+  && await until(async () => ((await tc.db!.collection("course_payments").findOne({ _id: new Types.ObjectId(cp2) })) as any)?.reason === "No such payment on the statement"), show(r));
+
 gate.stop(true);
 await tc.close();
 await mongoose.disconnect();

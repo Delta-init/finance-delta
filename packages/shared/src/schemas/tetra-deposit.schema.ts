@@ -23,7 +23,13 @@ import { listQuerySchema } from "./query.schema";
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
 const optionalAmount = z.number().finite().nullable().optional().default(null);
 
-export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS"]);
+/**
+ * DEPOSIT and BONUS are funding requests. COURSE_UPGRADE (2026-10-07) is one
+ * payment towards a student's CSE course upgrade, in AED, with its receipt:
+ * approving it confirms the money; Tetra Commission then counts it towards the
+ * course and raises the MT5 bonus it earns.
+ */
+export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS", "COURSE_UPGRADE"]);
 export type TetraDepositType = z.infer<typeof tetraDepositTypeSchema>;
 
 /** A bonus's course payment, as Tetra Commission worked it out at the request (amounts in AED, the bonus in USD). */

@@ -14,7 +14,7 @@ const tetraDepositSchema = new Schema({
   externalId: { type: String, required: true },
   status: { type: String, enum: ["pending", "approved", "rejected", "closed"], default: "pending", index: true },
   /** A deposit, or a bonus — a course payment, whose approval here is the first of two (@delta/shared). */
-  type: { type: String, enum: ["DEPOSIT", "BONUS"], default: "DEPOSIT", index: true },
+  type: { type: String, enum: ["DEPOSIT", "BONUS", "COURSE_UPGRADE"], default: "DEPOSIT", index: true },
   /** The amount as typed in Tetra Commission, when another currency (AED). */
   amountOriginal: { type: Number },
   amountCurrency: { type: String, uppercase: true },

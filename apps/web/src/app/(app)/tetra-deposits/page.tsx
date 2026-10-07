@@ -45,7 +45,7 @@ const methodOf = (d: TetraDeposit) =>
 
 const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Requested", value: (d) => formatWhen(d.requestedAt) },
-  { header: "Type", value: (d) => (d.type === "BONUS" ? "Bonus" : "Deposit") },
+  { header: "Type", value: (d) => (d.type === "BONUS" ? "Bonus" : d.type === "COURSE_UPGRADE" ? "Course payment" : "Deposit") },
   { header: "Student", value: (d) => d.student.name },
   { header: "Student code", value: (d) => d.student.code },
   { header: "Student email", value: (d) => d.student.email },

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import NextTopLoader from "nextjs-toploader";
 import { Providers } from "@/providers";
+import { PwaRegister } from "@/components/PwaRegister";
 
 export const metadata: Metadata = {
   title: "Delta Finance",
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             easing="ease"
             speed={200} />
         <Providers>{children}</Providers>
+        <PwaRegister />
       </body>
     </html>
   );

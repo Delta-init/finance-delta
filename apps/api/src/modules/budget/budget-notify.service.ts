@@ -82,6 +82,7 @@ export async function notifyFundRequestWaiting(
     const from = SOURCE_LABELS[request.source] ?? (request.source === "finance" ? "" : request.source);
     const drawdown = request.kind === "drawdown";
     await sendNotice({
+      log: { organizationId, kind: "fund_request_notice" },
       to,
       subject: `Fund request: ${request.title}`,
       title: "A fund request is waiting for approval",

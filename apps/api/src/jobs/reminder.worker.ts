@@ -79,7 +79,10 @@ export async function startReminderWorker(): Promise<void> {
         return;
       }
 
-      const { error } = await sendReminderEmail({ to: customerEmail, ...rest });
+      const { error } = await sendReminderEmail({
+        to: customerEmail, ...rest,
+        log: { organizationId: job.data.orgId, kind: "reminder", ref: { type: "invoice", id: job.data.invoiceId, label: job.data.invoiceNumber } },
+      });
       // Said plainly either way: a reminder that did not go is the kind of
       // thing that is only noticed when somebody asks why nobody was chased.
       if (error) {

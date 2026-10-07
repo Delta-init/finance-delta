@@ -47,6 +47,7 @@ export async function notifyDecided(
     const approved = outcome === "approved";
     const course = doc.enrolment?.course ?? "";
     await sendNotice({
+      log: { organizationId: String(doc.organizationId), kind: "approval_notice", ref: { type: "invoice", id: String(doc._id), label: doc.invoiceNumber } },
       to: [to.email],
       subject: approved
         ? `${doc.invoiceNumber} approved`
@@ -118,6 +119,7 @@ export async function notifyApprovers(doc: InvoiceDoc): Promise<void> {
 
     const course = doc.enrolment?.course ?? "";
     await sendNotice({
+      log: { organizationId: String(doc.organizationId), kind: "approval_notice", ref: { type: "invoice", id: String(doc._id), label: doc.invoiceNumber } },
       to,
       subject: `${doc.invoiceNumber} needs approval`,
       title: "An invoice is waiting for you",

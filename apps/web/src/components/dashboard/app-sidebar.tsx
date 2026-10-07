@@ -29,7 +29,7 @@ import {
   WalletCards,
   ClipboardCheck,
   Coins,
-  type LucideIcon,
+  type LucideIcon, MailCheck
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
@@ -141,6 +141,8 @@ const NAV: NavGroup[] = [
       { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
       { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
       { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
+      // Every email finance tried to send, and whether it went (admins and accountants).
+      { href: "/email-log", label: "Email Log", icon: MailCheck, enabled: true, permission: "ledger:write" },
       // A tin is a bank account underneath, and finding it meant knowing that.
       // The people who keep one do not think of it as a bank account.
       { href: "/petty-cash", label: "Petty Cash", icon: Wallet, enabled: true, permission: "banking:read" },

@@ -26,6 +26,13 @@ export const get = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.getInvoice(orgId(req), req.params.id!, readScope(req)));
 });
 
+/** Every email sent about this invoice — only for somebody who may see the invoice. */
+export const emails = asyncHandler(async (req, res) => {
+  await invoiceService.getInvoice(orgId(req), req.params.id!, readScope(req));
+  const { invoiceEmails } = await import("../email-log/email-log.service");
+  ok(res, await invoiceEmails(orgId(req), req.params.id!));
+});
+
 /** The logo its PDF is drawn with, loaded — see invoiceLogo. */
 export const logo = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.invoiceLogo(orgId(req), req.params.id!, readScope(req)));
@@ -51,7 +58,7 @@ export const restore = asyncHandler(async (req, res) => {
 });
 
 export const send = asyncHandler(async (req, res) => {
-  ok(res, await invoiceService.sendInvoice(orgId(req), req.params.id!, writeScope(req)));
+  ok(res, await invoiceService.sendInvoice(orgId(req), req.params.id!, writeScope(req), await actorOf(req)));
 });
 
 export const voidInvoice = asyncHandler(async (req, res) => {
@@ -79,7 +86,7 @@ export const deletePayment = asyncHandler(async (req, res) => {
 });
 
 export const resend = asyncHandler(async (req, res) => {
-  await invoiceService.resendInvoice(orgId(req), req.params.id!, writeScope(req), req.body?.message);
+  await invoiceService.resendInvoice(orgId(req), req.params.id!, writeScope(req), req.body?.message, await actorOf(req));
   ok(res, { queued: true });
 });
 

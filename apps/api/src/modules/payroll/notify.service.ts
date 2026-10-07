@@ -81,6 +81,7 @@ export async function notifyPayrollWaiting(
     );
 
     await sendNotice({
+      log: { organizationId: orgId, kind: "payroll_notice" },
       to,
       subject:
         batches.length === 1
@@ -116,6 +117,7 @@ export async function notifyPaymentNotSynced(
     if (!to.length) return;
 
     await sendNotice({
+      log: { organizationId: orgId, kind: "payroll_notice" },
       to,
       subject: `Action needed: ${opts.runNumber} was paid but HRMS was not told`,
       title: "A payroll payment did not reach HRMS",

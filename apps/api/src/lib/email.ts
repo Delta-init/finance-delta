@@ -3,6 +3,7 @@ import nodemailer, { type Transporter } from "nodemailer";
 import { DELTA_LOGO_EMAIL } from "@delta/shared";
 import { env } from "../config/env";
 import { logger } from "./logger";
+import type { MailLog } from "../modules/email-log/email-log.model";
 
 /**
  * How mail leaves this application.
@@ -75,11 +76,50 @@ export interface MailAttachment {
   contentType?: string;
 }
 
+/**
+ * Writes the email log entry for one attempt. Never throws and never holds the
+ * send up: a log that cannot be written must not cost anybody their email.
+ */
+export async function logEmail(log: MailLog | undefined, entry: { to: string[]; subject: string; result: SendResult }): Promise<void> {
+  try {
+    const { EmailLog } = await import("../modules/email-log/email-log.model");
+    const err = entry.result.error;
+    const state = !err ? "sent" : err === "no_recipients" ? "no_address" : err === "not_configured" ? "not_configured" : "failed";
+    await EmailLog.create({
+      organizationId: log?.organizationId || undefined,
+      kind: log?.kind ?? "other",
+      to: entry.to,
+      subject: entry.subject,
+      state,
+      messageId: entry.result.id ?? "",
+      error: state === "sent" ? "" : err ?? "",
+      ...(log?.ref ? { ref: log.ref } : {}),
+      ...(log?.actorId ? { actorId: log.actorId } : {}),
+      actorName: log?.actorName ?? "Automatic",
+    });
+  } catch (e) {
+    logger.warn({ e }, "Could not write the email log");
+  }
+}
+
 async function deliver(opts: {
   to: string[];
   subject: string;
   html: string;
   /** Files to send with it. Both transports take them, in different shapes. */
+  attachments?: MailAttachment[];
+  /** Where this message goes in the email log. */
+  log?: MailLog;
+}): Promise<SendResult> {
+  const result = await deliverOnce(opts);
+  await logEmail(opts.log, { to: opts.to.filter((t) => t && t.trim()), subject: opts.subject, result });
+  return result;
+}
+
+async function deliverOnce(opts: {
+  to: string[];
+  subject: string;
+  html: string;
   attachments?: MailAttachment[];
 }): Promise<SendResult> {
   const recipients = [...new Set(opts.to.filter((t) => t && t.trim()))];
@@ -324,6 +364,7 @@ export async function sendNotice(opts: {
   lines: string[];
   actionLabel?: string;
   actionUrl?: string;
+  log?: MailLog;
 }): Promise<{ sent: number; skipped?: string }> {
   const recipients = [...new Set(opts.to.filter(Boolean))];
   if (!recipients.length) return { sent: 0, skipped: "no_recipients" };
@@ -334,7 +375,7 @@ export async function sendNotice(opts: {
   let sent = 0;
   let lastError: string | undefined;
   for (const to of recipients) {
-    const { error } = await deliver({ to: [to], subject: opts.subject, html });
+    const { error } = await deliver({ to: [to], subject: opts.subject, html, log: opts.log ?? { kind: "notice" } });
     if (error) lastError = error;
     else sent++;
   }
@@ -357,12 +398,14 @@ export async function sendInvoiceEmail(opts: {
    * most of the way to sending nothing.
    */
   attachments?: MailAttachment[];
+  log?: MailLog;
 }): Promise<SendResult> {
   return deliver({
     to: [opts.to],
     subject: `Invoice ${opts.invoiceNumber} from ${opts.orgName}`,
     html: invoiceHtml({ ...opts, hasAttachment: Boolean(opts.attachments?.length) }),
     attachments: opts.attachments,
+    log: opts.log ?? { kind: "invoice" },
   });
 }
 
@@ -375,6 +418,7 @@ export async function sendReminderEmail(opts: {
   detail?: InvoiceEmailDetail;
   /** The invoice being chased, so the reader has it to hand. */
   attachments?: MailAttachment[];
+  log?: MailLog;
 }): Promise<SendResult> {
   const subjectPrefix = opts.intervalDays < 0
     ? `Upcoming payment due in ${Math.abs(opts.intervalDays)} day(s)`
@@ -384,5 +428,6 @@ export async function sendReminderEmail(opts: {
     subject: `${subjectPrefix}: Invoice ${opts.invoiceNumber}`,
     html: invoiceHtml({ ...opts, isReminder: true, hasAttachment: Boolean(opts.attachments?.length) }),
     attachments: opts.attachments,
+    log: opts.log ?? { kind: "reminder" },
   });
 }

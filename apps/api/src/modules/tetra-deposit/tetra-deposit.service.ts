@@ -143,6 +143,7 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
     const bonus = d.type === "BONUS";
     const what = bonus ? "bonus (course payment)" : "deposit";
     await sendNotice({
+      log: { organizationId: organizationId, kind: "tetra_deposit_notice" },
       to,
       subject: `${bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
       title: `A Tetra Commission ${what} is waiting for approval`,

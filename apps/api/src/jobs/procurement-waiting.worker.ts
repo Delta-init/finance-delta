@@ -70,6 +70,7 @@ export async function checkProcurementWaiting(): Promise<number> {
       const to = await withAccountants(orgId, await payrollRecipients(orgId, "expense:approve"));
       if (!to.length) continue;
       await sendNotice({
+        log: { organizationId: orgId, kind: "procurement_notice" },
         to,
         subject: rows.length === 1 ? "A purchase request is waiting for approval" : `${rows.length} purchase requests are waiting for approval`,
         title: "HR has approved a purchase request",

@@ -38,6 +38,7 @@ export async function notifyExpenseApproved(doc: ExpenseDoc, approverName: strin
     const to = await emailFor(doc.submittedById);
     if (!to) return;
     await sendNotice({
+      log: { organizationId: String(doc.organizationId), kind: "expense_notice" },
       to: [to.email],
       subject: `Expense ${doc.expenseNumber} approved`,
       title: "Your claim was approved",
@@ -68,6 +69,7 @@ export async function notifyExpenseRejected(
     const to = await emailFor(doc.submittedById);
     if (!to) return;
     await sendNotice({
+      log: { organizationId: String(doc.organizationId), kind: "expense_notice" },
       to: [to.email],
       subject: `Expense ${doc.expenseNumber} sent back`,
       title: "Your claim was sent back",
@@ -134,6 +136,7 @@ export async function notifyApproversOfSubmission(doc: ExpenseDoc): Promise<void
     }
 
     await sendNotice({
+      log: { organizationId: String(doc.organizationId), kind: "expense_notice" },
       to: recipients,
       subject: `Expense ${doc.expenseNumber} needs approval`,
       title: "A claim is waiting for you",

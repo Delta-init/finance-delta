@@ -22,6 +22,7 @@ export async function notifyBillWaiting(
     if (!to.length) return;
     const amount = `${bill.currency} ${(bill.totalMinor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     await sendNotice({
+      log: { organizationId: orgId, kind: "bill_notice", ref: { type: "bill", id: bill.id, label: bill.billNumber } },
       to,
       subject: `Bill ${bill.billNumber} needs approval`,
       title: "A bill is waiting for approval",

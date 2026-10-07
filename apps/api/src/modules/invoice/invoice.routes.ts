@@ -19,6 +19,7 @@ router.get("/", requireAnyPermission("invoice:read", "invoice:read:own"), c.list
 router.get("/summary", requireAnyPermission("invoice:read", "invoice:read:own"), c.summary);
 router.get("/:id", requireAnyPermission("invoice:read", "invoice:read:own"), c.get);
 router.get("/:id/logo", requireAnyPermission("invoice:read", "invoice:read:own"), c.logo);
+router.get("/:id/emails", requireAnyPermission("invoice:read", "invoice:read:own"), c.emails);
 router.post("/", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(createInvoiceSchema), c.create);
 router.patch("/:id", requireAnyPermission("invoice:write", "invoice:write:own"), validateBody(updateInvoiceSchema), c.update);
 router.delete("/:id", requirePermission("invoice:write"), c.remove);

@@ -1281,6 +1281,26 @@ export async function approveInvoice(
   }
   void notifyDecided(doc, actor.name, "approved");
   void queueLmsProvision(orgId, doc);
+  // An enrolment, approved, is issued: the client gets the invoice by email and
+  // the salesperson a copy (the user, 2026-10-07). Reminders are not started by
+  // this. An invoice typed here is not issued by its approval — it still waits
+  // for Send.
+  const fromSale = Boolean(
+    (doc as unknown as { external?: { source?: string } }).external?.source
+      || (doc as unknown as { enrolment?: { course?: string } }).enrolment?.course,
+  );
+  if (fromSale) {
+    const issue: Record<string, unknown> = {};
+    if (!doc.sentAt) issue.sentAt = new Date();
+    if ((doc.status as string) === "draft") issue.status = "sent";
+    if (Object.keys(issue).length) {
+      await Invoice.updateOne({ _id: doc._id }, { $set: issue });
+      doc.set(issue);
+    }
+    void _dispatchInvoiceEmail(orgId, doc as unknown as InvoiceDoc, undefined, {
+      kind: "invoice_approved", actor, salesperson: true, reminders: false,
+    });
+  }
   return toDTO(doc as unknown as InvoiceDoc);
 }
 
@@ -1447,7 +1467,7 @@ function assertApproved(doc: unknown): void {
   );
 }
 
-export async function sendInvoice(orgId: string, id: string, scope: Scope): Promise<InvoiceDTO> {
+export async function sendInvoice(orgId: string, id: string, scope: Scope, actor?: { userId: string; name: string }): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
   const eff = effectiveStatus(doc);
@@ -1463,7 +1483,7 @@ export async function sendInvoice(orgId: string, id: string, scope: Scope): Prom
   doc.status = "sent";
   doc.sentAt = new Date();
   await doc.save();
-  void _dispatchInvoiceEmail(orgId, doc, undefined);
+  void _dispatchInvoiceEmail(orgId, doc, undefined, { kind: "invoice", actor });
   void _deductInventory(orgId, doc);
   return toDTO(doc);
 }
@@ -1484,10 +1504,11 @@ export async function resendInvoice(
   id: string,
   scope: Scope,
   message?: string,
+  actor?: { userId: string; name: string },
 ): Promise<void> {
   const doc = await findDoc(orgId, id);
   assertOwned(scope, doc.salespersonId, "Invoice");
-  void _dispatchInvoiceEmail(orgId, doc, message);
+  void _dispatchInvoiceEmail(orgId, doc, message, { kind: "invoice_resend", actor });
 }
 
 /** Record what became of an attempt, so the invoice stops claiming it was sent. */
@@ -1509,20 +1530,30 @@ async function _recordDelivery(
   }).catch(() => {});
 }
 
-async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: string) {
+interface DispatchOpts {
+  /** For the email log: invoice (Send), invoice_resend, invoice_approved. */
+  kind?: string;
+  actor?: { userId: string; name: string };
+  /** Also send the salesperson a copy (on approval). */
+  salesperson?: boolean;
+  /** Start payment reminders once the client has it. Not on approval: an enrolment's balance is not chased by email unless somebody decides it is. */
+  reminders?: boolean;
+}
+
+async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: string, opts: DispatchOpts = {}) {
+  const kind = opts.kind ?? "invoice";
+  const log = (k: string) => ({
+    organizationId: orgId,
+    kind: k,
+    ref: { type: "invoice", id: String(doc._id), label: doc.invoiceNumber },
+    ...(opts.actor ? { actorId: opts.actor.userId, actorName: opts.actor.name } : {}),
+  });
   try {
     const [customer, org] = await Promise.all([
       Customer.findById(doc.customerId),
       Organization.findById(orgId),
     ]);
-    // A customer with no address is the commonest reason an invoice was never
-    // emailed, and it used to leave no trace at all.
-    if (!customer?.email) {
-      await _recordDelivery(doc._id, "no_address", {
-        error: `${doc.customerName} has no email address on file`,
-      });
-      return;
-    }
+    const clientEmail = customer?.email ?? "";
     const orgName = org?.name ?? "Delta Finance";
     const footerText = (org?.branding as { footerText?: string })?.footerText ?? "";
     // The organization's own logo where it has set one; the email template
@@ -1586,8 +1617,54 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       ...(dto.reference ? { reference: dto.reference } : {}),
     };
 
+    const content = {
+      orgName,
+      invoiceNumber: doc.invoiceNumber,
+      customerName: doc.customerName,
+      totalFormatted,
+      dueDate: dateOnly(doc.dueDate),
+      footerText,
+      logoUrl,
+      detail,
+      attachments,
+    };
+
+    // The salesperson's copy (on approval): the CRM's own address for the
+    // closer where the enrolment came from one, else their account here.
+    if (opts.salesperson) {
+      let to = String((doc as unknown as { enrolment?: { meetingByEmail?: string } }).enrolment?.meetingByEmail ?? "");
+      if (!to && doc.salespersonId) {
+        const { User } = await import("../user/user.model");
+        to = (await User.findById(doc.salespersonId).select("email").lean())?.email ?? "";
+      }
+      to = to.trim().toLowerCase();
+      if (!to) {
+        const { logEmail } = await import("../../lib/email");
+        await logEmail(log("invoice_salesperson"), { to: [], subject: `Invoice ${doc.invoiceNumber} — salesperson's copy`, result: { error: "no_recipients" } });
+      } else if (to !== clientEmail.trim().toLowerCase()) {
+        await sendInvoiceEmail({
+          ...content,
+          to,
+          message: `Your copy: ${doc.customerName}'s enrolment was approved, and this invoice has been emailed to them.`,
+          log: log("invoice_salesperson"),
+        });
+      }
+    }
+
+    // A customer with no address is the commonest reason an invoice was never
+    // emailed, and it used to leave no trace at all.
+    if (!clientEmail) {
+      await _recordDelivery(doc._id, "no_address", {
+        error: `${doc.customerName} has no email address on file`,
+      });
+      const { logEmail } = await import("../../lib/email");
+      await logEmail(log(kind), { to: [], subject: `Invoice ${doc.invoiceNumber} from ${orgName}`, result: { error: "no_recipients" } });
+      return;
+    }
+
     const { id: emailId, error } = await sendInvoiceEmail({
-      to: customer.email,
+      log: log(kind),
+      to: clientEmail,
       orgName,
       invoiceNumber: doc.invoiceNumber,
       customerName: doc.customerName,
@@ -1607,6 +1684,7 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       return;
     }
     await _recordDelivery(doc._id, "sent", { messageId: emailId });
+    if (opts.reminders === false) return;
 
     const intervals: number[] = (org as unknown as { reminderIntervals?: number[] })?.reminderIntervals ?? [-3, 1, 7];
     await scheduleReminders({
@@ -1614,7 +1692,7 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
       orgId,
       orgName,
       footerText,
-      customerEmail: customer.email,
+      customerEmail: clientEmail,
       customerName: doc.customerName,
       invoiceNumber: doc.invoiceNumber,
       totalFormatted,

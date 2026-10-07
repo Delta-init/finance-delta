@@ -38,6 +38,7 @@ import {
 import { TagList } from "@/features/tags/TagBadge";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { InvoiceEmailsCard } from "@/features/email-log/invoice-emails-card";
 import { useInvoice, useSendInvoice, useRestoreInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
@@ -237,6 +238,9 @@ export function InvoiceDetail({ id }: { id: string }) {
           somebody pressed Send; this is whether the message actually left, and
           for a long time nothing said when it had not. */}
       <UndeliveredNotice invoice={invoice} onResend={() => setResendOpen(true)} />
+
+      {/* Every email sent about this invoice (the user, 2026-10-07). */}
+      <InvoiceEmailsCard invoiceId={id} onResend={!isDraft && invoice.status !== "void" ? () => setResendOpen(true) : undefined} />
 
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}

@@ -63,6 +63,7 @@ async function deliver(
 ): Promise<boolean> {
   const invite = purpose === "invite";
   const { sent } = await sendNotice({
+    log: { kind: invite ? "invite" : "password_reset" },
     to: [email],
     subject: invite ? "Your Delta Finance account" : "Reset your Delta Finance password",
     title: invite ? `Welcome, ${name}` : "Reset your password",

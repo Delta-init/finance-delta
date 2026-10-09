@@ -374,9 +374,9 @@ export async function intakeEnrolment(
  * Where the balance is missing the screens work it out from the fee and the
  * declared payment, as they always have.
  */
-function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { given: boolean; amountMinor: number }; declaredBalanceMinor?: number } {
+function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
   return {
-    ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor } } : {}),
+    ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor, ...(input.bonus.currency ? { currency: input.bonus.currency } : {}) } } : {}),
     ...(input.balanceMinor !== undefined ? { declaredBalanceMinor: input.balanceMinor } : {}),
   };
 }

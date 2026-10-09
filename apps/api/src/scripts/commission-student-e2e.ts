@@ -267,7 +267,7 @@ step("The course's fees go with the student, for the mentors to see");
   env.COMMISSION_API_URL = COMMISSION_URL;
   const summary = (feeMinor: number, paidMinor: number, extra: Record<string, unknown> = {}) => ({
     currency: "AED", feeMinor, paidMinor, balanceMinor: Math.max(0, feeMinor - paidMinor),
-    bonus: { given: true, amountMinor: 25_000 },
+    bonus: { given: true, amountMinor: 25_000, currency: "USD" },
     receipt: { url: "https://files.example.com/enrolment-receipts/lead-7/1-receipt.jpg", name: "receipt.jpg", mimeType: "image/jpeg" },
     ...extra,
   });
@@ -286,7 +286,7 @@ step("The course's fees go with the student, for the mentors to see");
   check("Case 1 — a new student arrives with the course's fee, what was paid and the balance",
     created?.course_fees?.length === 1 && f0?.fee_minor === 130_000 && f0?.paid_minor === 50_000 && f0?.balance_minor === 80_000 && f0?.currency === "AED",
     JSON.stringify(created?.course_fees));
-  check("...the bonus given at the close, and the receipt", f0?.bonus_given === true && f0?.bonus_minor === 25_000 &&
+  check("...the bonus given at the close, in its own currency (USD), and the receipt", f0?.bonus_given === true && f0?.bonus_minor === 25_000 && f0?.bonus_currency === "USD" &&
     f0?.receipt_url === "https://files.example.com/enrolment-receipts/lead-7/1-receipt.jpg", JSON.stringify(f0));
   check("...against the invoice and the course it paid for",
     f0?.invoice_id === String(first.invoiceId) && f0?.invoice_number === first.invoiceNumber && f0?.course === "Delta Wave Theory Trading Programme", JSON.stringify(f0));

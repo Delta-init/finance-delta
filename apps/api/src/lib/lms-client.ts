@@ -112,7 +112,8 @@ export interface EnrolmentFeeSummary {
   feeMinor: number;
   paidMinor: number;
   balanceMinor: number;
-  bonus: { given: boolean; amountMinor: number } | null;
+  /** currency: the bonus's own (USD from the CRMs), which may not be the fee's. */
+  bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
 }
 

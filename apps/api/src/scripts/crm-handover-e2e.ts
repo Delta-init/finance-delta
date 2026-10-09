@@ -549,6 +549,34 @@ async function main() {
     check("Case 2 — a caller from before the question records neither, rather than \"no\"",
       eOld?.bonus === undefined && eOld?.declaredBalanceMinor === undefined, JSON.stringify(eOld));
 
+    // The bonus in US dollars (2026-10-09): every sales CRM sends the course
+    // bonus as USD now, whatever the fee's currency — kept with its currency,
+    // shown in it, and passed on in it to the LMS and Tetra Commission.
+    const usd = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-bonus-usd", "driftone@e2e-test.com", "USD Bonus Student"),
+      bonus: { given: true, amountMinor: 50_000, currency: "usd" },
+      balanceMinor: 130_000,
+    });
+    const invUsd = await Invoice.findOne({ "external.externalId": "e2e-bonus-usd" }).lean();
+    const eUsd = invUsd?.enrolment as { bonus?: { given?: boolean; amountMinor?: number; currency?: string } } | undefined;
+    check("Case 2b — a USD bonus is kept as USD, the fee staying in the invoice's currency",
+      usd.status === 200 && eUsd?.bonus?.amountMinor === 50_000 && eUsd?.bonus?.currency === "USD" && invUsd?.currency !== "USD",
+      JSON.stringify({ bonus: eUsd?.bonus, currency: invUsd?.currency }));
+    const dtoUsd = await request("GET", `/invoices/${invUsd?._id}`, undefined, adminAuth.token);
+    check("...an approver reading it sees $500, not 500 of the fee's currency",
+      (dtoUsd.body?.data as unknown as { enrolment?: { bonus?: { currency?: string } } })?.enrolment?.bonus?.currency === "USD", show(dtoUsd));
+    const { enrolmentFeeSummary } = await import("../modules/invoice/invoice.service");
+    const sumUsd = enrolmentFeeSummary(invUsd as never);
+    const sumOld = enrolmentFeeSummary((await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean()) as never);
+    check("...and the LMS and Tetra Commission are told USD; a bonus sent without one, the invoice's currency",
+      sumUsd.bonus?.currency === "USD" && sumUsd.currency === invUsd?.currency && sumOld.bonus?.currency === sumOld.currency,
+      JSON.stringify({ usd: sumUsd.bonus, old: sumOld.bonus, cur: sumOld.currency }));
+    const badCurrency = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-bonus-cur-bad", "driftone@e2e-test.com"),
+      bonus: { given: true, amountMinor: 100, currency: "dollars" },
+    });
+    check("...a bonus currency that is not three letters is refused", badCurrency.status === 422, show(badCurrency));
+
     const yesNoAmount = await signedPost(orgId, "/api/v1/integrations/enrolments", {
       ...enrolment("e2e-bonus-bad", "driftone@e2e-test.com"),
       bonus: { given: true, amountMinor: 0 },

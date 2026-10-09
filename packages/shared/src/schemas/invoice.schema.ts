@@ -239,14 +239,19 @@ export type InvoiceApprovalState = z.infer<typeof invoiceApprovalSchema>;
  *
  * "No" is recorded as well as "yes" — a closed lead that answered the question
  * is different from one that was never asked — and a "no" carries no amount.
+ *
+ * Its currency (the user, 2026-10-09): every sales CRM now gives the course
+ * bonus in USD — it is an MT5 bonus — and says so. A CRM from before says
+ * nothing, and its bonus is in the invoice's currency, as it always was.
  */
 export const enrolmentBonusSchema = z
   .object({
     given: z.boolean(),
     amountMinor: z.number().int().min(0).default(0),
+    currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, "A currency is three letters, like USD").optional(),
   })
   .refine((b) => !b.given || b.amountMinor > 0, { message: "A bonus needs an amount", path: ["amountMinor"] })
-  .transform((b) => (b.given ? b : { given: false, amountMinor: 0 }));
+  .transform((b) => (b.given ? b : { given: false, amountMinor: 0, ...(b.currency ? { currency: b.currency } : {}) }));
 export type EnrolmentBonus = z.infer<typeof enrolmentBonusSchema>;
 
 /**

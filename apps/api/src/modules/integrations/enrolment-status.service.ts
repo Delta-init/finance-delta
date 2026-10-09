@@ -136,10 +136,10 @@ function commissionOf(p: Provision): EnrolmentCommission {
 }
 
 /** Whether a sales close promised a bonus — and how much — as the CRM said at the close. */
-function promisedBonus(i: { enrolment?: unknown }): { given: boolean; amountMinor: number } | null {
-  const b = (i.enrolment as { bonus?: { given?: boolean; amountMinor?: number } } | undefined)?.bonus;
+function promisedBonus(i: { enrolment?: unknown; currency?: unknown }): { given: boolean; amountMinor: number; currency: string } | null {
+  const b = (i.enrolment as { bonus?: { given?: boolean; amountMinor?: number; currency?: string } } | undefined)?.bonus;
   if (!b || typeof b.given !== "boolean") return null;
-  return { given: b.given, amountMinor: Number(b.amountMinor) || 0 };
+  return { given: b.given, amountMinor: Number(b.amountMinor) || 0, currency: b.currency || String(i.currency || "AED") };
 }
 
 /**
@@ -148,7 +148,7 @@ function promisedBonus(i: { enrolment?: unknown }): { given: boolean; amountMino
  * claimed). This invoice's bonus by our invoice id; none to find, and none
  * promised at the close, is "none": nothing for a broker admin to approve.
  */
-function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolment?: unknown }): Pick<EnrolmentCommission, "onboarded" | "bonus"> {
+function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolment?: unknown; currency?: unknown }): Pick<EnrolmentCommission, "onboarded" | "bonus"> {
   if (typeof there.onboarded !== "boolean") return {};
   const onboarded = {
     done: there.onboarded,
@@ -171,7 +171,7 @@ function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolme
     bonus = { state: "none" };
   } else {
     // Promised here, but Tetra Commission has no such bonus on record for this invoice.
-    bonus = { state: "unknown", amount: promised.amountMinor / 100 };
+    bonus = { state: "unknown", amount: promised.amountMinor / 100, currency: promised.currency };
   }
   return { onboarded, bonus };
 }

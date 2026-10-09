@@ -115,7 +115,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           {e.bonus ? (
             <Detail
               label="Bonus"
-              value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, invoice.currency)}` : "No"}
+              value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, e.bonus.currency ?? invoice.currency)}` : "No"}
             />
           ) : null}
         </div>

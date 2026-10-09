@@ -156,7 +156,7 @@ export function EnrolmentDetailsDialog({
             {e?.bonus ? (
               <Row
                 label="Bonus (not in the fee or balance)"
-                value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, invoice.currency)}` : "No"}
+                value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, e.bonus.currency ?? invoice.currency)}` : "No"}
               />
             ) : null}
           </Section>

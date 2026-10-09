@@ -162,7 +162,8 @@ const invoiceSchema = new Schema(
               only — never a line, never taxed, never part of the balance. */
           bonus: {
             type: new Schema(
-              { given: { type: Boolean, default: false }, amountMinor: { type: Number, default: 0 } },
+              // currency: the bonus's own (USD from the CRMs since 2026-10-09); absent — the invoice's.
+              { given: { type: Boolean, default: false }, amountMinor: { type: Number, default: 0 }, currency: { type: String } },
               { _id: false },
             ),
             default: undefined,

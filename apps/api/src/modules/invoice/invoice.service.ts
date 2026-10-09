@@ -54,10 +54,10 @@ function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
 
 /** The bonus and the declared balance, where the enrolment recorded them — absent, not zero, where it did not. */
-function enrolmentBonusDTO(enrolment: unknown): { bonus?: { given: boolean; amountMinor: number }; declaredBalanceMinor?: number } {
-  const e = enrolment as { bonus?: { given?: boolean; amountMinor?: number } | null; declaredBalanceMinor?: number | null };
+function enrolmentBonusDTO(enrolment: unknown): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
+  const e = enrolment as { bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null; declaredBalanceMinor?: number | null };
   return {
-    ...(e.bonus ? { bonus: { given: Boolean(e.bonus.given), amountMinor: e.bonus.amountMinor ?? 0 } } : {}),
+    ...(e.bonus ? { bonus: { given: Boolean(e.bonus.given), amountMinor: e.bonus.amountMinor ?? 0, ...(e.bonus.currency ? { currency: e.bonus.currency } : {}) } } : {}),
     ...(typeof e.declaredBalanceMinor === "number" ? { declaredBalanceMinor: e.declaredBalanceMinor } : {}),
   };
 }
@@ -875,14 +875,15 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
   feeMinor: number;
   paidMinor: number;
   balanceMinor: number;
-  bonus: { given: boolean; amountMinor: number } | null;
+  /** currency: the bonus's own — USD from the CRMs since 2026-10-09, else the invoice's. */
+  bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
 } {
   const d = doc as unknown as {
     currency?: string;
     totalMinor?: number;
     amountPaidMinor?: number;
-    enrolment?: { declaredPaidMinor?: number; bonus?: { given?: boolean; amountMinor?: number } | null };
+    enrolment?: { declaredPaidMinor?: number; bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null };
     attachments?: { name?: string; url?: string; key?: string; mimeType?: string }[];
   };
   const fee = d.totalMinor ?? 0;
@@ -896,7 +897,7 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
     feeMinor: fee,
     paidMinor: paid,
     balanceMinor: Math.max(0, fee - paid),
-    bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0 } : null,
+    bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0, currency: bonus.currency ?? d.currency ?? "AED" } : null,
     receipt: receipt ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) } : null,
   };
 }

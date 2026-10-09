@@ -617,6 +617,41 @@ async function main() {
       JSON.stringify(after?.extraCourses?.map((e) => [e.slug, e.accessSent])));
   }
 
+  step("The Banglore CRM: to the LMS as a Bangalore student, never to Tetra Commission");
+  {
+    const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
+    const { env } = await import("../config/env");
+    const blrOrg = await lms.db!.collection("organizations").insertOne({
+      name: "Delta Bangalore", slug: "bangalore", currency: "INR", createdAt: new Date(), updatedAt: new Date(),
+    });
+    const saved = { url: env.COMMISSION_API_URL, secret: env.COMMISSION_S2S_SECRET };
+    env.COMMISSION_API_URL = "http://127.0.0.1:1";
+    env.COMMISSION_S2S_SECRET = "e2e-not-sent";
+    const blr = await intakeEnrolment(orgId, {
+      externalId: "blr-1", source: "crm", crm: "banglore",
+      customer: { name: "Kiran Blr", email: "kiran.blr@e2e-test.com", phone: "+919800000002" },
+      course: { name: "Market Break out", itemId: String(mapped._id), amountMinor: 130_000 },
+      enrolledOn: today, declaredPaidMinor: 0, modeOfStudy: "online", language: "English",
+    } as never);
+    await post(`/invoices/${blr.invoiceId}/approval/approve`, undefined, token);
+    await settle();
+    const queued = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(blr.invoiceId) }).lean();
+    check("a Banglore close is queued for the LMS, carrying crm \"banglore\"",
+      queued?.status === "pending" && (queued?.payload as { crm?: string })?.crm === "banglore", JSON.stringify({ s: queued?.status, crm: (queued?.payload as { crm?: string })?.crm }));
+    await drainLmsProvisions();
+    env.COMMISSION_API_URL = saved.url;
+    env.COMMISSION_S2S_SECRET = saved.secret;
+    const sent = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(blr.invoiceId) }).lean();
+    check("...taken by the LMS, on its Forex course, and passed over for Tetra Commission",
+      sent?.status === "sent" && sent?.lmsCourseProgram === "4x-trading" && sent?.commission?.state === "skipped" && /Banglore/.test(sent?.commission?.reason ?? ""),
+      JSON.stringify({ s: sent?.status, c: sent?.commission }));
+    const u = await lms.db!.collection("users").findOne({ email: "kiran.blr@e2e-test.com" });
+    check("...a new LMS student in the Bangalore organisation, though Dubai runs the course",
+      String(u?.organizationId) === String(blrOrg.insertedId), String(u?.organizationId));
+    const e = u ? await lms.db!.collection("enrollments").findOne({ userId: u._id }) : null;
+    check("...the enrolment tagged the Banglore CRM", e?.salesCrm === "banglore", JSON.stringify(e?.salesCrm));
+  }
+
   await lms.close();
   await mongoose.disconnect();
   console.log("");

@@ -138,6 +138,8 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
       email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
       courseSlug: opts.courseSlug ?? "delta-wave-theory", invoiceId: String(invoiceId), invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
       amount: 4500, paymentStatus: "partial",
+      // The CRM tag, as the approval snapshots it into what is sent.
+      ...(opts.crm ? { crm: opts.crm } : {}),
       // The money at approval, as Tetra Commission is told it — with the bonus the close promised.
       ...(opts.bonus ? { feeSummary: { currency: "AED", feeMinor: 450_000, paidMinor: 200_000, balanceMinor: 250_000, bonus: opts.bonus, receipt: null } } : {}),
     },
@@ -397,6 +399,38 @@ step("Which sales CRM sold it");
     r?.sales_crm === "remote" && r?.course_fees?.[0]?.sales_crm === "remote", JSON.stringify({ crm: r?.sales_crm, fees: r?.course_fees }));
   const o = await students.findOne({ email: "older.crm@e2e-test.com" }) as any;
   check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
+}
+
+step("The Banglore CRM's students never go to Tetra Commission");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const before = await students.countDocuments();
+  // Sharing Delta's "crm" source, on a Forex course: everything that would send anybody else.
+  const blr = await enrol("banglore.forex@e2e-test.com", { crm: "banglore", source: "crm" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const b = await row(blr._id);
+  check("Case 1 — a Banglore Forex close: in the LMS, passed over for Tetra Commission, and says why",
+    b.status === "sent" && b.lmsCourseProgram === "4x-trading" && b.commission?.state === "skipped" && /Banglore CRM/.test(b.commission?.reason ?? "")
+      && !(await students.findOne({ email: "banglore.forex@e2e-test.com" })), JSON.stringify(b.commission));
+
+  const bundle = await enrol("banglore.bundle@e2e-test.com", { crm: "banglore", source: "crm", courseSlug: "digital-marketing", extra: ["delta-wave-theory"] });
+  await drainLmsProvisions();
+  await drainLmsExtraCourses();
+  await drainCommissionStudents();
+  const bb = await row(bundle._id);
+  check("Case 2 — a Forex course second on a Banglore close does not send them either",
+    bb.commission?.state === "skipped" && !(await students.findOne({ email: "banglore.bundle@e2e-test.com" })), JSON.stringify(bb.commission));
+
+  // Queued without the tag in what is sent (the invoice tagged since), already waiting for Tetra Commission.
+  const late = await enrol("banglore.late@e2e-test.com", { source: "crm" });
+  await mongoose.connection.db!.collection("invoices").updateOne({ _id: late.invoiceId }, { $set: { "enrolment.crm": "banglore" } });
+  await LmsProvision.updateOne({ _id: late._id }, { $set: { status: "sent", sentAt: new Date(), lmsUserId: "x", "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() } });
+  await drainCommissionStudents();
+  const lr = await row(late._id);
+  check("Case 3 — tagged Banglore on the invoice when it is about to be sent: not sent, passed over",
+    lr.commission?.state === "skipped" && !(await students.findOne({ email: "banglore.late@e2e-test.com" })), JSON.stringify(lr.commission));
+  check("...and nobody new in Tetra Commission at all", (await students.countDocuments()) === before);
 }
 
 step("Who closed it");

@@ -149,16 +149,26 @@ export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
 
 /**
  * The sales CRM an enrolment was sold in, by the codes the Root portal gives
- * them: Delta's Sales CRM, the Remote CRM, Draw. Shown as a tag on the
- * enrolment here, and passed on with it to the LMS and Tetra Commission.
+ * them: Delta's Sales CRM, the Remote CRM, Draw, and the Banglore CRM. Shown
+ * as a tag on the enrolment here, and passed on with it to the LMS and Tetra
+ * Commission — except the Banglore CRM's, which a different team looks after:
+ * those never go to Tetra Commission (see NO_COMMISSION_CRMS).
  */
-export const ENROLMENT_CRMS = ["delta", "remote", "draw"] as const;
+export const ENROLMENT_CRMS = ["delta", "remote", "draw", "banglore"] as const;
 export type EnrolmentCrm = (typeof ENROLMENT_CRMS)[number];
 export const ENROLMENT_CRM_LABELS: Record<EnrolmentCrm, string> = {
   delta: "Sales CRM",
   remote: "Remote CRM",
   draw: "Draw",
+  banglore: "Banglore CRM",
 };
+
+/**
+ * Sales CRMs whose students are never sent to Tetra Commission: the Banglore
+ * CRM's are looked after by a different team. Their enrolments still reach the
+ * LMS, as Bangalore students there.
+ */
+export const NO_COMMISSION_CRMS: ReadonlySet<string> = new Set<EnrolmentCrm>(["banglore"]);
 
 /**
  * Which CRM an enrolment came from: what the CRM said, or — for one from
@@ -170,6 +180,7 @@ export const ENROLMENT_CRM_LABELS: Record<EnrolmentCrm, string> = {
 export function enrolmentCrm(crm: string | null | undefined, source: string | null | undefined): EnrolmentCrm | null {
   if (crm && (ENROLMENT_CRMS as readonly string[]).includes(crm)) return crm as EnrolmentCrm;
   if (source === "draw-crm") return "draw";
+  if (source === "banglore-crm") return "banglore";
   if (source === "crm") return "delta";
   return null;
 }

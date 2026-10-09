@@ -1,4 +1,4 @@
-import { enrolmentCrm, type EnrolmentCrm } from "@delta/shared";
+import { enrolmentCrm, NO_COMMISSION_CRMS, type EnrolmentCrm } from "@delta/shared";
 import { logger } from "../lib/logger";
 import {
   lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus, type EnrolmentFeeSummary,
@@ -36,6 +36,16 @@ const BATCH = 20;
  */
 const COMMISSION_SOURCES = new Set(["crm", "draw-crm"]);
 const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(source ?? "crm"));
+
+/**
+ * Never the Banglore CRM's students, whatever their course: a different team
+ * looks after them (2026-10-09). They share the "crm" source with Delta's, so
+ * this goes by the CRM tag the payload carries — and, for safety, the tag on
+ * the invoice again right before anything is sent.
+ */
+const NOT_FOR_COMMISSION_REASON = "Banglore CRM student — looked after by a different team, not Tetra Commission";
+const payloadCrm = (payload: unknown) => (payload as { crm?: string } | undefined)?.crm;
+const excludedCrm = (crm: unknown) => typeof crm === "string" && NO_COMMISSION_CRMS.has(crm);
 
 /**
  * And only Forex students: Tetra Commission is the trading side's. The LMS
@@ -85,7 +95,9 @@ export async function drainLmsProvisions(): Promise<number> {
         // Forex. New students only: one the LMS took before this, or while it
         // was off, is never sent. One on another programme is marked, with why.
         ...(commissionConfigured() && !row.commission?.state && sendsToCommission(row.source)
-          ? isForex(result.courseProgram)
+          ? excludedCrm(payloadCrm(row.payload))
+            ? { "commission.state": "skipped", "commission.reason": NOT_FOR_COMMISSION_REASON }
+            : isForex(result.courseProgram)
             ? { "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() }
             : { "commission.state": "skipped", "commission.reason": notForex(result.courseProgram) }
           : {}),
@@ -175,9 +187,9 @@ export async function drainLmsExtraCourses(): Promise<number> {
         // A Forex course after a first that was not: a Forex student after all,
         // sent under this course. Only one passed over for its programme —
         // never one from before Tetra Commission was switched on.
-        if (commissionConfigured() && isForex(result.courseProgram)) {
+        if (commissionConfigured() && isForex(result.courseProgram) && !excludedCrm(payloadCrm(row.payload))) {
           await LmsProvision.updateOne(
-            { _id: row._id, "commission.state": "skipped" },
+            { _id: row._id, "commission.state": "skipped", "payload.crm": { $nin: [...NO_COMMISSION_CRMS] } },
             {
               $set: { "commission.state": "pending", "commission.course": result.courseTitle, "commission.attempts": 0, "commission.nextAttemptAt": new Date() },
               $unset: { "commission.reason": 1 },
@@ -279,6 +291,7 @@ export async function drainCommissionStudents(): Promise<number> {
   const due = await LmsProvision.find({
     status: "sent",
     "commission.state": "pending",
+    "payload.crm": { $nin: [...NO_COMMISSION_CRMS] },
     $or: [{ "commission.nextAttemptAt": { $lte: new Date() } }, { "commission.nextAttemptAt": null }],
   })
     .sort({ sentAt: 1 })
@@ -292,6 +305,14 @@ export async function drainCommissionStudents(): Promise<number> {
     try {
       const language = await enrolmentLanguage(row.invoiceId);
       const crm = await enrolmentSaleCrm(row.invoiceId);
+      if (excludedCrm(crm)) {
+        // Tagged Banglore on the invoice since it was queued: never sent.
+        await LmsProvision.updateOne(
+          { _id: row._id, "commission.state": "pending" },
+          { $set: { "commission.state": "skipped", "commission.reason": NOT_FOR_COMMISSION_REASON }, $unset: { "commission.nextAttemptAt": 1 } },
+        );
+        continue;
+      }
       const closedBy = await enrolmentCloser(row.invoiceId, crm);
       const result = await sendStudentToCommission({
         invoiceId: String(row.invoiceId),

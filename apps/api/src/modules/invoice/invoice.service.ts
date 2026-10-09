@@ -940,8 +940,12 @@ export async function syncLmsAccess(doc: InvoiceDoc): Promise<void> {
   }
 }
 
-/** The systems whose enrolments reach the LMS: Delta's sales CRM and Draw's. */
-const LMS_SOURCES = new Set(["crm", "draw-crm"]);
+/**
+ * The systems whose enrolments reach the LMS: Delta's sales CRM (and the CRMs
+ * copied from it, which share "crm"), Draw's, and the Banglore CRM's should it
+ * name itself "banglore-crm".
+ */
+const LMS_SOURCES = new Set(["crm", "draw-crm", "banglore-crm"]);
 
 /**
  * The LMS courses an approved enrolment opens, in order and each once.

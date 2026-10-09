@@ -60,7 +60,7 @@ export async function sendStudentToCommission(input: {
   course?: string;
   /** The language they study in, as the sales CRM asked it at the close: English, Malayalam, Hindi/Urdu or Tamil. */
   language?: string;
-  /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM) or "draw". */
+  /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM) or "draw" — never "banglore", whose students are not sent here. */
   crm?: string;
   /** Who closed it: the sales CRM's rep, by their email there — on the student there, for their Sales account. */
   closedBy?: { email: string; name: string; crm: string };

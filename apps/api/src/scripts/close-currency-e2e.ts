@@ -211,6 +211,54 @@ async function main() {
   got = await request("GET", `/invoices/${idOf(r)}`);
   check("the invoice, original and all, needs a sign-in: 401", got.status === 401, show(got));
 
+  step("Case 5 — the Banglore CRM closes into an INR organisation (Bangalore)");
+  {
+    const blr = await Organization.create({
+      name: "Bangalore E2E",
+      baseCurrency: "INR",
+      taxRates: [{ label: "GST 18%", code: "GST", rate: 18, isDefault: true, appliesTo: "sales" }],
+    });
+    const blrId = String(blr._id);
+    for (const def of SYSTEM_ROLES) {
+      await Role.create({ organizationId: blr._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });
+    }
+    const bRoles = await Role.find({ organizationId: blr._id }).lean();
+    const bRole = (key: string) => new Types.ObjectId(String(bRoles.find((x) => x.key === key)!._id));
+    await User.create({ name: "Blr Approver", email: "blr.approver@e2e-test.com", passwordHash, status: "active", memberships: [{ organizationId: blr._id, roleId: bRole("admin"), status: "active" }] });
+    await User.create({ name: "Ravi Sales", email: "ravi@e2e-test.com", passwordHash, status: "active", memberships: [{ organizationId: blr._id, roleId: bRole("salesperson"), status: "active" }] });
+    const tBlr = await login("blr.approver@e2e-test.com");
+    // INR 1,50,000 fee; INR 1,00,000 paid by UPI-style transfer + INR 20,000 cash, in rupees, no conversion.
+    const sent = await signedPost(blrId, "/api/v1/integrations/enrolments", {
+      externalId: "blr-1", source: "crm", crm: "banglore",
+      customer: { name: "Blr Client", email: "blr.client@e2e-test.com", phone: "+919800000001" },
+      course: { name: "Trading Course", amountMinor: 15_000_000 },
+      modeOfStudy: "online", language: "Kannada", salespersonEmail: "ravi@e2e-test.com", salespersonName: "Ravi Sales",
+      declaredPaidMinor: 12_000_000, declaredPaymentMethod: "bank_transfer", balanceMinor: 3_000_000,
+      payments: [
+        { method: "bank_transfer", amountMinor: 10_000_000, paidOn: "2026-10-09", receipt: receipt("blr-a") },
+        { method: "cash", amountMinor: 2_000_000, paidOn: "2026-10-09", receipt: receipt("blr-b") },
+      ],
+    });
+    check("taken in", sent.status < 300, show(sent));
+    let d = await invoiceOf(sent);
+    check("the invoice is in INR, at a rate of 1 to the organisation's own", d?.currency === "INR" && d?.exchangeRate === 1, `${d?.currency} @ ${d?.exchangeRate}`);
+    check("…for the INR 1,50,000 sent, unconverted", d?.totalMinor === 15_000_000, String(d?.totalMinor));
+    check("…the customer is billed in INR too", (await mongoose.connection.db!.collection("customers").findOne({ _id: d?.customerId }))?.currency === "INR");
+    check("…tagged the Banglore CRM", d?.enrolment?.crm === "banglore", d?.enrolment?.crm);
+    check("…its payments carry no conversion", (d?.enrolment?.declaredPayments ?? []).every((p: any) => p.original === undefined), JSON.stringify(d?.enrolment?.declaredPayments));
+    const list = await request("GET", "/approvals/list", undefined, tBlr);
+    const rowB = (list.body?.data ?? []).find((x: any) => x.id === String(d?._id));
+    check("on Approvals: shown as the Banglore CRM's, in INR", rowB?.crm === "banglore" && rowB?.currency === "INR" && rowB?.feeMinor === 15_000_000 && rowB?.amountMinor === 12_000_000, JSON.stringify(rowB ?? list.body).slice(0, 300));
+    const ok = await request("POST", `/invoices/${String(d?._id)}/approval/approve`, undefined, tBlr);
+    check("approved", ok.status === 200, show(ok));
+    d = await Invoice.findById(d?._id).lean() as any;
+    check("…both payments recorded in INR, as sent; INR 30,000 still due",
+      (d?.payments ?? []).map((p: any) => `${p.method}:${p.amountMinor}`).join(",") === "bank_transfer:10000000,cash:2000000" && d?.balanceMinor === 3_000_000 && d?.status === "partial",
+      JSON.stringify({ p: d?.payments, b: d?.balanceMinor, s: d?.status }));
+    const other = await request("GET", `/invoices/${String(d?._id)}`, undefined, tApprover);
+    check("the AED organisation's approver cannot see it", other.status === 404 || other.status === 403, show(other));
+  }
+
   await mongoose.disconnect();
   console.log(`\n${checks - failures}/${checks} checks passed`);
   process.exit(failures ? 1 : 0);

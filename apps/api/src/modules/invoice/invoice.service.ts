@@ -6,6 +6,7 @@ import {
   toBaseMinor,
   approvalBlocksSending,
   approvalBlocksEditing,
+  enrolmentAcademy,
   enrolmentCrm,
   type CreateInvoiceInput,
   type DeclaredPayment,
@@ -70,6 +71,17 @@ type StoredDeclaredPayment = {
   /** Paid in another currency and converted at the close — see declaredPaymentSchema. */
   original?: { currency: string; amountMinor: number; rate: number } | null;
 };
+
+/**
+ * The academy an enrolment was sold for: as recorded, else worked out from the
+ * CRM that sold it. Nothing for an enrolment typed here — no close chose one.
+ */
+function enrolmentAcademyDTO(doc: unknown): { academy?: "dubai" | "bangalore" } {
+  const d = doc as { enrolment?: { crm?: string; academy?: string } | null; external?: { source?: string } };
+  const crm = enrolmentCrm(d.enrolment?.crm, d.external?.source);
+  if (!crm && !d.enrolment?.academy) return {};
+  return { academy: enrolmentAcademy(d.enrolment?.academy, crm) };
+}
 
 /** Each payment declared at the close, and what the approval did with them — absent where the enrolment has none. */
 function declaredPaymentsDTO(enrolment: unknown): Pick<NonNullable<InvoiceDTO["enrolment"]>, "declaredPayments" | "declaredPaymentsOnApproval"> {
@@ -138,6 +150,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           ...enrolmentBonusDTO(doc.enrolment),
           // The CRM that sold it, worked out from the source where it never said.
           crm: enrolmentCrm((doc.enrolment as { crm?: string }).crm, (doc as { external?: { source?: string } }).external?.source) ?? undefined,
+          // The academy it was sold for — for a sales CRM's enrolment, or one that recorded it.
+          ...enrolmentAcademyDTO(doc),
         }
       : undefined,
     approval: approvalDTO(doc),
@@ -1063,6 +1077,8 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         feeSummary: enrolmentFeeSummary(doc),
         // The sales CRM that sold it, as a tag on the enrolment there too.
         ...(saleCrm ? { crm: saleCrm } : {}),
+        // The academy it was sold for: a Bangalore one is a Bangalore student there.
+        academy: enrolmentAcademy((d.enrolment as { academy?: string } | undefined)?.academy, saleCrm),
       },
       status: "pending",
       // The rest of what was sold, sent once the first has made the student.

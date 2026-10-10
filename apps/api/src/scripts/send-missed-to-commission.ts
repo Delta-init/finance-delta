@@ -11,8 +11,8 @@
  * This lists them, and with --apply marks each one "pending", exactly as the
  * worker would have: its next run sends them, Tetra Commission gives each to the
  * next team in turn, and the approvals screen follows. Only rows the worker
- * itself would have sent — a source that goes to Tetra Commission, never a
- * Banglore CRM student, and a Forex course.
+ * itself would have sent — a source that goes to Tetra Commission, never a CRM
+ * in NO_COMMISSION_CRMS (none since 2026-10-10), and a Forex course.
  *
  * Forex is known for a row the LMS named the programme on (lmsCourseProgram).
  * Older rows have no programme kept: they are listed by course, and sent only
@@ -45,7 +45,7 @@ const sinceArg = process.argv[process.argv.indexOf("--since") + 1];
 const SINCE = process.argv.includes("--since") && sinceArg ? new Date(sinceArg) : null;
 
 /* As the worker decides (jobs/lms-provision.worker.ts): whose students go, and what Forex is in the LMS. */
-const COMMISSION_SOURCES = new Set(["crm", "draw-crm"]);
+const COMMISSION_SOURCES = new Set(["crm", "draw-crm", "banglore-crm"]);
 const FOREX_PROGRAMME = "4x-trading";
 
 type Row = {

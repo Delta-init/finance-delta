@@ -151,8 +151,7 @@ export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
  * The sales CRM an enrolment was sold in, by the codes the Root portal gives
  * them: Delta's Sales CRM, the Remote CRM, Draw, and the Banglore CRM. Shown
  * as a tag on the enrolment here, and passed on with it to the LMS and Tetra
- * Commission — except the Banglore CRM's, which a different team looks after:
- * those never go to Tetra Commission (see NO_COMMISSION_CRMS).
+ * Commission — the Banglore CRM's too, since 2026-10-10 (see NO_COMMISSION_CRMS).
  */
 export const ENROLMENT_CRMS = ["delta", "remote", "draw", "banglore"] as const;
 export type EnrolmentCrm = (typeof ENROLMENT_CRMS)[number];
@@ -164,11 +163,13 @@ export const ENROLMENT_CRM_LABELS: Record<EnrolmentCrm, string> = {
 };
 
 /**
- * Sales CRMs whose students are never sent to Tetra Commission: the Banglore
- * CRM's are looked after by a different team. Their enrolments still reach the
- * LMS, as Bangalore students there.
+ * Sales CRMs whose students are never sent to Tetra Commission. Empty since
+ * 2026-10-10: the Banglore CRM's students, kept out from 2026-10-09, now go
+ * there too — to the Bangalore teams, by their academy (see ACADEMIES). Kept
+ * as the one place to name a CRM that must not be sent; the Forex-only rule
+ * applies to everybody regardless.
  */
-export const NO_COMMISSION_CRMS: ReadonlySet<string> = new Set<EnrolmentCrm>(["banglore"]);
+export const NO_COMMISSION_CRMS: ReadonlySet<string> = new Set<EnrolmentCrm>([]);
 
 /**
  * Which CRM an enrolment came from: what the CRM said, or — for one from
@@ -183,6 +184,30 @@ export function enrolmentCrm(crm: string | null | undefined, source: string | nu
   if (source === "banglore-crm") return "banglore";
   if (source === "crm") return "delta";
   return null;
+}
+
+/**
+ * The academy an enrolment was sold for, picked at the close (the user,
+ * 2026-10-10): Dubai — what every enrolment was before — or Bangalore. The
+ * Banglore CRM's are always Bangalore. Fixed per close: a correction keeps it.
+ * Shown beside the CRM tag, and passed on to the LMS (the student's academy
+ * there) and Tetra Commission (which academy's teams look after them).
+ */
+export const ACADEMIES = ["dubai", "bangalore"] as const;
+export type Academy = (typeof ACADEMIES)[number];
+export const ACADEMY_LABELS: Record<Academy, string> = {
+  dubai: "Dubai",
+  bangalore: "Bangalore",
+};
+
+/**
+ * Which academy an enrolment is for: what the close said, or — for one from
+ * before the CRMs said — Bangalore for the Banglore CRM's and Dubai for
+ * everybody else's. Pass the CRM as `enrolmentCrm` worked it out.
+ */
+export function enrolmentAcademy(academy: string | null | undefined, crm: string | null | undefined): Academy {
+  if (academy && (ACADEMIES as readonly string[]).includes(academy)) return academy as Academy;
+  return crm === "banglore" ? "bangalore" : "dubai";
 }
 
 /**
@@ -373,6 +398,12 @@ export const enrolmentInputSchema = z.object({
    * `enrolmentCrm`, which works those out from the source.
    */
   crm: z.enum(ENROLMENT_CRMS).optional(),
+  /**
+   * The academy it was sold for, as the close said — or, where it said
+   * nothing, worked out from the CRM at intake (see `enrolmentAcademy`).
+   * Absent on enrolments typed here and on those from before.
+   */
+  academy: z.enum(ACADEMIES).optional(),
   /**
    * Each payment the counsellor took at the close, when the CRM sent them one
    * by one — they add up to `declaredPaidMinor`. Absent on enrolments typed
@@ -649,6 +680,14 @@ export const inboundEnrolmentSchema = z.object({
    * part of the idempotency key, so it cannot change for what was already sent.
    */
   crm: z.enum(ENROLMENT_CRMS).optional(),
+  /**
+   * Which academy it was sold for: "dubai" or "bangalore", picked at the close
+   * (the Banglore CRM's always "bangalore"). The CRM sends a Bangalore close to
+   * the Bangalore organisation, so the invoice is in its currency. Absent from
+   * a CRM from before it was asked: the Banglore CRM's are Bangalore, the rest
+   * Dubai. Fixed per close — a resubmit cannot change it.
+   */
+  academy: z.enum(ACADEMIES).optional(),
 
   customer: z.object({
     name: z.string().min(1).max(120),

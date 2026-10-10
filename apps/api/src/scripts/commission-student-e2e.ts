@@ -107,7 +107,7 @@ let n = 0;
  * An approved CRM enrolment, queued the way the approval queues it — the invoice's other courses in `extra`, and the
  * language the close recorded on the invoice's enrolment in `language`.
  */
-async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; source?: string; externalId?: string; meetingBy?: string; meetingByEmail?: string; bonus?: { given: boolean; amountMinor: number } } = {}) {
+async function enrol(email?: string, opts: { courseSlug?: string; extra?: string[]; language?: string; crm?: string; academy?: string; source?: string; externalId?: string; meetingBy?: string; meetingByEmail?: string; bonus?: { given: boolean; amountMinor: number } } = {}) {
   n++;
   const invoiceId = new Types.ObjectId();
   const customerId = new Types.ObjectId();
@@ -115,10 +115,12 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
   await mongoose.connection.db!.collection("customers").insertOne({ _id: customerId, organizationId: orgId, customerCode: `CUST-E2E-${n}`, name: `Student ${n}`, country: "India" });
   await mongoose.connection.db!.collection("invoices").insertOne({
     _id: invoiceId, customerId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
-    ...(opts.language !== undefined || opts.crm || opts.meetingBy || opts.bonus
+    ...(opts.language !== undefined || opts.crm || opts.academy || opts.meetingBy || opts.bonus
       ? {
         enrolment: {
           ...(opts.language !== undefined ? { language: opts.language } : {}), ...(opts.crm ? { crm: opts.crm } : {}),
+          // The academy the close picked, as the intake recorded it.
+          ...(opts.academy ? { academy: opts.academy } : {}),
           // Whether the close promised a bonus, as the CRM said it.
           ...(opts.bonus ? { bonus: opts.bonus } : {}),
           // The CRM's rep, as the close kept them: their name, and their email there when it was kept.
@@ -401,26 +403,30 @@ step("Which sales CRM sold it");
   check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
 }
 
-step("The Banglore CRM's students never go to Tetra Commission");
+step("The Banglore CRM's students go to Tetra Commission now (2026-10-10), as Bangalore students");
 {
   env.COMMISSION_API_URL = COMMISSION_URL;
-  const before = await students.countDocuments();
-  // Sharing Delta's "crm" source, on a Forex course: everything that would send anybody else.
+  // The academy as Tetra Commission keeps it on the student: `academy`, or `location` on a Tetra Commission from before the name.
+  const academyOf = (st: any) => st?.academy ?? st?.location;
+  // Sharing Delta's "crm" source, on a Forex course, with nothing recorded about an academy.
   const blr = await enrol("banglore.forex@e2e-test.com", { crm: "banglore", source: "crm" });
   await drainLmsProvisions();
   await drainCommissionStudents();
   const b = await row(blr._id);
-  check("Case 1 — a Banglore Forex close: in the LMS, passed over for Tetra Commission, and says why",
-    b.status === "sent" && b.lmsCourseProgram === "4x-trading" && b.commission?.state === "skipped" && /Banglore CRM/.test(b.commission?.reason ?? "")
-      && !(await students.findOne({ email: "banglore.forex@e2e-test.com" })), JSON.stringify(b.commission));
+  const bs = await students.findOne({ email: "banglore.forex@e2e-test.com" }) as any;
+  check("Case 1 — a Banglore Forex close: in the LMS, and sent on to Tetra Commission",
+    b.status === "sent" && b.lmsCourseProgram === "4x-trading" && b.commission?.state === "sent" && !!bs, JSON.stringify(b.commission));
+  check("...tagged the Banglore CRM, a Bangalore student there", bs?.sales_crm === "banglore" && academyOf(bs) === "bangalore", JSON.stringify({ crm: bs?.sales_crm, academy: academyOf(bs) }));
+  check("...with no Bangalore team, to Open Students — never a Dubai team", b.commission?.team === undefined && bs?.assignment_status === "open_pool",
+    JSON.stringify({ team: b.commission?.team, assignment: bs?.assignment_status }));
 
   const bundle = await enrol("banglore.bundle@e2e-test.com", { crm: "banglore", source: "crm", courseSlug: "digital-marketing", extra: ["delta-wave-theory"] });
   await drainLmsProvisions();
   await drainLmsExtraCourses();
   await drainCommissionStudents();
   const bb = await row(bundle._id);
-  check("Case 2 — a Forex course second on a Banglore close does not send them either",
-    bb.commission?.state === "skipped" && !(await students.findOne({ email: "banglore.bundle@e2e-test.com" })), JSON.stringify(bb.commission));
+  check("Case 2 — a Forex course second on a Banglore close sends them too",
+    bb.commission?.state === "sent" && academyOf(await students.findOne({ email: "banglore.bundle@e2e-test.com" })) === "bangalore", JSON.stringify(bb.commission));
 
   // Queued without the tag in what is sent (the invoice tagged since), already waiting for Tetra Commission.
   const late = await enrol("banglore.late@e2e-test.com", { source: "crm" });
@@ -428,9 +434,30 @@ step("The Banglore CRM's students never go to Tetra Commission");
   await LmsProvision.updateOne({ _id: late._id }, { $set: { status: "sent", sentAt: new Date(), lmsUserId: "x", "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() } });
   await drainCommissionStudents();
   const lr = await row(late._id);
-  check("Case 3 — tagged Banglore on the invoice when it is about to be sent: not sent, passed over",
-    lr.commission?.state === "skipped" && !(await students.findOne({ email: "banglore.late@e2e-test.com" })), JSON.stringify(lr.commission));
-  check("...and nobody new in Tetra Commission at all", (await students.countDocuments()) === before);
+  check("Case 3 — tagged Banglore on the invoice when it is about to be sent: sent, as Bangalore's",
+    lr.commission?.state === "sent" && academyOf(await students.findOne({ email: "banglore.late@e2e-test.com" })) === "bangalore", JSON.stringify(lr.commission));
+}
+
+step("The academy picked at the close (2026-10-10), passed on to Tetra Commission");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const academyOf = (st: any) => st?.academy ?? st?.location;
+  const salesBlr = await enrol("sales.bangalore@e2e-test.com", { crm: "delta", academy: "bangalore", source: "crm" });
+  const remoteDxb = await enrol("remote.dubai@e2e-test.com", { crm: "remote", academy: "dubai", source: "crm" });
+  const drawSilent = await enrol("draw.silent@e2e-test.com", { crm: "draw", source: "draw-crm" });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  const sb = await students.findOne({ email: "sales.bangalore@e2e-test.com" }) as any;
+  check("Case 1 — a Sales CRM close for Bangalore: a Bangalore student, tagged the Sales CRM",
+    (await row(salesBlr._id)).commission?.state === "sent" && academyOf(sb) === "bangalore" && sb?.sales_crm === "delta", JSON.stringify({ academy: academyOf(sb), crm: sb?.sales_crm }));
+  check("...given to Open Students while no Bangalore team has a CS", sb?.assignment_status === "open_pool", JSON.stringify(sb?.assignment_status));
+  const rd = await students.findOne({ email: "remote.dubai@e2e-test.com" }) as any;
+  // (Which Dubai team is not asked here: this rig's teams have no CS, the rotation's own failures above.)
+  check("Case 2 — a Remote CRM close for Dubai: sent, a Dubai student",
+    (await row(remoteDxb._id)).commission?.state === "sent" && academyOf(rd) === "dubai", JSON.stringify({ academy: academyOf(rd), c: (await row(remoteDxb._id)).commission }));
+  const ds = await students.findOne({ email: "draw.silent@e2e-test.com" }) as any;
+  check("Case 3 — a Draw close from before academies were kept: Dubai's", academyOf(ds) === "dubai" && (await row(drawSilent._id)).commission?.state === "sent",
+    JSON.stringify({ academy: academyOf(ds), c: (await row(drawSilent._id)).commission }));
 }
 
 step("Who closed it");

@@ -299,7 +299,7 @@ async function main() {
   await provision(in8, { status: "sent", studentCreated: true, source: "draw-crm" });
   // Which sales CRM sold them: one that said (the Remote CRM), one that only has
   // the Sales CRM's source, one from Draw by its source; IN-9 was typed here.
-  await Invoice.collection.updateOne({ _id: in5 }, { $set: { "enrolment.crm": "remote", external: { source: "crm", externalId: "crm-in5" } } });
+  await Invoice.collection.updateOne({ _id: in5 }, { $set: { "enrolment.crm": "remote", "enrolment.academy": "bangalore", external: { source: "crm", externalId: "crm-in5" } } });
   await Invoice.collection.updateOne({ _id: in6 }, { $set: { external: { source: "crm", externalId: "crm-in6" } } });
   await Invoice.collection.updateOne({ _id: in8 }, { $set: { external: { source: "draw-crm", externalId: "draw-in8" } } });
   // What they collected: IN-5 120 of 200 at the close, 180 recorded since; IN-6 all 200 at the close, recorded on
@@ -377,6 +377,10 @@ async function main() {
     a5?.crm === "remote" && a6?.crm === "delta" && rowOf(approvedList, "invoice", "Client IN-8")?.crm === "draw"
     && rowOf(approvedList, "invoice", "Client IN-9")?.crm === undefined,
     show(["IN-5", "IN-6", "IN-8", "IN-9"].map((n) => rowOf(approvedList, "invoice", `Client ${n}`)?.crm ?? null)));
+  check("…and which academy it was sold for: as recorded, else Dubai for a sales CRM's, and none for one typed here",
+    a5?.academy === "bangalore" && a6?.academy === "dubai" && rowOf(approvedList, "invoice", "Client IN-8")?.academy === "dubai"
+    && rowOf(approvedList, "invoice", "Client IN-9")?.academy === undefined,
+    show(["IN-5", "IN-6", "IN-8", "IN-9"].map((n) => rowOf(approvedList, "invoice", `Client ${n}`)?.academy ?? null)));
   const p2 = rowOf(pendingList, "invoice", "Client IN-2");
   check("a waiting enrolment's amount is what was collected at the close, its fee beside it",
     p2?.amountMinor === 40_00 && p2?.feeMinor === 100_00, show(p2));

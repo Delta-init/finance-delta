@@ -195,6 +195,18 @@ async function main() {
   c = await Customer.findById(waiting).lean() as any;
   check("approved: a duplicate, the same client, unchanged", r.body?.data?.duplicate === true && String(doc?.customerId) === waiting && c?.name === "Waiting Client", `${r.body?.data?.duplicate} ${doc?.customerId}`);
 
+  step("Case 5 — the academy is fixed per close (2026-10-10): a correction cannot move it");
+  r = await send("stu-0100", { academy: "bangalore", customer: { name: "Bangalore Client", email: "blr.client@e2e-test.com", phone: "+919800000100" } });
+  const id5 = idOf(r);
+  check("a close for the Bangalore academy is kept as Bangalore's", r.status < 300 && (await invoice(id5))?.enrolment?.academy === "bangalore", show(r));
+  await sendBack(id5, "Fix the phone");
+  r = await send("stu-0100", { academy: "dubai", customer: { name: "Bangalore Client", email: "blr.client@e2e-test.com", phone: "+919800000101" } });
+  doc = await invoice(id5);
+  check("…corrected naming Dubai: the phone corrected, the academy still Bangalore", r.status < 300 && doc?.approval?.state === "pending" && doc?.enrolment?.academy === "bangalore",
+    `${doc?.approval?.state} ${doc?.enrolment?.academy}`);
+  r = await request("GET", `/invoices/${id5}`, undefined, tApprover);
+  check("…and the approver is shown Bangalore", r.body?.data?.enrolment?.academy === "bangalore", show(r));
+
   await mongoose.disconnect();
   console.log(`\n${checks - failures}/${checks} checks passed`);
   process.exit(failures ? 1 : 0);

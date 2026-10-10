@@ -1,5 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
-import { ENROLMENT_CRMS, PAYMENT_METHODS } from "@delta/shared";
+import { ACADEMIES, ENROLMENT_CRMS, PAYMENT_METHODS } from "@delta/shared";
 
 const taxRateSchema = new Schema(
   { code: { type: String, required: true }, rate: { type: Number, required: true }, amountMinor: { type: Number, required: true } },
@@ -220,6 +220,11 @@ const invoiceSchema = new Schema(
               "draw"). Absent before the CRMs said; read through enrolmentCrm,
               which falls back on the source. */
           crm: { type: String, enum: [...ENROLMENT_CRMS] },
+          /** The academy it was sold for ("dubai" / "bangalore"), as the close
+              said or as intake worked it out from the CRM. Fixed per close.
+              Absent on enrolments typed here and on those from before 2026-10-10;
+              read through enrolmentAcademy. */
+          academy: { type: String, enum: [...ACADEMIES] },
         },
         { _id: false },
       ),

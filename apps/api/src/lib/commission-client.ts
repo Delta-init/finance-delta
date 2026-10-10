@@ -60,8 +60,13 @@ export async function sendStudentToCommission(input: {
   course?: string;
   /** The language they study in, as the sales CRM asked it at the close: English, Malayalam, Hindi/Urdu or Tamil. */
   language?: string;
-  /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM) or "draw" — never "banglore", whose students are not sent here. */
+  /** Which sales CRM sold the enrolment: "delta" (Sales CRM), "remote" (Remote CRM), "draw" or "banglore" (Banglore CRM, since 2026-10-10). */
   crm?: string;
+  /**
+   * The academy it was sold for, picked at the close: "dubai" or "bangalore".
+   * Tetra Commission gives the student only to that academy's teams.
+   */
+  academy?: "dubai" | "bangalore";
   /** Who closed it: the sales CRM's rep, by their email there — on the student there, for their Sales account. */
   closedBy?: { email: string; name: string; crm: string };
   lmsUserId?: string;

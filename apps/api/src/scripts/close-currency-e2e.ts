@@ -12,7 +12,11 @@
  *   - Case 2: part paid, a corrected resend with a new rate, a currency shown
  *     in whole units, and payments with no original (unchanged);
  *   - Case 3: an original that can't be right — refused;
- *   - Case 4: unsigned calls and who may approve.
+ *   - Case 4: unsigned calls and who may approve;
+ *   - Case 5: the Banglore CRM closes into the INR organisation (Bangalore) —
+ *     its academy, unsaid, recorded and shown as Bangalore;
+ *   - Case 6: a Sales CRM close for the Bangalore academy (2026-10-10) into the
+ *     same INR organisation, in paise, cash taken in AED kept as the original.
  *
  * Run through scripts/close-currency-e2e.sh (throwaway mongod and API, no
  * .env). Refuses to run against anything that does not look like a scratch
@@ -245,10 +249,12 @@ async function main() {
     check("…for the INR 1,50,000 sent, unconverted", d?.totalMinor === 15_000_000, String(d?.totalMinor));
     check("…the customer is billed in INR too", (await mongoose.connection.db!.collection("customers").findOne({ _id: d?.customerId }))?.currency === "INR");
     check("…tagged the Banglore CRM", d?.enrolment?.crm === "banglore", d?.enrolment?.crm);
+    check("…its academy, unsaid, recorded as Bangalore", d?.enrolment?.academy === "bangalore", d?.enrolment?.academy);
     check("…its payments carry no conversion", (d?.enrolment?.declaredPayments ?? []).every((p: any) => p.original === undefined), JSON.stringify(d?.enrolment?.declaredPayments));
     const list = await request("GET", "/approvals/list", undefined, tBlr);
     const rowB = (list.body?.data ?? []).find((x: any) => x.id === String(d?._id));
     check("on Approvals: shown as the Banglore CRM's, in INR", rowB?.crm === "banglore" && rowB?.currency === "INR" && rowB?.feeMinor === 15_000_000 && rowB?.amountMinor === 12_000_000, JSON.stringify(rowB ?? list.body).slice(0, 300));
+    check("…and the Bangalore academy's", rowB?.academy === "bangalore", JSON.stringify(rowB?.academy));
     const ok = await request("POST", `/invoices/${String(d?._id)}/approval/approve`, undefined, tBlr);
     check("approved", ok.status === 200, show(ok));
     d = await Invoice.findById(d?._id).lean() as any;
@@ -257,6 +263,46 @@ async function main() {
       JSON.stringify({ p: d?.payments, b: d?.balanceMinor, s: d?.status }));
     const other = await request("GET", `/invoices/${String(d?._id)}`, undefined, tApprover);
     check("the AED organisation's approver cannot see it", other.status === 404 || other.status === 403, show(other));
+
+    step("Case 6 — a Sales CRM close for the Bangalore academy, into the same INR organisation");
+    // INR 1,30,000 fee (paise): INR 50,000 by transfer + AED 1,000 cash at 22.75 INR per AED (INR 22,750).
+    const sales = await signedPost(blrId, "/api/v1/integrations/enrolments", {
+      externalId: "sales-blr-1", source: "crm", crm: "delta", academy: "bangalore",
+      customer: { name: "Sales Blr Client", email: "sales.blr.client@e2e-test.com", phone: "+919800000002" },
+      course: { name: "Forex Course", amountMinor: 13_000_000 },
+      modeOfStudy: "online", language: "English", salespersonEmail: "someone@sales-crm-e2e.com", salespersonName: "Sales Rep",
+      declaredPaidMinor: 7_275_000, declaredPaymentMethod: "bank_transfer", balanceMinor: 5_725_000,
+      bonus: { given: true, amountMinor: 20_000, currency: "USD" },
+      payments: [
+        { method: "bank_transfer", amountMinor: 5_000_000, paidOn: "2026-10-10", receipt: receipt("sblr-a") },
+        { method: "cash", amountMinor: 2_275_000, paidOn: "2026-10-10", receipt: receipt("sblr-b"), original: { currency: "AED", amountMinor: 100_000, rate: 22.75 } },
+      ],
+    });
+    check("taken in", sales.status < 300, show(sales));
+    let s6 = await invoiceOf(sales);
+    check("…an INR invoice for INR 1,30,000", s6?.currency === "INR" && s6?.totalMinor === 13_000_000, `${s6?.currency} ${s6?.totalMinor}`);
+    check("…tagged the Sales CRM, for the Bangalore academy", s6?.enrolment?.crm === "delta" && s6?.enrolment?.academy === "bangalore", `${s6?.enrolment?.crm}/${s6?.enrolment?.academy}`);
+    check("…the AED cash keeps what was handed over: AED 1,000 at 22.75",
+      JSON.stringify(s6?.enrolment?.declaredPayments?.[1]?.original) === JSON.stringify({ currency: "AED", amountMinor: 100_000, rate: 22.75 }), JSON.stringify(s6?.enrolment?.declaredPayments?.[1]));
+    check("…the bonus stays in USD", s6?.enrolment?.bonus?.currency === "USD" && s6?.enrolment?.bonus?.amountMinor === 20_000, JSON.stringify(s6?.enrolment?.bonus));
+    const shown = await request("GET", `/invoices/${String(s6?._id)}`, undefined, tBlr);
+    check("…the approver's screen says Sales CRM, Bangalore", shown.body?.data?.enrolment?.crm === "delta" && shown.body?.data?.enrolment?.academy === "bangalore", show(shown));
+    const list6 = await request("GET", "/approvals/list", undefined, tBlr);
+    const row6 = (list6.body?.data ?? []).find((x: any) => x.id === String(s6?._id));
+    check("…on Approvals: the Sales CRM's, the Bangalore academy's, in INR", row6?.crm === "delta" && row6?.academy === "bangalore" && row6?.currency === "INR", JSON.stringify(row6).slice(0, 300));
+    const ok6 = await request("POST", `/invoices/${String(s6?._id)}/approval/approve`, undefined, tBlr);
+    check("approved", ok6.status === 200, show(ok6));
+    s6 = await Invoice.findById(s6?._id).lean() as any;
+    check("…both payments recorded in INR; the cash one's note says AED 1,000 at 22.75",
+      (s6?.payments ?? []).map((p: any) => `${p.method}:${p.amountMinor}`).join(",") === "bank_transfer:5000000,cash:2275000"
+        && /paid AED 1,000(\.00)? at 1 AED = 22\.75 INR$/.test(s6?.payments?.[1]?.notes ?? "") && s6?.balanceMinor === 5_725_000,
+      JSON.stringify({ p: s6?.payments, b: s6?.balanceMinor }));
+    // And a Dubai close into the AED organisation is Dubai's, as before.
+    const dxb = await enrol({ academy: "dubai", declaredPaidMinor: 0 });
+    const dd = await invoiceOf(dxb);
+    check("a Remote CRM close for Dubai, in the AED organisation: Dubai's, in AED", dd?.enrolment?.academy === "dubai" && dd?.currency === "AED", `${dd?.enrolment?.academy} ${dd?.currency}`);
+    const listD = await request("GET", "/approvals/list", undefined, tApprover);
+    check("…and on Approvals as Dubai's", (listD.body?.data ?? []).find((x: any) => x.id === String(dd?._id))?.academy === "dubai");
   }
 
   await mongoose.disconnect();

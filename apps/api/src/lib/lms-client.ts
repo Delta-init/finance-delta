@@ -64,6 +64,10 @@ export async function provisionEnrolment(input: {
   paymentStatus?: LmsPaymentStatus;
   /** What the enrolment was at approval — fee, paid, balance, bonus, receipt. Shown in the LMS, for information. */
   feeSummary?: EnrolmentFeeSummary;
+  /** The sales CRM that sold it, as a tag on the enrolment there. */
+  crm?: string;
+  /** The academy it was sold for: a "bangalore" student is put in the LMS's Bangalore academy. */
+  academy?: "dubai" | "bangalore";
 }): Promise<LmsProvisionResult> {
   // The LMS mounts everything under /api/v1. Accepted with or without it, so a
   // base URL copied from a browser's address bar works either way rather than

@@ -1,5 +1,6 @@
 import { Types, type Model, type PipelineStage } from "mongoose";
 import {
+  enrolmentAcademy,
   enrolmentCrm,
   hasPermission,
   type ApprovalCommission, type ApprovalGroup, type ApprovalItem, type ApprovalListQuery, type ApprovalListStatus,
@@ -369,7 +370,7 @@ const LIST_KINDS: ListKind[] = [
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
-        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.declaredPaidMinor external.source createdAt",
+        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.academy enrolment.declaredPaidMinor external.source createdAt",
         ctx,
       );
       return {
@@ -377,13 +378,16 @@ const LIST_KINDS: ListKind[] = [
         rows: docs.map((r): ApprovalRow => {
           const state = r.approval?.state as string;
           const decided = state !== "pending";
+          const crm = enrolmentCrm(r.enrolment?.crm, r.external?.source);
           return {
             id: String(r._id),
             type: "invoice",
             title: r.customerName ?? r.invoiceNumber,
             subtitle: [r.enrolment?.course, r.invoiceNumber].filter(Boolean).join(" · "),
             // Which sales CRM sold it; absent for an enrolment typed here.
-            crm: enrolmentCrm(r.enrolment?.crm, r.external?.source) ?? undefined,
+            crm: crm ?? undefined,
+            // And the academy it was sold for, beside it; none for one typed here.
+            academy: crm || r.enrolment?.academy ? enrolmentAcademy(r.enrolment?.academy, crm) : undefined,
             // What was collected, and the fee it is part of.
             amountMinor: collectedOf(r),
             feeMinor: r.totalMinor ?? 0,

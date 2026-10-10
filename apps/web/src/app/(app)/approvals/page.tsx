@@ -6,7 +6,7 @@ import { AlertTriangle, ClipboardCheck, RefreshCw, X } from "lucide-react";
 import { describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { CrmTag } from "@/components/crm-tag";
+import { AcademyTag, CrmTag } from "@/components/crm-tag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -230,6 +230,7 @@ export default function ApprovalsPage() {
           <div className="mb-1 flex flex-wrap items-center gap-1">
             <Badge tone="primary" className="whitespace-nowrap text-[11px]">{TYPE_LABEL[r.type]}</Badge>
             <CrmTag crm={r.crm} />
+            <AcademyTag academy={r.academy} />
           </div>
           <p className="truncate font-medium">{r.title}</p>
           {r.subtitle && <p className="truncate text-xs text-foreground-muted">{r.subtitle}</p>}

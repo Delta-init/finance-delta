@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
-import { inboundEnrolmentLanguage } from "@delta/shared";
-import type { InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, StoredReceipt } from "@delta/shared";
+import { enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
+import type { Academy, InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, StoredReceipt } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
@@ -327,6 +327,9 @@ export async function intakeEnrolment(
         // Which sales CRM sold it, as it said — not guessed from the source,
         // which two CRMs share. Read through enrolmentCrm for the fallback.
         ...(input.crm ? { crm: input.crm } : {}),
+        // The academy it was sold for — always recorded, worked out from the
+        // CRM where the close did not say (the Banglore CRM's are Bangalore).
+        academy: intakeAcademy(input),
       },
     } as never,
     // Scoped, so createInvoice treats it the way it treats a counsellor: the
@@ -379,6 +382,16 @@ function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { give
     ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor, ...(input.bonus.currency ? { currency: input.bonus.currency } : {}) } } : {}),
     ...(input.balanceMinor !== undefined ? { declaredBalanceMinor: input.balanceMinor } : {}),
   };
+}
+
+/**
+ * The academy an arriving enrolment is for: what the close said, else — from a
+ * CRM from before it was asked — Bangalore for the Banglore CRM, Dubai for the
+ * rest. `storedCrm` is the CRM the invoice already has, for a resend that does
+ * not repeat it.
+ */
+function intakeAcademy(input: InboundEnrolmentInput, storedCrm?: string): Academy {
+  return enrolmentAcademy(input.academy, enrolmentCrm(input.crm ?? storedCrm, input.source));
 }
 
 /** Every receipt the caller sent — the enrolment's own and each payment's — once each. */
@@ -543,6 +556,21 @@ async function resubmitReturned(
       if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
       // A CRM that says which it is says so again; one that does not leaves it.
       if (input.crm) doc.set("enrolment.crm", input.crm);
+      /*
+       * The academy is fixed per close (the user, 2026-10-10): the CRM sends a
+       * correction to the organisation the close went to, and shows the academy
+       * read-only. So the one recorded stays whatever is resent; an enrolment
+       * from before academies were kept is given the one this close carries.
+       */
+      const storedAcademy = doc.get("enrolment.academy") as Academy | undefined;
+      const resentAcademy = intakeAcademy(input, doc.get("enrolment.crm") as string | undefined);
+      if (!storedAcademy) doc.set("enrolment.academy", resentAcademy);
+      else if (input.academy && input.academy !== storedAcademy) {
+        logger.warn(
+          { orgId, source: input.source, externalId: input.externalId, stored: storedAcademy, sent: input.academy },
+          "Corrected enrolment named another academy — the close's academy is kept",
+        );
+      }
     }
     // A receipt the correction brought — a payment added or its proof replaced —
     // goes beside the ones already there.

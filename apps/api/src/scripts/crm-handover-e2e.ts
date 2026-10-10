@@ -673,6 +673,100 @@ async function main() {
       `${rr.stored} ${JSON.stringify(rr.inv?.approval)}`);
   }
 
+  step("F. Which academy it was sold for (the user, 2026-10-10)");
+  {
+    /** What is stored, and what an approver reading the invoice is told. */
+    const academyOf = async (externalId: string) => {
+      const inv = await Invoice.findOne({ "external.externalId": externalId }).lean();
+      const dto = inv ? await request("GET", `/invoices/${inv._id}`, undefined, adminAuth.token) : null;
+      return {
+        inv,
+        stored: (inv?.enrolment as { academy?: string } | undefined)?.academy,
+        shown: (dto?.body?.data as unknown as { enrolment?: { academy?: string } } | undefined)?.enrolment?.academy,
+      };
+    };
+
+    const blr = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-blr", "driftone@e2e-test.com", "Bangalore Student"),
+      crm: "delta",
+      academy: "bangalore",
+    });
+    const b = await academyOf("e2e-academy-blr");
+    check("Case 1 — a Sales CRM close for Bangalore is kept as Bangalore's", blr.status === 200 && b.stored === "bangalore", show(blr));
+    check("...and an approver reading the invoice is told so", b.shown === "bangalore", `shown=${b.shown}`);
+
+    const dxb = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-dxb", "driftone@e2e-test.com", "Dubai Student"),
+      crm: "remote",
+      academy: "dubai",
+    });
+    const d = await academyOf("e2e-academy-dxb");
+    check("Case 1 — a Remote CRM close for Dubai is Dubai's", dxb.status === 200 && d.stored === "dubai" && d.shown === "dubai", `${d.stored}/${d.shown}`);
+
+    const silent = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-silent", "driftone@e2e-test.com", "Silent Student"),
+      crm: "delta",
+    });
+    const sl = await academyOf("e2e-academy-silent");
+    check("Case 2 — a close that says no academy, from the Sales CRM, is recorded as Dubai", silent.status === 200 && sl.stored === "dubai" && sl.shown === "dubai", `${sl.stored}/${sl.shown}`);
+    const blrCrm = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-blrcrm", "driftone@e2e-test.com", "Banglore CRM Student"),
+      crm: "banglore",
+    });
+    const bc = await academyOf("e2e-academy-blrcrm");
+    check("Case 2 — ...from the Banglore CRM, as Bangalore", blrCrm.status === 200 && bc.stored === "bangalore" && bc.shown === "bangalore", `${bc.stored}/${bc.shown}`);
+    const blrSource = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-blrsrc", "driftone@e2e-test.com", "Banglore Source Student"),
+      source: "banglore-crm",
+    });
+    const bs = await academyOf("e2e-academy-blrsrc");
+    check("Case 2 — ...and from a caller calling itself banglore-crm, as Bangalore", blrSource.status === 200 && bs.stored === "bangalore", `${bs.stored}`);
+    // One from before academies were kept: nothing stored, shown by its CRM.
+    await Invoice.updateOne({ "external.externalId": "e2e-academy-silent" }, { $unset: { "enrolment.academy": 1 } });
+    const pre = await academyOf("e2e-academy-silent");
+    check("Case 2 — an enrolment from before stores none, and reads as Dubai by its CRM", pre.stored === undefined && pre.shown === "dubai", `${pre.stored}/${pre.shown}`);
+    await Invoice.updateOne({ "external.externalId": "e2e-academy-blrcrm" }, { $unset: { "enrolment.academy": 1 } });
+    const preB = await academyOf("e2e-academy-blrcrm");
+    check("...and a Banglore CRM one from before reads as Bangalore", preB.stored === undefined && preB.shown === "bangalore", `${preB.stored}/${preB.shown}`);
+
+    const bad = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-bad", "driftone@e2e-test.com"),
+      academy: "mumbai",
+    });
+    check("Case 3 — an academy finance does not know is refused", bad.status === 422, show(bad));
+    check("...and made no invoice", (await Invoice.countDocuments({ "external.externalId": "e2e-academy-bad" })) === 0);
+
+    // Fixed per close: a correction cannot move it to the other academy.
+    const back = await request("POST", `/invoices/${b.inv?._id}/approval/return`, { reason: "Check the fee" }, adminAuth.token);
+    const moved = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-blr", "driftone@e2e-test.com", "Bangalore Student"),
+      crm: "delta",
+      academy: "dubai",
+    });
+    const bm = await academyOf("e2e-academy-blr");
+    check("Case 4 — a correction naming the other academy keeps the close's (Bangalore)",
+      back.status === 200 && moved.status === 200 && bm.stored === "bangalore" && bm.inv?.approval?.state === "pending",
+      `${bm.stored} ${JSON.stringify(bm.inv?.approval)}`);
+    await request("POST", `/invoices/${b.inv?._id}/approval/return`, { reason: "Again" }, adminAuth.token);
+    const quiet = await signedPost(orgId, "/api/v1/integrations/enrolments", enrolment("e2e-academy-blr", "driftone@e2e-test.com", "Bangalore Student"));
+    check("...and one that names none keeps it too", quiet.status === 200 && (await academyOf("e2e-academy-blr")).stored === "bangalore");
+    // An enrolment from before, sent back and corrected: given the academy the correction carries.
+    const preInv = await Invoice.findOne({ "external.externalId": "e2e-academy-blrcrm" }).lean();
+    await request("POST", `/invoices/${preInv?._id}/approval/return`, { reason: "Check the course" }, adminAuth.token);
+    const fill = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-academy-blrcrm", "driftone@e2e-test.com", "Banglore CRM Student"),
+      crm: "banglore",
+      academy: "bangalore",
+    });
+    check("Case 4 — an enrolment from before, corrected, is given its academy then",
+      fill.status === 200 && (await academyOf("e2e-academy-blrcrm")).stored === "bangalore");
+    const typed = await Invoice.findOne({ "enrolment.course": { $exists: true }, "external.source": { $exists: false } }).lean();
+    if (typed) {
+      const t = await request("GET", `/invoices/${typed._id}`, undefined, adminAuth.token);
+      check("an enrolment typed in finance shows no academy", (t.body?.data as unknown as { enrolment?: { academy?: string } })?.enrolment?.academy === undefined);
+    }
+  }
+
   console.log(
     failures
       ? `\n\x1b[31m${failures} of ${checks} checks failed\x1b[0m`

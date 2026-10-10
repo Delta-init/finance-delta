@@ -1,4 +1,4 @@
-import { enrolmentCrm, NO_COMMISSION_CRMS, type EnrolmentCrm } from "@delta/shared";
+import { enrolmentAcademy, enrolmentCrm, NO_COMMISSION_CRMS, type Academy, type EnrolmentCrm } from "@delta/shared";
 import { logger } from "../lib/logger";
 import {
   lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus, type EnrolmentFeeSummary,
@@ -29,21 +29,24 @@ const EVERY_MS = 60_000;
 const BATCH = 20;
 
 /**
- * Whose students go on to Tetra Commission: the sales CRMs' — Delta's and the
- * Remote CRM's ("crm") and, since 2026-10-03, Draw's ("draw-crm"), whose
- * students join the same round of teams and get a CS like anybody else's. A
- * row from before `source` was kept is Delta's.
+ * Whose students go on to Tetra Commission: the sales CRMs' — Delta's, the
+ * Remote CRM's and the Banglore CRM's ("crm"; the Banglore CRM's since
+ * 2026-10-10, to the Bangalore teams) and, since 2026-10-03, Draw's
+ * ("draw-crm"), whose students join the same round of teams and get a CS like
+ * anybody else's. "banglore-crm" in case the Banglore CRM ever names itself.
+ * A row from before `source` was kept is Delta's.
  */
-const COMMISSION_SOURCES = new Set(["crm", "draw-crm"]);
+const COMMISSION_SOURCES = new Set(["crm", "draw-crm", "banglore-crm"]);
 const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(source ?? "crm"));
 
 /**
- * Never the Banglore CRM's students, whatever their course: a different team
- * looks after them (2026-10-09). They share the "crm" source with Delta's, so
- * this goes by the CRM tag the payload carries — and, for safety, the tag on
- * the invoice again right before anything is sent.
+ * Never a CRM named in NO_COMMISSION_CRMS, whatever the course — none since
+ * 2026-10-10, when the Banglore CRM's students began going (2026-10-09 to then
+ * they were kept out). CRMs share the "crm" source, so this goes by the CRM tag
+ * the payload carries — and, for safety, the tag on the invoice again right
+ * before anything is sent.
  */
-const NOT_FOR_COMMISSION_REASON = "Banglore CRM student — looked after by a different team, not Tetra Commission";
+const NOT_FOR_COMMISSION_REASON = "Sold through a sales CRM whose students are not sent to Tetra Commission";
 const payloadCrm = (payload: unknown) => (payload as { crm?: string } | undefined)?.crm;
 const excludedCrm = (crm: unknown) => typeof crm === "string" && NO_COMMISSION_CRMS.has(crm);
 
@@ -304,9 +307,9 @@ export async function drainCommissionStudents(): Promise<number> {
     };
     try {
       const language = await enrolmentLanguage(row.invoiceId);
-      const crm = await enrolmentSaleCrm(row.invoiceId);
+      const { crm, academy } = await enrolmentSaleCrmAndAcademy(row.invoiceId);
       if (excludedCrm(crm)) {
-        // Tagged Banglore on the invoice since it was queued: never sent.
+        // Tagged with such a CRM on the invoice since it was queued: never sent.
         await LmsProvision.updateOne(
           { _id: row._id, "commission.state": "pending" },
           { $set: { "commission.state": "skipped", "commission.reason": NOT_FOR_COMMISSION_REASON }, $unset: { "commission.nextAttemptAt": 1 } },
@@ -325,6 +328,8 @@ export async function drainCommissionStudents(): Promise<number> {
         ...(language ? { language } : {}),
         // Which sales CRM sold it — shown as a tag on the student there.
         ...(crm ? { crm } : {}),
+        // Which academy it was sold for — only that academy's teams are given them.
+        academy,
         // Who closed it: shown on the student there, and their Sales account sees the students they closed.
         ...(closedBy ? { closedBy } : {}),
         lmsUserId: row.lmsUserId ?? undefined,
@@ -405,12 +410,17 @@ async function enrolmentLanguage(invoiceId: unknown): Promise<string> {
   return closeLanguage(invoice?.enrolment?.language);
 }
 
-/** The sales CRM that sold the enrolment on the invoice — read when sent, like the language. */
-async function enrolmentSaleCrm(invoiceId: unknown): Promise<EnrolmentCrm | null> {
+/**
+ * The sales CRM that sold the enrolment on the invoice, and the academy it was
+ * sold for (as recorded, else from the CRM: the Banglore CRM's are Bangalore) —
+ * read when sent, like the language.
+ */
+async function enrolmentSaleCrmAndAcademy(invoiceId: unknown): Promise<{ crm: EnrolmentCrm | null; academy: Academy }> {
   const invoice = await Invoice.findById(invoiceId)
-    .select("enrolment.crm external.source")
-    .lean<{ enrolment?: { crm?: string }; external?: { source?: string } } | null>();
-  return enrolmentCrm(invoice?.enrolment?.crm, invoice?.external?.source);
+    .select("enrolment.crm enrolment.academy external.source")
+    .lean<{ enrolment?: { crm?: string; academy?: string }; external?: { source?: string } } | null>();
+  const crm = enrolmentCrm(invoice?.enrolment?.crm, invoice?.external?.source);
+  return { crm, academy: enrolmentAcademy(invoice?.enrolment?.academy, crm) };
 }
 
 /**

@@ -617,7 +617,7 @@ async function main() {
       JSON.stringify(after?.extraCourses?.map((e) => [e.slug, e.accessSent])));
   }
 
-  step("The Banglore CRM: to the LMS as a Bangalore student, never to Tetra Commission");
+  step("The Banglore CRM: to the LMS as a Bangalore student, and on to Tetra Commission (since 2026-10-10)");
   {
     const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
     const { env } = await import("../config/env");
@@ -638,18 +638,55 @@ async function main() {
     const queued = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(blr.invoiceId) }).lean();
     check("a Banglore close is queued for the LMS, carrying crm \"banglore\"",
       queued?.status === "pending" && (queued?.payload as { crm?: string })?.crm === "banglore", JSON.stringify({ s: queued?.status, crm: (queued?.payload as { crm?: string })?.crm }));
+    check("...and academy \"bangalore\", though the close did not say", (queued?.payload as { academy?: string })?.academy === "bangalore", JSON.stringify((queued?.payload as { academy?: string })?.academy));
     await drainLmsProvisions();
     env.COMMISSION_API_URL = saved.url;
     env.COMMISSION_S2S_SECRET = saved.secret;
     const sent = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(blr.invoiceId) }).lean();
-    check("...taken by the LMS, on its Forex course, and passed over for Tetra Commission",
-      sent?.status === "sent" && sent?.lmsCourseProgram === "4x-trading" && sent?.commission?.state === "skipped" && /Banglore/.test(sent?.commission?.reason ?? ""),
+    check("...taken by the LMS, on its Forex course, and queued for Tetra Commission",
+      sent?.status === "sent" && sent?.lmsCourseProgram === "4x-trading" && sent?.commission?.state === "pending",
       JSON.stringify({ s: sent?.status, c: sent?.commission }));
     const u = await lms.db!.collection("users").findOne({ email: "kiran.blr@e2e-test.com" });
     check("...a new LMS student in the Bangalore organisation, though Dubai runs the course",
       String(u?.organizationId) === String(blrOrg.insertedId), String(u?.organizationId));
     const e = u ? await lms.db!.collection("enrollments").findOne({ userId: u._id }) : null;
     check("...the enrolment tagged the Banglore CRM", e?.salesCrm === "banglore", JSON.stringify(e?.salesCrm));
+
+    step("The academy picked at the close (2026-10-10): Bangalore from the Sales CRM, Dubai from the Remote CRM");
+    env.COMMISSION_API_URL = "http://127.0.0.1:1";
+    env.COMMISSION_S2S_SECRET = "e2e-not-sent";
+    const close = async (externalId: string, email: string, extra: Record<string, unknown>) => {
+      const r = await intakeEnrolment(orgId, {
+        externalId, source: "crm",
+        customer: { name: externalId, email, phone: "+971500000777" },
+        course: { name: "Market Break out", itemId: String(mapped._id), amountMinor: 130_000 },
+        enrolledOn: today, declaredPaidMinor: 0, modeOfStudy: "online", language: "English",
+        ...extra,
+      } as never);
+      await post(`/invoices/${r.invoiceId}/approval/approve`, undefined, token);
+      await settle();
+      return r.invoiceId;
+    };
+    const salesBlr = await close("sales-blr-1", "sales.blr@e2e-test.com", { crm: "delta", academy: "bangalore" });
+    const remoteDxb = await close("remote-dxb-1", "remote.dxb@e2e-test.com", { crm: "remote", academy: "dubai" });
+    const silent = await close("sales-silent-1", "sales.silent@e2e-test.com", { crm: "delta" });
+    const payloadOf = async (invoiceId: string) => (await LmsProvision.findOne({ invoiceId: new Types.ObjectId(invoiceId) }).lean())?.payload as { academy?: string; crm?: string } | undefined;
+    check("a Sales CRM close for Bangalore goes to the LMS with academy \"bangalore\" and crm \"delta\"",
+      (await payloadOf(salesBlr))?.academy === "bangalore" && (await payloadOf(salesBlr))?.crm === "delta", JSON.stringify(await payloadOf(salesBlr)));
+    check("a Remote CRM close for Dubai with academy \"dubai\"", (await payloadOf(remoteDxb))?.academy === "dubai", JSON.stringify(await payloadOf(remoteDxb)));
+    check("one that said no academy, from the Sales CRM, with academy \"dubai\"", (await payloadOf(silent))?.academy === "dubai", JSON.stringify(await payloadOf(silent)));
+    await drainLmsProvisions();
+    env.COMMISSION_API_URL = saved.url;
+    env.COMMISSION_S2S_SECRET = saved.secret;
+    const lmsUser = (email: string) => lms.db!.collection("users").findOne({ email });
+    const dubaiOrg = String(lmsOrg.insertedId);
+    check("...the Bangalore one a new LMS student in the Bangalore organisation, though Dubai runs the course",
+      String((await lmsUser("sales.blr@e2e-test.com"))?.organizationId) === String(blrOrg.insertedId), String((await lmsUser("sales.blr@e2e-test.com"))?.organizationId));
+    check("...the Dubai one, and the one that said none, in the course's academy (Dubai), as before",
+      String((await lmsUser("remote.dxb@e2e-test.com"))?.organizationId) === dubaiOrg && String((await lmsUser("sales.silent@e2e-test.com"))?.organizationId) === dubaiOrg,
+      `${(await lmsUser("remote.dxb@e2e-test.com"))?.organizationId} ${(await lmsUser("sales.silent@e2e-test.com"))?.organizationId}`);
+    const blrRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(salesBlr) }).lean();
+    check("...and the Bangalore one queued for Tetra Commission like any Forex student", blrRow?.status === "sent" && blrRow?.commission?.state === "pending", JSON.stringify({ s: blrRow?.status, c: blrRow?.commission }));
   }
 
   await lms.close();

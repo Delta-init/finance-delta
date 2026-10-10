@@ -123,6 +123,12 @@ export const approvalRowSchema = z.object({
   crm: z.enum(ENROLMENT_CRMS).optional(),
   /** An enrolment invoice from a sales CRM: the academy it was sold for. */
   academy: z.enum(ACADEMIES).optional(),
+  /**
+   * An enrolment invoice from a sales CRM: what finance flagged on it to check
+   * before deciding — an unmapped course, a rep with no account here, an email
+   * that already belongs to another client. Absent when nothing was.
+   */
+  flags: z.array(z.string()).optional(),
   /** A decided Tetra deposit: whether Tetra Commission has the decision yet. */
   delivery: z.object({ state: z.string(), error: z.string().optional() }).optional(),
   lms: approvalLmsSchema.optional(),

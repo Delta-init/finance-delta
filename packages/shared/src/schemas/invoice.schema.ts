@@ -526,6 +526,13 @@ export const invoiceSchema = z.object({
    */
   emailDelivery: invoiceEmailDeliverySchema.optional(),
   attachments: z.array(invoiceAttachmentSchema).default([]),
+  /**
+   * What finance flagged on an enrolment a sales CRM handed over, for whoever
+   * approves it to check first: a course not mapped to the catalogue, a rep with
+   * no account here, an email that already belongs to another client. The same
+   * flags the CRM was answered with. [] for everything else.
+   */
+  flags: z.array(z.string()).default([]),
   salespersonName: z.string(),
   reference: z.string(),
   status: invoiceStatusSchema,

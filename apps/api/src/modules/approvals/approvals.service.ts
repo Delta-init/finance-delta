@@ -370,7 +370,7 @@ const LIST_KINDS: ListKind[] = [
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
-        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.academy enrolment.declaredPaidMinor external.source createdAt",
+        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.academy enrolment.declaredPaidMinor external.source external.flags createdAt",
         ctx,
       );
       return {
@@ -388,6 +388,8 @@ const LIST_KINDS: ListKind[] = [
             crm: crm ?? undefined,
             // And the academy it was sold for, beside it; none for one typed here.
             academy: crm || r.enrolment?.academy ? enrolmentAcademy(r.enrolment?.academy, crm) : undefined,
+            // What finance flagged on it when the CRM handed it over, to check before deciding.
+            flags: r.external?.flags?.length ? r.external.flags : undefined,
             // What was collected, and the fee it is part of.
             amountMinor: collectedOf(r),
             feeMinor: r.totalMinor ?? 0,

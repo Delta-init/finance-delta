@@ -10,6 +10,7 @@ import { Customer } from "../customer/customer.model";
 import { findOrCreateCustomer } from "../customer/customer.service";
 import { createInvoice, updateInvoice } from "../invoice/invoice.service";
 import { notifyApprovers } from "../invoice/approval-notify.service";
+import { closeIsForAnother, correctionIsForAnother, emailBelongsToAnother, phoneKnown } from "./client-identity";
 
 /**
  * Taking an enrolment from another system.
@@ -198,7 +199,7 @@ export async function intakeEnrolment(
      */
     const state = (existing as unknown as { approval?: { state?: string } }).approval?.state;
     if (state === "returned") {
-      return await resubmitReturned(orgId, String(existing._id), input, flagsFor(existing), String(existing.customerId));
+      return await resubmitReturned(orgId, String(existing._id), input, String(existing.customerId));
     }
 
     return {
@@ -245,11 +246,16 @@ export async function intakeEnrolment(
 
   // Found or made, and never overwritten — a student enrolling on a second
   // course is the ordinary case, not a duplicate.
-  const { customer } = await findOrCreateCustomer(orgId, {
+  const { customer, existed } = await findOrCreateCustomer(orgId, {
     name: input.customer.name,
     email: input.customer.email,
     phone: input.customer.phone,
   } as never);
+  // Unless the email already belongs to somebody else: filed under them all the
+  // same (the email is the client here), and flagged (client-identity).
+  if (existed && closeIsForAnother(customer, input.customer)) {
+    flag(flags, emailBelongsToAnother(customer, input.customer.name));
+  }
 
   const enrolledOn = input.enrolledOn?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const taxes = await defaultSalesTaxes(orgId);
@@ -417,27 +423,41 @@ function flagsFor(doc: unknown): string[] {
  * The email says who the client is, as it does at intake. A different one
  * moves the invoice to that client — found, or made with the name and phone
  * sent — because the sale was filed under the wrong person; a client already
- * known here under that email keeps their own details, as at intake. The same
- * email has its name and phone brought up to what was sent: the correction is
- * somebody saying the spelling or the number was wrong.
+ * known here under that email keeps their own details, as at intake (and is
+ * flagged when the name and phone sent are somebody else's, as at intake).
  *
- * Returns the client the invoice is for now.
+ * The same email has its name and phone brought up to what was sent — the
+ * correction is somebody saying the spelling was wrong — but only when it is
+ * the same person (the user, 2026-10-10): the same phone, or, with a phone not
+ * known, the same name. Another number means the close is for somebody else
+ * sharing the email, and writing their name over this client's would rename
+ * the client every other invoice under this email is filed under; so this
+ * client is kept as they are and the invoice is flagged instead. A number that
+ * is not a number is never written over one that is.
+ *
+ * Returns the client the invoice is for now; flags go into `flags`.
  */
 async function correctedCustomer(
   orgId: string,
   currentId: string,
   sent: InboundEnrolmentInput["customer"],
+  flags: string[],
 ): Promise<string> {
   const email = sent.email.trim().toLowerCase();
   const current = Types.ObjectId.isValid(currentId)
     ? await Customer.findOne({ _id: new Types.ObjectId(currentId), organizationId: new Types.ObjectId(orgId) })
     : null;
   if (!current || current.email !== email) {
-    const { customer } = await findOrCreateCustomer(orgId, { name: sent.name, email, phone: sent.phone } as never);
+    const { customer, existed } = await findOrCreateCustomer(orgId, { name: sent.name, email, phone: sent.phone } as never);
+    if (existed && closeIsForAnother(customer, sent)) flag(flags, emailBelongsToAnother(customer, sent.name));
     return customer.id;
   }
+  if (correctionIsForAnother(current, sent)) {
+    flag(flags, emailBelongsToAnother({ name: current.name, customerCode: current.customerCode }, sent.name));
+    return String(current._id);
+  }
   const name = sent.name.trim();
-  const phone = sent.phone.trim();
+  const phone = phoneKnown(sent.phone) || !phoneKnown(current.phone) ? sent.phone.trim() : current.phone;
   if (name && phone && (current.name !== name || current.phone !== phone)) {
     current.name = name;
     current.phone = phone;
@@ -463,13 +483,12 @@ async function resubmitReturned(
   orgId: string,
   invoiceId: string,
   input: InboundEnrolmentInput,
-  priorFlags: string[],
   customerIdBefore: string,
 ): Promise<InboundEnrolmentResult> {
   const flags: string[] = [];
   const salesperson = await resolveSalesperson(orgId, input, flags);
   // The client as corrected; the invoice is put in their name below.
-  const customerId = await correctedCustomer(orgId, customerIdBefore, input.customer);
+  const customerId = await correctedCustomer(orgId, customerIdBefore, input.customer, flags);
   const lines = linesOf(input);
   const itemIds = await Promise.all(lines.map((line) => resolveItem(orgId, line, flags)));
   const taxes = await defaultSalesTaxes(orgId);
@@ -591,6 +610,8 @@ async function resubmitReturned(
     invoiceNumber: updated.invoiceNumber,
     customerId: String(updated.customerId ?? ""),
     duplicate: false,
-    flags: flags.length > 0 ? flags : priorFlags,
+    // What the invoice is flagged with now — the CRM keeps this answer, so a
+    // flag the correction put right (another email given) must not come back.
+    flags,
   };
 }

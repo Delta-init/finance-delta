@@ -130,9 +130,12 @@ async function signedPost(orgId: string, p: string, payload: unknown): Promise<R
   return { status: r.status, body: (await r.json().catch(() => ({}))) as Record<string, never> };
 }
 
-/** Runs a repo script the way an operator would, and returns everything it said. */
+/**
+ * Runs a repo script the way an operator would, and returns everything it said.
+ * Never with a .env: it sees the scratch database the wrapper exported, nothing else.
+ */
 async function runScript(file: string, ...args: string[]): Promise<string> {
-  const proc = Bun.spawn(["bun", path.join(import.meta.dir, file), ...args], {
+  const proc = Bun.spawn(["bun", "--no-env-file", path.join(import.meta.dir, file), ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -765,6 +768,76 @@ async function main() {
       const t = await request("GET", `/invoices/${typed._id}`, undefined, adminAuth.token);
       check("an enrolment typed in finance shows no academy", (t.body?.data as unknown as { enrolment?: { academy?: string } })?.enrolment?.academy === undefined);
     }
+  }
+
+  step("G. One email, one client (the user, 2026-10-10)");
+  {
+    // Four different people closed with one email in the Remote CRM were all
+    // filed under the first. They still are — the email is who a client is
+    // here, and a sale is never refused — but flagged: on the invoice, for the
+    // approver, and in the answers the CRM keeps.
+    const shared = "family.shared@student-e2e.com";
+    const close = (externalId: string, name: string, phone: string, email = shared) =>
+      signedPost(orgId, "/api/v1/integrations/enrolments", { ...enrolment(externalId, "driftone@e2e-test.com"), customer: { name, email, phone } });
+    const flagsOf = (r: Res) => (r.body as { data?: { flags?: string[] } })?.data?.flags ?? [];
+    const emailFlag = (flags: string[] | undefined) => (flags ?? []).find((f) => /already belongs to/.test(f));
+
+    const first = await close("e2e-share-1", "najad ahmed", "+971 50 111 2233");
+    const najad = await Customer.findOne({ email: shared }).lean();
+    check("Case 1 — the first close with an email makes its client, nothing flagged about the email",
+      first.status === 200 && !!najad && !emailFlag(flagsOf(first)), show(first));
+
+    const halif = await close("e2e-share-2", "Halif", "+971 55 999 8877");
+    const inv = await Invoice.findOne({ "external.externalId": "e2e-share-2" }).lean();
+    const msg = emailFlag(flagsOf(halif)) ?? "";
+    check("Case 2 — somebody else (another name, another number) with that email is still taken in, under the client it belongs to",
+      halif.status === 200 && String(inv?.customerId) === String(najad?._id) && inv?.customerName === "najad ahmed", show(halif));
+    check("...and flagged in the answer the CRM keeps: the client the email belongs to, their code, and who this close is for",
+      msg.includes("already belongs to najad ahmed") && msg.includes(`(${najad?.customerCode})`) && msg.includes("this close is for Halif"),
+      msg || JSON.stringify(flagsOf(halif)));
+    check("...the same flag on the invoice", ((inv?.external as { flags?: string[] } | undefined)?.flags ?? []).includes(msg));
+    check("...with no phone number in it", msg !== "" && !/\d{7,}/.test(msg), msg);
+    const najadAfter = await Customer.findById(najad?._id).lean();
+    check("...the client keeps their own name and phone, and is still the only one with the email",
+      najadAfter?.name === "najad ahmed" && najadAfter?.phone === "+971 50 111 2233" && (await Customer.countDocuments({ email: shared })) === 1,
+      JSON.stringify({ name: najadAfter?.name, phone: najadAfter?.phone }));
+    const retried = await close("e2e-share-2", "Halif", "+971 55 999 8877");
+    check("...a retry is answered as a duplicate, with the flag",
+      retried.status === 200 && (retried.body as { data?: { duplicate?: boolean } })?.data?.duplicate === true && flagsOf(retried).includes(msg), show(retried));
+
+    const again = await close("e2e-share-3", "Najad  AHMED", "0501112233");
+    check("Case 3 — the same person again (the same number, written another way), a second course: nothing flagged",
+      again.status === 200 && !emailFlag(flagsOf(again)), show(again));
+    const spelt = await close("e2e-share-4", "Najad Ahamed", "+971501112233");
+    check("...the same number under another spelling of the name: the same person", spelt.status === 200 && !emailFlag(flagsOf(spelt)), show(spelt));
+    const renumbered = await close("e2e-share-5", "najad ahmed", "+971 52 000 0001");
+    check("...the same name under a new number: the same person too", renumbered.status === 200 && !emailFlag(flagsOf(renumbered)), show(renumbered));
+    check("...all five under the one client", (await Invoice.countDocuments({ customerId: najad?._id })) === 5);
+
+    const other = "no.phone@student-e2e.com";
+    const np1 = await close("e2e-share-6", "Mohammed Lebbie", "n/a", other);
+    const np2 = await close("e2e-share-7", "mohammed  LEBBIE", "+971 56 123 4567", other);
+    check("Case 4 — a phone not known: the names decide — the same name is the same person",
+      np1.status === 200 && np2.status === 200 && !emailFlag(flagsOf(np2)), show(np2));
+    const np3 = await close("e2e-share-8", "yfscghs", "+971 56 123 4567", other);
+    check("...another name is somebody else: flagged",
+      np3.status === 200 && /already belongs to Mohammed Lebbie \(CUST-\d+\) — this close is for yfscghs\./.test(emailFlag(flagsOf(np3)) ?? ""), show(np3));
+
+    const status = await signedPost(orgId, "/api/v1/integrations/enrolments/status", { source: "crm", externalIds: ["e2e-share-1", "e2e-share-2"] });
+    const statuses = (status.body as { data?: { externalId: string; flags?: string[] }[] })?.data ?? [];
+    const st1 = statuses.find((s) => s.externalId === "e2e-share-1");
+    const st2 = statuses.find((s) => s.externalId === "e2e-share-2");
+    check("Case 5 — the CRM's status answer carries the flag, beside the catalogue flag, the same way",
+      status.status === 200 && (st2?.flags ?? []).includes(msg) && (st2?.flags ?? []).some((f) => /not mapped to a catalogue item/.test(f)), JSON.stringify(st2));
+    check("...and every enrolment in it says its flags — the first close's, none about the email",
+      Array.isArray(st1?.flags) && (st1?.flags ?? []).length > 0 && !emailFlag(st1?.flags), JSON.stringify(st1));
+    const list = await request("GET", "/approvals/list?status=pending&type=invoice&pageSize=100", undefined, adminAuth.token);
+    const listed = (list.body as { data?: { id: string; flags?: string[] }[] })?.data ?? [];
+    const firstInv = await Invoice.findOne({ "external.externalId": "e2e-share-1" }).lean();
+    check("...the Approvals row shows it", list.status === 200 && (listed.find((r) => r.id === String(inv?._id))?.flags ?? []).includes(msg), show(list));
+    check("...and the first close's row does not", !!listed.find((r) => r.id === String(firstInv?._id)) && !emailFlag(listed.find((r) => r.id === String(firstInv?._id))?.flags));
+    const dto = await request("GET", `/invoices/${inv?._id}`, undefined, adminAuth.token);
+    check("...and so does the invoice the approval panel reads", dto.status === 200 && ((dto.body?.data as unknown as { flags?: string[] })?.flags ?? []).includes(msg), show(dto));
   }
 
   console.log(

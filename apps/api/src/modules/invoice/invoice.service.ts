@@ -166,6 +166,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         uploadedAt: r.uploadedAt ? new Date(r.uploadedAt as Date).toISOString() : undefined,
       };
     }),
+    // What finance flagged when a sales CRM handed it over, for the approval panel.
+    flags: [...((doc as unknown as { external?: { flags?: string[] } }).external?.flags ?? [])],
     reference: doc.reference ?? "",
     status: effectiveStatus(doc),
     issueDate: dateOnly(doc.issueDate),

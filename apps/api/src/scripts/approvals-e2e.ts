@@ -161,6 +161,9 @@ async function main() {
   await inv(org._id, "IN-2", "pending", 10);
   // Closed with 40 of its 100 collected; IN-1 has nothing collected.
   await Invoice.collection.updateOne({ organizationId: org._id, invoiceNumber: "IN-2" }, { $set: { "enrolment.declaredPaidMinor": 40_00 } });
+  // Handed over by a CRM with an email that belongs to another client: flagged.
+  const emailFlag = "The client's email already belongs to Someone Else (CUST-00001) — this close is for Client IN-2. It was filed under Someone Else; check before approving, and send it back for the client's own email.";
+  await Invoice.collection.updateOne({ organizationId: org._id, invoiceNumber: "IN-2" }, { $set: { external: { source: "crm", externalId: "crm-in2", flags: [emailFlag] } } });
   await inv(org._id, "IN-3", "approved", 5);
   await inv(org._id, "IN-4", "returned", 5);
   await inv(other._id, "IN-X", "pending", 1);
@@ -384,6 +387,9 @@ async function main() {
   const p2 = rowOf(pendingList, "invoice", "Client IN-2");
   check("a waiting enrolment's amount is what was collected at the close, its fee beside it",
     p2?.amountMinor === 40_00 && p2?.feeMinor === 100_00, show(p2));
+  check("an enrolment flagged when its CRM handed it over says so on its row; one with nothing flagged has no flags",
+    JSON.stringify(p2?.flags) === JSON.stringify([emailFlag]) && rowOf(pendingList, "invoice", "Client IN-1")?.flags === undefined,
+    show([p2?.flags, rowOf(pendingList, "invoice", "Client IN-1")?.flags]));
   const a9 = rowOf(approvedList, "invoice", "Client IN-9");
   check("…once approved, what accounts have recorded when that is more; all of it when paid in full; 0 for one typed here with nothing paid",
     a5?.amountMinor === 180_00 && a5?.feeMinor === 200_00 && a6?.amountMinor === 200_00 && a9?.amountMinor === 0 && a9?.feeMinor === 200_00,

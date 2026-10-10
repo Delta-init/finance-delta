@@ -5,7 +5,8 @@ import { lookupCommissionStudents, type CommissionStudentLookup } from "../../li
 /**
  * Where enrolments a sales CRM handed over got to — for its My Enrolments.
  *
- * The invoice: its number, approval, status and money, as always. And, once
+ * The invoice: its number, approval, status and money, as always, and what
+ * finance flagged on it for accounts to check (`flags`). And, once
  * accounts approved it, what became of the student, from the provisioning
  * record behind the approval:
  *
@@ -74,6 +75,12 @@ export interface EnrolmentStatus {
   totalMinor: number;
   amountPaidMinor: number;
   balanceMinor: number;
+  /**
+   * What finance flagged on the invoice, as it stands now — the same flags the
+   * handover answered with (an unmapped course, a rep with no account here, an
+   * email that belongs to another client), updated by a correction. [] when none.
+   */
+  flags: string[];
   /** Null until accounts approve it: nothing has been asked of the LMS yet. */
   lms: EnrolmentLms | null;
   commission: EnrolmentCommission | null;
@@ -196,7 +203,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
   const now = await lookupCommissionStudents(codes);
 
   return invoices.map((i) => {
-    const ext = i.external as { externalId?: string } | undefined;
+    const ext = i.external as { externalId?: string; flags?: string[] } | undefined;
     const approval = i.approval as { state?: string; returnedReason?: string } | undefined;
     const p = provisionOf.get(String(i._id));
     let commission = p ? commissionOf(p) : null;
@@ -220,6 +227,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
       totalMinor: (i.totalMinor as number) ?? 0,
       amountPaidMinor: (i.amountPaidMinor as number) ?? 0,
       balanceMinor: (i.balanceMinor as number) ?? 0,
+      flags: ext?.flags ?? [],
       lms: p ? lmsOf(p) : null,
       commission,
     };

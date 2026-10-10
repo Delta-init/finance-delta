@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye } from "lucide-react";
+import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye, AlertTriangle } from "lucide-react";
 import { formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -122,6 +122,21 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           ) : null}
         </div>
       )}
+
+      {/* What finance flagged when a sales CRM handed it over — an unmapped
+          course, a rep with no account here, an email that already belongs to
+          another client. Said before the decision, not found after it. */}
+      {invoice.flags?.length ? (
+        <div className="space-y-1 rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-sm">
+          <p className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+            {pending ? "Check before approving" : "Flagged when it arrived"}
+          </p>
+          <ul className="ml-5 list-disc space-y-0.5">
+            {invoice.flags.map((f) => <li key={f}>{f}</li>)}
+          </ul>
+        </div>
+      ) : null}
 
       {returned && approval.returnedReason && (
         <p className="rounded-lg border border-danger/30 bg-danger/5 p-2.5 text-sm">

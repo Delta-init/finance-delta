@@ -234,6 +234,15 @@ export default function ApprovalsPage() {
           </div>
           <p className="truncate font-medium">{r.title}</p>
           {r.subtitle && <p className="truncate text-xs text-foreground-muted">{r.subtitle}</p>}
+          {/* An enrolment flagged when its CRM handed it over — an email that
+              belongs to another client, an unmapped course — said on the row
+              while it waits; once decided, its page still says. */}
+          {r.status === "pending" && r.flags?.map((f) => (
+            <p key={f} className="mt-1 flex items-start gap-1 text-xs text-warning" title={f}>
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+              <span className="line-clamp-2">{f}</span>
+            </p>
+          ))}
         </div>
       ),
     },

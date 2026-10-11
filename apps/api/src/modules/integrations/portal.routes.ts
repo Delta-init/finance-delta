@@ -10,6 +10,7 @@ import {
   describeManyForPortal,
   setUserRoleFromPortal,
 } from "./portal-directory.service";
+import { pendingForPortal } from "./portal-pending.service";
 
 const router = Router();
 
@@ -105,6 +106,17 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { emails, remoteOrgId } = (req.body ?? {}) as { emails?: unknown; remoteOrgId?: string };
     ok(res, await describeManyForPortal({ emails, remoteOrgId }));
+  }),
+);
+
+/**
+ * What is waiting in finance, and on whom — the Root portal's Pending page.
+ * Every organization's sidebar counts added up; see pendingForPortal.
+ */
+router.get(
+  "/pending",
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.json({ success: true, data: await pendingForPortal() });
   }),
 );
 

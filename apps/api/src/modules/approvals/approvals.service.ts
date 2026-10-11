@@ -267,10 +267,28 @@ function procurementRequests(hrmsOrgId: string): Promise<HrmsProcurementRequest[
   return value;
 }
 
-export async function approvalSummary(auth: AuthContext): Promise<ApprovalSummary> {
+/**
+ * Whether somebody holding these permissions may decide this kind — the same
+ * test the summary below gates each kind on, so whoever is named as waiting
+ * on a kind is somebody it would be counted for.
+ */
+export function decidesApproval(type: ApprovalGroup["type"], permissions: readonly string[], isSuperAdmin: boolean): boolean {
+  const kind = KINDS.find((k) => k.type === type);
+  return Boolean(kind?.allowed((p) => isSuperAdmin || hasPermission(permissions, p)));
+}
+
+/**
+ * `without` leaves kinds out entirely — not read at all. The Root portal's
+ * Pending page uses it to leave out purchase requests, which are read live
+ * from HRMS.
+ */
+export async function approvalSummary(
+  auth: AuthContext,
+  options: { without?: readonly ApprovalGroup["type"][] } = {},
+): Promise<ApprovalSummary> {
   const can = (p: Permission) => auth.isSuperAdmin || hasPermission(auth.permissions, p);
   const org = new Types.ObjectId(auth.organizationId);
-  const kinds = KINDS.filter((k) => k.allowed(can));
+  const kinds = KINDS.filter((k) => k.allowed(can) && !options.without?.includes(k.type));
 
   const groups = await Promise.all(kinds.map(async (kind): Promise<ApprovalGroup> => {
     try {

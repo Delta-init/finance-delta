@@ -120,6 +120,15 @@ export interface CommissionFundingDecision {
   mt5Login?: string;
   note?: string;
   reason?: string;
+  /**
+   * A balance payment a CS recorded (type ENROLMENT_PAYMENT): approved, it is
+   * recorded on this invoice here — `paymentId` — and the new figures follow
+   * as a fee update.
+   */
+  type?: "ENROLMENT_PAYMENT";
+  invoiceId?: string;
+  paymentId?: string;
+  paidOn?: string;
   decidedBy: { name: string; email: string };
   decidedAt: string;
 }
@@ -184,6 +193,70 @@ export async function sendFundingDecisionToCommission(input: CommissionFundingDe
     throw err;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/* ── An enrolment's money, as it changes ─────────────────────────────────── */
+
+/**
+ * What Tetra Commission is told when an enrolment's money changes — a payment
+ * recorded, edited or removed, the invoice voided or deleted, a credit note,
+ * a new due date (the user, 2026-10-11). The whole picture each time, so the
+ * newest one is all Tetra Commission needs; `updatedAt` lets it ignore one
+ * that arrives after a newer one.
+ */
+export interface CommissionFeeUpdate {
+  invoiceId: string;
+  invoiceNumber: string;
+  email: string;
+  course: string;
+  currency: string;
+  totalMinor: number;
+  paidMinor: number;
+  balanceMinor: number;
+  status: "partial" | "paid" | "void" | "deleted";
+  /** The next instalment's due date, "YYYY-MM-DD"; null when nothing is owed. */
+  nextDueOn: string | null;
+  payments: { amountMinor: number; paidOn: string; method: string }[];
+  updatedAt: string;
+}
+
+/**
+ * Send one fee update (backend/src/finance/feeUpdates there), on the same
+ * secret as the students. Any 200 is done — applied, a repeat ({ already }) or
+ * older than what it has ({ ignored: "older" }). 404 UNKNOWN_INVOICE — no student or course fee
+ * there for this invoice — is a CommissionRefusedError and stops it; a 400 or
+ * 422 too (malformed, and will stay so). Anything else — down, not deployed
+ * yet (a 404 without that code), a secret not set there yet — is a plain Error
+ * and waited out.
+ */
+export async function sendFeeUpdateToCommission(input: CommissionFeeUpdate): Promise<{ applied: boolean }> {
+  const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/fee-updates`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.COMMISSION_S2S_SECRET },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      data?: { applied?: boolean };
+      applied?: boolean;
+      error?: { code?: string; message?: string } | string;
+    };
+    if (!res.ok) {
+      const code = typeof body.error === "object" ? body.error?.code ?? "" : "";
+      const message =
+        (typeof body.error === "object" ? body.error?.message : body.error) ?? `Tetra Commission refused with ${res.status}`;
+      if (res.status === 404 && code === "UNKNOWN_INVOICE") throw new CommissionRefusedError(message, 404, code);
+      if (res.status === 400 || res.status === 422) throw new CommissionRefusedError(message, res.status, code);
+      throw new Error(message);
+    }
+    return { applied: Boolean(body.data?.applied ?? body.applied) };
+  } catch (err) {
+    const name = (err as Error).name;
+    if (name === "AbortError" || name === "TimeoutError") throw new Error("Tetra Commission did not answer in time");
+    throw err;
   }
 }
 

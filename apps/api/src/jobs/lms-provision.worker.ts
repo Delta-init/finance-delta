@@ -6,9 +6,10 @@ import {
 import {
   commissionConfigured, sendStudentToCommission, CommissionPermanentError, CommissionNotReadyError, logCommissionConfig,
 } from "../lib/commission-client";
-import { LmsProvision, extraCourseKey } from "../modules/integrations/lms-provision.model";
+import { LmsProvision, extraCourseKey, FOREX_PROGRAMME } from "../modules/integrations/lms-provision.model";
 import { Invoice } from "../modules/invoice/invoice.model";
 import { Customer } from "../modules/customer/customer.model";
+import { queueFeeUpdate } from "../modules/integrations/commission-fee-update.service";
 
 /**
  * Delivers approved enrolments to the LMS.
@@ -57,7 +58,6 @@ const excludedCrm = (crm: unknown) => typeof crm === "string" && NO_COMMISSION_C
  * none, and the student is not sent. An LMS too old to name it counts as none,
  * which is why the LMS goes live with this before finance does.
  */
-const FOREX_PROGRAMME = "4x-trading";
 const isForex = (program: unknown) => program === FOREX_PROGRAMME;
 const notForex = (program: string | null | undefined) =>
   program === undefined ? "The LMS did not say which programme the course is in" : `Not a Forex course (${program || "no programme set"})`;
@@ -353,6 +353,9 @@ export async function drainCommissionStudents(): Promise<number> {
         },
       );
       sent++;
+      // What is owed and when the next instalment is due, as it is now — the
+      // student carried the fee as it was at approval (2026-10-11).
+      void queueFeeUpdate(row.invoiceId, "sent to Tetra Commission");
       logger.info(
         { invoice: row.invoiceNumber, student: result.studentCode, mentor: result.mentorName, existing: result.existing },
         result.existing === "email" ? "Student already in Tetra Commission — left as they are" : "Student sent to Tetra Commission",

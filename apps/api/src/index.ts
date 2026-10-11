@@ -51,6 +51,8 @@ import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
 import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
 import { startProcurementWaitingWorker } from "./jobs/procurement-waiting.worker";
 import { startTetraDepositWorker } from "./jobs/tetra-deposit.worker";
+import { startCommissionFeeUpdateWorker } from "./jobs/commission-fee-update.worker";
+import { startInstalmentReminderWorker } from "./jobs/instalment-reminder.worker";
 
 async function bootstrap() {
   // Before anything else: a mail misconfiguration that only shows up per-email,
@@ -147,6 +149,10 @@ async function bootstrap() {
     void startProcurementWaitingWorker();
     startLmsProvisionWorker();
     startTetraDepositWorker();
+    // Partial enrolments (2026-10-11): money changes to Tetra Commission, and
+    // the client's instalment reminders at 10:00 UAE.
+    startCommissionFeeUpdateWorker();
+    startInstalmentReminderWorker();
   } else {
     logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");
   }

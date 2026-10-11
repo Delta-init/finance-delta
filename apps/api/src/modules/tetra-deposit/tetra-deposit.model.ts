@@ -14,7 +14,7 @@ const tetraDepositSchema = new Schema({
   externalId: { type: String, required: true },
   status: { type: String, enum: ["pending", "approved", "rejected", "closed"], default: "pending", index: true },
   /** A deposit, or a bonus — a course payment, whose approval here is the first of two (@delta/shared). */
-  type: { type: String, enum: ["DEPOSIT", "BONUS", "COURSE_UPGRADE"], default: "DEPOSIT", index: true },
+  type: { type: String, enum: ["DEPOSIT", "BONUS", "COURSE_UPGRADE", "ENROLMENT_PAYMENT"], default: "DEPOSIT", index: true },
   /** The amount as typed in Tetra Commission, when another currency (AED). */
   amountOriginal: { type: Number },
   amountCurrency: { type: String, uppercase: true },
@@ -86,6 +86,35 @@ const tetraDepositSchema = new Schema({
     deliveredAt: { type: Date },
   },
   closedReason: { type: String },
+  /**
+   * A balance payment a CS recorded (type ENROLMENT_PAYMENT): the invoice it
+   * pays towards — which decides the organization this row is in — how and
+   * when it was paid, the receipt, who recorded it, the invoice as it stood on
+   * arrival, and once approved the payment it became on the invoice.
+   */
+  enrolmentPayment: {
+    type: new Schema({
+      invoiceId: { type: Schema.Types.ObjectId, ref: "Invoice", required: true },
+      invoiceNumber: { type: String, default: "" },
+      method: { type: String, default: "" },
+      paidOn: { type: String, required: true },
+      receiptUrl: { type: String, default: "" },
+      receiptName: { type: String, default: "" },
+      cs: { name: { type: String, default: "" }, email: { type: String, default: "" } },
+      invoice: {
+        type: new Schema({
+          course: String, customerName: String, currency: String,
+          totalMinor: Number, paidMinor: Number, balanceMinor: Number, dueDate: String,
+        }, { _id: false }),
+        default: undefined,
+      },
+      recorded: {
+        type: new Schema({ paymentId: String, at: Date, method: String }, { _id: false }),
+        default: undefined,
+      },
+    }, { _id: false }),
+    default: undefined,
+  },
   events: [{
     _id: false,
     at: { type: Date, required: true },

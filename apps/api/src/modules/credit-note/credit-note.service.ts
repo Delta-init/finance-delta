@@ -119,6 +119,8 @@ export async function applyCreditNote(orgId: string, id: string, input: ApplyCre
   await invoice.save();
   // Credit that settles an enrolment opens the rest of its course in the LMS.
   void import("../invoice/invoice.service").then((m) => m.syncLmsAccess(invoice as never));
+  // And Tetra Commission is told, where the student went there.
+  void import("../integrations/commission-fee-update.service").then((m) => m.queueFeeUpdate(invoice._id, "credit note")).catch(() => undefined);
 
   cn.amountAppliedMinor = (cn.amountAppliedMinor ?? 0) + applyAmount;
   if (cn.amountAppliedMinor >= (cn.totalMinor ?? 0)) cn.status = "applied";

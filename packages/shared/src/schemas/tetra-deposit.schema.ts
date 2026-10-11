@@ -29,7 +29,14 @@ const optionalAmount = z.number().finite().nullable().optional().default(null);
  * approving it confirms the money; Tetra Commission then counts it towards the
  * course and raises the MT5 bonus it earns.
  */
-export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS", "COURSE_UPGRADE"]);
+/*
+ * ENROLMENT_PAYMENT (2026-10-11) is the next payment of a partial enrolment's
+ * balance, recorded by the student's CS in Tetra Commission with its receipt:
+ * approving it records the payment on that invoice here (as recordPayment
+ * does), which sets the next due date and sends Tetra Commission the new
+ * figures.
+ */
+export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS", "COURSE_UPGRADE", "ENROLMENT_PAYMENT"]);
 export type TetraDepositType = z.infer<typeof tetraDepositTypeSchema>;
 
 /** A bonus's course payment, as Tetra Commission worked it out at the request (amounts in AED, the bonus in USD). */
@@ -64,8 +71,50 @@ export const tetraDepositPaymentSchema = z.object({
 });
 export type TetraDepositPayment = z.infer<typeof tetraDepositPaymentSchema>;
 
+const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}/, "Must be a date (YYYY-MM-DD)").transform((v) => v.slice(0, 10));
+
+/**
+ * A balance payment's own facts (type ENROLMENT_PAYMENT): the invoice it pays
+ * towards — finance's id, which Tetra Commission was given with the student —
+ * how and when the client paid, the receipt, and the CS who recorded it.
+ */
+export const tetraEnrolmentPaymentSchema = z.object({
+  invoiceId: z.string().trim().regex(/^[a-f0-9]{24}$/i, "Must be the finance invoice id"),
+  invoiceNumber: optionalText(40),
+  method: optionalText(60),
+  paidOn: isoDate,
+  receiptUrl: optionalText(1000).refine((v) => !v || /^https?:\/\//i.test(v), "Must be a web address"),
+  receiptName: optionalText(200),
+  cs: z.object({ name: optionalText(120), email: optionalText(200) }).optional().default({ name: "", email: "" }),
+});
+export type TetraEnrolmentPayment = z.infer<typeof tetraEnrolmentPaymentSchema>;
+
+/**
+ * Tetra Commission may send a balance payment's facts flat beside the rest
+ * (invoiceId, method, paidOn, receiptUrl, csName / csEmail or cs) rather than
+ * under `enrolmentPayment`: gathered into it here, so either shape is taken.
+ */
+function gatherEnrolmentPayment(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const r = raw as Record<string, any>;
+  if (r.type !== "ENROLMENT_PAYMENT" || (r.enrolmentPayment && typeof r.enrolmentPayment === "object")) return raw;
+  const cs = r.cs && typeof r.cs === "object" ? r.cs : { name: r.csName ?? r.cs_name ?? "", email: r.csEmail ?? r.cs_email ?? "" };
+  return {
+    ...r,
+    enrolmentPayment: {
+      invoiceId: r.invoiceId ?? r.invoice_id,
+      invoiceNumber: r.invoiceNumber ?? r.invoice_number,
+      method: r.method ?? r.paymentMethod,
+      paidOn: r.paidOn ?? r.paid_on,
+      receiptUrl: r.receiptUrl ?? r.receipt_url ?? r.screenshotUrl,
+      receiptName: r.receiptName ?? r.receipt_name,
+      cs,
+    },
+  };
+}
+
 /** Idempotent on Tetra Commission's own id, so a retry after a timeout is the same request. */
-export const inboundTetraDepositSchema = z.object({
+const inboundTetraDepositObject = z.object({
   externalId: z.string().trim().min(1).max(64),
   /** Absent from a Tetra Commission from before bonuses came here: a deposit. */
   type: tetraDepositTypeSchema.optional().default("DEPOSIT"),
@@ -101,8 +150,18 @@ export const inboundTetraDepositSchema = z.object({
   initiatingMentor: optionalText(120),
   primaryMentor: optionalText(120),
   meetingMentor: optionalText(120),
+  /** A balance payment's facts — required for, and only kept on, type ENROLMENT_PAYMENT. */
+  enrolmentPayment: tetraEnrolmentPaymentSchema.optional(),
 });
-export type InboundTetraDeposit = z.infer<typeof inboundTetraDepositSchema>;
+export const inboundTetraDepositSchema = z.preprocess(
+  gatherEnrolmentPayment,
+  inboundTetraDepositObject.superRefine((v, ctx) => {
+    if (v.type === "ENROLMENT_PAYMENT" && !v.enrolmentPayment) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["enrolmentPayment"], message: "A balance payment needs the invoice, the date it was paid and the method" });
+    }
+  }),
+);
+export type InboundTetraDeposit = z.infer<typeof inboundTetraDepositObject>;
 
 /**
  * pending   waiting for an accountant
@@ -186,6 +245,24 @@ export const tetraDepositSchema = z.object({
     deliveredAt: z.string().optional(),
   }).optional(),
   closedReason: z.string().optional(),
+  /**
+   * A balance payment's facts, with the invoice as it stood when it arrived
+   * (`invoice`), and — once approved — the payment it became (`recorded`).
+   */
+  enrolmentPayment: z.object({
+    invoiceId: z.string(),
+    invoiceNumber: z.string(),
+    method: z.string(),
+    paidOn: z.string(),
+    receiptUrl: z.string(),
+    receiptName: z.string(),
+    cs: z.object({ name: z.string(), email: z.string() }),
+    invoice: z.object({
+      course: z.string(), customerName: z.string(), currency: z.string(),
+      totalMinor: z.number(), paidMinor: z.number(), balanceMinor: z.number(), dueDate: z.string(),
+    }).optional(),
+    recorded: z.object({ paymentId: z.string(), at: z.string(), method: z.string() }).optional(),
+  }).optional(),
   /** What happened to it here, oldest first — on a single deposit only. */
   events: z.array(z.object({ at: z.string(), kind: z.string(), byName: z.string(), text: z.string() })).optional(),
 });

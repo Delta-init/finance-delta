@@ -431,3 +431,81 @@ export async function sendReminderEmail(opts: {
     log: opts.log ?? { kind: "reminder" },
   });
 }
+
+/**
+ * A partial enrolment's next instalment, 3, 2 and 1 day before it is due
+ * (the user, 2026-10-11): to the client, balance-aware — what is left to pay,
+ * for which course, by when, the invoice, and how to pay or ask. Sent as
+ * "Delta Finance" like every other mail from here.
+ */
+export interface InstalmentReminderContent {
+  to: string;
+  orgName: string;
+  customerName: string;
+  course: string;
+  invoiceNumber: string;
+  /** The balance, formatted with its currency. */
+  balance: string;
+  total: string;
+  paid: string;
+  /** "YYYY-MM-DD" and how it is read. */
+  dueDate: string;
+  dueDateLong: string;
+  daysBefore: number;
+  contactEmail?: string;
+  contactPhone?: string;
+  /** The account to pay into, where the organization has one on its invoices. */
+  bank?: { name?: string; accountName?: string; accountNumber?: string; iban?: string; swift?: string } | null;
+  logoUrl?: string;
+  footerText?: string;
+  log?: MailLog;
+}
+
+export function instalmentReminderSubject(c: Pick<InstalmentReminderContent, "course" | "dueDateLong" | "daysBefore">): string {
+  const when = c.daysBefore === 1 ? "tomorrow" : `in ${c.daysBefore} days`;
+  return `Your next instalment for ${c.course} is due ${when} (${c.dueDateLong})`;
+}
+
+function instalmentReminderHtml(c: InstalmentReminderContent): string {
+  const row = (label: string, value: string, strong = false) =>
+    `<tr><td style="padding:4px 20px;font-size:13px;color:#64748b">${esc(label)}</td><td style="padding:4px 20px;font-size:${strong ? "15px" : "13px"};color:#111;font-weight:${strong ? "700" : "600"};text-align:right">${esc(value)}</td></tr>`;
+  const bank = c.bank && (c.bank.accountNumber || c.bank.iban)
+    ? `<p style="margin:0 0 8px">To pay by bank transfer:</p>
+  <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:8px;margin-bottom:16px">
+    ${c.bank.name ? row("Bank", c.bank.name) : ""}
+    ${c.bank.accountName ? row("Account name", c.bank.accountName) : ""}
+    ${c.bank.accountNumber ? row("Account number", c.bank.accountNumber) : ""}
+    ${c.bank.iban ? row("IBAN", c.bank.iban) : ""}
+    ${c.bank.swift ? row("SWIFT", c.bank.swift) : ""}
+  </table>
+  <p style="margin:0 0 16px;font-size:13px;color:#475569">Please quote invoice <strong>${esc(c.invoiceNumber)}</strong> as the reference.</p>`
+    : "";
+  const contact = [c.contactEmail && `email <a href="mailto:${esc(c.contactEmail)}">${esc(c.contactEmail)}</a>`, c.contactPhone && `call ${esc(c.contactPhone)}`]
+    .filter(Boolean).join(" or ");
+  return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
+${brandHeader({ orgName: c.orgName, logoUrl: c.logoUrl })}
+<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
+  <h2 style="margin:0 0 8px;font-size:18px">Your next instalment is due ${c.daysBefore === 1 ? "tomorrow" : `in ${c.daysBefore} days`}</h2>
+  <p style="color:#64748b;margin:0 0 24px">Dear ${esc(c.customerName)},</p>
+  <p style="margin:0 0 16px">Your next instalment of <strong>${esc(c.balance)}</strong> for <strong>${esc(c.course)}</strong> is due on <strong>${esc(c.dueDateLong)}</strong>.</p>
+  <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:8px;margin-bottom:24px">
+    ${row("Invoice", c.invoiceNumber)}
+    ${row("Course fee", c.total)}
+    ${row("Paid so far", c.paid)}
+    ${row("Balance due", c.balance, true)}
+    ${row("Due date", c.dueDateLong)}
+  </table>
+  ${bank}
+  <p style="margin:0 0 16px">If you have already paid, thank you — please reply with your receipt so we can record it. To pay, or for any question about your fees, ${contact ? `${contact}, or ` : ""}reply to this email or speak to your Customer Success manager.</p>
+  <p style="color:#64748b;font-size:12px;margin:24px 0 0">${esc(c.footerText || "Thank you for studying with us.")}</p>
+</div></body></html>`;
+}
+
+export async function sendInstalmentReminderEmail(c: InstalmentReminderContent): Promise<SendResult> {
+  return deliver({
+    to: [c.to],
+    subject: instalmentReminderSubject(c),
+    html: instalmentReminderHtml(c),
+    log: c.log ?? { kind: "instalment_reminder" },
+  });
+}

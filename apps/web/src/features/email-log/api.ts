@@ -25,6 +25,7 @@ export const EMAIL_KIND_LABEL: Record<string, string> = {
   invoice_approved: "Invoice on approval",
   invoice_salesperson: "Salesperson's copy",
   reminder: "Payment reminder",
+  instalment_reminder: "Instalment reminder",
   approval_notice: "Approval notice",
   expense_notice: "Expense notice",
   bill_notice: "Bill notice",

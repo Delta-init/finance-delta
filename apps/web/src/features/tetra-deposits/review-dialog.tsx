@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
-import type { TetraDeposit } from "@delta/shared";
+import { PAYMENT_METHODS as FINANCE_METHODS, PAYMENT_METHOD_LABELS, type TetraDeposit } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,11 +47,37 @@ export const receiptsOf = (d: TetraDeposit) => (d.payments?.length ? d.payments.
 export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
 /** One payment towards a student's CSE course upgrade, in AED: approving it confirms the money; Tetra Commission counts it. */
 export const isCourseUpgrade = (d: TetraDeposit | null | undefined) => d?.type === "COURSE_UPGRADE";
-/** "deposit", "bonus" or "course payment" — what the request is, in a sentence. */
-export const kindWord = (d: TetraDeposit | null | undefined) => (isCourseUpgrade(d) ? "course payment" : isBonus(d) ? "bonus" : "deposit");
+/**
+ * The next payment of a partial enrolment's balance, recorded by the student's
+ * CS in Tetra Commission (2026-10-11): approving it records it on the invoice.
+ */
+export const isBalancePayment = (d: TetraDeposit | null | undefined) => d?.type === "ENROLMENT_PAYMENT";
+/** "deposit", "bonus", "course payment" or "balance payment" — what the request is, in a sentence. */
+export const kindWord = (d: TetraDeposit | null | undefined) =>
+  (isBalancePayment(d) ? "balance payment" : isCourseUpgrade(d) ? "course payment" : isBonus(d) ? "bonus" : "deposit");
+
+/** Finance's own method for what Tetra Commission called it — the server's financeMethodFor, for the form's first choice. */
+function financeMethodFor(raw: string): string {
+  const v = raw.trim().toLowerCase();
+  const slug = v.replace(/[\s/-]+/g, "_");
+  if ((FINANCE_METHODS as readonly string[]).includes(slug) && slug !== "easebuzz_emi") return slug;
+  if (/tabby/.test(v)) return "tabby";
+  if (/tamara/.test(v)) return "tamara";
+  if (/billex|smart invoice/.test(v)) return "billexpro";
+  if (/cheque|check/.test(v)) return "cheque";
+  if (/\binr\b|upi|rupee/.test(v)) return "inr_bank_account";
+  if (/cash/.test(v)) return "cash";
+  if (/card/.test(v)) return "card";
+  if (/bank|transfer|wire|neft|imps|rtgs/.test(v)) return "bank_transfer";
+  return "other";
+}
+const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi");
 
 /** "Bonus" or "Course payment" beside a request that is one. */
 export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
+  if (isBalancePayment(deposit)) {
+    return <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-800" title="The next payment of a partial enrolment's balance, recorded by the CS — approving it records it on the invoice">Balance payment</span>;
+  }
   if (isCourseUpgrade(deposit)) {
     return <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-800" title="A payment towards the student's course upgrade — approving it confirms the money; Tetra Commission counts it and raises the MT5 bonus it earns">Course payment</span>;
   }
@@ -61,8 +87,22 @@ export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
 
 export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   const cp = deposit.coursePayment;
+  const ep = deposit.enrolmentPayment;
   const rows: [string, string][] = [
-    ["Type", isCourseUpgrade(deposit) ? "Course upgrade payment" : isBonus(deposit) ? "Bonus — a course payment" : ""],
+    ["Type", isBalancePayment(deposit) ? "Balance payment of an enrolment" : isCourseUpgrade(deposit) ? "Course upgrade payment" : isBonus(deposit) ? "Bonus — a course payment" : ""],
+    ...(ep
+      ? ([
+          ["Invoice", ep.invoiceNumber],
+          ["Course", ep.invoice?.course ?? ""],
+          ["Fee", ep.invoice ? amount(ep.invoice.totalMinor / 100, ep.invoice.currency) : ""],
+          ["Paid before", ep.invoice ? amount(ep.invoice.paidMinor / 100, ep.invoice.currency) : ""],
+          ["Balance before", ep.invoice ? amount(ep.invoice.balanceMinor / 100, ep.invoice.currency) : ""],
+          ["Was due", ep.invoice?.dueDate ?? ""],
+          ["Paid on", ep.paidOn],
+          ["Recorded by (CS)", [ep.cs.name, ep.cs.email].filter(Boolean).join(" · ")],
+          ["On the invoice", ep.recorded ? `Recorded ${new Date(ep.recorded.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""],
+        ] as [string, string][])
+      : []),
     ["As typed", deposit.amountOriginal && deposit.amountCurrency && deposit.amountCurrency !== deposit.currency ? amount(deposit.amountOriginal, deposit.amountCurrency) : ""],
     ...((isBonus(deposit) || isCourseUpgrade(deposit)) && cp
       ? ([
@@ -145,16 +185,21 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
     setDecision("approved");
     setAmount((deposit.amountMinor / 100).toFixed(2));
     setTransactionId("");
-    setPaymentMethod(deposit.paymentMethod);
+    setPaymentMethod(deposit.type === "ENROLMENT_PAYMENT" ? financeMethodFor(deposit.enrolmentPayment?.method || deposit.paymentMethod) : deposit.paymentMethod);
     setMt5Login(deposit.mt5Login);
     setNote("");
     setReason("");
   }, [deposit?.id]);
 
+  const balancePayment = isBalancePayment(deposit);
   const methods = useMemo(
-    () => [...new Set([deposit?.paymentMethod ?? "", ...PAYMENT_METHODS])].filter(Boolean),
-    [deposit?.paymentMethod],
+    () => (balancePayment
+      // Recorded on the invoice: finance's own methods.
+      ? FINANCE_METHOD_CHOICES.map((m) => m as string)
+      : [...new Set([deposit?.paymentMethod ?? "", ...PAYMENT_METHODS])].filter(Boolean)),
+    [deposit?.paymentMethod, balancePayment],
   );
+  const methodLabel = (m: string) => (balancePayment ? PAYMENT_METHOD_LABELS[m as keyof typeof PAYMENT_METHOD_LABELS] ?? m : m);
   const amountMinor = Math.round(Number(amount) * 100);
   const amountValid = Number.isFinite(amountMinor) && amountMinor > 0;
   const corrected = !!deposit && amountValid && amountMinor !== deposit.amountMinor;
@@ -189,7 +234,9 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
         <DialogHeader>
           <DialogTitle>Review {kindWord(deposit)}</DialogTitle>
           <DialogDescription>
-            {isCourseUpgrade(deposit)
+            {balancePayment
+              ? "From Tetra Commission — the next payment of this student's course fee, recorded by their CS. Approving it records the payment on the invoice (paid on the date the CS gave), which sets the next due date and updates Tetra Commission. More than the balance is refused."
+              : isCourseUpgrade(deposit)
               ? "From Tetra Commission — a payment towards the student's course upgrade. Approving it confirms the money; Tetra Commission then counts it and raises the MT5 bonus it earns."
               : isBonus(deposit)
               ? "From Tetra Commission — a course payment. Approving it confirms the payment; a broker admin there then credits the bonus in MT5 and approves it."
@@ -212,7 +259,7 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="tetra-amount">Amount that arrived (USD)</Label>
+                  <Label htmlFor="tetra-amount">Amount that arrived ({deposit?.currency ?? "USD"})</Label>
                   <Input id="tetra-amount" type="number" inputMode="decimal" step="0.01" min="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
                   {corrected && (
                     <p className="text-xs text-warning">
@@ -221,7 +268,7 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="tetra-txn">Transaction ID</Label>
+                  <Label htmlFor="tetra-txn">{balancePayment ? "Transaction ID / reference" : "Transaction ID"}</Label>
                   <Input id="tetra-txn" value={transactionId} onChange={(e) => setTransactionId(e.target.value)} maxLength={100} placeholder="As on the statement" />
                 </div>
                 <div className="space-y-1.5">
@@ -229,17 +276,19 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
                   <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                     <SelectTrigger><SelectValue placeholder="Choose" /></SelectTrigger>
                     <SelectContent>
-                      {methods.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                      {methods.map((m) => <SelectItem key={m} value={m}>{methodLabel(m)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="tetra-mt5">MT5 login</Label>
-                  <Input id="tetra-mt5" value={mt5Login} onChange={(e) => setMt5Login(e.target.value)} maxLength={60} list="tetra-mt5-accounts" />
-                  <datalist id="tetra-mt5-accounts">
-                    {(deposit?.mt5Accounts ?? []).map((a) => <option key={a.login} value={a.login}>{a.platform}</option>)}
-                  </datalist>
-                </div>
+                {!balancePayment && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tetra-mt5">MT5 login</Label>
+                    <Input id="tetra-mt5" value={mt5Login} onChange={(e) => setMt5Login(e.target.value)} maxLength={60} list="tetra-mt5-accounts" />
+                    <datalist id="tetra-mt5-accounts">
+                      {(deposit?.mt5Accounts ?? []).map((a) => <option key={a.login} value={a.login}>{a.platform}</option>)}
+                    </datalist>
+                  </div>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="tetra-note">Note (optional)</Label>

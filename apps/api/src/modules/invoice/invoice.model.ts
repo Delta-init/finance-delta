@@ -99,6 +99,9 @@ const paymentSubSchema = new Schema(
     emi: { type: emiSubSchema, default: undefined },
     proofUrl: { type: String, default: "" },
     proofKey: { type: String, default: "" },
+    /** Where the payment was recorded from, when not here: "tetra:<request id>" for one a CS
+        recorded in Tetra Commission and accounts approved — what stops it being recorded twice. */
+    externalRef: { type: String },
   },
   { timestamps: true },
 );

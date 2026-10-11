@@ -13,6 +13,7 @@ import { withAccountants } from "../../lib/approval-recipients";
 import {
   commissionConfigured, sendFundingDecisionToCommission, CommissionRefusedError, type CommissionFundingDecision,
 } from "../../lib/commission-client";
+import { PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
 import { Role } from "../role/role.model";
 import { User } from "../user/user.model";
 import { TetraDepositModel } from "./tetra-deposit.model";
@@ -42,7 +43,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
   return {
     id: String(r._id),
     externalId: String(r.externalId),
-    type: r.type === "BONUS" || r.type === "COURSE_UPGRADE" ? r.type : "DEPOSIT",
+    type: r.type === "BONUS" || r.type === "COURSE_UPGRADE" || r.type === "ENROLMENT_PAYMENT" ? r.type : "DEPOSIT",
     status: r.status,
     amountMinor: r.amountMinor,
     currency: r.currency ?? "USD",
@@ -102,6 +103,32 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
         }
       : {}),
     ...(r.closedReason ? { closedReason: r.closedReason } : {}),
+    ...(r.enrolmentPayment?.invoiceId
+      ? {
+          enrolmentPayment: {
+            invoiceId: String(r.enrolmentPayment.invoiceId),
+            invoiceNumber: String(r.enrolmentPayment.invoiceNumber ?? ""),
+            method: String(r.enrolmentPayment.method ?? ""),
+            paidOn: String(r.enrolmentPayment.paidOn ?? ""),
+            receiptUrl: String(r.enrolmentPayment.receiptUrl ?? ""),
+            receiptName: String(r.enrolmentPayment.receiptName ?? ""),
+            cs: { name: String(r.enrolmentPayment.cs?.name ?? ""), email: String(r.enrolmentPayment.cs?.email ?? "") },
+            ...(r.enrolmentPayment.invoice
+              ? {
+                  invoice: {
+                    course: String(r.enrolmentPayment.invoice.course ?? ""), customerName: String(r.enrolmentPayment.invoice.customerName ?? ""),
+                    currency: String(r.enrolmentPayment.invoice.currency ?? ""), totalMinor: Number(r.enrolmentPayment.invoice.totalMinor) || 0,
+                    paidMinor: Number(r.enrolmentPayment.invoice.paidMinor) || 0, balanceMinor: Number(r.enrolmentPayment.invoice.balanceMinor) || 0,
+                    dueDate: String(r.enrolmentPayment.invoice.dueDate ?? ""),
+                  },
+                }
+              : {}),
+            ...(r.enrolmentPayment.recorded?.paymentId
+              ? { recorded: { paymentId: String(r.enrolmentPayment.recorded.paymentId), at: iso(r.enrolmentPayment.recorded.at), method: String(r.enrolmentPayment.recorded.method ?? "") } }
+              : {}),
+          },
+        }
+      : {}),
     ...(withEvents
       ? {
           events: (r.events ?? []).map((e: any) => ({
@@ -142,16 +169,20 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
     const by = d.requestedBy || d.initiatingMentor;
     const bonus = d.type === "BONUS";
     const upgrade = d.type === "COURSE_UPGRADE";
-    const what = upgrade ? "course upgrade payment" : bonus ? "bonus (course payment)" : "deposit";
+    const balancePayment = d.type === "ENROLMENT_PAYMENT";
+    const what = balancePayment ? "balance payment" : upgrade ? "course upgrade payment" : bonus ? "bonus (course payment)" : "deposit";
     await sendNotice({
       log: { organizationId: organizationId, kind: "tetra_deposit_notice" },
       to,
-      subject: `${upgrade ? "Course payment" : bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
+      subject: `${balancePayment ? "Balance payment" : upgrade ? "Course payment" : bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
       title: `A Tetra Commission ${what} is waiting for approval`,
       lines: [
         `${by ? `${by} raised` : "Tetra Commission sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
-        [d.coursePayment?.product, paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
-        upgrade
+        [d.coursePayment?.product, d.enrolmentPayment && `Invoice ${d.enrolmentPayment.invoiceNumber}`, d.enrolmentPayment?.paidOn && `Paid on ${d.enrolmentPayment.paidOn}`,
+          paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
+        balancePayment
+          ? "Approving it records the payment on the student's invoice, which sets their next due date and updates Tetra Commission. Check it against the receipt first."
+          : upgrade
           ? "Approving it confirms the payment towards their course upgrade; Tetra Commission then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
           : bonus
           ? "Approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first."
@@ -175,6 +206,17 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
   // The unique key on Tetra Commission's id is what makes a retry safe; wait
   // for it to be built (a no-op once it is).
   await TetraDepositModel.init();
+  // A balance payment is decided by the organization its invoice is in — a
+  // Bangalore enrolment's by Bangalore's accounts — whichever one Tetra
+  // Commission's link names.
+  if (input.type === "ENROLMENT_PAYMENT") {
+    // A retry finds what it made, wherever that is — before the invoice is
+    // checked again, since an approved one has changed the balance.
+    const made = await TetraDepositModel.findOne({ externalId: input.externalId, type: "ENROLMENT_PAYMENT" }).lean();
+    if (made) return tetraDepositDTO(made);
+  }
+  const balance = input.type === "ENROLMENT_PAYMENT" ? await enrolmentPaymentIntake(input) : null;
+  if (balance) organizationId = balance.organizationId;
   const orgObjectId = new Types.ObjectId(organizationId);
   const key = { organizationId: orgObjectId, externalId: input.externalId };
   const existing = await TetraDepositModel.findOne(key).lean();
@@ -205,7 +247,14 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       initiatingMentor: input.initiatingMentor,
       primaryMentor: input.primaryMentor,
       meetingMentor: input.meetingMentor,
-      events: [{ at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor, text: input.type === "BONUS" ? "Bonus raised in Tetra Commission" : input.type === "COURSE_UPGRADE" ? "Course upgrade payment from Tetra Commission" : "Raised in Tetra Commission" }],
+      ...(balance ? { enrolmentPayment: balance.enrolmentPayment } : {}),
+      events: [{
+        at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor,
+        text: input.type === "BONUS" ? "Bonus raised in Tetra Commission"
+          : input.type === "COURSE_UPGRADE" ? "Course upgrade payment from Tetra Commission"
+          : input.type === "ENROLMENT_PAYMENT" ? `Balance payment recorded in Tetra Commission${balance?.enrolmentPayment.cs.name ? ` by ${balance.enrolmentPayment.cs.name}` : ""}`
+          : "Raised in Tetra Commission",
+      }],
     });
   } catch (error) {
     // Two deliveries of the same request racing past the lookup: the unique
@@ -220,6 +269,142 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
   logger.info({ depositId: dto.id, externalId: dto.externalId, student: dto.student.name }, "Tetra Commission deposit received for approval");
   void notifyDepositWaiting(organizationId, dto);
   return dto;
+}
+
+/* ── Balance payments (ENROLMENT_PAYMENT) ────────────────────────────────── */
+
+/**
+ * Finance's payment method for what Tetra Commission called it. Exact slugs
+ * and labels first, then the words a CS uses; anything else is "other" (the
+ * method as typed stays in the payment's note). An EMI's terms are not asked
+ * there, so it is never recorded as one.
+ */
+export function financeMethodFor(raw: string | undefined | null): PaymentMethod {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return "other";
+  const slug = v.replace(/[\s/-]+/g, "_");
+  if ((PAYMENT_METHODS as readonly string[]).includes(slug) && slug !== "easebuzz_emi") return slug as PaymentMethod;
+  if (/tabby/.test(v)) return "tabby";
+  if (/tamara/.test(v)) return "tamara";
+  if (/billex|smart invoice/.test(v)) return "billexpro";
+  if (/cheque|check/.test(v)) return "cheque";
+  if (/\binr\b|upi|rupee/.test(v)) return "inr_bank_account";
+  if (/cash/.test(v)) return "cash";
+  if (/card/.test(v)) return "card";
+  if (/bank|transfer|wire|neft|imps|rtgs/.test(v)) return "bank_transfer";
+  return "other";
+}
+
+/** The invoice a balance payment pays towards, as accounts read it on the request. */
+async function invoiceForBalancePayment(invoiceId: string) {
+  const { Invoice } = await import("../invoice/invoice.model");
+  return Invoice.findById(invoiceId)
+    .select("organizationId invoiceNumber customerName currency totalMinor amountPaidMinor balanceMinor status approval dueDate enrolment.course external.source")
+    .lean<any>();
+}
+
+/** Why this balance payment cannot be recorded on the invoice as it stands, or null. */
+function balancePaymentRefusal(invoice: any, amountMinor: number, currency: string): string | null {
+  if (!invoice) return "The invoice it pays towards is not in finance (deleted?)";
+  const n = invoice.invoiceNumber;
+  if (invoice.status === "void") return `Invoice ${n} is void`;
+  if (invoice.approval?.state !== "approved") return `Invoice ${n} is not approved yet`;
+  const cur = invoice.currency ?? "AED";
+  if (currency && currency !== cur) return `Invoice ${n} is in ${cur}, the payment in ${currency}`;
+  const balance = invoice.balanceMinor ?? 0;
+  if (balance <= 0) return `Invoice ${n} is already paid in full`;
+  if (amountMinor > balance) return `${money(amountMinor, cur)} is more than the balance of ${money(balance, cur)} on invoice ${n}`;
+  return null;
+}
+
+/**
+ * Checks a balance payment as it arrives: an invoice whose student went to
+ * Tetra Commission, still owing at least this much in this currency. Refused
+ * with the reason otherwise — the CS sees it at once. Answers the invoice's
+ * organization and what the row keeps.
+ */
+async function enrolmentPaymentIntake(input: InboundTetraDeposit) {
+  const ep = input.enrolmentPayment!;
+  const invoice = await invoiceForBalancePayment(ep.invoiceId);
+  if (!invoice) throw new AppError("NOT_FOUND", "No such invoice in finance — the payment cannot be recorded against it");
+  const { LmsProvision } = await import("../integrations/lms-provision.model");
+  const sentThere = await LmsProvision.exists({ invoiceId: invoice._id, "commission.state": "sent" });
+  if (!sentThere) throw new AppError("VALIDATION_ERROR", `Invoice ${invoice.invoiceNumber}'s student was not sent to Tetra Commission by finance`);
+  const refusal = balancePaymentRefusal(invoice, input.amountMinor, input.currency);
+  if (refusal) throw new AppError("CONFLICT", refusal);
+  const { isoDay } = await import("../invoice/instalments");
+  return {
+    organizationId: String(invoice.organizationId),
+    enrolmentPayment: {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      method: ep.method || input.paymentMethod,
+      paidOn: ep.paidOn,
+      receiptUrl: ep.receiptUrl || input.screenshotUrl,
+      receiptName: ep.receiptName,
+      cs: { name: ep.cs?.name || input.requestedBy, email: ep.cs?.email ?? "" },
+      invoice: {
+        course: invoice.enrolment?.course ?? "", customerName: invoice.customerName ?? "", currency: invoice.currency ?? "AED",
+        totalMinor: invoice.totalMinor ?? 0, paidMinor: invoice.amountPaidMinor ?? 0, balanceMinor: invoice.balanceMinor ?? 0,
+        dueDate: invoice.dueDate ? isoDay(new Date(invoice.dueDate)) : "",
+      },
+    },
+  };
+}
+
+/**
+ * Records an approved balance payment on its invoice, through recordPayment —
+ * the same path as accounts' own, so the next due date and Tetra Commission's
+ * fee update follow. Idempotent on the request (`tetra:<id>`): a retry after
+ * this got part-way records nothing twice. Answers why not, when it could not.
+ */
+async function recordBalancePayment(row: any): Promise<{ ok: true } | { ok: false; message: string }> {
+  const ep = row.enrolmentPayment;
+  if (!ep?.invoiceId) return { ok: false, message: "The request names no invoice" };
+  if (ep.recorded?.paymentId) return { ok: true };
+  const d = row.decision ?? {};
+  const externalRef = `tetra:${row.externalId}`;
+  try {
+    const invoice = await invoiceForBalancePayment(String(ep.invoiceId));
+    if (!invoice) return { ok: false, message: "The invoice it pays towards is not in finance (deleted?)" };
+    const method = d.paymentMethod && (PAYMENT_METHODS as readonly string[]).includes(d.paymentMethod) && d.paymentMethod !== "easebuzz_emi"
+      ? (d.paymentMethod as PaymentMethod)
+      : financeMethodFor(d.paymentMethod || ep.method);
+    const { recordPayment } = await import("../invoice/invoice.service");
+    await recordPayment(String(invoice.organizationId), String(ep.invoiceId), {
+      method,
+      amountMinor: d.approvedAmountMinor ?? row.amountMinor,
+      paidOn: ep.paidOn,
+      reference: String(d.transactionId ?? ""),
+      notes: [
+        `Recorded in Tetra Commission${ep.cs?.name ? ` by ${ep.cs.name}` : ""}${ep.method ? ` (${ep.method})` : ""}`,
+        `approved by ${d.decidedByName || "accounts"}`,
+        d.note,
+      ].filter(Boolean).join(" · ").slice(0, 1000),
+      accountName: "",
+      chargesMinor: 0,
+    }, undefined, { externalRef, proofUrl: ep.receiptUrl || row.screenshotUrl || "" });
+    const { Invoice } = await import("../invoice/invoice.model");
+    const after = await Invoice.findById(ep.invoiceId).select("payments._id payments.externalRef").lean<any>();
+    const payment = (after?.payments ?? []).find((p: any) => p.externalRef === externalRef);
+    await TetraDepositModel.updateOne({ _id: row._id }, {
+      $set: { "enrolmentPayment.recorded": { paymentId: String(payment?._id ?? ""), at: new Date(), method } },
+      $push: { events: { at: new Date(), kind: "recorded", byName: "", text: `Recorded on invoice ${invoice.invoiceNumber} — ${money(d.approvedAmountMinor ?? row.amountMinor, invoice.currency ?? "AED")}, paid on ${ep.paidOn}` } },
+    });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AppError) return { ok: false, message: err.message };
+    throw err;
+  }
+}
+
+/** Back to pending, decision undone, with why — a balance payment that could not be recorded. */
+async function putBack(row: any, message: string): Promise<void> {
+  await TetraDepositModel.updateOne({ _id: row._id }, {
+    $set: { status: "pending" },
+    $unset: { decision: "", delivery: "" },
+    $push: { events: { at: new Date(), kind: "returned", byName: "", text: `Not recorded on the invoice: ${message}` } },
+  });
 }
 
 /* ── Read ────────────────────────────────────────────────────────────────── */
@@ -309,6 +494,14 @@ function decisionFor(row: any): CommissionFundingDecision {
           ...(d.note ? { note: d.note } : {}),
         }
       : { reason: d.reason }),
+    ...(row.type === "ENROLMENT_PAYMENT" && row.enrolmentPayment?.invoiceId
+      ? {
+          type: "ENROLMENT_PAYMENT" as const,
+          invoiceId: String(row.enrolmentPayment.invoiceId),
+          paidOn: String(row.enrolmentPayment.paidOn ?? ""),
+          ...(row.enrolmentPayment.recorded?.paymentId ? { paymentId: String(row.enrolmentPayment.recorded.paymentId) } : {}),
+        }
+      : {}),
     decidedBy: { name: String(d.decidedByName ?? ""), email: String(d.decidedByEmail ?? "") },
     decidedAt: iso(d.decidedAt) || new Date().toISOString(),
   };
@@ -344,7 +537,9 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
     return {
       kind: "delivered",
       message: row.status === "approved"
-        ? "Approved — Tetra Commission has it, and the mentors' commission is credited"
+        ? row.type === "ENROLMENT_PAYMENT"
+          ? `Approved — recorded on invoice ${row.enrolmentPayment?.invoiceNumber ?? ""}, and Tetra Commission has it`
+          : "Approved — Tetra Commission has it, and the mentors' commission is credited"
         : "Rejected — Tetra Commission has it",
     };
   } catch (err) {
@@ -387,7 +582,12 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   const me = await User.findById(auth.userId).select("name email").lean();
   const byName = String(me?.name ?? "An accountant");
   // Its own currency in the history: a course payment is in AED, a deposit in USD.
-  const current = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("currency").lean();
+  const current = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("currency type enrolmentPayment status").lean();
+  if (current?.type === "ENROLMENT_PAYMENT" && current.status === "pending" && input.decision === "approved" && !current.enrolmentPayment?.recorded?.paymentId) {
+    // Checked before anything changes: refused, it stays pending in front of them to correct or reject.
+    const refusal = balancePaymentRefusal(await invoiceForBalancePayment(String(current.enrolmentPayment?.invoiceId)), input.amountMinor, current.currency ?? "");
+    if (refusal) throw new AppError("CONFLICT", `Not recorded: ${refusal}`);
+  }
   const now = new Date();
   const decided = { decidedById: new Types.ObjectId(auth.userId), decidedByName: byName, decidedByEmail: String(me?.email ?? ""), decidedAt: now };
   const decision = input.decision === "approved"
@@ -416,7 +616,20 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
     throw new AppError("CONFLICT", `This deposit request is already ${other.status}`);
   }
 
-  const outcome = await deliverDecision(row, true);
+  let toDeliver: any = row;
+  if (row.type === "ENROLMENT_PAYMENT" && row.status === "approved") {
+    // The payment goes on the invoice first; only then does Tetra Commission hear it was approved.
+    const recorded = await recordBalancePayment(row);
+    if (!recorded.ok) {
+      await putBack(row, recorded.message);
+      throw new AppError("CONFLICT", `Not recorded: ${recorded.message}`);
+    }
+    toDeliver = await TetraDepositModel.findById(row._id).lean();
+  }
+
+  // A balance payment is on the invoice by now, so a refusal there is not put back in front of
+  // them to decide again: it is kept as not delivered, to reopen, like the worker's.
+  const outcome = await deliverDecision(toDeliver, row.type !== "ENROLMENT_PAYMENT");
   if (outcome.kind === "correctable") {
     // Turned down for something they can put right: back in front of them, as it was.
     await TetraDepositModel.updateOne({ _id: row._id }, {
@@ -482,7 +695,17 @@ export async function drainTetraDepositDecisions(): Promise<number> {
       { new: true },
     ).lean();
     if (!row) continue;
-    if ((await deliverDecision(row, false)).kind === "delivered") delivered++;
+    let toDeliver: any = row;
+    if (row.type === "ENROLMENT_PAYMENT" && row.status === "approved" && !row.enrolmentPayment?.recorded?.paymentId) {
+      // Approved by a request that died before the payment was recorded: record it now, or hand it back.
+      const recorded = await recordBalancePayment(row);
+      if (!recorded.ok) {
+        await putBack(row, recorded.message);
+        continue;
+      }
+      toDeliver = await TetraDepositModel.findById(row._id).lean();
+    }
+    if ((await deliverDecision(toDeliver, false)).kind === "delivered") delivered++;
   }
   return delivered;
 }

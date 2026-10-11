@@ -115,6 +115,25 @@ lmsProvisionSchema.index({ status: 1, "access.pending": 1, "access.nextAttemptAt
 lmsProvisionSchema.index({ "commission.state": 1, "commission.nextAttemptAt": 1 });
 lmsProvisionSchema.index({ status: 1, "extraCourses.status": 1, "extraCourses.nextAttemptAt": 1 });
 
+/**
+ * FOREX Trading's programme as the LMS names it. Tetra Commission is the
+ * trading side's, so only these students go there (jobs/lms-provision.worker).
+ */
+export const FOREX_PROGRAMME = "4x-trading";
+
+/**
+ * Whether the enrolment on this row is a Forex one: the LMS named its course
+ * 4x-trading, or a Forex course on the invoice put the student on their way to
+ * Tetra Commission (which is only ever done for Forex). The rule the partial
+ * payment reminders go by.
+ */
+export function isForexEnrolment(row: { lmsCourseProgram?: string | null; commission?: { state?: string | null } | null } | null | undefined): boolean {
+  if (!row) return false;
+  if (row.lmsCourseProgram === FOREX_PROGRAMME) return true;
+  const state = row.commission?.state;
+  return state === "pending" || state === "sent" || state === "failed";
+}
+
 /** The key a further course of an invoice is sent under — the LMS keeps one enrolment per key. */
 export const extraCourseKey = (invoiceId: unknown, slug: string) => `${String(invoiceId)}:${slug}`;
 

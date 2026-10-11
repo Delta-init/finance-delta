@@ -36,6 +36,18 @@ import { Invoice, type InvoiceDoc } from "./invoice.model";
 import { sendInvoiceEmail } from "../../lib/email";
 import { getExchangeRate } from "../../lib/exchange-rate";
 import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
+import { applyInstalmentDue } from "./instalments";
+
+/**
+ * Tell Tetra Commission the enrolment's money changed, if its student went
+ * there (modules/integrations/commission-fee-update.service). Queued, never
+ * awaited by the caller's answer, never throws.
+ */
+function feeUpdate(invoice: Parameters<typeof import("../integrations/commission-fee-update.service").queueFeeUpdate>[0], reason: string, opts: { deleted?: boolean } = {}): void {
+  void import("../integrations/commission-fee-update.service")
+    .then((m) => m.queueFeeUpdate(invoice, reason, opts))
+    .catch(() => undefined);
+}
 import { formatMoney, formatOriginalPayment } from "@delta/shared";
 
 /** Lazily compute overdue: sent/viewed past due date with unpaid balance. */
@@ -796,6 +808,8 @@ export async function updateInvoice(
   if (input.lineItems && before !== "draft") {
     void _reconcileInventory(orgId, doc, linesBefore);
   }
+  // A new total or a due date set by hand: Tetra Commission's figures follow.
+  if (input.lineItems || input.dueDate) feeUpdate(doc._id, "edit");
 
   await doc.populate("tagIds", "name color");
   return toDTO(doc);
@@ -1118,6 +1132,7 @@ export async function restoreInvoice(orgId: string, id: string): Promise<Invoice
   if (doc.status !== "draft") {
     void _reconcileInventory(orgId, doc as unknown as InvoiceDoc, []);
   }
+  feeUpdate(doc._id, "restore");
 
   await doc.populate("tagIds", "name color");
   return toDTO(doc);
@@ -1255,7 +1270,10 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
     if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
   }
 
+  // Gone from the database once deleted, so Tetra Commission is told from what it was.
+  const gone = doc.toObject();
   await doc.deleteOne();
+  feeUpdate(gone as never, "delete", { deleted: true });
 }
 
 /**
@@ -1295,6 +1313,8 @@ export async function approveInvoice(
   });
   // In the same save: an approval and the payments it records stand or fall together.
   const recorded = recordDeclaredPayments(doc);
+  // Part paid at the close: the next instalment is due 29 days after the money was paid.
+  applyInstalmentDue(doc as never);
   await doc.save();
 
   if (recorded && (doc.balanceMinor ?? 0) <= 0) {
@@ -1304,6 +1324,7 @@ export async function approveInvoice(
   }
   void notifyDecided(doc, actor.name, "approved");
   void queueLmsProvision(orgId, doc);
+  feeUpdate(doc._id, "approval");
   // An enrolment, approved, is issued: the client gets the invoice by email and
   // the salesperson a copy (the user, 2026-10-07). Reminders are not started by
   // this. An invoice typed here is not issued by its approval — it still waits
@@ -1746,6 +1767,7 @@ export async function voidInvoice(orgId: string, id: string): Promise<InvoiceDTO
   doc.status = "void";
   await doc.save();
   if (wasSent) void _restoreInventory(orgId, doc);
+  feeUpdate(doc._id, "void");
   return toDTO(doc);
 }
 
@@ -1800,10 +1822,13 @@ export async function updatePayment(
   doc.amountPaidMinor = newPaid;
   doc.balanceMinor = (doc.totalMinor ?? 0) - newPaid;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partial";
+  // A payment's date moved: the next instalment is due 29 days after the latest.
+  applyInstalmentDue(doc as never);
 
   await doc.save();
   await doc.populate("tagIds", "name color");
   void syncLmsAccess(doc);
+  feeUpdate(doc._id, "payment edited");
 
   if (doc.balanceMinor <= 0) {
     const org = await Organization.findById(orgId);
@@ -1856,9 +1881,12 @@ export async function deletePayment(
   // is not partially paid, it is simply outstanding. effectiveStatus still
   // decides whether that reads as overdue.
   doc.status = doc.balanceMinor <= 0 ? "paid" : remaining > 0 ? "partial" : "sent";
+  // From the latest payment left, where one is.
+  applyInstalmentDue(doc as never);
 
   await doc.save();
   await doc.populate("tagIds", "name color");
+  feeUpdate(doc._id, "payment deleted");
   return toDTO(doc);
 }
 
@@ -1878,8 +1906,19 @@ export async function recordPayment(
   id: string,
   input: RecordPaymentInput,
   file?: { buffer: Buffer; mimeType: string; originalName: string },
+  /**
+   * A payment recorded from elsewhere — one a CS took in Tetra Commission and
+   * accounts approved: its receipt where it already lives, and the reference
+   * that makes recording it again a no-op.
+   */
+  from?: { externalRef: string; proofUrl?: string },
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
+  if (from?.externalRef && ((doc.payments as unknown as { externalRef?: string }[]) ?? []).some((p) => p.externalRef === from.externalRef)) {
+    // Recorded already — a retry after the first attempt got this far.
+    await doc.populate("tagIds", "name color");
+    return toDTO(doc);
+  }
   const eff = effectiveStatus(doc);
   if (eff === "void") throw new AppError("CONFLICT", "Cannot record payment on a voided invoice");
   if (eff === "paid") throw new AppError("CONFLICT", "Invoice is already fully paid");
@@ -1896,7 +1935,7 @@ export async function recordPayment(
     throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
   }
 
-  let proofUrl = "";
+  let proofUrl = from?.proofUrl ?? "";
   let proofKey = "";
   if (file) {
     const { uploadFile, storageConfigured } = await import("../../lib/storage");
@@ -1928,6 +1967,7 @@ export async function recordPayment(
         : undefined,
     proofUrl,
     proofKey,
+    ...(from?.externalRef ? { externalRef: from.externalRef } : {}),
   };
 
   (doc.payments as unknown[]).push(payment);
@@ -1936,11 +1976,14 @@ export async function recordPayment(
   doc.amountPaidMinor = newPaid;
   doc.balanceMinor = newBalance;
   doc.status = newBalance <= 0 ? "paid" : "partial";
+  // Still part paid: the next instalment is due 29 days after this money was paid.
+  applyInstalmentDue(doc as never);
 
   await doc.save();
   await doc.populate("tagIds", "name color");
   // More of an enrolment paid opens more of its course in the LMS.
   void syncLmsAccess(doc);
+  feeUpdate(doc._id, "payment");
 
   if (newBalance <= 0) {
     const org = await Organization.findById(orgId);

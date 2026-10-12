@@ -109,7 +109,7 @@ export function onFeeUpdateQueued(fn: () => void): void {
 export async function queueFeeUpdate(
   invoiceOrId: InvoiceLike | string | Types.ObjectId,
   reason: string,
-  opts: { deleted?: boolean } = {},
+  opts: { deleted?: boolean; evenIfNotSent?: boolean } = {},
 ): Promise<boolean> {
   try {
     if (!commissionConfigured()) return false;
@@ -118,7 +118,9 @@ export async function queueFeeUpdate(
     const provision = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(id), "commission.state": "sent" })
       .select("organizationId commission lmsCourseTitle payload.email")
       .lean<ProvisionLike & { organizationId: unknown }>();
-    if (!provision) return false;
+    // evenIfNotSent (the receipts backfill, 2026-10-12): an enrolment Tetra Commission has from before finance sent
+    // students — it knows the invoice, and answers UNKNOWN_INVOICE (stopped, harmless) when it doesn't.
+    if (!provision && !opts.evenIfNotSent) return false;
 
     const invoice: InvoiceLike | null = opts.deleted && typeof invoiceOrId === "object" && !(invoiceOrId instanceof Types.ObjectId)
       ? invoiceOrId
@@ -134,7 +136,7 @@ export async function queueFeeUpdate(
       { invoiceId: new Types.ObjectId(id) },
       {
         $set: {
-          organizationId: invoice.organizationId ?? provision.organizationId,
+          organizationId: invoice.organizationId ?? provision?.organizationId,
           invoiceNumber: invoice.invoiceNumber ?? "",
           payload,
           reason,

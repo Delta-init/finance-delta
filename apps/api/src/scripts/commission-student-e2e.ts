@@ -602,6 +602,30 @@ step("Collected by counsellor and each payment's receipt, to Tetra Commission (2
     queued[0]?.queued === true && f?.collected_minor === 225_000 && /tabby/i.test(f?.collected_method ?? "") && f?.recorded_minor === 225_000
       && f?.declared_payments?.[0]?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
   check("...and the receipt where it had none", f?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
+
+  // An older student: Tetra Commission has their course fee for an invoice finance never sent (no provision here).
+  const oldInvoice = await Invoice.create({
+    organizationId: new Types.ObjectId(), invoiceNumber: "IN-OLD-1", customerName: "Rajesh Old", status: "partial", currency: "AED",
+    totalMinor: 2_000_000, amountPaidMinor: 367_000, balanceMinor: 1_633_000, issueDate: new Date(), dueDate: new Date(),
+    approval: { state: "approved" },
+    enrolment: { course: "DSLP", declaredPaidMinor: 367_000, declaredPaymentMethod: "cash",
+      declaredPayments: [{ method: "cash", amountMinor: 367_000, paidOn: "2026-10-01", receipt: { name: "old.jpg", url: "https://files.example.com/enrolment-receipts/old/old.jpg", key: "enrolment-receipts/old/old.jpg" } }] },
+  } as never).catch(async () => (await Invoice.collection.insertOne({
+    organizationId: new Types.ObjectId(), invoiceNumber: "IN-OLD-1", customerName: "Rajesh Old", status: "partial", currency: "AED",
+    totalMinor: 2_000_000, amountPaidMinor: 367_000, balanceMinor: 1_633_000, issueDate: new Date(), dueDate: new Date(), approval: { state: "approved" },
+    enrolment: { course: "DSLP", declaredPaidMinor: 367_000, declaredPaymentMethod: "cash",
+      declaredPayments: [{ method: "cash", amountMinor: 367_000, paidOn: "2026-10-01", receipt: { name: "old.jpg", url: "https://files.example.com/enrolment-receipts/old/old.jpg", key: "enrolment-receipts/old/old.jpg" } }] },
+  } as never), { _id: (await Invoice.collection.findOne({ invoiceNumber: "IN-OLD-1" }))!._id }));
+  const oldId = String((oldInvoice as any)._id);
+  await students.insertOne({ full_name: "Rajesh Old", email: "rajesh.old@e2e-test.com", course_fees: [{ invoice_id: oldId, invoice_number: "IN-OLD-1", currency: "AED", fee_minor: 2_000_000, paid_minor: 367_000, balance_minor: 1_633_000, bonus_given: true, bonus_minor: 775_000, receipt_url: "" }] } as never);
+  const plain = await backfillDeclaredReceipts({ write: false, invoices: ["IN-OLD-1"] });
+  check("without --not-sent the older one isn't looked at", plain.length === 0, JSON.stringify(plain));
+  const old = await backfillDeclaredReceipts({ write: true, invoices: ["IN-OLD-1"], notSent: true });
+  for (let i = 0; i < 30 && (await drainFeeUpdates(new Date(Date.now() + 1000))) > 0; i++);
+  const of: any = ((await students.findOne({ email: "rajesh.old@e2e-test.com" })) as any)?.course_fees?.[0];
+  check("--not-sent: the older student's receipt and collection reach Tetra Commission by the invoice",
+    old[0]?.notSent === true && old[0]?.queued === true && of?.collected_minor === 367_000 && of?.declared_payments?.[0]?.receipt_url === "https://files.example.com/enrolment-receipts/old/old.jpg"
+      && of?.receipt_url === "https://files.example.com/enrolment-receipts/old/old.jpg" && of?.bonus_minor === 775_000, JSON.stringify(of));
   void queueFeeUpdate;
 }
 

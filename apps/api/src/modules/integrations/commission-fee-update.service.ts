@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import { paymentMethodLabel } from "@delta/shared";
+import { declaredSide } from "./declared-side";
 import { logger } from "../../lib/logger";
 import {
   commissionConfigured, sendFeeUpdateToCommission, CommissionRefusedError, type CommissionFeeUpdate,
@@ -35,9 +36,16 @@ type InvoiceLike = {
   amountPaidMinor?: number | null;
   balanceMinor?: number | null;
   dueDate?: Date | null;
-  enrolment?: { course?: string | null } | null;
+  enrolment?: {
+    course?: string | null;
+    declaredPaidMinor?: number | null;
+    declaredPaymentMethod?: string | null;
+    declaredPayments?: ReadonlyArray<{ method?: string | null; amountMinor?: number | null; paidOn?: string | null; receipt?: { url?: string | null; name?: string | null } | null }> | null;
+  } | null;
+  attachments?: ReadonlyArray<{ name?: string | null; url?: string | null; key?: string | null }> | null;
   payments?: ReadonlyArray<{ amountMinor?: number | null; paidOn?: Date | string | null; method?: string | null }> | null;
 };
+
 
 type ProvisionLike = {
   commission?: { state?: string | null; course?: string | null } | null;
@@ -83,6 +91,7 @@ export function buildFeeUpdate(
       }))
       .sort((a, b) => a.paidOn.localeCompare(b.paidOn)),
     updatedAt: (opts.at ?? new Date()).toISOString(),
+    ...declaredSide(invoice),
   };
 }
 

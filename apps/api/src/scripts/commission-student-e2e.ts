@@ -574,6 +574,37 @@ step("Onboarded, and the MT5 bonus — the last steps before a sales CRM counts 
   void noBonus;
 }
 
+step("Collected by counsellor and each payment's receipt, to Tetra Commission (2026-10-12)");
+{
+  env.COMMISSION_API_URL = COMMISSION_URL;
+  const { Invoice } = await import("../modules/invoice/invoice.model");
+  const { queueFeeUpdate, drainFeeUpdates } = await import("../modules/integrations/commission-fee-update.service");
+  const { backfillDeclaredReceipts } = await import("./declared-receipts-backfill");
+  const r = await enrol("declared@e2e-test.com");
+  await LmsProvision.updateOne({ _id: r._id }, { $set: { "payload.feeSummary": { currency: "AED", feeMinor: 225_000, paidMinor: 225_000, balanceMinor: 0, bonus: null, receipt: null } } });
+  await drainLmsProvisions();
+  await drainCommissionStudents();
+  // The close as the CRM declared it: Tabby, with the salesperson's receipt — and accounts recorded it.
+  await Invoice.updateOne({ _id: r.invoiceId }, { $set: {
+    totalMinor: 225_000, amountPaidMinor: 225_000, balanceMinor: 0, currency: "AED",
+    "enrolment.declaredPaidMinor": 225_000, "enrolment.declaredPaymentMethod": "tabby",
+    "enrolment.declaredPayments": [{ method: "tabby", amountMinor: 225_000, paidOn: "2026-10-09", receipt: { name: "tabby.jpg", url: "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", key: "enrolment-receipts/lead-9/tabby.jpg" } }],
+  } }, { strict: false });
+  const rows = await backfillDeclaredReceipts({ write: false, invoices: [r.invoiceNumber] });
+  check("the backfill names it: collected AED 2,250 by Tabby, one receipt — and queues nothing without --write",
+    rows.length === 1 && /2,250/.test(rows[0]!.collected) && rows[0]!.receipts === 1, JSON.stringify(rows));
+  const queued = await backfillDeclaredReceipts({ write: true, invoices: [r.invoiceNumber] });
+  // In batches, after whatever else is queued: until nothing is left.
+  for (let i = 0; i < 30 && (await drainFeeUpdates(new Date(Date.now() + 1000))) > 0; i++);
+  const s = await students.findOne({ email: "declared@e2e-test.com" }) as any;
+  const f = s?.course_fees?.[0];
+  check("--write: Tetra Commission has collected by counsellor, how, what was recorded, and the salesperson's receipt",
+    queued[0]?.queued === true && f?.collected_minor === 225_000 && /tabby/i.test(f?.collected_method ?? "") && f?.recorded_minor === 225_000
+      && f?.declared_payments?.[0]?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
+  check("...and the receipt where it had none", f?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
+  void queueFeeUpdate;
+}
+
 step("Sent the moment it is approved");
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const until = async (ok: () => Promise<boolean>, ms = 3000) => {

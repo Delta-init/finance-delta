@@ -1,3 +1,4 @@
+import { declaredSide } from "../integrations/declared-side";
 import { Types, type PipelineStage } from "mongoose";
 import {
   computeInvoiceLine,
@@ -913,6 +914,10 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
   /** currency: the bonus's own; USD for a sales CRM's close that sent none; else (typed here) the invoice's. */
   bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
+  declaredPaidMinor: number;
+  declaredPaymentMethod: string;
+  recordedPaidMinor: number;
+  declaredPayments: { method: string; amountMinor: number; paidOn: string; receipt: { url: string; name: string } | null }[];
 } {
   const d = doc as unknown as {
     currency?: string;
@@ -928,13 +933,22 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
   // The receipt the CRM wrote at the close — under its own prefix, so a file
   // somebody attached here later is never passed off as the client's receipt.
   const receipt = (d.attachments ?? []).find((a) => String(a.key ?? "").startsWith("enrolment-receipts/") && a.url);
+  const declared = declaredSide(doc as never);
   return {
     currency: d.currency ?? "AED",
     feeMinor: fee,
     paidMinor: paid,
     balanceMinor: Math.max(0, fee - paid),
     bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0, currency: bonusCurrency(d.enrolment, d.currency, d.external?.source) } : null,
-    receipt: receipt ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) } : null,
+    receipt: receipt
+      ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) }
+      // From a CRM that sends a receipt with each payment: the first one's (2026-10-12).
+      : declared.declaredPayments.find((p) => p.receipt)?.receipt ?? null,
+    // The close as the counsellor declared it, and what accounts recorded — Tetra Commission shows both (2026-10-12).
+    declaredPaidMinor: declared.declaredPaidMinor,
+    declaredPaymentMethod: declared.declaredPaymentMethod,
+    recordedPaidMinor: d.amountPaidMinor ?? 0,
+    declaredPayments: declared.declaredPayments,
   };
 }
 

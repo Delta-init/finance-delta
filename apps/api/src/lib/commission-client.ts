@@ -219,6 +219,11 @@ export interface CommissionFeeUpdate {
   nextDueOn: string | null;
   payments: { amountMinor: number; paidOn: string; method: string }[];
   updatedAt: string;
+  /** The close as the counsellor declared it — Tetra Commission's "Collected by counsellor" and the salesperson's receipts. */
+  declaredPaidMinor?: number;
+  declaredPaymentMethod?: string;
+  declaredPayments?: { method: string; amountMinor: number; paidOn: string; receipt: { url: string; name: string } | null }[];
+  receipt?: { url: string; name: string } | null;
 }
 
 /**

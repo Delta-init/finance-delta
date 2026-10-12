@@ -119,6 +119,11 @@ export interface EnrolmentFeeSummary {
   /** currency: the bonus's own (USD from the CRMs), which may not be the fee's. */
   bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
+  /** The close as the counsellor declared it, and what accounts recorded (2026-10-12) — read by Tetra Commission. */
+  declaredPaidMinor?: number;
+  declaredPaymentMethod?: string;
+  recordedPaidMinor?: number;
+  declaredPayments?: { method: string; amountMinor: number; paidOn: string; receipt: { url: string; name: string } | null }[];
 }
 
 /**

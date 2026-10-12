@@ -258,6 +258,25 @@ export interface HrmsProcurementRequest {
   createdAt: string;
 }
 
+/** A salary advance HR has approved, waiting on finance to pay it out. */
+export interface HrmsSalaryAdvance {
+  _id: string;
+  /** Major units, as approved by HR — recovered from pay at exactly this. */
+  amount: number;
+  currency: string;
+  reason: string;
+  neededBy?: string | null;
+  monthlySalary: number;
+  months: number;
+  startMonth: string;
+  employee?: { _id: string; name: string; employeeCode?: string; designation?: string; department?: { _id: string; name: string } | null } | null;
+  user?: { _id: string; name: string; email?: string } | null;
+  hrReviewedBy?: { _id: string; name: string } | null;
+  hrReviewedAt?: string | null;
+  hrNote?: string;
+  createdAt: string;
+}
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -428,6 +447,32 @@ export const hrmsClient = {
   async rejectProcurement(organizationId: string, id: string, opts: { note?: string } = {}) {
     return (
       await request<HrmsProcurementRequest>("POST", `/procurement/requests/${id}/reject`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  // ── Salary advances ────────────────────────────────────────────────────────
+
+  /** Advances HR has approved and set the recovery for, waiting on finance. */
+  async salaryAdvances(organizationId: string): Promise<HrmsSalaryAdvance[]> {
+    return (await request<HrmsSalaryAdvance[]>("GET", "/advances/requests", { query: { organizationId } })).data;
+  },
+
+  /** Finance agreed to pay it: HRMS starts recovering it from the employee's pay. */
+  async approveAdvance(organizationId: string, id: string, opts: { reference?: string; note?: string; paidOn?: string } = {}) {
+    return (
+      await request<HrmsSalaryAdvance>("POST", `/advances/requests/${id}/approve`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  async rejectAdvance(organizationId: string, id: string, opts: { note?: string } = {}) {
+    return (
+      await request<HrmsSalaryAdvance>("POST", `/advances/requests/${id}/reject`, {
         query: { organizationId },
         body: { organizationId, ...opts },
       })

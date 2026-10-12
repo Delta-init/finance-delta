@@ -54,7 +54,7 @@ const expenseAttachmentSchema = new Schema(
  */
 const expenseSourceSchema = new Schema(
   {
-    kind: { type: String, enum: ["hrms_procurement"], required: true },
+    kind: { type: String, enum: ["hrms_procurement", "hrms_advance"], required: true },
     key: { type: String, required: true },
     hrmsOrgId: { type: String, required: true },
     requestId: { type: String, required: true },

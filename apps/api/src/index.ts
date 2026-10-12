@@ -28,6 +28,7 @@ import paymentRoutes from "./modules/invoice/payment.routes";
 import vendorRoutes from "./modules/vendor/vendor.routes";
 import purchaseOrderRoutes from "./modules/purchase-order/purchase-order.routes";
 import procurementRoutes from "./modules/procurement/procurement.routes";
+import advanceRoutes from "./modules/advances/advances.routes";
 import billRoutes from "./modules/bill/bill.routes";
 import vendorCreditRoutes from "./modules/vendor-credit/vendor-credit.routes";
 import expenseRoutes from "./modules/expense/expense.routes";
@@ -113,6 +114,7 @@ async function bootstrap() {
   api.use("/vendors", vendorRoutes);
   api.use("/purchase-orders", purchaseOrderRoutes);
   api.use("/procurement", procurementRoutes);
+  api.use("/advances", advanceRoutes);
   api.use("/bills", billRoutes);
   api.use("/vendor-credits", vendorCreditRoutes);
   api.use("/expenses", expenseRoutes);

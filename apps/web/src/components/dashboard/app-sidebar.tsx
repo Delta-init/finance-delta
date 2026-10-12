@@ -27,6 +27,7 @@ import {
   Link2,
   Wallet,
   WalletCards,
+  HandCoins,
   ClipboardCheck,
   Coins,
   type LucideIcon, MailCheck
@@ -155,6 +156,8 @@ const NAV: NavGroup[] = [
       { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
       { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read", badge: "payroll" },
       { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
+      // Paid out on approval, like a purchase request — so the same right.
+      { href: "/advances", label: "Salary Advances", icon: HandCoins, enabled: true, permission: "expense:approve" },
     ],
   },
   {

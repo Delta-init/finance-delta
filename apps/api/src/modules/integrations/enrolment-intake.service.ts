@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
+import { CRM_BONUS_CURRENCY, enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
 import type { Academy, InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, StoredReceipt } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
@@ -382,10 +382,17 @@ export async function intakeEnrolment(
  * an enrolment that says nothing is different from one that says "no bonus".
  * Where the balance is missing the screens work it out from the fee and the
  * declared payment, as they always have.
+ *
+ * The bonus's currency as sent; a sales CRM that sends none — a close queued
+ * before the CRMs said "USD", resent from its stored snapshot — means USD
+ * (the user, 2026-10-12), so it is recorded as USD rather than left to fall
+ * back to the invoice's currency. `storedCrm`: the CRM the invoice already
+ * has, for a resend that does not repeat it.
  */
-function declaredBonusAndBalance(input: InboundEnrolmentInput): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
+function declaredBonusAndBalance(input: InboundEnrolmentInput, storedCrm?: string): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
+  const currency = input.bonus?.currency || (enrolmentCrm(input.crm ?? storedCrm, input.source) ? CRM_BONUS_CURRENCY : undefined);
   return {
-    ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor, ...(input.bonus.currency ? { currency: input.bonus.currency } : {}) } } : {}),
+    ...(input.bonus ? { bonus: { given: input.bonus.given, amountMinor: input.bonus.amountMinor, ...(currency ? { currency } : {}) } } : {}),
     ...(input.balanceMinor !== undefined ? { declaredBalanceMinor: input.balanceMinor } : {}),
   };
 }
@@ -570,7 +577,7 @@ async function resubmitReturned(
       // Each payment as resent — none from a caller that sends only the total,
       // whose earlier list would no longer add up to it.
       doc.set("enrolment.declaredPayments", input.payments ?? undefined);
-      const { bonus, declaredBalanceMinor } = declaredBonusAndBalance(input);
+      const { bonus, declaredBalanceMinor } = declaredBonusAndBalance(input, doc.get("enrolment.crm") as string | undefined);
       if (bonus) doc.set("enrolment.bonus", bonus);
       if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
       // A CRM that says which it is says so again; one that does not leaves it.

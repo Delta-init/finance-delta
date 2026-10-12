@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye, AlertTriangle } from "lucide-react";
-import { formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { bonusCurrency, formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AcademyTag, CrmTag } from "@/components/crm-tag";
@@ -117,7 +117,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           {e.bonus ? (
             <Detail
               label="Bonus"
-              value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, e.bonus.currency ?? invoice.currency)}` : "No"}
+              value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, bonusCurrency(e, invoice.currency, undefined))}` : "No"}
             />
           ) : null}
         </div>

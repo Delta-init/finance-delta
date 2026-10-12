@@ -238,6 +238,8 @@ async function main() {
       course: { name: "Trading Course", amountMinor: 15_000_000 },
       modeOfStudy: "online", language: "Kannada", salespersonEmail: "ravi@e2e-test.com", salespersonName: "Ravi Sales",
       declaredPaidMinor: 12_000_000, declaredPaymentMethod: "bank_transfer", balanceMinor: 3_000_000,
+      // A close queued before the CRM said "USD": a $300 bonus with no currency (the user, 2026-10-12).
+      bonus: { given: true, amountMinor: 30_000 },
       payments: [
         { method: "bank_transfer", amountMinor: 10_000_000, paidOn: "2026-10-09", receipt: receipt("blr-a") },
         { method: "cash", amountMinor: 2_000_000, paidOn: "2026-10-09", receipt: receipt("blr-b") },
@@ -248,6 +250,10 @@ async function main() {
     check("the invoice is in INR, at a rate of 1 to the organisation's own", d?.currency === "INR" && d?.exchangeRate === 1, `${d?.currency} @ ${d?.exchangeRate}`);
     check("…for the INR 1,50,000 sent, unconverted", d?.totalMinor === 15_000_000, String(d?.totalMinor));
     check("…the customer is billed in INR too", (await mongoose.connection.db!.collection("customers").findOne({ _id: d?.customerId }))?.currency === "INR");
+    check("…its bonus, sent with no currency, is recorded in USD — not INR", d?.enrolment?.bonus?.currency === "USD" && d?.enrolment?.bonus?.amountMinor === 30_000, JSON.stringify(d?.enrolment?.bonus));
+    const { enrolmentFeeSummary } = await import("../modules/invoice/invoice.service");
+    const sumB = enrolmentFeeSummary(d as never);
+    check("…and the LMS and Tetra Commission are told $300 beside an INR fee", sumB.bonus?.currency === "USD" && sumB.currency === "INR", JSON.stringify(sumB.bonus));
     check("…tagged the Banglore CRM", d?.enrolment?.crm === "banglore", d?.enrolment?.crm);
     check("…its academy, unsaid, recorded as Bangalore", d?.enrolment?.academy === "bangalore", d?.enrolment?.academy);
     check("…its payments carry no conversion", (d?.enrolment?.declaredPayments ?? []).every((p: any) => p.original === undefined), JSON.stringify(d?.enrolment?.declaredPayments));

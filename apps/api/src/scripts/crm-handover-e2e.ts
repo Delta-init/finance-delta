@@ -530,6 +530,10 @@ async function main() {
     const inv = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
     const e = inv?.enrolment as { bonus?: { given?: boolean; amountMinor?: number }; declaredBalanceMinor?: number } | undefined;
     check("...the bonus is kept, given and with its amount", e?.bonus?.given === true && e?.bonus?.amountMinor === 25_000, JSON.stringify(e?.bonus));
+    // A close queued before the CRMs said "USD" is resent with no currency — it
+    // was meant in US dollars all the same (the user, 2026-10-12).
+    check("...and, sent with no currency by a sales CRM, it is recorded as USD — not the invoice's currency",
+      (e?.bonus as { currency?: string } | undefined)?.currency === "USD" && inv?.currency !== "USD", JSON.stringify({ bonus: e?.bonus, currency: inv?.currency }));
     check("...the balance is kept as the CRM worked it out", e?.declaredBalanceMinor === 80_000, `balance=${e?.declaredBalanceMinor}`);
     check("...and the bonus is not billed: the total is the fee alone", inv?.totalMinor === 130_000 && (inv?.lineItems as unknown[]).length === 1, `total=${inv?.totalMinor}`);
 
@@ -571,9 +575,53 @@ async function main() {
     const { enrolmentFeeSummary } = await import("../modules/invoice/invoice.service");
     const sumUsd = enrolmentFeeSummary(invUsd as never);
     const sumOld = enrolmentFeeSummary((await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean()) as never);
-    check("...and the LMS and Tetra Commission are told USD; a bonus sent without one, the invoice's currency",
-      sumUsd.bonus?.currency === "USD" && sumUsd.currency === invUsd?.currency && sumOld.bonus?.currency === sumOld.currency,
+    check("...and the LMS and Tetra Commission are told USD; a CRM's bonus sent without one, USD too",
+      sumUsd.bonus?.currency === "USD" && sumUsd.currency === invUsd?.currency && sumOld.bonus?.currency === "USD" && sumOld.currency !== "USD",
       JSON.stringify({ usd: sumUsd.bonus, old: sumOld.bonus, cur: sumOld.currency }));
+
+    // A CRM invoice stored before this fix — its bonus with no currency at all
+    // (the ones the backfill labels): read as USD everywhere it is shown or sent.
+    {
+      const { promisedBonus } = await import("../modules/integrations/enrolment-status.service");
+      const stored = await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean();
+      const legacyId = new Types.ObjectId();
+      await Invoice.collection.insertOne({
+        ...(stored as Record<string, unknown>),
+        _id: legacyId,
+        invoiceNumber: "IN-E2E-LEGACY",
+        external: { source: "crm", externalId: "e2e-bonus-legacy", flags: [] },
+        enrolment: { ...(stored?.enrolment as Record<string, unknown>), crm: undefined, bonus: { given: true, amountMinor: 50_000 } },
+      } as never);
+      const legacy = await Invoice.findById(legacyId).lean();
+      const dtoLegacy = await request("GET", `/invoices/${legacyId}`, undefined, adminAuth.token);
+      const lb = (dtoLegacy.body?.data as unknown as { enrolment?: { bonus?: { currency?: string; amountMinor?: number } } })?.enrolment?.bonus;
+      check("Case 2c — a CRM invoice stored with no bonus currency: an approver sees $500, not AED 500",
+        dtoLegacy.status === 200 && lb?.currency === "USD" && lb?.amountMinor === 50_000, show(dtoLegacy));
+      const sumLegacy = enrolmentFeeSummary(legacy as never);
+      check("...the LMS and Tetra Commission are told USD, the fee staying in the invoice's currency",
+        sumLegacy.bonus?.currency === "USD" && sumLegacy.bonus?.amountMinor === 50_000 && sumLegacy.currency === legacy?.currency, JSON.stringify(sumLegacy));
+      check("...and the CRM's status answer promises USD", promisedBonus(legacy as never)?.currency === "USD", JSON.stringify(promisedBonus(legacy as never)));
+
+      // The same bonus typed in finance — no CRM, no source: the invoice's currency, as always.
+      const typedId = new Types.ObjectId();
+      const { external: _ext, ...rest } = stored as Record<string, unknown>;
+      await Invoice.collection.insertOne({
+        ...rest,
+        _id: typedId,
+        invoiceNumber: "IN-E2E-TYPED",
+        enrolment: { ...(stored?.enrolment as Record<string, unknown>), crm: undefined, bonus: { given: true, amountMinor: 50_000 } },
+      } as never);
+      const typed = await Invoice.findById(typedId).lean();
+      const dtoTyped = await request("GET", `/invoices/${typedId}`, undefined, adminAuth.token);
+      const tb = (dtoTyped.body?.data as unknown as { enrolment?: { bonus?: { currency?: string; amountMinor?: number } } })?.enrolment?.bonus;
+      check("Case 2d — a bonus typed in finance keeps the invoice's currency: none on the record, the screens use the invoice's",
+        dtoTyped.status === 200 && tb?.amountMinor === 50_000 && tb?.currency === undefined, show(dtoTyped));
+      const sumTyped = enrolmentFeeSummary(typed as never);
+      check("...and is passed on in the invoice's currency",
+        sumTyped.bonus?.currency === typed?.currency && typed?.currency !== "USD", JSON.stringify(sumTyped.bonus));
+      check("...and promised in it", promisedBonus(typed as never)?.currency === typed?.currency, JSON.stringify(promisedBonus(typed as never)));
+      await Invoice.deleteMany({ _id: { $in: [legacyId, typedId] } });
+    }
     const badCurrency = await signedPost(orgId, "/api/v1/integrations/enrolments", {
       ...enrolment("e2e-bonus-cur-bad", "driftone@e2e-test.com"),
       bonus: { given: true, amountMinor: 100, currency: "dollars" },
@@ -610,6 +658,7 @@ async function main() {
     check("...the corrected resend replaces the bonus, the balance and the payment",
       corrected.status === 200 && eC?.bonus?.amountMinor === 30_000 && eC?.declaredBalanceMinor === 70_000 && eC?.declaredPaidMinor === 60_000,
       JSON.stringify(eC));
+    check("...its bonus, resent with no currency, recorded as USD", (eC?.bonus as { currency?: string } | undefined)?.currency === "USD", JSON.stringify(eC?.bonus));
     check("...on the same invoice, back with the approver", invC?.approval?.state === "pending" && String(invC?._id) === String(inv?._id), JSON.stringify(invC?.approval));
     check("...with who closed it, as resent", (invC?.enrolment as { meetingByEmail?: string })?.meetingByEmail === "driftone@e2e-test.com", JSON.stringify(invC?.enrolment));
     const again = await signedPost(orgId, "/api/v1/integrations/enrolments", { ...withBonus, bonus: { given: true, amountMinor: 99_000 } });

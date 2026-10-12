@@ -1,3 +1,4 @@
+import { bonusCurrency } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { LmsProvision } from "./lms-provision.model";
 import { lookupCommissionStudents, type CommissionStudentLookup } from "../../lib/commission-client";
@@ -142,11 +143,16 @@ function commissionOf(p: Provision): EnrolmentCommission {
   }
 }
 
-/** Whether a sales close promised a bonus — and how much — as the CRM said at the close. */
-function promisedBonus(i: { enrolment?: unknown; currency?: unknown }): { given: boolean; amountMinor: number; currency: string } | null {
-  const b = (i.enrolment as { bonus?: { given?: boolean; amountMinor?: number; currency?: string } } | undefined)?.bonus;
+/**
+ * Whether a sales close promised a bonus — and how much — as the CRM said at the close. Its currency:
+ * the one recorded, else USD — a close queued before the CRMs said so (bonusCurrency).
+ */
+export function promisedBonus(i: { enrolment?: unknown; currency?: unknown; external?: unknown }): { given: boolean; amountMinor: number; currency: string } | null {
+  const e = i.enrolment as { crm?: string; bonus?: { given?: boolean; amountMinor?: number; currency?: string } } | undefined;
+  const b = e?.bonus;
   if (!b || typeof b.given !== "boolean") return null;
-  return { given: b.given, amountMinor: Number(b.amountMinor) || 0, currency: b.currency || String(i.currency || "AED") };
+  const source = (i.external as { source?: string } | undefined)?.source;
+  return { given: b.given, amountMinor: Number(b.amountMinor) || 0, currency: bonusCurrency(e, String(i.currency || "AED"), source) };
 }
 
 /**
@@ -155,7 +161,7 @@ function promisedBonus(i: { enrolment?: unknown; currency?: unknown }): { given:
  * claimed). This invoice's bonus by our invoice id; none to find, and none
  * promised at the close, is "none": nothing for a broker admin to approve.
  */
-function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolment?: unknown; currency?: unknown }): Pick<EnrolmentCommission, "onboarded" | "bonus"> {
+function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolment?: unknown; currency?: unknown; external?: unknown }): Pick<EnrolmentCommission, "onboarded" | "bonus"> {
   if (typeof there.onboarded !== "boolean") return {};
   const onboarded = {
     done: there.onboarded,
@@ -189,7 +195,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
     "external.source": source,
     "external.externalId": { $in: externalIds },
   })
-    .select("invoiceNumber status approval totalMinor amountPaidMinor balanceMinor currency external issueDate enrolment.bonus")
+    .select("invoiceNumber status approval totalMinor amountPaidMinor balanceMinor currency external issueDate enrolment.bonus enrolment.crm")
     .lean();
   if (!invoices.length) return [];
 

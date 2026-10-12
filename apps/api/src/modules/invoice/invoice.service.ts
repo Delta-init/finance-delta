@@ -48,7 +48,7 @@ function feeUpdate(invoice: Parameters<typeof import("../integrations/commission
     .then((m) => m.queueFeeUpdate(invoice, reason, opts))
     .catch(() => undefined);
 }
-import { formatMoney, formatOriginalPayment } from "@delta/shared";
+import { bonusCurrency, formatMoney, formatOriginalPayment } from "@delta/shared";
 
 /** Lazily compute overdue: sent/viewed past due date with unpaid balance. */
 function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
@@ -66,11 +66,16 @@ function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
 
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
 
-/** The bonus and the declared balance, where the enrolment recorded them — absent, not zero, where it did not. */
-function enrolmentBonusDTO(enrolment: unknown): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
-  const e = enrolment as { bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null; declaredBalanceMinor?: number | null };
+/**
+ * The bonus and the declared balance, where the enrolment recorded them — absent, not zero, where it did not.
+ * The bonus's currency: its own, or USD for a sales CRM's close that sent none (bonusCurrency); absent for
+ * one typed here without one, which the screens show in the invoice's currency.
+ */
+function enrolmentBonusDTO(enrolment: unknown, source?: string): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
+  const e = enrolment as { crm?: string; bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null; declaredBalanceMinor?: number | null };
+  const currency = e.bonus && (e.bonus.currency || enrolmentCrm(e.crm, source)) ? bonusCurrency(e, undefined, source) : undefined;
   return {
-    ...(e.bonus ? { bonus: { given: Boolean(e.bonus.given), amountMinor: e.bonus.amountMinor ?? 0, ...(e.bonus.currency ? { currency: e.bonus.currency } : {}) } } : {}),
+    ...(e.bonus ? { bonus: { given: Boolean(e.bonus.given), amountMinor: e.bonus.amountMinor ?? 0, ...(currency ? { currency } : {}) } } : {}),
     ...(typeof e.declaredBalanceMinor === "number" ? { declaredBalanceMinor: e.declaredBalanceMinor } : {}),
   };
 }
@@ -159,7 +164,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           declaredPaidMinor: doc.enrolment.declaredPaidMinor ?? 0,
           declaredPaymentMethod: doc.enrolment.declaredPaymentMethod ?? undefined,
           ...declaredPaymentsDTO(doc.enrolment),
-          ...enrolmentBonusDTO(doc.enrolment),
+          ...enrolmentBonusDTO(doc.enrolment, (doc as { external?: { source?: string } }).external?.source),
           // The CRM that sold it, worked out from the source where it never said.
           crm: enrolmentCrm((doc.enrolment as { crm?: string }).crm, (doc as { external?: { source?: string } }).external?.source) ?? undefined,
           // The academy it was sold for — for a sales CRM's enrolment, or one that recorded it.
@@ -905,7 +910,7 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
   feeMinor: number;
   paidMinor: number;
   balanceMinor: number;
-  /** currency: the bonus's own — USD from the CRMs since 2026-10-09, else the invoice's. */
+  /** currency: the bonus's own; USD for a sales CRM's close that sent none; else (typed here) the invoice's. */
   bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
 } {
@@ -913,7 +918,8 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
     currency?: string;
     totalMinor?: number;
     amountPaidMinor?: number;
-    enrolment?: { declaredPaidMinor?: number; bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null };
+    enrolment?: { crm?: string; declaredPaidMinor?: number; bonus?: { given?: boolean; amountMinor?: number; currency?: string } | null };
+    external?: { source?: string };
     attachments?: { name?: string; url?: string; key?: string; mimeType?: string }[];
   };
   const fee = d.totalMinor ?? 0;
@@ -927,7 +933,7 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
     feeMinor: fee,
     paidMinor: paid,
     balanceMinor: Math.max(0, fee - paid),
-    bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0, currency: bonus.currency ?? d.currency ?? "AED" } : null,
+    bonus: bonus ? { given: Boolean(bonus.given), amountMinor: bonus.given ? bonus.amountMinor ?? 0 : 0, currency: bonusCurrency(d.enrolment, d.currency, d.external?.source) } : null,
     receipt: receipt ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) } : null,
   };
 }

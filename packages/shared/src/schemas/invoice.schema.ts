@@ -186,6 +186,29 @@ export function enrolmentCrm(crm: string | null | undefined, source: string | nu
   return null;
 }
 
+/** The currency every sales CRM gives the course (MT5) bonus in. */
+export const CRM_BONUS_CURRENCY = "USD";
+
+/**
+ * The currency of an enrolment's bonus (the user, 2026-10-12): its own where
+ * it was recorded with one; otherwise USD for one a sales CRM sold — a close
+ * queued before the CRM said so, whose bonus was always meant in US dollars —
+ * and the invoice's for one typed in finance, as it always was. Nothing is
+ * converted: this is the label the amount is shown and passed on with.
+ * `source` is the invoice's `external.source`, for an enrolment from before
+ * the CRMs named themselves.
+ */
+export function bonusCurrency(
+  enrolment: { crm?: string | null; bonus?: { currency?: string | null } | null } | null | undefined,
+  invoiceCurrency: string | null | undefined,
+  source: string | null | undefined,
+): string {
+  const own = String(enrolment?.bonus?.currency ?? "").trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(own)) return own;
+  if (enrolmentCrm(enrolment?.crm, source)) return CRM_BONUS_CURRENCY;
+  return String(invoiceCurrency || "AED").trim().toUpperCase();
+}
+
 /**
  * The academy an enrolment was sold for, picked at the close (the user,
  * 2026-10-10): Dubai — what every enrolment was before — or Bangalore. The
@@ -266,8 +289,10 @@ export type InvoiceApprovalState = z.infer<typeof invoiceApprovalSchema>;
  * is different from one that was never asked — and a "no" carries no amount.
  *
  * Its currency (the user, 2026-10-09): every sales CRM now gives the course
- * bonus in USD — it is an MT5 bonus — and says so. A CRM from before says
- * nothing, and its bonus is in the invoice's currency, as it always was.
+ * bonus in USD — it is an MT5 bonus — and says so. A close queued before the
+ * CRM said so carries no currency; its bonus was meant in US dollars all the
+ * same (the user, 2026-10-12), so a sales CRM's bonus with none is USD — see
+ * `bonusCurrency`. Only an enrolment typed here falls back to the invoice's.
  */
 export const enrolmentBonusSchema = z
   .object({

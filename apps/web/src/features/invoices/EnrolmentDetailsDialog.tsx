@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, GraduationCap, Mail, Paperclip, Phone } from "lucide-react";
-import { ACADEMY_LABELS, ENROLMENT_CRM_LABELS, formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { ACADEMY_LABELS, ENROLMENT_CRM_LABELS, bonusCurrency, formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -157,7 +157,7 @@ export function EnrolmentDetailsDialog({
             {e?.bonus ? (
               <Row
                 label="Bonus (not in the fee or balance)"
-                value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, e.bonus.currency ?? invoice.currency)}` : "No"}
+                value={e.bonus.given ? `Yes · ${formatMoney(e.bonus.amountMinor, bonusCurrency(e, invoice.currency, undefined))}` : "No"}
               />
             ) : null}
           </Section>

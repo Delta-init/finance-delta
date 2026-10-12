@@ -115,6 +115,12 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
           ["Balance", amount(cp.balanceAed, "AED")],
         ] as [string, string][])
       : []),
+    ...(deposit.courseInvoice
+      ? ([
+          ["Invoice", `${deposit.courseInvoice.invoiceNumber}${deposit.courseInvoice.created ? " (made for it)" : ""}`],
+          ["Receipt", `${deposit.courseInvoice.receiptNumber} · ${amount(deposit.courseInvoice.amountMinor / 100, deposit.courseInvoice.currency)}`],
+        ] as [string, string][])
+      : []),
     ["Student", [deposit.student.name, deposit.student.code].filter(Boolean).join(" · ")],
     ["Email", deposit.student.email],
     ["Level", levelLabel(deposit.student.level)],
@@ -237,9 +243,9 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
             {balancePayment
               ? "From Tetra Commission — the next payment of this student's course fee, recorded by their CS. Approving it records the payment on the invoice (paid on the date the CS gave), which sets the next due date and updates Tetra Commission. More than the balance is refused."
               : isCourseUpgrade(deposit)
-              ? "From Tetra Commission — a payment towards the student's course upgrade. Approving it confirms the money; Tetra Commission then counts it and raises the MT5 bonus it earns."
+              ? "From Tetra Commission — a payment towards the student's course upgrade. Approving it records the money on the upgrade's invoice (made with its first payment) and emails the client a receipt; Tetra Commission then counts it and raises the MT5 bonus it earns."
               : isBonus(deposit)
-              ? "From Tetra Commission — a course payment. Approving it confirms the payment; a broker admin there then credits the bonus in MT5 and approves it."
+              ? "From Tetra Commission — a course payment. Approving it records the money on the student's invoice for the course (made when there is none) and emails the client a receipt; a broker admin there then credits the bonus in MT5 and approves it."
               : <>From Tetra Commission — approving it records it there and credits the mentors&apos; commission.</>}
           </DialogDescription>
         </DialogHeader>

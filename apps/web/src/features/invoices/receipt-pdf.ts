@@ -53,7 +53,7 @@ export async function downloadReceiptPdf(opts: {
   doc.setFont("helvetica", "bold").setFontSize(18).setTextColor(17);
   doc.text("RECEIPT", W - M, y + 4, { align: "right" });
   doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(100, 116, 139);
-  doc.text(`Ref: ${invoice.invoiceNumber}`, W - M, y + 10, { align: "right" });
+  doc.text(`${payment.receiptNumber ? `${payment.receiptNumber} · ` : ""}Ref: ${invoice.invoiceNumber}`, W - M, y + 10, { align: "right" });
 
   const logoH = drawPdfLogo(doc, logo, M, y, 55, 14);
   if (logoH) y += logoH + 2;
@@ -145,6 +145,6 @@ export async function downloadReceiptPdf(opts: {
     doc.text(org.branding.footerText, W / 2, 285, { align: "center" });
   }
 
-  doc.save(`Receipt-${invoice.invoiceNumber}-${payment.paidOn}.pdf`);
+  doc.save(payment.receiptNumber ? `Receipt-${payment.receiptNumber}.pdf` : `Receipt-${invoice.invoiceNumber}-${payment.paidOn}.pdf`);
   return true;
 }

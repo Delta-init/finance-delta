@@ -234,6 +234,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         };
         proofUrl?: string;
         proofKey?: string;
+        receiptNumber?: string;
         createdAt: Date;
       };
       return {
@@ -256,6 +257,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
             }
           : undefined,
         proofUrl: pm.proofUrl || undefined,
+        ...(pm.receiptNumber ? { receiptNumber: pm.receiptNumber } : {}),
         createdAt: pm.createdAt.toISOString(),
       };
     }),

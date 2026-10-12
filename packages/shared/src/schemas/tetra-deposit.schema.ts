@@ -52,6 +52,10 @@ export const tetraCoursePaymentSchema = z.object({
   paidBeforeAed: optionalAmount,
   price: optionalAmount,
   priceCurrency: optionalText(3),
+  /** A course upgrade's id in Tetra Commission — every payment of one upgrade goes on one invoice here (the user, 2026-10-12). */
+  upgradeId: optionalText(40),
+  /** The day the money was paid (YYYY-MM-DD), where Tetra Commission has it — the payment's date here. */
+  paidOn: optionalText(10),
 });
 export type TetraCoursePayment = z.infer<typeof tetraCoursePaymentSchema>;
 
@@ -130,6 +134,8 @@ const inboundTetraDepositObject = z.object({
     name: z.string().trim().min(1).max(160),
     email: optionalText(200),
     level: optionalText(20),
+    /** For the client a course payment is invoiced to, when finance has none with this email yet. */
+    phone: optionalText(40),
   }),
   team: optionalText(120),
   paymentMethod: optionalText(60),
@@ -262,6 +268,20 @@ export const tetraDepositSchema = z.object({
       totalMinor: z.number(), paidMinor: z.number(), balanceMinor: z.number(), dueDate: z.string(),
     }).optional(),
     recorded: z.object({ paymentId: z.string(), at: z.string(), method: z.string() }).optional(),
+  }).optional(),
+  /**
+   * A course payment (a course upgrade's, or a bonus's course payment) once approved: the
+   * invoice it was recorded on — made for it, or the student's open one for the course —
+   * the payment and its receipt (the user, 2026-10-12).
+   */
+  courseInvoice: z.object({
+    invoiceId: z.string(),
+    invoiceNumber: z.string(),
+    paymentId: z.string(),
+    receiptNumber: z.string(),
+    amountMinor: z.number(),
+    currency: z.string(),
+    created: z.boolean(),
   }).optional(),
   /** What happened to it here, oldest first — on a single deposit only. */
   events: z.array(z.object({ at: z.string(), kind: z.string(), byName: z.string(), text: z.string() })).optional(),

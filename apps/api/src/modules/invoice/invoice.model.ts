@@ -102,6 +102,8 @@ const paymentSubSchema = new Schema(
     /** Where the payment was recorded from, when not here: "tetra:<request id>" for one a CS
         recorded in Tetra Commission and accounts approved — what stops it being recorded twice. */
     externalRef: { type: String },
+    /** The receipt issued for it (RCT-00001) — a course payment from Tetra Commission (the user, 2026-10-12). */
+    receiptNumber: { type: String },
   },
   { timestamps: true },
 );

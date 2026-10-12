@@ -129,6 +129,23 @@ export interface CommissionFundingDecision {
   invoiceId?: string;
   paymentId?: string;
   paidOn?: string;
+  /**
+   * A course payment (a course upgrade's, or a bonus's course payment), approved: the invoice it was
+   * recorded on here — made for it, or the student's open one for the course — and its receipt
+   * (the user, 2026-10-12). Amounts in fils of `currency` (AED).
+   */
+  courseInvoice?: {
+    invoiceId: string;
+    invoiceNumber: string;
+    paymentId: string;
+    receiptNumber: string;
+    amountMinor: number;
+    currency: string;
+    totalMinor: number;
+    paidMinor: number;
+    balanceMinor: number;
+    created: boolean;
+  };
   decidedBy: { name: string; email: string };
   decidedAt: string;
 }

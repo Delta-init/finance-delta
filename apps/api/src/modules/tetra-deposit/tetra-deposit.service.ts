@@ -17,6 +17,7 @@ import { PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
 import { Role } from "../role/role.model";
 import { User } from "../user/user.model";
 import { TetraDepositModel } from "./tetra-deposit.model";
+import { courseInvoiceForDecision, isCoursePayment, recordCoursePayment } from "./course-invoice";
 
 /**
  * Deposit requests from Tetra Commission, decided here and sent back there.
@@ -55,6 +56,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
             bonusUsd: r.coursePayment.bonusUsd ?? null, holdAed: r.coursePayment.holdAed ?? null, balanceAed: r.coursePayment.balanceAed ?? null,
             paidTodayAed: r.coursePayment.paidTodayAed ?? null, paidBeforeAed: r.coursePayment.paidBeforeAed ?? null,
             price: r.coursePayment.price ?? null, priceCurrency: r.coursePayment.priceCurrency ?? "",
+            upgradeId: r.coursePayment.upgradeId ?? "", paidOn: r.coursePayment.paidOn ?? "",
           },
         }
       : {}),
@@ -129,6 +131,16 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
           },
         }
       : {}),
+    ...(r.courseInvoice?.paymentId
+      ? {
+          courseInvoice: {
+            invoiceId: String(r.courseInvoice.invoiceId ?? ""), invoiceNumber: String(r.courseInvoice.invoiceNumber ?? ""),
+            paymentId: String(r.courseInvoice.paymentId), receiptNumber: String(r.courseInvoice.receiptNumber ?? ""),
+            amountMinor: Number(r.courseInvoice.amountMinor) || 0, currency: String(r.courseInvoice.currency ?? "AED"),
+            created: r.courseInvoice.created === true,
+          },
+        }
+      : {}),
     ...(withEvents
       ? {
           events: (r.events ?? []).map((e: any) => ({
@@ -183,9 +195,9 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
         balancePayment
           ? "Approving it records the payment on the student's invoice, which sets their next due date and updates Tetra Commission. Check it against the receipt first."
           : upgrade
-          ? "Approving it confirms the payment towards their course upgrade; Tetra Commission then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
+          ? "Approving it records the payment on the upgrade's invoice (made with its first payment) and emails the client a receipt; Tetra Commission then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
           : bonus
-          ? "Approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first."
+          ? `Approving it confirms the payment${Number(d.coursePayment?.paidTodayAed) > 0 ? ", records it on the student's invoice for the course (made when there is none) and emails the client a receipt" : ""}; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first.`
           : "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
       ].filter(Boolean),
       actionLabel: "Review it",
@@ -525,7 +537,8 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
   const attempts = (row.delivery?.attempts ?? 0) + 1;
   const event = (kind: string, text: string) => ({ events: { at: new Date(), kind, byName: "", text } });
   try {
-    const result = await sendFundingDecisionToCommission(decisionFor(row));
+    const courseInvoice = row.status === "approved" ? await courseInvoiceForDecision(row) : undefined;
+    const result = await sendFundingDecisionToCommission({ ...decisionFor(row), ...(courseInvoice ? { courseInvoice } : {}) });
     await TetraDepositModel.updateOne({ _id: row._id }, {
       $set: { "delivery.state": "delivered", "delivery.deliveredAt": new Date(), "delivery.attempts": attempts },
       $unset: { "delivery.nextAttemptAt": "", "delivery.claimedAt": "", "delivery.lastError": "" },
@@ -539,6 +552,8 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
       message: row.status === "approved"
         ? row.type === "ENROLMENT_PAYMENT"
           ? `Approved — recorded on invoice ${row.enrolmentPayment?.invoiceNumber ?? ""}, and Tetra Commission has it`
+          : courseInvoice
+          ? `Approved — ${courseInvoice.created ? "invoice made" : "recorded on invoice"} ${courseInvoice.invoiceNumber}, receipt ${courseInvoice.receiptNumber} emailed to the client, and Tetra Commission has it`
           : "Approved — Tetra Commission has it, and the mentors' commission is credited"
         : "Rejected — Tetra Commission has it",
     };
@@ -626,10 +641,20 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
     }
     toDeliver = await TetraDepositModel.findById(row._id).lean();
   }
+  const coursePayment = isCoursePayment(row) && row.status === "approved";
+  if (coursePayment) {
+    // A course payment goes on its invoice, with its receipt, before Tetra Commission hears it was approved.
+    const recorded = await recordCoursePayment(row);
+    if (!recorded.ok) {
+      await putBack(row, recorded.message);
+      throw new AppError("CONFLICT", `Not recorded: ${recorded.message}`);
+    }
+    toDeliver = await TetraDepositModel.findById(row._id).lean();
+  }
 
-  // A balance payment is on the invoice by now, so a refusal there is not put back in front of
-  // them to decide again: it is kept as not delivered, to reopen, like the worker's.
-  const outcome = await deliverDecision(toDeliver, row.type !== "ENROLMENT_PAYMENT");
+  // A balance payment (or a course payment) is on the invoice by now, so a refusal there is not put back
+  // in front of them to decide again: it is kept as not delivered, to reopen, like the worker's.
+  const outcome = await deliverDecision(toDeliver, row.type !== "ENROLMENT_PAYMENT" && !coursePayment);
   if (outcome.kind === "correctable") {
     // Turned down for something they can put right: back in front of them, as it was.
     await TetraDepositModel.updateOne({ _id: row._id }, {
@@ -699,6 +724,15 @@ export async function drainTetraDepositDecisions(): Promise<number> {
     if (row.type === "ENROLMENT_PAYMENT" && row.status === "approved" && !row.enrolmentPayment?.recorded?.paymentId) {
       // Approved by a request that died before the payment was recorded: record it now, or hand it back.
       const recorded = await recordBalancePayment(row);
+      if (!recorded.ok) {
+        await putBack(row, recorded.message);
+        continue;
+      }
+      toDeliver = await TetraDepositModel.findById(row._id).lean();
+    }
+    if (isCoursePayment(row) && row.status === "approved" && !row.courseInvoice?.receiptNumber) {
+      // The same for a course payment: on its invoice first, or handed back.
+      const recorded = await recordCoursePayment(row);
       if (!recorded.ok) {
         await putBack(row, recorded.message);
         continue;

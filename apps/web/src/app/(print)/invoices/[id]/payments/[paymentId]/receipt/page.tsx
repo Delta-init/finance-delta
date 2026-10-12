@@ -59,6 +59,7 @@ export default function PaymentReceiptPage({
           <PrintBrandMark branding={invoice.branding} fallbackBranding={org?.branding} footerText={invoice.branding?.footerText} />
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.5 }}>RECEIPT</div>
+            {payment?.receiptNumber && <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 600 }}>{payment.receiptNumber}</div>}
             <div style={{ fontSize: 12, color: "#64748b" }}>Ref: {invoice.invoiceNumber}</div>
           </div>
         </div>

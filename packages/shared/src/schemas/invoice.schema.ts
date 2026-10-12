@@ -496,6 +496,8 @@ export const paymentSchema = z.object({
   chargesMinor: z.number().default(0),
   emi: emiDetailSchema.optional(),
   proofUrl: z.string().optional(),
+  /** The receipt's number (RCT-00001), on a payment one was issued for — a course payment from Tetra Commission. */
+  receiptNumber: z.string().optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;

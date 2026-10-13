@@ -328,7 +328,63 @@ type ListCtx = {
   status: ApprovalListStatus;
   range: { $gte?: Date; $lt?: Date } | null;
   limit: number;
+  /** Search and filters (2026-10-13): what is typed, and the CRM, academy and person picked. */
+  search?: RegExp | null;
+  crm?: string | null;
+  academy?: string | null;
+  raisedBy?: RegExp | null;
 };
+
+/*
+ * What each kind is searched by, and whose name "raised by" means (2026-10-13).
+ * The CRM and the academy are an enrolment's alone: picked, every other kind
+ * has none to match.
+ */
+const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
+  invoice: { text: ["invoiceNumber", "customerName", "salespersonName", "enrolment.course", "enrolment.meetingBy"], raiser: ["salespersonName"] },
+  fund_request: { text: ["title", "requestedByName", "platform"], raiser: ["requestedByName"] },
+  tetra_deposit: { text: ["student.name", "student.code", "student.email", "requestedBy", "initiatingMentor", "team"], raiser: ["requestedBy", "initiatingMentor"] },
+  expense: { text: ["description", "expenseNumber", "categoryName", "submittedByName"], raiser: ["submittedByName"] },
+  bill: { text: ["vendorName", "billNumber"], raiser: [] },
+  payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
+  procurement: { text: ["description", "expenseNumber"], raiser: [] },
+};
+
+const CRM_SOURCE: Record<string, string> = { delta: "crm", draw: "draw-crm", banglore: "banglore-crm" };
+const NONE = { _id: { $exists: false } };
+const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The words typed, each found in the field in that order — case aside. */
+export const searchRe = (q?: string) => (q?.trim() ? new RegExp(q.trim().split(/\s+/).map(escapeRe).join(".*"), "i") : null);
+/** Exactly this name — case aside. */
+export const exactRe = (v?: string) => (v?.trim() ? new RegExp(`^${escapeRe(v.trim())}$`, "i") : null);
+
+/** An enrolment sold by this CRM (or typed here, "finance") — by what it says, else by where it came from. */
+function crmMatch(crm: string): Record<string, unknown> {
+  const unset = { "enrolment.crm": { $in: [null, ""] } };
+  if (crm === "finance") return { ...unset, "external.source": { $nin: Object.values(CRM_SOURCE) } };
+  const src = CRM_SOURCE[crm];
+  return { $or: [{ "enrolment.crm": crm }, ...(src ? [{ ...unset, "external.source": src }] : [])] };
+}
+const BANGALORE = { $or: [{ "enrolment.academy": "bangalore" }, { "enrolment.academy": { $in: [null, ""] }, "external.source": "banglore-crm" }] };
+
+/** A kind's own match, narrowed to what was searched and picked — or to nothing, when it cannot have any. */
+function narrowed(match: Record<string, unknown>, ctx: ListCtx, type: string): Record<string, unknown> {
+  const f = SEARCH_FIELDS[type] ?? { text: [], raiser: [] };
+  const and: Record<string, unknown>[] = [match];
+  if ((ctx.crm || ctx.academy) && type !== "invoice") return { $and: [match, NONE] };
+  if (ctx.raisedBy && !f.raiser.length) return { $and: [match, NONE] };
+  if (ctx.search) and.push(f.text.length ? { $or: f.text.map((k) => ({ [k]: ctx.search })) } : NONE);
+  if (ctx.raisedBy) and.push({ $or: f.raiser.map((k) => ({ [k]: ctx.raisedBy })) });
+  if (ctx.crm) and.push(crmMatch(ctx.crm));
+  if (ctx.academy) and.push(ctx.academy === "bangalore" ? BANGALORE : { $nor: [BANGALORE] });
+  return and.length === 1 ? match : { $and: and };
+}
+
+/** A live row (HRMS's waiting purchase requests) against the same search and filters. */
+const rowMatches = (row: ApprovalRow, ctx: ListCtx) =>
+  !ctx.crm && !ctx.academy
+  && (!ctx.raisedBy || ctx.raisedBy.test(row.raisedBy ?? ""))
+  && (!ctx.search || [row.title, row.subtitle, row.raisedBy].some((v) => ctx.search!.test(v ?? "")));
 
 type ListKind = {
   type: ApprovalType;
@@ -384,7 +440,7 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["returned"] });
       const { docs, total } = await newest(
         Invoice,
-        { organizationId: ctx.org, "approval.state": { $in: states } },
+        narrowed({ organizationId: ctx.org, "approval.state": { $in: states } }, ctx, "invoice"),
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
@@ -433,7 +489,7 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["submitted"], approved: ["approved"], rejected: ["rejected"] });
       const { docs, total } = await newest(
         FundingRequestModel,
-        { organizationId: ctx.org, status: { $in: states } },
+        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "fund_request"),
         { $cond: [{ $eq: ["$status", "submitted"] }, "$createdAt", firstOf("$reviewedAt", "$updatedAt")] },
         "title period amountMinor currency requestedById requestedByName external platform departmentId status reviewedAt reviewedByName reviewNote createdAt",
         ctx,
@@ -480,7 +536,7 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["rejected"], other: ["closed"] });
       const { docs, total } = await newest(
         TetraDepositModel,
-        { organizationId: ctx.org, status: { $in: states } },
+        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "tetra_deposit"),
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
         "type student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
         ctx,
@@ -523,7 +579,7 @@ const LIST_KINDS: ListKind[] = [
       const { docs, total } = await newest(
         Expense,
         // A purchase request's expense is listed as the purchase request.
-        { organizationId: ctx.org, status: { $in: states }, "source.kind": { $ne: "hrms_procurement" } },
+        narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $ne: "hrms_procurement" } }, ctx, "expense"),
         { $cond: [{ $eq: ["$status", "submitted"] }, "$updatedAt", firstOf("$approvedAt", "$updatedAt")] },
         "expenseNumber category categoryName description submittedByName totalMinor currency status approvedByName approvedAt rejectedReason updatedAt createdAt",
         ctx,
@@ -567,7 +623,7 @@ const LIST_KINDS: ListKind[] = [
       // the nearest there is.
       const { docs, total } = await newest(
         Bill,
-        { organizationId: ctx.org, $or: which },
+        narrowed({ organizationId: ctx.org, $or: which }, ctx, "bill"),
         "$updatedAt",
         "billNumber vendorName totalMinor currency dueDate status approvalStatus updatedAt createdAt",
         ctx,
@@ -600,7 +656,7 @@ const LIST_KINDS: ListKind[] = [
       });
       const { docs, total } = await newest(
         PayrollRun,
-        { organizationId: ctx.org, status: { $in: states } },
+        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "payroll"),
         {
           $switch: {
             branches: [
@@ -661,7 +717,7 @@ const LIST_KINDS: ListKind[] = [
             for (const r of await procurementRequests(String(link.hrmsOrgId))) {
               const at = iso(r.hrReviewedAt ?? r.createdAt);
               if (!inRange(at, ctx.range)) continue;
-              waiting.push({
+              const row: ApprovalRow = {
                 id: r._id,
                 type: "procurement",
                 title: `${r.quantity} × ${r.item}`,
@@ -674,7 +730,8 @@ const LIST_KINDS: ListKind[] = [
                 at,
                 submittedAt: at,
                 href: "/procurement",
-              });
+              };
+              if (rowMatches(row, ctx)) waiting.push(row);
             }
           } catch {
             failed++;
@@ -691,7 +748,7 @@ const LIST_KINDS: ListKind[] = [
       if (ctx.status === "approved" || ctx.status === "all") {
         const { docs, total: approved } = await newest(
           Expense,
-          { organizationId: ctx.org, "source.kind": "hrms_procurement", status: "approved" },
+          narrowed({ organizationId: ctx.org, "source.kind": "hrms_procurement", status: "approved" }, ctx, "procurement"),
           firstOf("$approvedAt", "$createdAt"),
           "expenseNumber description totalMinor currency approvedByName approvedAt createdAt",
           ctx,
@@ -769,7 +826,10 @@ export async function approvalList(
   const range = q.from || q.to
     ? { ...(q.from ? { $gte: new Date(q.from) } : {}), ...(q.to ? { $lt: new Date(q.to) } : {}) }
     : null;
-  const ctx: ListCtx = { org, me: auth.userId, status: q.status, range, limit: q.page * q.pageSize };
+  const ctx: ListCtx = {
+    org, me: auth.userId, status: q.status, range, limit: q.page * q.pageSize,
+    search: searchRe(q.q), crm: q.crm ?? null, academy: q.academy ?? null, raisedBy: exactRe(q.raisedBy),
+  };
 
   const unavailable: string[] = [];
   const results = await Promise.all(kinds.map(async (kind) => {
@@ -811,4 +871,34 @@ export async function approvalList(
     rows,
     meta: { page: q.page, pageSize: q.pageSize, total, pageCount: Math.max(1, Math.ceil(total / q.pageSize)), unavailable },
   };
+}
+
+
+/**
+ * The people who raised what the caller approves (2026-10-13) — the Approvals
+ * page's "Raised by" list: per kind they may decide, its raisers' names, once
+ * each whatever the case, A to Z.
+ */
+const RAISER_MODELS: { type: string; model: Model<any>; match: Record<string, unknown> }[] = [
+  { type: "invoice", model: Invoice, match: { approval: { $exists: true } } },
+  { type: "fund_request", model: FundingRequestModel, match: {} },
+  { type: "tetra_deposit", model: TetraDepositModel, match: {} },
+  { type: "expense", model: Expense, match: { "source.kind": { $ne: "hrms_procurement" } } },
+  { type: "payroll", model: PayrollRun, match: {} },
+];
+
+export async function approvalRaisers(auth: AuthContext): Promise<string[]> {
+  const can = (p: Permission) => auth.isSuperAdmin || hasPermission(auth.permissions, p);
+  const org = new Types.ObjectId(auth.organizationId);
+  const allowed = new Set(LIST_KINDS.filter((k) => k.allowed(can)).map((k) => k.type as string));
+  const names = new Map<string, string>();
+  for (const r of RAISER_MODELS.filter((m) => allowed.has(m.type))) {
+    for (const field of SEARCH_FIELDS[r.type]!.raiser) {
+      for (const v of await r.model.distinct(field, { organizationId: org, ...r.match })) {
+        const name = String(v ?? "").trim();
+        if (name && !names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+      }
+    }
+  }
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
 }

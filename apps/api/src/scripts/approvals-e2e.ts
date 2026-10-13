@@ -437,6 +437,49 @@ async function main() {
   check("not signed in is refused", (await request("GET", "/approvals/list")).status === 401);
   check("a status that does not exist is refused", (await listOf(tAdmin, { status: "maybe" })).status === 422);
 
+  step("Search and filters (2026-10-13): across every approval, not just the page on show");
+  {
+    const all = (p: Record<string, string>) => listOf(tAdmin, { status: "all", pageSize: 100, ...p });
+    const titles = (l: { rows: any[] }) => l.rows.map((r) => r.title).sort();
+    let l = await all({ q: "st-d5" });
+    check("a student code, any case: only that Tetra request", l.status === 200 && l.rows.length === 1 && l.rows[0].title === "Student D5", show(titles(l)));
+    l = await all({ q: "in-10" });
+    check("an invoice number: that enrolment", l.rows.length === 1 && l.rows[0].title === "Client IN-10", show(titles(l)));
+    l = await all({ q: "media planner" });
+    // Media Planner raised two (one for the mail check, above).
+    check("who raised it: their fund requests, nothing else", l.rows.length === 2 && titles(l).includes("Ads for October") && l.rows.every((r) => r.type === "fund_request" && r.raisedBy === "Media Planner"), show(titles(l)));
+    l = await all({ q: "client in" });
+    check("several words, in order: every enrolment, nothing else", l.rows.length > 5 && l.rows.every((r) => r.type === "invoice"), show(titles(l)));
+    l = await all({ q: "(][" });
+    check("symbols are searched as typed, not as a pattern — nothing found, no error", l.status === 200 && l.rows.length === 0, `${l.status} ${show(l.rows)}`);
+    l = await all({ crm: "remote" });
+    check("Remote CRM: only its enrolment", l.rows.length === 1 && l.rows[0].title === "Client IN-5", show(titles(l)));
+    l = await all({ crm: "delta" });
+    check("Sales CRM: those that say so or came from its source — not Remote's, not Draw's", titles(l).includes("Client IN-6") && titles(l).includes("Client IN-2")
+      && !titles(l).includes("Client IN-5") && !titles(l).includes("Client IN-8") && l.rows.every((r) => r.type === "invoice"), show(titles(l)));
+    l = await all({ crm: "draw" });
+    check("Draw: its enrolment by its source", l.rows.length === 1 && l.rows[0].title === "Client IN-8", show(titles(l)));
+    l = await all({ crm: "finance" });
+    check("typed in finance: none of the CRMs'", titles(l).includes("Client IN-9") && !titles(l).some((t) => ["Client IN-5", "Client IN-6", "Client IN-8", "Client IN-2"].includes(t)), show(titles(l)));
+    l = await all({ academy: "bangalore" });
+    check("Bangalore academy: only that enrolment", l.rows.length === 1 && l.rows[0].title === "Client IN-5", show(titles(l)));
+    l = await all({ academy: "dubai" });
+    check("Dubai: every other enrolment, and only enrolments", !titles(l).includes("Client IN-5") && titles(l).includes("Client IN-6") && l.rows.every((r) => r.type === "invoice"), show(titles(l)));
+    l = await all({ raisedBy: "MEDIA PLANNER" });
+    check("raised by a person, any case: only theirs", l.rows.length === 2 && l.rows.every((r) => r.raisedBy === "Media Planner"), show(titles(l)));
+    l = await all({ crm: "delta", q: "in-6" });
+    check("filters and search together", l.rows.length === 1 && l.rows[0].title === "Client IN-6", show(titles(l)));
+    l = await listOf(tAdmin, { q: "st-d", pageSize: 100 });
+    check("the Pending tab searched: only waiting ones, counted", l.rows.every((r) => r.status === "pending") && l.meta?.total === l.rows.length && l.rows.length === 2, show({ t: l.meta?.total, r: titles(l) }));
+    check("a CRM that does not exist is refused", (await all({ crm: "nowhere" })).status === 422);
+    const raisers = await request("GET", "/approvals/raisers", undefined, tAdmin);
+    const names = (raisers.body?.data ?? []) as string[];
+    check("the Raised by list: each person once, A to Z", raisers.status === 200 && ["Media Planner", "Rep", "Staff"].every((n) => names.includes(n))
+      && names.every((n, i) => i === 0 || names[i - 1]!.localeCompare(n) <= 0) && new Set(names.map((n) => n.toLowerCase())).size === names.length, show(names));
+    const fundOnly = await request("GET", "/approvals/raisers", undefined, tFunder);
+    check("…someone who only decides fund requests sees only those raisers", fundOnly.status === 200 && !(fundOnly.body?.data ?? []).includes("Rep"), show(fundOnly.body?.data));
+  }
+
   console.log(`\n${checks - failures}/${checks} checks passed`);
   await mongoose.disconnect();
   process.exit(failures ? 1 : 0);

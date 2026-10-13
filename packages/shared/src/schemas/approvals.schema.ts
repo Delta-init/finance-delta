@@ -70,6 +70,16 @@ export const approvalListQuerySchema = z.object({
    */
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
+  /**
+   * Search and filters (the user, 2026-10-13). `q`: words in a row's names and
+   * numbers — the client, the invoice number, the course, the student and their
+   * code, who raised it. `crm` and `academy` are an enrolment's, so they leave
+   * only enrolments; "finance" is one typed here. `raisedBy`: exactly that person.
+   */
+  q: z.string().trim().max(100).optional(),
+  crm: z.enum([...ENROLMENT_CRMS, "finance"]).optional(),
+  academy: z.enum(ACADEMIES).optional(),
+  raisedBy: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });

@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ClipboardCheck, RefreshCw, X } from "lucide-react";
-import { describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
+import { AlertTriangle, ClipboardCheck, RefreshCw, Search, X } from "lucide-react";
+import { ACADEMIES, ACADEMY_LABELS, ENROLMENT_CRMS, ENROLMENT_CRM_LABELS, describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { AcademyTag, CrmTag } from "@/components/crm-tag";
@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useTableQuery } from "@/lib/use-table-query";
-import { useApprovalList, useApprovalSummary } from "@/features/approvals/api";
+import { useApprovalList, useApprovalRaisers, useApprovalSummary } from "@/features/approvals/api";
 import { LegacyApprovalQueues } from "@/features/approvals/legacy-queues";
 import { useFundingRequests } from "@/features/budgets/api";
 import { FundingReviewDialog } from "@/features/budgets/review-dialog";
@@ -161,7 +161,48 @@ export default function ApprovalsPage() {
   const [type, setType] = useState<"all" | ApprovalType>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  useEffect(() => t.resetPage(), [status, type, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Search and filters (the user, 2026-10-13): across every approval, not just the page on show.
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState(""); // what was typed, once typing pauses
+  const [crm, setCrm] = useState("all");
+  const [academy, setAcademy] = useState("all");
+  const [raisedBy, setRaisedBy] = useState("all");
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+  // Kept in the address bar, so a filtered view can be shared or bookmarked — read back on opening.
+  const [fromUrl, setFromUrl] = useState(false);
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const st = p.get("status");
+    if (st && STATUSES.some((s) => s.key === st)) setStatus(st as ApprovalListStatus);
+    if (p.get("type")) setType(p.get("type") as ApprovalType);
+    if (p.get("from")) setDateFrom(p.get("from")!);
+    if (p.get("to")) setDateTo(p.get("to")!);
+    if (p.get("q")) { setSearch(p.get("q")!); setQuery(p.get("q")!); }
+    if (p.get("crm")) setCrm(p.get("crm")!);
+    if (p.get("academy")) setAcademy(p.get("academy")!);
+    if (p.get("raisedBy")) setRaisedBy(p.get("raisedBy")!);
+    setFromUrl(true);
+  }, []);
+  useEffect(() => {
+    if (!fromUrl) return;
+    const p = new URLSearchParams();
+    if (status !== "pending") p.set("status", status);
+    if (type !== "all") p.set("type", type);
+    if (dateFrom) p.set("from", dateFrom);
+    if (dateTo) p.set("to", dateTo);
+    if (query) p.set("q", query);
+    if (crm !== "all") p.set("crm", crm);
+    if (academy !== "all") p.set("academy", academy);
+    if (raisedBy !== "all") p.set("raisedBy", raisedBy);
+    const next = `${window.location.pathname}${p.size ? `?${p}` : ""}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
+  }, [fromUrl, status, type, dateFrom, dateTo, query, crm, academy, raisedBy]);
+  useEffect(() => t.resetPage(), [status, type, dateFrom, dateTo, query, crm, academy, raisedBy]); // eslint-disable-line react-hooks/exhaustive-deps
+  const raisers = useApprovalRaisers(approver);
+  const filtered = !!query || crm !== "all" || academy !== "all" || raisedBy !== "all";
 
   const list = useApprovalList(
     {
@@ -169,10 +210,14 @@ export default function ApprovalsPage() {
       type: type === "all" ? undefined : type,
       from: dateFrom ? startOf(dateFrom) : undefined,
       to: dateTo ? dayAfter(dateTo) : undefined,
+      ...(query ? { q: query } : {}),
+      ...(crm !== "all" ? { crm } : {}),
+      ...(academy !== "all" ? { academy } : {}),
+      ...(raisedBy !== "all" ? { raisedBy } : {}),
       page: t.page,
       pageSize: t.pageSize,
     },
-    approver,
+    approver && fromUrl,
   );
   // The web app goes live when it is pushed, the finance API when it is
   // deployed; until then there is no list to show, so the queues stand in.
@@ -214,7 +259,9 @@ export default function ApprovalsPage() {
   const rows = list.data?.data ?? [];
   // Only an approved enrolment has accounts to show; the column is not worth its width elsewhere.
   const showOutcomes = rows.some((r) => r.lms || r.commission) || ((status === "approved" || status === "all") && (type === "all" || type === "invoice") && invoices);
-  const hasFilters = status !== "pending" || type !== "all" || !!dateFrom || !!dateTo;
+  const hasFilters = status !== "pending" || type !== "all" || !!dateFrom || !!dateTo || !!search || filtered;
+  // Searched or filtered, the Pending count is what matches; otherwise everything waiting.
+  const pendingCount = filtered && status === "pending" ? list.data?.meta.total ?? 0 : summary?.total ?? 0;
   const procurementVisible = kinds.some((k) => k.type === "procurement");
   // Review a fund request or deposit here; reopen a deposit Tetra Commission turned down.
   const canDecide = (r: ApprovalRow) => r.status === "pending" && !!r.decideHere && !r.own;
@@ -361,6 +408,16 @@ export default function ApprovalsPage() {
         </>
       ) : (
         <>
+          <div className="relative max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, invoice no., STU code, course, who raised it…"
+              className="pl-9"
+              aria-label="Search approvals"
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="tablist" aria-label="Status">
               {STATUSES.map((s) => (
@@ -376,9 +433,9 @@ export default function ApprovalsPage() {
                   )}
                 >
                   {s.label}
-                  {s.key === "pending" && (summary?.total ?? 0) > 0 && (
+                  {s.key === "pending" && pendingCount > 0 && (
                     <span className={cn("ml-1.5 rounded-full px-1.5 text-xs", status === s.key ? "bg-white/20" : "bg-warning/15 text-warning")}>
-                      {summary!.total}
+                      {pendingCount}
                     </span>
                   )}
                 </button>
@@ -398,11 +455,43 @@ export default function ApprovalsPage() {
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" aria-label="From" />
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" aria-label="To" />
 
+            {invoices && (
+              <Select value={crm} onValueChange={setCrm}>
+                <SelectTrigger className="w-[160px]" aria-label="Sales CRM"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All CRMs</SelectItem>
+                  {ENROLMENT_CRMS.map((c) => <SelectItem key={c} value={c}>{ENROLMENT_CRM_LABELS[c]}</SelectItem>)}
+                  <SelectItem value="finance">Typed in finance</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {invoices && (
+              <Select value={academy} onValueChange={setAcademy}>
+                <SelectTrigger className="w-[150px]" aria-label="Academy"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All academies</SelectItem>
+                  {ACADEMIES.map((a) => <SelectItem key={a} value={a}>{ACADEMY_LABELS[a]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+            {(raisers.data?.length ?? 0) > 0 && (
+              <Select value={raisedBy} onValueChange={setRaisedBy}>
+                <SelectTrigger className="w-[180px]" aria-label="Raised by"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Raised by anyone</SelectItem>
+                  {raisers.data!.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+
             {hasFilters && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setStatus("pending"); setType("all"); setDateFrom(""); setDateTo(""); }}
+                onClick={() => {
+                  setStatus("pending"); setType("all"); setDateFrom(""); setDateTo("");
+                  setSearch(""); setQuery(""); setCrm("all"); setAcademy("all"); setRaisedBy("all");
+                }}
               >
                 <X className="h-4 w-4" /> Clear
               </Button>

@@ -48,3 +48,15 @@ export function useApprovalList(params: QueryParams, enabled = true) {
     retry: (count, err) => !(err instanceof Error && "status" in err && (err as { status: number }).status === 404) && count < 2,
   });
 }
+
+/** Who raised what the signed-in person approves — the Approvals page's "Raised by" filter (2026-10-13). */
+export function useApprovalRaisers(enabled = true) {
+  return useQuery({
+    queryKey: [...APPROVALS_KEY, "raisers"],
+    queryFn: () => api.get<string[]>("approvals/raisers"),
+    enabled,
+    staleTime: 5 * 60_000,
+    // An older API has none: the filter is simply not offered.
+    retry: false,
+  });
+}

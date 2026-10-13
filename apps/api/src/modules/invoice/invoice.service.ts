@@ -998,7 +998,7 @@ export async function syncLmsAccess(doc: InvoiceDoc): Promise<void> {
  * copied from it, which share "crm"), Draw's, and the Banglore CRM's should it
  * name itself "banglore-crm".
  */
-const LMS_SOURCES = new Set(["crm", "draw-crm", "banglore-crm"]);
+export const LMS_SOURCES: ReadonlySet<string> = new Set(["crm", "draw-crm", "banglore-crm"]);
 
 /**
  * The LMS courses an approved enrolment opens, in order and each once.

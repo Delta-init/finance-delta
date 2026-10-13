@@ -5,6 +5,7 @@ import { AppError, asyncHandler, ok } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { Customer } from "../customer/customer.model";
 import { Organization } from "../organization/organization.model";
+import { lmsEnrolmentStatuses } from "./lms-enrolment-status.service";
 
 const router = Router();
 
@@ -69,6 +70,42 @@ router.post(
       exists: rows.length > 0,
       organizations: orgs.map((o) => o.name ?? "").filter(Boolean).sort(),
     });
+  }),
+);
+
+/** The most emails one enrolment-status call may ask about. */
+const STATUS_BATCH = 100;
+
+/**
+ * Where each student's enrolment requests stand in finance, for a page of the
+ * LMS admin's Students Requests: per email, whether finance knows them
+ * (customer-check's rule) and the requests a sales CRM sent for them — which
+ * CRM, who closed it, the course, and whether accounts approved it, still has
+ * it, or sent it back and why. See lms-enrolment-status.service.ts.
+ *
+ * POST so the emails never sit in a URL. 1..100 of them, trimmed and
+ * lowercased here; ones that are not emails are left out of the answer, every
+ * valid one gets a key. Too many, or no list at all, is a 400.
+ */
+router.post(
+  "/enrolment-status",
+  asyncHandler(async (req: Request, res: Response) => {
+    const raw = (req.body as { emails?: unknown } | undefined)?.emails;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > STATUS_BATCH) {
+      res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: `emails must be a list of 1 to ${STATUS_BATCH} emails` },
+      });
+      return;
+    }
+    const emails = [
+      ...new Set(
+        raw
+          .filter((e): e is string => typeof e === "string")
+          .map((e) => e.trim().toLowerCase())
+          .filter((e) => e.length > 0 && e.length <= 320 && /^[^\s@]+@[^\s@]+$/.test(e)),
+      ),
+    ];
+    ok(res, { results: await lmsEnrolmentStatuses(emails) });
   }),
 );
 

@@ -94,15 +94,22 @@ export function formatMoney(minor: number, currency = "AED"): string {
 
 /**
  * A payment as the client made it, before the sales CRM converted it:
- * "INR 50,000 at 1 INR = 0.044 AED". `rate` is how much of `invoiceCurrency`
+ * "USD 1,000 at 1 USD = 3.6725 AED". `rate` is how much of `invoiceCurrency`
  * one unit of the original bought, shown to six significant figures.
+ *
+ * A unit worth less than one of the invoice's is quoted the way it is spoken
+ * (the user, 2026-10-13) — rupees as "INR 50,000 at 1 AED = 22.75 INR", not
+ * "1 INR = 0.043956 AED".
  */
 export function formatOriginalPayment(
   original: { currency: string; amountMinor: number; rate: number },
   invoiceCurrency: string,
 ): string {
-  const rate = Number(original.rate.toPrecision(6)).toLocaleString("en-US", { maximumFractionDigits: 10 });
-  return `${formatMoney(original.amountMinor, original.currency)} at 1 ${original.currency} = ${rate} ${invoiceCurrency}`;
+  const shown = (n: number) => Number(n.toPrecision(6)).toLocaleString("en-US", { maximumFractionDigits: 10 });
+  const paid = formatMoney(original.amountMinor, original.currency);
+  return original.rate > 0 && original.rate < 1
+    ? `${paid} at 1 ${invoiceCurrency} = ${shown(1 / original.rate)} ${original.currency}`
+    : `${paid} at 1 ${original.currency} = ${shown(original.rate)} ${invoiceCurrency}`;
 }
 
 /**

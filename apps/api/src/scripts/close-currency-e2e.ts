@@ -162,7 +162,7 @@ async function main() {
   check("approved", r.status === 200, show(r));
   doc = await Invoice.findById(id1).lean() as any;
   check("…both payments recorded in AED, as converted", (doc?.payments ?? []).map((p: any) => `${p.method}:${p.amountMinor}`).join(",") === "bank_transfer:220000,cash:5000", JSON.stringify(doc?.payments));
-  check("…the INR one's note says what was handed over", doc?.payments?.[0]?.notes === "Collected at the close — recorded on approval · paid INR 50,000 at 1 INR = 0.044 AED", doc?.payments?.[0]?.notes);
+  check("…the INR one's note says what was handed over", doc?.payments?.[0]?.notes === "Collected at the close — recorded on approval · paid INR 50,000 at 1 AED = 22.7273 INR", doc?.payments?.[0]?.notes);
   check("…the AED one's note as before", doc?.payments?.[1]?.notes === "Collected at the close — recorded on approval", doc?.payments?.[1]?.notes);
   check("…the invoice paid in full", doc?.amountPaidMinor === 225_000 && doc?.balanceMinor === 0 && doc?.status === "paid", `${doc?.amountPaidMinor}/${doc?.balanceMinor}/${doc?.status}`);
 

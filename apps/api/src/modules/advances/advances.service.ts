@@ -15,8 +15,8 @@ import { AppError } from "../../lib/http";
  * Salary advances HR has approved in HRMS, and finance's decision on them.
  *
  * Built the way procurement is: nothing is mirrored, the request is read live
- * from HRMS, and a yes is recorded here as an expense — approved, unpaid —
- * before HRMS is told, so a lost answer can be resent without a second
+ * from HRMS, and "Mark paid" is recorded here as an expense — approved and
+ * paid, on the date and by the method finance gives — before HRMS is told, so a lost answer can be resent without a second
  * expense. HRMS then recovers the advance from the employee's pay on the
  * schedule HR set; nothing about that schedule is decided here.
  */
@@ -137,6 +137,10 @@ async function makeExpense(orgId: string, userId: string, hrmsOrgId: string, row
       approvedById: new Types.ObjectId(userId),
       approvedByName: user.name,
       approvedAt: now,
+      // Marked paid here — this page records the money going, not a promise of it.
+      paidOn: new Date(`${input.paidOn}T00:00:00.000Z`),
+      paymentMethod: input.paymentMethod,
+      reference: input.reference || "",
       departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
       notes: notesFor(row, input.note),
       source: { kind: "hrms_advance", key, hrmsOrgId, requestId: row._id, round: 0 },
@@ -169,7 +173,9 @@ export async function approve(orgId: string, userId: string, id: string, input: 
       await hrmsClient.approveAdvance(input.hrmsOrgId, id, {
         reference: expense.expenseNumber,
         note: input.note || undefined,
-        paidOn: new Date().toISOString().slice(0, 10),
+        // What the expense says, so the two systems agree even on a resend.
+        paidOn: expense.paidOn ? new Date(expense.paidOn).toISOString().slice(0, 10) : input.paidOn,
+        method: expense.paymentMethod ?? input.paymentMethod,
       });
     } catch (err) {
       const now = await Expense.findById(expense._id).select("source").lean();

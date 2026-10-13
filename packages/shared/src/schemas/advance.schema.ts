@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { expensePaymentMethodSchema } from "./expense.schema";
 
 /**
  * Finance's decision on a salary advance HR has approved in HRMS.
@@ -21,6 +22,11 @@ export const approveAdvanceSchema = z.object({
   departmentId: z.union([z.literal(""), z.string().regex(/^[a-f\d]{24}$/i, "Invalid department")]).optional().default(""),
   /** Sent back to the employee and HR with the decision. HRMS keeps 500 characters. */
   note: optionalText(500),
+  /** The day the money went — the expense is recorded as paid on it. */
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date it was paid"),
+  paymentMethod: expensePaymentMethodSchema,
+  /** The bank or cheque reference, kept on the expense. */
+  reference: optionalText(120),
 });
 export type ApproveAdvanceInput = z.infer<typeof approveAdvanceSchema>;
 export type ApproveAdvanceBody = z.input<typeof approveAdvanceSchema>;
@@ -31,3 +37,15 @@ export const rejectAdvanceSchema = z.object({
 });
 export type RejectAdvanceInput = z.infer<typeof rejectAdvanceSchema>;
 export type RejectAdvanceBody = z.input<typeof rejectAdvanceSchema>;
+
+/**
+ * A one-time payment HR sent from HRMS for finance to pay directly — a bonus
+ * or commission that does not go on the payslip. Marking it paid records a
+ * paid expense, the same way a salary advance is; the amount is HR's.
+ */
+export const markOneTimePaidSchema = approveAdvanceSchema;
+export type MarkOneTimePaidInput = ApproveAdvanceInput;
+export type MarkOneTimePaidBody = ApproveAdvanceBody;
+export const rejectOneTimePaymentSchema = rejectAdvanceSchema;
+export type RejectOneTimePaymentInput = RejectAdvanceInput;
+export type RejectOneTimePaymentBody = RejectAdvanceBody;

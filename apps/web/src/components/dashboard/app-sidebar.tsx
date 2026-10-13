@@ -28,6 +28,7 @@ import {
   Wallet,
   WalletCards,
   HandCoins,
+  Banknote,
   ClipboardCheck,
   Coins,
   type LucideIcon, MailCheck
@@ -158,6 +159,8 @@ const NAV: NavGroup[] = [
       { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
       // Paid out on approval, like a purchase request — so the same right.
       { href: "/advances", label: "Salary Advances", icon: HandCoins, enabled: true, permission: "expense:approve" },
+      // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
+      { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
     ],
   },
   {

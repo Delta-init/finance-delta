@@ -277,6 +277,19 @@ export interface HrmsSalaryAdvance {
   createdAt: string;
 }
 
+/** A one-time payment HR sent from HRMS for finance to pay directly (not on a payslip). */
+export interface HrmsOneTimePayment {
+  _id: string;
+  label: string;
+  /** Major units, as HR entered it. */
+  amount: number;
+  month: string;
+  notes?: string;
+  employee?: { _id: string; name: string; employeeCode?: string; designation?: string; currency?: string; department?: { _id: string; name: string } | null } | null;
+  createdBy?: { _id: string; name: string } | null;
+  createdAt: string;
+}
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -461,7 +474,7 @@ export const hrmsClient = {
   },
 
   /** Finance agreed to pay it: HRMS starts recovering it from the employee's pay. */
-  async approveAdvance(organizationId: string, id: string, opts: { reference?: string; note?: string; paidOn?: string } = {}) {
+  async approveAdvance(organizationId: string, id: string, opts: { reference?: string; note?: string; paidOn?: string; method?: string } = {}) {
     return (
       await request<HrmsSalaryAdvance>("POST", `/advances/requests/${id}/approve`, {
         query: { organizationId },
@@ -473,6 +486,32 @@ export const hrmsClient = {
   async rejectAdvance(organizationId: string, id: string, opts: { note?: string } = {}) {
     return (
       await request<HrmsSalaryAdvance>("POST", `/advances/requests/${id}/reject`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  // ── One-time payments finance pays directly ────────────────────────────────
+
+  /** One-time payments HR sent to finance to pay, not yet paid or refused. */
+  async oneTimePayments(organizationId: string): Promise<HrmsOneTimePayment[]> {
+    return (await request<HrmsOneTimePayment[]>("GET", "/one-time-payments/requests", { query: { organizationId } })).data;
+  },
+
+  /** Paid: HRMS marks it Paid and tells the employee. */
+  async markOneTimePaid(organizationId: string, id: string, opts: { paidOn: string; method: string; reference?: string; note?: string }) {
+    return (
+      await request<HrmsOneTimePayment>("POST", `/one-time-payments/requests/${id}/paid`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  async rejectOneTimePayment(organizationId: string, id: string, opts: { note?: string } = {}) {
+    return (
+      await request<HrmsOneTimePayment>("POST", `/one-time-payments/requests/${id}/reject`, {
         query: { organizationId },
         body: { organizationId, ...opts },
       })

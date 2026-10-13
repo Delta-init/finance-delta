@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/lib/toast";
 import { useSalaryAdvances, useApproveAdvance, useRejectAdvance, type SalaryAdvanceRequest } from "@/features/advances/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useAllDepartments } from "@/features/departments/api";
 
 /** Radix reads "" as unset, so "no department" needs a value of its own. */
@@ -23,9 +24,9 @@ const NO_DEPARTMENT = "__none__";
  * Salary advances HR has approved in HRMS, waiting on finance.
  *
  * The amount and the recovery are HR's — HRMS takes exactly that back from the
- * employee's pay, on that schedule — so nothing here changes them. Approving
- * records the payout as an expense (approved, unpaid; "Mark paid" on it says
- * when the money went) and tells HRMS to start the recovery.
+ * employee's pay, on that schedule — so nothing here changes them. "Mark paid"
+ * records the payout as a paid expense — the date, the method and the bank
+ * reference — and tells HRMS, which shows it Paid and starts the recovery.
  */
 export default function AdvancesPage() {
   const { data, isLoading, error } = useSalaryAdvances();
@@ -36,7 +37,7 @@ export default function AdvancesPage() {
       <PageHeader
         icon={HandCoins}
         title="Salary advances"
-        description="Advances HR has approved, waiting on finance to pay them out. Approving one records it as an expense and starts the recovery from pay in HRMS."
+        description="Advances HR has approved, waiting on finance to pay them. Marking one paid records a paid expense and starts the recovery from pay in HRMS."
         action={rows.length > 0 ? <Badge tone="warning">{rows.length} waiting</Badge> : undefined}
       />
 
@@ -70,6 +71,7 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
   const [category, setCategory] = useState<string | null>(null);
   const [department, setDepartment] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [payout, setPayout] = useState<Payout>(emptyPayout);
 
   // "Salaries & Wages" when this org has it — an advance is pay, early.
   const categoryList = categories.data ?? [];
@@ -89,9 +91,10 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
       id: r._id,
       hrmsOrgId: r.hrmsOrgId,
       note: note.trim(),
+      ...payout,
       ...(made ? {} : { category: chosenCategory, departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment }),
     });
-    toast.success(`Approved — ${res.expense.expenseNumber} recorded, and HRMS will recover it from pay`);
+    toast.success(`Paid — ${res.expense.expenseNumber} recorded, and HRMS will recover it from pay`);
   };
 
   const onReject = async () => {
@@ -133,7 +136,7 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
           <Send className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>
             <Link href={`/expenses/${made.id}`} className="font-medium text-primary underline-offset-2 hover:underline">{made.expenseNumber}</Link>{" "}
-            has been recorded for this advance, but HRMS has not been told yet. Approve again to send it — no second expense is made.
+            has been recorded for this advance, but HRMS has not been told yet. Send it again — no second expense is made.
           </span>
         </div>
       )}
@@ -146,7 +149,8 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
 
       <div className="space-y-4 border-t border-border bg-surface-muted/50 p-5">
         {!made && !voided && (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <PayoutFields value={payout} onChange={setPayout} idPrefix={id("payout")} />
             <div className="space-y-1.5">
               <Label htmlFor={id("category")}>Category</Label>
               <Select value={chosenCategory} onValueChange={setCategory} disabled={categories.isLoading}>
@@ -177,9 +181,9 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
           </div>
           <div className="flex shrink-0 gap-2">
             {!voided && (
-              <Button onClick={() => void onApprove().catch(() => undefined)} disabled={busy || (!made && !chosenCategory)}>
+              <Button onClick={() => void onApprove().catch(() => undefined)} disabled={busy || (!made && (!chosenCategory || !payoutValid(payout)))}>
                 {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-                {made ? "Send approval to HRMS" : "Approve as expense"}
+                {made ? "Send to HRMS" : "Mark paid"}
               </Button>
             )}
             <Button variant="outline" onClick={() => void onReject().catch(() => undefined)} disabled={busy || !!made}

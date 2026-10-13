@@ -482,7 +482,7 @@ const LIST_KINDS: ListKind[] = [
         TetraDepositModel,
         { organizationId: ctx.org, status: { $in: states } },
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
-        "student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
+        "type student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
         ctx,
       );
       return {
@@ -498,7 +498,9 @@ const LIST_KINDS: ListKind[] = [
             amountMinor: r.decision?.approvedAmountMinor ?? r.amountMinor,
             currency: r.currency ?? "USD",
             raisedBy: r.requestedBy || r.initiatingMentor || undefined,
-            status: r.status,
+            // Sent back to its CS to correct reads as an invoice sent back does.
+            status: r.status === "rejected" && r.decision?.sentBack ? "returned" : r.status,
+            ...(r.type === "BONUS" ? { bonus: true } : {}),
             at: iso(r.__at),
             submittedAt: iso(r.requestedAt ?? r.createdAt),
             decidedAt: waiting ? undefined : iso(r.decision?.decidedAt),

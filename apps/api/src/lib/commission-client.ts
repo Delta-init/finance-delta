@@ -120,6 +120,8 @@ export interface CommissionFundingDecision {
   mt5Login?: string;
   note?: string;
   reason?: string;
+  /** Rejected to be corrected and sent again, not refused (the user, 2026-10-13): Tetra Commission says so to its CS. */
+  sentBack?: boolean;
   /**
    * A balance payment a CS recorded (type ENROLMENT_PAYMENT): approved, it is
    * recorded on this invoice here — `paymentId` — and the new figures follow

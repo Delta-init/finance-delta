@@ -151,6 +151,13 @@ const inboundTetraDepositObject = z.object({
    */
   payments: z.array(tetraDepositPaymentSchema).max(10).optional().default([]).catch([]),
   notes: optionalText(2000),
+  /**
+   * A request corrected and sent again in Tetra Commission after it was sent
+   * back (or rejected) here (the user, 2026-10-13): its earlier request's id
+   * there, and the reason it was given.
+   */
+  resubmitOf: optionalText(64),
+  resubmitReason: optionalText(1000),
   requestedAt: optionalText(40),
   requestedBy: optionalText(120),
   initiatingMentor: optionalText(120),
@@ -202,6 +209,11 @@ export const decideTetraDepositSchema = z.discriminatedUnion("decision", [
   z.object({
     decision: z.literal("rejected"),
     reason: z.string().trim().min(5, "Give a reason of at least 5 characters").max(1000),
+    /**
+     * Sent back to correct, like an invoice (the user, 2026-10-13): a bonus the
+     * CS fixes in Tetra Commission and sends again — rather than refused.
+     */
+    sentBack: z.boolean().optional(),
   }),
 ]);
 export type DecideTetraDepositInput = z.infer<typeof decideTetraDepositSchema>;
@@ -241,9 +253,13 @@ export const tetraDepositSchema = z.object({
     mt5Login: z.string().optional(),
     note: z.string().optional(),
     reason: z.string().optional(),
+    /** Rejected to be corrected and sent again, not refused. */
+    sentBack: z.boolean().optional(),
     decidedByName: z.string(),
     decidedAt: z.string(),
   }).optional(),
+  /** Sent again after the request it replaces was sent back or rejected: its reason, and that request here when it came through finance. */
+  resubmit: z.object({ reason: z.string(), previousId: z.string().optional(), previousStatus: z.string().optional() }).optional(),
   delivery: z.object({
     state: tetraDepositDeliverySchema,
     attempts: z.number(),

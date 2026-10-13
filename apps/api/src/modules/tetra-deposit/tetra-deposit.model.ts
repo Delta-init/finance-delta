@@ -74,10 +74,17 @@ const tetraDepositSchema = new Schema({
     mt5Login: { type: String },
     note: { type: String },
     reason: { type: String },
+    /** Rejected to be corrected and sent again (the user, 2026-10-13), not refused. */
+    sentBack: { type: Boolean },
     decidedById: { type: Schema.Types.ObjectId, ref: "User" },
     decidedByName: { type: String },
     decidedByEmail: { type: String },
     decidedAt: { type: Date },
+  },
+  /** Sent again after its earlier request was sent back or rejected: that request's id in Tetra Commission, and the reason. */
+  resubmit: {
+    type: new Schema({ of: { type: String, default: "" }, reason: { type: String, default: "" }, previousId: { type: String, default: "" } }, { _id: false }),
+    default: undefined,
   },
   delivery: {
     state: { type: String, enum: ["sending", "queued", "delivered", "failed"] },

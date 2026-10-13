@@ -163,7 +163,7 @@ export default function TetraDepositsPage() {
         const note = d.status === "pending" ? "" : deliveryText(d);
         return (
           <div className="min-w-0">
-            <TetraDepositStatusBadge status={d.status} />
+            <TetraDepositStatusBadge status={d.status} sentBack={d.decision?.sentBack} />
             {note && note !== "In Tetra Commission" && (
               <p className={cn("mt-1 max-w-[220px] truncate text-xs", d.delivery?.state === "failed" ? "text-danger" : "text-foreground-muted")} title={note}>
                 {note}

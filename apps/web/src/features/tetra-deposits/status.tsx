@@ -17,7 +17,9 @@ const STATUS_TONE: Record<TetraDeposit["status"], NonNullable<BadgeProps["tone"]
   closed: "neutral",
 };
 
-export function TetraDepositStatusBadge({ status }: { status: TetraDeposit["status"] }) {
+/** A bonus sent back to its CS to correct (2026-10-13) reads so, not as refused. */
+export function TetraDepositStatusBadge({ status, sentBack }: { status: TetraDeposit["status"]; sentBack?: boolean }) {
+  if (status === "rejected" && sentBack) return <Badge tone="warning">Sent back</Badge>;
   return <Badge tone={STATUS_TONE[status] ?? "neutral"}>{STATUS_LABELS[status] ?? status}</Badge>;
 }
 

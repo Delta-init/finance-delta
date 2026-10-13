@@ -40,7 +40,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {deposit ? deposit.student.name : "Deposit"}
-            {deposit && <TetraDepositStatusBadge status={deposit.status} />}
+            {deposit && <TetraDepositStatusBadge status={deposit.status} sentBack={deposit.decision?.sentBack} />}
             {deposit && <TetraTypeTag deposit={deposit} />}
           </DialogTitle>
           <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from Tetra Commission." : deposit?.type === "COURSE_UPGRADE" ? "A course upgrade payment from Tetra Commission." : deposit?.type === "ENROLMENT_PAYMENT" ? "A balance payment a CS recorded in Tetra Commission." : "A deposit request from Tetra Commission."}</DialogDescription>
@@ -55,7 +55,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
             {decision && (
               <div className="rounded-lg border border-border p-3 text-sm">
                 {deposit.status === "rejected" || (decision.reason && !decision.transactionId) ? (
-                  <p className="font-medium">Rejected{decision.reason ? `: ${decision.reason}` : ""}</p>
+                  <p className="font-medium">{decision.sentBack ? "Sent back to correct" : "Rejected"}{decision.reason ? `: ${decision.reason}` : ""}</p>
                 ) : (
                   <p className="font-medium">
                     Approved at <MoneyDisplay minor={decision.approvedAmountMinor ?? deposit.amountMinor} currency={deposit.currency} />

@@ -186,12 +186,15 @@ export default function ApprovalsPage() {
   const [fundId, setFundId] = useState<string | null>(null);
   const fundTarget = useMemo(() => (fundRequests.data?.data ?? []).find((r) => r.id === fundId) ?? null, [fundRequests.data, fundId]);
   const [depositId, setDepositId] = useState<string | null>(null);
+  const [depositStart, setDepositStart] = useState<"approved" | "sentBack">("approved");
   const depositTarget = useTetraDeposit(depositId);
 
   const decide = (row: ApprovalRow) => {
     if (row.type === "fund_request") setFundId(row.id);
-    else if (row.type === "tetra_deposit") setDepositId(row.id);
+    else if (row.type === "tetra_deposit") { setDepositStart("approved"); setDepositId(row.id); }
   };
+  // A bonus straight back to its CS, with what to correct (2026-10-13) — like an invoice's Send back.
+  const sendBack = (row: ApprovalRow) => { setDepositStart("sentBack"); setDepositId(row.id); };
   const open = (row: ApprovalRow) => {
     if (row.status === "pending" && row.decideHere) {
       if (!row.own) decide(row);
@@ -326,7 +329,12 @@ export default function ApprovalsPage() {
             align: "right" as const,
             cell: (r: ApprovalRow) =>
               canDecide(r) ? (
-                <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); decide(r); }}>Review</Button>
+                <div className="flex justify-end gap-2">
+                  {r.type === "tetra_deposit" && r.bonus && (
+                    <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); sendBack(r); }}>Send back</Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); decide(r); }}>Review</Button>
+                </div>
               ) : canReopen(r) ? (
                 <ReopenButton id={r.id} />
               ) : null,
@@ -429,7 +437,7 @@ export default function ApprovalsPage() {
       )}
 
       <FundingReviewDialog request={fundTarget} onClose={() => setFundId(null)} />
-      <TetraDepositReviewDialog deposit={depositTarget.data ?? null} onClose={() => setDepositId(null)} />
+      <TetraDepositReviewDialog deposit={depositTarget.data ?? null} start={depositStart} onClose={() => setDepositId(null)} />
     </div>
   );
 }

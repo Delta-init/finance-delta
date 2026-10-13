@@ -229,6 +229,32 @@ check("run again: nothing more to do (the hand-typed one is still listed)", agai
 await backfillCourseInvoices({ write: true, include: [o2.d.id] });
 check("--include does the hand-typed one when asked", Boolean((await row(o2.d.id))?.courseInvoice?.receiptNumber));
 
+/* ── 8. Send back (the user, 2026-10-13) ───────────────────────────────── */
+step("8. Send back: a bonus back to its CS to correct, and sent again");
+{
+  const sb = await arrive({ type: "BONUS", amountMinor: 30_000, currency: "USD", student: student("STU-SB") });
+  const why = "The receipt is for another amount — attach the right one";
+  const sent = await svc.decideTetraDeposit(auth as never, sb.id, { decision: "rejected", reason: why, sentBack: true } as never);
+  const row1 = await row(sb.id);
+  check("sent back: rejected here, marked sent back, with what to correct", row1?.status === "rejected" && row1?.decision?.sentBack === true && row1?.decision?.reason === why, j(row1?.decision));
+  check("…the accountant is told it went back to the CS", /Sent back — the CS sees why/.test(sent.message ?? ""), sent.message);
+  check("…its history says so", (row1?.events ?? []).some((e: any) => e.text === `Sent back to correct: ${why}`), j(row1?.events));
+  const tsb = await tcTxs.findOne({ _id: new Types.ObjectId(sb.externalId) });
+  check("Tetra Commission has it rejected, marked sent back, with the reason", tsb?.status === "REJECTED" && tsb?.finance_approval?.sent_back === true && tsb?.rejection_reason === why, j({ s: tsb?.status, fa: tsb?.finance_approval }));
+  const { approvalList } = await import("../modules/approvals/approvals.service");
+  const page = await approvalList({ ...auth } as never, { status: "all", type: "tetra_deposit", page: 1, pageSize: 100 } as never);
+  const ar = page.rows.find((x) => x.id === sb.id);
+  check("on Approvals it reads Sent back (like an invoice), and bonuses say they are bonuses", ar?.status === "returned" && ar?.bonus === true, j(ar));
+  const up = await arrive({ type: "COURSE_UPGRADE", amountMinor: 10_000, currency: "AED", student: student("STU-SB2"), coursePayment: upgradeCp(new Types.ObjectId().toString(), 20_000) });
+  const refused = await svc.decideTetraDeposit(auth as never, up.id, { decision: "rejected", reason: "Not a bonus at all", sentBack: true } as never).then(() => "decided", (e: Error) => e.message);
+  check("only a bonus can be sent back — anything else is refused, and stays pending", /Only a bonus can be sent back/.test(refused) && (await row(up.id))?.status === "pending", refused);
+  // The CS corrects it in Tetra Commission and sends it again: a new request, naming the one sent back.
+  const again = await arrive({ type: "BONUS", amountMinor: 30_000, currency: "USD", student: student("STU-SB"), resubmitOf: sb.externalId, resubmitReason: why });
+  const dto = (await svc.listTetraDeposits(ORG, "waiting")).find((d: any) => d.id === again.id) as any;
+  check("sent again: waiting for a decision, saying it was corrected after being sent back, and which request it replaces",
+    dto?.status === "pending" && dto?.resubmit?.reason === why && dto?.resubmit?.previousId === sb.id, j(dto?.resubmit));
+}
+
 await mongoose.disconnect();
 await tc.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

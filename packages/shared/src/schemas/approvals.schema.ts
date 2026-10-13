@@ -119,6 +119,8 @@ export const approvalRowSchema = z.object({
   decideHere: z.boolean().optional(),
   /** The reader's own request: somebody else decides it. */
   own: z.boolean().optional(),
+  /** A Tetra Commission bonus — one that can be sent back to its CS to correct (2026-10-13). */
+  bonus: z.boolean().optional(),
   /** An enrolment invoice: the sales CRM that sold it. Absent for one typed in finance. */
   crm: z.enum(ENROLMENT_CRMS).optional(),
   /** An enrolment invoice from a sales CRM: the academy it was sold for. */

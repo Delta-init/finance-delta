@@ -89,6 +89,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
             ...(r.decision.mt5Login ? { mt5Login: r.decision.mt5Login } : {}),
             ...(r.decision.note ? { note: r.decision.note } : {}),
             ...(r.decision.reason ? { reason: r.decision.reason } : {}),
+            ...(r.decision.sentBack ? { sentBack: true } : {}),
             decidedByName: r.decision.decidedByName ?? "",
             decidedAt: iso(r.decision.decidedAt),
           },
@@ -140,6 +141,9 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
             created: r.courseInvoice.created === true,
           },
         }
+      : {}),
+    ...(r.resubmit?.of
+      ? { resubmit: { reason: String(r.resubmit.reason ?? ""), ...(r.resubmit.previousId ? { previousId: String(r.resubmit.previousId) } : {}) } }
       : {}),
     ...(withEvents
       ? {
@@ -260,6 +264,16 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       primaryMentor: input.primaryMentor,
       meetingMentor: input.meetingMentor,
       ...(balance ? { enrolmentPayment: balance.enrolmentPayment } : {}),
+      // Sent again after its earlier request was sent back or rejected: which, and why — that request here, if finance had it.
+      ...(input.resubmitOf
+        ? {
+            resubmit: {
+              of: input.resubmitOf,
+              reason: input.resubmitReason ?? "",
+              previousId: String((await TetraDepositModel.findOne({ externalId: input.resubmitOf }).select("_id").lean())?._id ?? ""),
+            },
+          }
+        : {}),
       events: [{
         at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor,
         text: input.type === "BONUS" ? "Bonus raised in Tetra Commission"
@@ -505,7 +519,7 @@ function decisionFor(row: any): CommissionFundingDecision {
           ...(d.mt5Login ? { mt5Login: d.mt5Login } : {}),
           ...(d.note ? { note: d.note } : {}),
         }
-      : { reason: d.reason }),
+      : { reason: d.reason, ...(d.sentBack ? { sentBack: true } : {}) }),
     ...(row.type === "ENROLMENT_PAYMENT" && row.enrolmentPayment?.invoiceId
       ? {
           type: "ENROLMENT_PAYMENT" as const,
@@ -555,6 +569,8 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
           : courseInvoice
           ? `Approved — ${courseInvoice.created ? "invoice made" : "recorded on invoice"} ${courseInvoice.invoiceNumber}, receipt ${courseInvoice.receiptNumber} emailed to the client, and Tetra Commission has it`
           : "Approved — Tetra Commission has it, and the mentors' commission is credited"
+        : row.decision?.sentBack
+        ? "Sent back — the CS sees why in Tetra Commission, corrects it and sends it again"
         : "Rejected — Tetra Commission has it",
     };
   } catch (err) {
@@ -605,9 +621,12 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   }
   const now = new Date();
   const decided = { decidedById: new Types.ObjectId(auth.userId), decidedByName: byName, decidedByEmail: String(me?.email ?? ""), decidedAt: now };
+  // Sent back to correct (the user, 2026-10-13): a bonus, which Tetra Commission lets its CS correct and send again.
+  const sentBack = input.decision === "rejected" && input.sentBack === true;
+  if (sentBack && current?.type !== "BONUS") throw new AppError("VALIDATION_ERROR", "Only a bonus can be sent back to correct — reject this one instead");
   const decision = input.decision === "approved"
     ? { ...decided, approvedAmountMinor: input.amountMinor, transactionId: input.transactionId, paymentMethod: input.paymentMethod, mt5Login: input.mt5Login, note: input.note }
-    : { ...decided, reason: input.reason };
+    : { ...decided, reason: input.reason, ...(sentBack ? { sentBack: true } : {}) };
 
   // One decision per request, whoever gets there first — claimed for sending in the same write.
   const row = await TetraDepositModel.findOneAndUpdate(
@@ -619,7 +638,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
           at: now, kind: input.decision, byName,
           text: input.decision === "approved"
             ? `Approved at ${money(input.amountMinor, current?.currency ?? "USD")}, transaction ${input.transactionId}`
-            : `Rejected: ${input.reason}`,
+            : sentBack ? `Sent back to correct: ${input.reason}` : `Rejected: ${input.reason}`,
         },
       },
     },

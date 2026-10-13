@@ -121,6 +121,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
           ["Receipt", `${deposit.courseInvoice.receiptNumber} · ${amount(deposit.courseInvoice.amountMinor / 100, deposit.courseInvoice.currency)}`],
         ] as [string, string][])
       : []),
+    ["Sent again", deposit.resubmit ? `Corrected after it was sent back${deposit.resubmit.reason ? `: ${deposit.resubmit.reason}` : ""}` : ""],
     ["Student", [deposit.student.name, deposit.student.code].filter(Boolean).join(" · ")],
     ["Email", deposit.student.email],
     ["Level", levelLabel(deposit.student.level)],
@@ -177,9 +178,13 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   );
 }
 
-export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraDeposit | null; onClose: () => void }) {
+/**
+ * `start`: what the dialog opens on — "sentBack" from the row's Send back button
+ * (the user, 2026-10-13: a bonus sent back to its CS to correct, like an invoice).
+ */
+export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" }: { deposit: TetraDeposit | null; onClose: () => void; start?: "approved" | "sentBack" }) {
   const decide = useDecideTetraDeposit(deposit?.id ?? "");
-  const [decision, setDecision] = useState<"approved" | "rejected">("approved");
+  const [decision, setDecision] = useState<"approved" | "rejected" | "sentBack">("approved");
   const [amount, setAmount] = useState("");
   const [transactionId, setTransactionId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -188,14 +193,14 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
   const [reason, setReason] = useState("");
   useEffect(() => {
     if (!deposit) return;
-    setDecision("approved");
+    setDecision(start === "sentBack" && isBonus(deposit) ? "sentBack" : "approved");
     setAmount((deposit.amountMinor / 100).toFixed(2));
     setTransactionId("");
     setPaymentMethod(deposit.type === "ENROLMENT_PAYMENT" ? financeMethodFor(deposit.enrolmentPayment?.method || deposit.paymentMethod) : deposit.paymentMethod);
     setMt5Login(deposit.mt5Login);
     setNote("");
     setReason("");
-  }, [deposit?.id]);
+  }, [deposit?.id, start]);
 
   const balancePayment = isBalancePayment(deposit);
   const methods = useMemo(
@@ -217,12 +222,14 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
       if (!amountValid) { toast.error("Enter the amount that arrived"); return; }
       if (!transactionId.trim()) { toast.error("Enter the transaction ID"); return; }
     } else if (reason.trim().length < 5) {
-      toast.error("Add a short reason before rejecting");
+      toast.error(decision === "sentBack" ? "Say what to correct before sending it back" : "Add a short reason before rejecting");
       return;
     }
     try {
       const result = await decide.mutateAsync(decision === "approved"
         ? { decision, amountMinor, transactionId: transactionId.trim(), paymentMethod, mt5Login: mt5Login.trim(), note: note.trim() }
+        : decision === "sentBack"
+        ? { decision: "rejected", reason: reason.trim(), sentBack: true }
         : { decision, reason: reason.trim() });
       if (result.delivered) toast.success(result.message);
       else toast.warning(result.message);
@@ -253,10 +260,12 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1.5">
             <Label>Decision</Label>
-            <Select value={decision} onValueChange={(v) => setDecision(v as "approved" | "rejected")}>
+            <Select value={decision} onValueChange={(v) => setDecision(v as "approved" | "rejected" | "sentBack")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="approved">Approve</SelectItem>
+                {/* A bonus can go back to its CS to correct and send again; a refusal is a Reject. */}
+                {isBonus(deposit) && <SelectItem value="sentBack">Send back to correct</SelectItem>}
                 <SelectItem value="rejected">Reject</SelectItem>
               </SelectContent>
             </Select>
@@ -303,14 +312,17 @@ export function TetraDepositReviewDialog({ deposit, onClose }: { deposit: TetraD
             </>
           ) : (
             <div className="space-y-1.5">
-              <Label htmlFor="tetra-reason">Reason (required)</Label>
-              <Textarea id="tetra-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} rows={3} placeholder="The mentor sees this in Tetra Commission" />
+              <Label htmlFor="tetra-reason">{decision === "sentBack" ? "What to correct (required)" : "Reason (required)"}</Label>
+              <Textarea
+                id="tetra-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} rows={3}
+                placeholder={decision === "sentBack" ? "The CS sees this in Tetra Commission, corrects the request and sends it again" : "The mentor sees this in Tetra Commission"}
+              />
             </div>
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant={decision === "rejected" ? "destructive" : "primary"} loading={decide.isPending}>
-              {decision === "approved" ? `Approve ${kindWord(deposit)}` : `Reject ${kindWord(deposit)}`}
+            <Button type="submit" variant={decision === "rejected" ? "destructive" : decision === "sentBack" ? "outline" : "primary"} loading={decide.isPending}>
+              {decision === "approved" ? `Approve ${kindWord(deposit)}` : decision === "sentBack" ? "Send back" : `Reject ${kindWord(deposit)}`}
             </Button>
           </DialogFooter>
         </form>

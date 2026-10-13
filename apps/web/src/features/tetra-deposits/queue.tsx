@@ -10,7 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useReopenTetraDeposit, useTetraDeposits } from "./api";
-import { TetraDepositReviewDialog, TetraTypeTag, paidBy } from "./review-dialog";
+import { TetraDepositReviewDialog, TetraTypeTag, isBonus, paidBy } from "./review-dialog";
 
 /**
  * Tetra Commission's deposits on the Approvals page: the ones waiting for a
@@ -24,7 +24,7 @@ const ago = (iso?: string) =>
     ? describeOverdue(iso.slice(0, 10)).replace("days late", "days ago").replace("1 day late", "yesterday").replace("due today", "today")
     : "";
 
-function Waiting({ deposit, onReview }: { deposit: TetraDeposit; onReview: () => void }) {
+function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onReview: () => void; onSendBack: () => void }) {
   return (
     <li className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-start">
       <div className="min-w-0 flex-1">
@@ -34,6 +34,11 @@ function Waiting({ deposit, onReview }: { deposit: TetraDeposit; onReview: () =>
           <TetraTypeTag deposit={deposit} />
           {paidBy(deposit) && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{paidBy(deposit)}</span>}
           {deposit.team && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{deposit.team}</span>}
+          {deposit.resubmit && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title={deposit.resubmit.reason ? `It was sent back: ${deposit.resubmit.reason}` : undefined}>
+              Sent again, corrected
+            </span>
+          )}
         </div>
         <p className="mt-1 text-xs text-foreground-muted">
           {[deposit.requestedBy || deposit.initiatingMentor, deposit.mt5Login && `MT5 ${deposit.mt5Login}`, ago(deposit.requestedAt)].filter(Boolean).join(" · ")}
@@ -41,7 +46,11 @@ function Waiting({ deposit, onReview }: { deposit: TetraDeposit; onReview: () =>
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 sm:flex-col sm:items-end">
         <MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} className="font-semibold" />
-        <Button size="sm" variant="outline" onClick={onReview}>Review</Button>
+        <div className="flex gap-2">
+          {/* Like an invoice's: back to the CS with what to correct (2026-10-13) — bonuses, which they can send again. */}
+          {isBonus(deposit) && <Button size="sm" variant="ghost" onClick={onSendBack}>Send back</Button>}
+          <Button size="sm" variant="outline" onClick={onReview}>Review</Button>
+        </div>
       </div>
     </li>
   );
@@ -84,6 +93,7 @@ function NotDelivered({ deposit }: { deposit: TetraDeposit }) {
 
 export function TetraDepositQueue() {
   const [reviewTarget, setReviewTarget] = useState<TetraDeposit | null>(null);
+  const [reviewStart, setReviewStart] = useState<"approved" | "sentBack">("approved");
   const waiting = useTetraDeposits("waiting");
   const attention = useTetraDeposits("attention");
   const rows = waiting.data?.data ?? [];
@@ -102,7 +112,13 @@ export function TetraDepositQueue() {
           <p className="px-5 py-6 text-sm text-foreground-muted">No deposits waiting.</p>
         ) : (
           <ul className="divide-y divide-border">
-            {rows.map((d) => <Waiting key={d.id} deposit={d} onReview={() => setReviewTarget(d)} />)}
+            {rows.map((d) => (
+              <Waiting
+                key={d.id} deposit={d}
+                onReview={() => { setReviewStart("approved"); setReviewTarget(d); }}
+                onSendBack={() => { setReviewStart("sentBack"); setReviewTarget(d); }}
+              />
+            ))}
           </ul>
         )}
       </Card>
@@ -119,7 +135,7 @@ export function TetraDepositQueue() {
           </ul>
         </div>
       )}
-      <TetraDepositReviewDialog deposit={reviewTarget} onClose={() => setReviewTarget(null)} />
+      <TetraDepositReviewDialog deposit={reviewTarget} start={reviewStart} onClose={() => setReviewTarget(null)} />
     </div>
   );
 }

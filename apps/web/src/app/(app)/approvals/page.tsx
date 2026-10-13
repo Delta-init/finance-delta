@@ -23,6 +23,8 @@ import { useFundingRequests } from "@/features/budgets/api";
 import { FundingReviewDialog } from "@/features/budgets/review-dialog";
 import { useReopenTetraDeposit, useTetraDeposit } from "@/features/tetra-deposits/api";
 import { TetraDepositReviewDialog } from "@/features/tetra-deposits/review-dialog";
+import { useBalancePayment } from "@/features/balance-payments/api";
+import { BalancePaymentReviewDialog } from "@/features/balance-payments/review-dialog";
 import { formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -50,6 +52,7 @@ const TYPE_LABEL: Record<ApprovalType, string> = {
   invoice: "Enrolment",
   fund_request: "Fund request",
   tetra_deposit: "Tetra deposit",
+  balance_payment: "Balance payment",
   expense: "Expense claim",
   bill: "Bill",
   payroll: "Payroll",
@@ -232,11 +235,14 @@ export default function ApprovalsPage() {
   const fundTarget = useMemo(() => (fundRequests.data?.data ?? []).find((r) => r.id === fundId) ?? null, [fundRequests.data, fundId]);
   const [depositId, setDepositId] = useState<string | null>(null);
   const [depositStart, setDepositStart] = useState<"approved" | "sentBack">("approved");
+  const [balanceId, setBalanceId] = useState<string | null>(null);
+  const balanceTarget = useBalancePayment(balanceId);
   const depositTarget = useTetraDeposit(depositId);
 
   const decide = (row: ApprovalRow) => {
     if (row.type === "fund_request") setFundId(row.id);
     else if (row.type === "tetra_deposit") { setDepositStart("approved"); setDepositId(row.id); }
+    else if (row.type === "balance_payment") setBalanceId(row.id);
   };
   // A bonus straight back to its CS, with what to correct (2026-10-13) — like an invoice's Send back.
   const sendBack = (row: ApprovalRow) => { setDepositStart("sentBack"); setDepositId(row.id); };
@@ -527,6 +533,7 @@ export default function ApprovalsPage() {
 
       <FundingReviewDialog request={fundTarget} onClose={() => setFundId(null)} />
       <TetraDepositReviewDialog deposit={depositTarget.data ?? null} start={depositStart} onClose={() => setDepositId(null)} />
+      <BalancePaymentReviewDialog payment={balanceTarget.data ?? null} onClose={() => setBalanceId(null)} />
     </div>
   );
 }

@@ -22,6 +22,11 @@ router.post("/enrolments", c.takeEnrolment);
 // a list of ids is not a thing to put in a query string.
 router.post("/enrolments/status", c.enrolmentStatuses);
 
+// The next payment of a part-paid enrolment, recorded in the CRM that closed it
+// (2026-10-13), for accounts to approve. Idempotent on the CRM's own id; where
+// it stands comes back with the enrolment's status.
+router.post("/enrolments/balance-payments", c.takeBalancePayment);
+
 // Media ERP asking for money out of Marketing's allocation. Lands as a
 // drawdown waiting for review; idempotent on the caller's own id, like the
 // enrolments above.

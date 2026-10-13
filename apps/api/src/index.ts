@@ -47,6 +47,7 @@ import budgetRoutes from "./modules/budget/budget.routes";
 import approvalsRoutes from "./modules/approvals/approvals.routes";
 import emailLogRoutes from "./modules/email-log/email-log.routes";
 import tetraDepositRoutes from "./modules/tetra-deposit/tetra-deposit.routes";
+import balancePaymentRoutes from "./modules/balance-payment/balance-payment.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
@@ -134,6 +135,7 @@ async function bootstrap() {
   api.use("/approvals", approvalsRoutes);
   api.use("/email-logs", emailLogRoutes);
   api.use("/tetra-deposits", tetraDepositRoutes);
+  api.use("/balance-payments", balancePaymentRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);

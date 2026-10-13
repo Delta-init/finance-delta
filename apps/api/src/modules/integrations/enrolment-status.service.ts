@@ -76,6 +76,11 @@ export interface EnrolmentStatus {
   totalMinor: number;
   amountPaidMinor: number;
   balanceMinor: number;
+  /** The course, the next instalment's date (YYYY-MM-DD, "" when nothing is owed), every payment recorded, and the CRM's balance payments with where each stands (2026-10-13). */
+  course: string;
+  nextDueOn: string;
+  payments: { amountMinor: number; paidOn: string; method: string; receiptNumber?: string }[];
+  balancePayments: { externalId: string; amountMinor: number; currency: string; method: string; paidOn: string; status: string; reason?: string; decidedAt?: string; decidedBy?: string; receiptNumber?: string }[];
   /**
    * What finance flagged on the invoice, as it stands now — the same flags the
    * handover answered with (an unmapped course, a rep with no account here, an
@@ -195,7 +200,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
     "external.source": source,
     "external.externalId": { $in: externalIds },
   })
-    .select("invoiceNumber status approval totalMinor amountPaidMinor balanceMinor currency external issueDate enrolment.bonus enrolment.crm")
+    .select("invoiceNumber status approval totalMinor amountPaidMinor balanceMinor currency external issueDate dueDate payments enrolment.bonus enrolment.crm enrolment.course")
     .lean();
   if (!invoices.length) return [];
 
@@ -207,6 +212,9 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
   // Who looks after them now, in one call for the page.
   const codes = provisions.filter((p) => p.commission?.state === "sent" && p.commission.studentCode).map((p) => p.commission!.studentCode!);
   const now = await lookupCommissionStudents(codes);
+  // The balance payments its salespeople recorded (2026-10-13), each with where it stands.
+  const { balancePaymentsFor } = await import("../balance-payment/balance-payment.service");
+  const recorded = await balancePaymentsFor(invoices.map((i) => i._id));
 
   return invoices.map((i) => {
     const ext = i.external as { externalId?: string; flags?: string[] } | undefined;
@@ -233,6 +241,16 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
       totalMinor: (i.totalMinor as number) ?? 0,
       amountPaidMinor: (i.amountPaidMinor as number) ?? 0,
       balanceMinor: (i.balanceMinor as number) ?? 0,
+      // For the CRM's Balance payments page (2026-10-13): the course, the next
+      // instalment's date while something is owed, every payment recorded, and
+      // the ones the CRM sent with where each stands.
+      course: ((i.enrolment as { course?: string } | undefined)?.course) ?? "",
+      nextDueOn: ((i.balanceMinor as number) ?? 0) > 0 && i.dueDate && i.status !== "void" ? new Date(i.dueDate as unknown as string).toISOString().slice(0, 10) : "",
+      payments: ((i.payments as any[]) ?? []).map((p) => ({
+        amountMinor: p.amountMinor, paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : "", method: p.method,
+        ...(p.receiptNumber ? { receiptNumber: p.receiptNumber } : {}),
+      })),
+      balancePayments: recorded.get(String(i._id)) ?? [],
       flags: ext?.flags ?? [],
       lms: p ? lmsOf(p) : null,
       commission,

@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundBalancePaymentSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
@@ -85,6 +85,14 @@ export const enrolmentStatuses = asyncHandler(async (req: Request, res: Response
   if (externalIds.length === 0) return ok(res, []);
 
   ok(res, await enrolmentStatusesFor(orgId, source, externalIds));
+});
+
+/** A sales CRM's balance payment (2026-10-13): waits for accounts; the enrolment's status says where it stands. */
+export const takeBalancePayment = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const input = inboundBalancePaymentSchema.parse(req.body);
+  const { intakeBalancePayment } = await import("../balance-payment/balance-payment.service");
+  ok(res, await intakeBalancePayment(orgId, input));
 });
 
 /**

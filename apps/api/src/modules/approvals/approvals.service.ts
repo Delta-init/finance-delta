@@ -16,6 +16,7 @@ import { PayrollRun } from "../payroll/payroll-run.model";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { FundingRequestModel } from "../budget/budget.model";
 import { TetraDepositModel } from "../tetra-deposit/tetra-deposit.model";
+import { BalancePaymentModel } from "../balance-payment/balance-payment.model";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { LmsProvision } from "../integrations/lms-provision.model";
@@ -131,6 +132,30 @@ const KINDS: Kind[] = [
           subtitle: [r.student?.code, depositPaidBy(r), r.requestedBy || r.initiatingMentor, r.team].filter(Boolean).join(" · "),
           amountMinor: r.amountMinor, currency: r.currency ?? "USD",
           at: iso(r.requestedAt ?? r.createdAt), href: "/approvals",
+        })),
+      };
+    },
+  },
+  {
+    // Balance payments recorded in the sales CRMs (2026-10-13), decided by whoever approves enrolments.
+    type: "balance_payment",
+    label: "Balance payments",
+    href: "/approvals",
+    allowed: (can) => can("invoice:write") && can("invoice:read"),
+    read: async (org) => {
+      const filter = { organizationId: org, status: "pending" };
+      const [count, rows] = await Promise.all([
+        BalancePaymentModel.countDocuments(filter),
+        BalancePaymentModel.find(filter).sort({ createdAt: -1 }).limit(LATEST).select("customerName invoiceNumber course amountMinor currency recordedBy createdAt").lean(),
+      ]);
+      return {
+        count,
+        items: rows.map((r: any) => ({
+          id: String(r._id),
+          title: r.customerName || r.invoiceNumber,
+          subtitle: [r.invoiceNumber, r.course, r.recordedBy?.name].filter(Boolean).join(" · "),
+          amountMinor: r.amountMinor, currency: r.currency ?? "AED",
+          at: iso(r.createdAt), href: "/approvals",
         })),
       };
     },
@@ -344,6 +369,7 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   invoice: { text: ["invoiceNumber", "customerName", "salespersonName", "enrolment.course", "enrolment.meetingBy"], raiser: ["salespersonName"] },
   fund_request: { text: ["title", "requestedByName", "platform"], raiser: ["requestedByName"] },
   tetra_deposit: { text: ["student.name", "student.code", "student.email", "requestedBy", "initiatingMentor", "team"], raiser: ["requestedBy", "initiatingMentor"] },
+  balance_payment: { text: ["customerName", "invoiceNumber", "course", "recordedBy.name"], raiser: ["recordedBy.name"] },
   expense: { text: ["description", "expenseNumber", "categoryName", "submittedByName"], raiser: ["submittedByName"] },
   bill: { text: ["vendorName", "billNumber"], raiser: [] },
   payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
@@ -565,6 +591,44 @@ const LIST_KINDS: ListKind[] = [
             href: waiting ? "/approvals" : "/tetra-deposits",
             decideHere: waiting || undefined,
             delivery: undelivered ? { state: r.delivery.state, error: r.delivery.lastError || undefined } : undefined,
+          };
+        }),
+      };
+    },
+  },
+  {
+    type: "balance_payment",
+    label: "Balance payments",
+    allowed: (can) => can("invoice:write") && can("invoice:read"),
+    list: async (ctx) => {
+      const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["rejected"] });
+      const { docs, total } = await newest(
+        BalancePaymentModel,
+        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "balance_payment"),
+        { $cond: [{ $eq: ["$status", "pending"] }, "$createdAt", firstOf("$decision.decidedAt", "$updatedAt")] },
+        "customerName invoiceNumber course amountMinor currency method paidOn recordedBy status decision createdAt",
+        ctx,
+      );
+      return {
+        total,
+        rows: docs.map((r): ApprovalRow => {
+          const waiting = r.status === "pending";
+          return {
+            id: String(r._id),
+            type: "balance_payment",
+            title: r.customerName || r.invoiceNumber,
+            subtitle: [r.invoiceNumber, r.course, `paid ${r.paidOn}`].filter(Boolean).join(" · "),
+            amountMinor: r.amountMinor,
+            currency: r.currency ?? "AED",
+            raisedBy: r.recordedBy?.name || undefined,
+            status: r.status,
+            at: iso(r.__at),
+            submittedAt: iso(r.createdAt),
+            decidedAt: waiting ? undefined : iso(r.decision?.decidedAt),
+            decidedBy: waiting ? undefined : r.decision?.decidedByName || undefined,
+            reason: r.status === "rejected" ? r.decision?.reason || undefined : undefined,
+            href: "/approvals",
+            decideHere: waiting || undefined,
           };
         }),
       };
@@ -883,6 +947,7 @@ const RAISER_MODELS: { type: string; model: Model<any>; match: Record<string, un
   { type: "invoice", model: Invoice, match: { approval: { $exists: true } } },
   { type: "fund_request", model: FundingRequestModel, match: {} },
   { type: "tetra_deposit", model: TetraDepositModel, match: {} },
+  { type: "balance_payment", model: BalancePaymentModel, match: {} },
   { type: "expense", model: Expense, match: { "source.kind": { $ne: "hrms_procurement" } } },
   { type: "payroll", model: PayrollRun, match: {} },
 ];

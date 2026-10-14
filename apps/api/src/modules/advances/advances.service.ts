@@ -10,6 +10,7 @@ import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { AppError } from "../../lib/http";
+import { forgetSalaryAdvances } from "../approvals/approvals.service";
 
 /**
  * Salary advances HR has approved in HRMS, and finance's decision on them.
@@ -189,6 +190,8 @@ export async function approve(orgId: string, userId: string, id: string, input: 
     }
     await Expense.updateOne({ _id: expense._id, "source.deliveredAt": { $exists: false } }, { $set: { "source.deliveredAt": new Date() } });
   }
+  // Approvals' count asks HRMS again rather than showing it still waiting.
+  forgetSalaryAdvances(input.hrmsOrgId);
 
   return { expense: { id: String(expense._id), expenseNumber: expense.expenseNumber, totalMinor: expense.totalMinor, currency: expense.currency } };
 }
@@ -207,5 +210,6 @@ export async function reject(orgId: string, id: string, input: RejectAdvanceInpu
     );
   }
   await hrmsClient.rejectAdvance(input.hrmsOrgId, id, { note: input.note || undefined });
+  forgetSalaryAdvances(input.hrmsOrgId);
   return { rejected: true };
 }

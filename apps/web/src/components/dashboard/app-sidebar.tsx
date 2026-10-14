@@ -31,6 +31,7 @@ import {
   Banknote,
   ClipboardCheck,
   Coins,
+  UserPlus,
   type LucideIcon, MailCheck
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
@@ -158,7 +159,9 @@ const NAV: NavGroup[] = [
       { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read", badge: "payroll" },
       { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
       // Paid out on approval, like a purchase request — so the same right.
-      { href: "/advances", label: "Salary Advances", icon: HandCoins, enabled: true, permission: "expense:approve" },
+      { href: "/advances", label: "Salary Advances", icon: HandCoins, enabled: true, permission: "expense:approve", badge: "salary_advance" },
+      // Hiring requests whose cost is not budgeted, after HR approved them in HRMS (2026-10-15).
+      { href: "/hiring", label: "Hiring Requests", icon: UserPlus, enabled: true, permission: "expense:approve", badge: "hiring" },
       // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
       { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
     ],

@@ -8,7 +8,9 @@ import {
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
 import { logger } from "../../lib/logger";
-import { hrmsClient, type HrmsProcurementRequest } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsProcurementRequest, type HrmsSalaryAdvance } from "../../lib/hrms-client";
+import { HiringDecision } from "../hiring/hiring-decision.model";
+import { hiringRequestsOf } from "../hiring/hiring.service";
 import { Invoice } from "../invoice/invoice.model";
 import { Expense } from "../expense/expense.model";
 import { Bill } from "../bill/bill.model";
@@ -267,7 +269,83 @@ const KINDS: Kind[] = [
       };
     },
   },
+  {
+    // Salary advances HR approved, waiting on finance to pay out (2026-10-15).
+    type: "salary_advance",
+    label: "Salary advances",
+    href: "/advances",
+    allowed: (can) => can("expense:approve"),
+    read: async (org) => {
+      const rows = await liveFromHrms(org, salaryAdvancesOf);
+      rows.sort((a, b) => String(b.r.hrReviewedAt ?? b.r.createdAt).localeCompare(String(a.r.hrReviewedAt ?? a.r.createdAt)));
+      return {
+        count: rows.length,
+        items: rows.slice(0, LATEST).map(({ r, from }) => ({
+          id: r._id,
+          title: `Salary advance — ${r.employee?.name ?? "employee"}`,
+          subtitle: [r.employee?.department?.name ?? from, `over ${r.months} month${r.months === 1 ? "" : "s"}`].filter(Boolean).join(" · "),
+          amountMinor: Math.round((r.amount || 0) * 100), currency: r.currency || "AED",
+          at: iso(r.hrReviewedAt ?? r.createdAt), href: "/advances",
+        })),
+      };
+    },
+  },
+  {
+    // Hiring requests HR approved whose cost is not budgeted (2026-10-15).
+    type: "hiring",
+    label: "Hiring requests",
+    href: "/hiring",
+    allowed: (can) => can("expense:approve"),
+    read: async (org) => {
+      const rows = await liveFromHrms(org, hiringRequestsOf);
+      rows.sort((a, b) => String(b.r.hrApprovedAt ?? b.r.createdAt).localeCompare(String(a.r.hrApprovedAt ?? a.r.createdAt)));
+      return {
+        count: rows.length,
+        items: rows.slice(0, LATEST).map(({ r, from }) => ({
+          id: r._id,
+          title: `${r.headcount > 1 ? `${r.headcount} × ` : ""}${r.title}`,
+          subtitle: [r.department?.name ?? from, r.type === "new_headcount" ? "New headcount" : "Replacement"].filter(Boolean).join(" · "),
+          ...(r.salaryMax ? { amountMinor: Math.round(r.salaryMax * 100), currency: r.currency || "AED" } : {}),
+          at: iso(r.hrApprovedAt ?? r.createdAt), href: "/hiring",
+        })),
+      };
+    },
+  },
 ];
+
+/**
+ * One HRMS-held kind, read live from every linked HRMS organisation. Every one
+ * unreadable is not "nothing waiting": it throws, and the kind says it could
+ * not be read.
+ */
+async function liveFromHrms<T>(org: Types.ObjectId, read: (hrmsOrgId: string) => Promise<T[]>): Promise<Array<{ r: T; from: string }>> {
+  const links = await PayrollOrgLink.find({ organizationId: org, isActive: true }).select("hrmsOrgId hrmsOrgName").lean();
+  const rows: Array<{ r: T; from: string }> = [];
+  let failed = 0;
+  for (const link of links) {
+    try {
+      for (const r of await read(String(link.hrmsOrgId))) rows.push({ r, from: String(link.hrmsOrgName ?? "") });
+    } catch {
+      failed++;
+    }
+  }
+  if (links.length && failed === links.length) throw new Error("HRMS could not be reached");
+  return rows;
+}
+
+/* Salary advances, kept two minutes per HRMS organisation like purchase requests. */
+const advanceCache = new Map<string, { at: number; value: Promise<HrmsSalaryAdvance[]> }>();
+function salaryAdvancesOf(hrmsOrgId: string): Promise<HrmsSalaryAdvance[]> {
+  const hit = advanceCache.get(hrmsOrgId);
+  if (hit && Date.now() - hit.at < PROCUREMENT_TTL_MS) return hit.value;
+  const value = hrmsClient.salaryAdvances(hrmsOrgId);
+  advanceCache.set(hrmsOrgId, { at: Date.now(), value });
+  return value;
+}
+/** An advance was just decided: the next count asks HRMS again. */
+export function forgetSalaryAdvances(hrmsOrgId: string): void {
+  advanceCache.delete(hrmsOrgId);
+}
 
 /*
  * Purchase requests live in HRMS and are read live. Asked every minute by
@@ -374,6 +452,8 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   bill: { text: ["vendorName", "billNumber"], raiser: [] },
   payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
   procurement: { text: ["description", "expenseNumber"], raiser: [] },
+  salary_advance: { text: ["description", "expenseNumber"], raiser: [] },
+  hiring: { text: ["request.title", "request.department", "request.raisedBy", "decidedByName"], raiser: ["request.raisedBy"] },
 };
 
 const CRM_SOURCE: Record<string, string> = { delta: "crm", draw: "draw-crm", banglore: "banglore-crm" };
@@ -838,6 +918,136 @@ const LIST_KINDS: ListKind[] = [
         return Object.assign({ total, rows }, { unreadable });
       }
       return { total, rows };
+    },
+  },
+  {
+    // Salary advances (2026-10-15): waiting read live from HRMS; paid out is the expense it made.
+    type: "salary_advance",
+    label: "Salary advances",
+    allowed: (can) => can("expense:approve"),
+    list: async (ctx) => {
+      const rows: ApprovalRow[] = [];
+      let total = 0;
+      let unreadable = "";
+      if (ctx.status === "pending" || ctx.status === "all") {
+        try {
+          const waiting = (await liveFromHrms(ctx.org, salaryAdvancesOf))
+            .map(({ r, from }): ApprovalRow => {
+              const at = iso(r.hrReviewedAt ?? r.createdAt);
+              return {
+                id: r._id,
+                type: "salary_advance",
+                title: `Salary advance — ${r.employee?.name ?? "employee"}`,
+                subtitle: [r.employee?.department?.name ?? from, `recovered over ${r.months} month${r.months === 1 ? "" : "s"} from ${r.startMonth}`].filter(Boolean).join(" · "),
+                amountMinor: Math.round((r.amount || 0) * 100),
+                currency: r.currency || "AED",
+                raisedBy: r.hrReviewedBy?.name || r.user?.name || undefined,
+                status: "pending",
+                at,
+                submittedAt: at,
+                href: "/advances",
+              };
+            })
+            .filter((row) => inRange(row.at, ctx.range) && rowMatches(row, ctx))
+            .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+          total += waiting.length;
+          rows.push(...waiting.slice(0, ctx.limit));
+        } catch {
+          unreadable = "the ones waiting in HRMS could not be read";
+        }
+      }
+      // Paid out: each became an expense here. A refused one is kept only in HRMS.
+      if (ctx.status === "approved" || ctx.status === "all") {
+        const { docs, total: approved } = await newest(
+          Expense,
+          narrowed({ organizationId: ctx.org, "source.kind": "hrms_advance", status: { $in: ["approved", "paid"] } }, ctx, "salary_advance"),
+          firstOf("$approvedAt", "$createdAt"),
+          "expenseNumber description totalMinor currency approvedByName approvedAt createdAt",
+          ctx,
+        );
+        total += approved;
+        rows.push(...docs.map((r): ApprovalRow => ({
+          id: String(r._id),
+          type: "salary_advance",
+          title: r.description,
+          subtitle: [r.expenseNumber, "HRMS"].filter(Boolean).join(" · "),
+          amountMinor: r.totalMinor ?? 0,
+          currency: r.currency ?? "AED",
+          status: "approved",
+          at: iso(r.__at),
+          decidedAt: iso(r.approvedAt),
+          decidedBy: r.approvedByName || undefined,
+          href: `/expenses/${r._id}`,
+        })));
+      }
+      return unreadable ? Object.assign({ total, rows }, { unreadable }) : { total, rows };
+    },
+  },
+  {
+    // Hiring requests (2026-10-15): waiting read live from HRMS; decided ones kept here.
+    type: "hiring",
+    label: "Hiring requests",
+    allowed: (can) => can("expense:approve"),
+    list: async (ctx) => {
+      const rows: ApprovalRow[] = [];
+      let total = 0;
+      let unreadable = "";
+      if (ctx.status === "pending" || ctx.status === "all") {
+        try {
+          const decided = new Set((await HiringDecision.find({ organizationId: ctx.org, deliveredAt: { $exists: true } }).select("requisitionId").lean()).map((d) => d.requisitionId));
+          const waiting = (await liveFromHrms(ctx.org, hiringRequestsOf))
+            // Decided and told a moment ago, before HRMS's cached answer caught up.
+            .filter(({ r }) => !decided.has(r._id))
+            .map(({ r, from }): ApprovalRow => {
+              const at = iso(r.hrApprovedAt ?? r.createdAt);
+              return {
+                id: r._id,
+                type: "hiring",
+                title: `${r.headcount > 1 ? `${r.headcount} × ` : ""}${r.title}`,
+                subtitle: [r.department?.name ?? from, r.type === "new_headcount" ? "New headcount" : "Replacement",
+                  r.salaryMin || r.salaryMax ? `salary ${[r.salaryMin, r.salaryMax].filter(Boolean).join("–")}` : ""].filter(Boolean).join(" · "),
+                ...(r.salaryMax ? { amountMinor: Math.round(r.salaryMax * 100), currency: r.currency || "AED" } : {}),
+                raisedBy: r.raisedBy?.name || undefined,
+                status: "pending",
+                at,
+                submittedAt: at,
+                href: "/hiring",
+              };
+            })
+            .filter((row) => inRange(row.at, ctx.range) && rowMatches(row, ctx))
+            .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+          total += waiting.length;
+          rows.push(...waiting.slice(0, ctx.limit));
+        } catch {
+          unreadable = "the ones waiting in HRMS could not be read";
+        }
+      }
+      const done = (["approved", "rejected"] as const).filter((st) => ctx.status === st || ctx.status === "all");
+      if (done.length) {
+        const { docs, total: n } = await newest(
+          HiringDecision,
+          narrowed({ organizationId: ctx.org, decision: { $in: done }, deliveredAt: { $exists: true } }, ctx, "hiring"),
+          "$decidedAt",
+          "requisitionId decision note decidedByName decidedAt request",
+          ctx,
+        );
+        total += n;
+        rows.push(...docs.map((d): ApprovalRow => ({
+          id: String(d.requisitionId),
+          type: "hiring",
+          title: `${(d.request?.headcount ?? 1) > 1 ? `${d.request.headcount} × ` : ""}${d.request?.title ?? "Hiring request"}`,
+          subtitle: [d.request?.department, d.request?.type === "new_headcount" ? "New headcount" : d.request?.type ? "Replacement" : ""].filter(Boolean).join(" · "),
+          ...(d.request?.salaryMax ? { amountMinor: Math.round(d.request.salaryMax * 100), currency: d.request.currency || "AED" } : {}),
+          raisedBy: d.request?.raisedBy || undefined,
+          status: d.decision,
+          at: iso(d.__at),
+          decidedAt: iso(d.decidedAt),
+          decidedBy: d.decidedByName || undefined,
+          ...(d.decision === "rejected" && d.note ? { reason: d.note } : {}),
+          href: "/hiring",
+        })));
+      }
+      return unreadable ? Object.assign({ total, rows }, { unreadable }) : { total, rows };
     },
   },
 ];

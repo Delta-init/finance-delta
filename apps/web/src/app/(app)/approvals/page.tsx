@@ -57,6 +57,8 @@ const TYPE_LABEL: Record<ApprovalType, string> = {
   bill: "Bill",
   payroll: "Payroll",
   procurement: "Purchase request",
+  salary_advance: "Salary advance",
+  hiring: "Hiring request",
 };
 
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
@@ -510,8 +512,8 @@ export default function ApprovalsPage() {
               <span>Could not be read just now — {note}. It will be tried again shortly.</span>
             </div>
           ))}
-          {status === "rejected" && procurementVisible && (type === "all" || type === "procurement") && (
-            <p className="text-xs text-foreground-muted">Rejected purchase requests are kept in HRMS, so they are not listed here.</p>
+          {status === "rejected" && procurementVisible && (type === "all" || type === "procurement" || type === "salary_advance") && (
+            <p className="text-xs text-foreground-muted">Rejected purchase requests and salary advances are kept in HRMS, so they are not listed here.</p>
           )}
 
           <DataTable

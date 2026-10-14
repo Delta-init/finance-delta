@@ -277,6 +277,33 @@ export interface HrmsSalaryAdvance {
   createdAt: string;
 }
 
+/** A hiring request HR has approved whose cost is not budgeted, waiting on finance (2026-10-15). */
+export interface HrmsHiringRequest {
+  _id: string;
+  title: string;
+  type: "replacement" | "new_headcount";
+  headcount: number;
+  /** Major units. */
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  currency: string;
+  department?: { name: string } | null;
+  designation?: string;
+  location?: string;
+  employmentType?: string;
+  justification?: string;
+  targetStartDate?: string | null;
+  jdText?: string;
+  jdFileName?: string;
+  /** A short-lived link to the attached job description, when there is one. */
+  jdUrl?: string;
+  raisedBy?: { name: string; email?: string } | null;
+  replacing?: { name: string; designation?: string; salary?: number | null } | null;
+  hrApprovedAt?: string | null;
+  hrApprovedBy?: string;
+  createdAt: string;
+}
+
 /** A one-time payment HR sent from HRMS for finance to pay directly (not on a payslip). */
 export interface HrmsOneTimePayment {
   _id: string;
@@ -490,6 +517,22 @@ export const hrmsClient = {
         body: { organizationId, ...opts },
       })
     ).data;
+  },
+
+  // ── Hiring requests (2026-10-15) ───────────────────────────────────────────
+
+  /** Hiring requests HR approved that need finance's budget approval. */
+  async hiringRequests(organizationId: string): Promise<HrmsHiringRequest[]> {
+    return (await request<HrmsHiringRequest[]>("GET", "/hiring/requisitions", { query: { organizationId } })).data;
+  },
+
+  /** Finance approved the budget: HRMS marks the request approved and tells the raiser. */
+  async approveHiring(organizationId: string, id: string, opts: { note?: string; by?: string } = {}) {
+    return (await request<unknown>("POST", `/hiring/requisitions/${id}/approve`, { query: { organizationId }, body: { organizationId, ...opts } })).data;
+  },
+
+  async rejectHiring(organizationId: string, id: string, opts: { note: string; by?: string }) {
+    return (await request<unknown>("POST", `/hiring/requisitions/${id}/reject`, { query: { organizationId }, body: { organizationId, ...opts } })).data;
   },
 
   // ── One-time payments finance pays directly ────────────────────────────────

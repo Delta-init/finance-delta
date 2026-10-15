@@ -90,7 +90,7 @@ export async function downloadReceiptPdf(opts: {
     // Capitalised as the page capitalises it, so the file and the screen read
     // the same rather than "bank transfer" against "Bank Transfer".
     ["Method", titleCase(payment.method.replace(/_/g, " "))],
-    ...(payment.accountName ? ([["Account", payment.accountName]] as [string, string][]) : []),
+    // Which of our accounts it went into is ours to know, not the client's — a receipt never says "Petty cash" (2026-10-16).
     ...(payment.reference ? ([["Reference", payment.reference]] as [string, string][]) : []),
     ...(payment.notes ? ([["Notes", payment.notes]] as [string, string][]) : []),
   ];

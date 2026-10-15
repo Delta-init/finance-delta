@@ -122,6 +122,13 @@ export const recordPaymentSchema = z.object({
   /** Populated by the server after uploading to R2 — not accepted from client directly. */
   proofUrl: z.string().url().optional(),
   proofKey: z.string().optional(),
+  /**
+   * The Banking account it went into (the user, 2026-10-16): an account's id, "" for none, or left out for its
+   * method's account (Settings → Where payments go). The payment gets a line in that account.
+   */
+  bankAccountId: z.string().max(40).optional(),
+  /** What landed, in the account's currency — needed when the account is in another currency than the invoice. */
+  bankAmountMinor: z.coerce.number().int().positive().optional(),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 
@@ -498,6 +505,12 @@ export const paymentSchema = z.object({
   proofUrl: z.string().optional(),
   /** The receipt's number (RCT-00001), on a payment one was issued for — a course payment from Tetra Commission. */
   receiptNumber: z.string().optional(),
+  /** The Banking account it went into, what landed there in its currency, whether its line is in, or why not. */
+  bankAccountId: z.string().optional(),
+  bankAmountMinor: z.number().optional(),
+  bankCurrency: z.string().optional(),
+  inBank: z.boolean().optional(),
+  bankNote: z.string().optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;

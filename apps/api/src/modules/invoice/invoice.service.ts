@@ -49,7 +49,10 @@ function feeUpdate(invoice: Parameters<typeof import("../integrations/commission
     .then((m) => m.queueFeeUpdate(invoice, reason, opts))
     .catch(() => undefined);
 }
-import { bonusCurrency, formatMoney, formatOriginalPayment } from "@delta/shared";
+import { bonusCurrency, formatMoney, formatOriginalPayment, PAYMENT_METHODS } from "@delta/shared";
+import {
+  assertLineMovable, paymentAccountsOf, removePaymentLine, resolvePaymentAccount, stampAccount, syncPaymentLine,
+} from "./payment-bank";
 
 /** Lazily compute overdue: sent/viewed past due date with unpaid balance. */
 function effectiveStatus(doc: InvoiceDoc): InvoiceStatus {
@@ -235,6 +238,11 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         proofUrl?: string;
         proofKey?: string;
         receiptNumber?: string;
+        bankAccountId?: { toString(): string } | null;
+        bankTransactionId?: { toString(): string } | null;
+        bankAmountMinor?: number | null;
+        bankCurrency?: string;
+        bankNote?: string;
         createdAt: Date;
       };
       return {
@@ -258,6 +266,15 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           : undefined,
         proofUrl: pm.proofUrl || undefined,
         ...(pm.receiptNumber ? { receiptNumber: pm.receiptNumber } : {}),
+        ...(pm.bankAccountId
+          ? {
+              bankAccountId: pm.bankAccountId.toString(),
+              ...(pm.bankAmountMinor ? { bankAmountMinor: pm.bankAmountMinor } : {}),
+              ...(pm.bankCurrency ? { bankCurrency: pm.bankCurrency } : {}),
+              inBank: Boolean(pm.bankTransactionId),
+              ...(pm.bankNote ? { bankNote: pm.bankNote } : {}),
+            }
+          : {}),
         createdAt: pm.createdAt.toISOString(),
       };
     }),
@@ -1333,11 +1350,18 @@ export async function approveInvoice(
     returnedReason: undefined,
     submittedAt: a.submittedAt,
   });
+  // Each method's bank account (Settings → Where payments go), for the payments the approval records.
+  const defaults = await paymentAccountsOf(orgId);
+  const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
+  for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
+  const before = ((doc.payments as unknown[]) ?? []).length;
   // In the same save: an approval and the payments it records stand or fall together.
-  const recorded = recordDeclaredPayments(doc);
+  const recorded = recordDeclaredPayments(doc, accountFor);
   // Part paid at the close: the next instalment is due 29 days after the money was paid.
   applyInstalmentDue(doc as never);
   await doc.save();
+  // …and each in its bank account.
+  for (const p of ((doc.payments as unknown as { _id: unknown }[]) ?? []).slice(before)) await syncPaymentLine(doc as never, p._id);
 
   if (recorded && (doc.balanceMinor ?? 0) <= 0) {
     const org = await Organization.findById(orgId);
@@ -1382,7 +1406,10 @@ export async function approveInvoice(
  * invoice, or when one is an EMI, whose terms the close does not ask. The
  * approval never waits on this. Returns how many were recorded.
  */
-function recordDeclaredPayments(doc: Awaited<ReturnType<typeof findDoc>>): number {
+function recordDeclaredPayments(
+  doc: Awaited<ReturnType<typeof findDoc>>,
+  accountFor: Map<string, Parameters<typeof stampAccount>[1]> = new Map(),
+): number {
   const e = (doc as unknown as {
     enrolment?: { declaredPayments?: StoredDeclaredPayment[] | null; declaredPaidMinor?: number; declaredPaymentMethod?: DeclaredPayment["method"] | null } | null;
   }).enrolment;
@@ -1409,7 +1436,7 @@ function recordDeclaredPayments(doc: Awaited<ReturnType<typeof findDoc>>): numbe
 
   const enrolledOn = doc.issueDate ? dateOnly(new Date(doc.issueDate as unknown as Date)) : dateOnly(new Date());
   for (const p of declared) {
-    (doc.payments as unknown[]).push({
+    const payment: Record<string, unknown> = {
       method: p.method,
       amountMinor: p.amountMinor,
       paidOn: new Date(p.paidOn || enrolledOn),
@@ -1423,7 +1450,10 @@ function recordDeclaredPayments(doc: Awaited<ReturnType<typeof findDoc>>): numbe
       chargesMinor: 0,
       proofUrl: p.receipt?.url ?? "",
       proofKey: p.receipt?.key ?? "",
-    });
+    };
+    // Its method's bank account — the rupees the client handed over land in a rupee account as they were.
+    stampAccount(payment, accountFor.get(p.method) ?? null, currency, p.original);
+    (doc.payments as unknown[]).push(payment);
   }
   doc.amountPaidMinor = sum;
   doc.balanceMinor = total - sum;
@@ -1822,6 +1852,21 @@ export async function updatePayment(
   }
 
   const p = pm as Record<string, unknown>;
+  // Its bank account: the one given ("" for none); left out, the one it has. Its line moves with it — unless a bank
+  // statement was reconciled against it.
+  const account = input.bankAccountId !== undefined
+    ? await resolvePaymentAccount(orgId, input.method, input.bankAccountId)
+    : p.bankAccountId ? await resolvePaymentAccount(orgId, input.method, String(p.bankAccountId)).catch(() => null) : null;
+  // What would land, and where — the line moves only when that or its date changes.
+  const keepForeign = account && account.currency !== (doc.currency ?? "AED") ? p.bankAmountMinor ?? null : null;
+  const next: Record<string, unknown> = {
+    amountMinor: input.amountMinor, chargesMinor: input.chargesMinor ?? 0, bankAmountMinor: input.bankAmountMinor ?? keepForeign,
+  };
+  stampAccount(next, account, doc.currency ?? "AED");
+  const moves = String(next.bankAccountId ?? "") !== String(p.bankAccountId ?? "")
+    || (next.bankNote ? null : next.bankAmountMinor ?? null) !== (p.bankNote ? null : p.bankAmountMinor ?? null)
+    || new Date(input.paidOn).getTime() !== new Date(p.paidOn as Date).getTime();
+  if (moves) await assertLineMovable(orgId, p as never);
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
@@ -1829,6 +1874,8 @@ export async function updatePayment(
   p.notes = input.notes ?? "";
   p.accountName = input.accountName ?? "";
   p.chargesMinor = input.chargesMinor ?? 0;
+  p.bankAmountMinor = input.bankAmountMinor ?? keepForeign;
+  stampAccount(p, account, doc.currency ?? "AED");
   p.emi =
     input.method === "easebuzz_emi" && input.emi
       ? {
@@ -1848,6 +1895,7 @@ export async function updatePayment(
   applyInstalmentDue(doc as never);
 
   await doc.save();
+  await syncPaymentLine(doc as never, paymentId);
   await doc.populate("tagIds", "name color");
   void syncLmsAccess(doc);
   feeUpdate(doc._id, "payment edited");
@@ -1892,6 +1940,9 @@ export async function deletePayment(
   };
   const pm = list.id(paymentId);
   if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+  // Its line in the bank account goes with it — not once a bank statement was reconciled against it.
+  const gone = { ...(pm as unknown as { toObject?: () => Record<string, unknown> }).toObject?.() } as never;
+  await assertLineMovable(orgId, gone);
   pm.deleteOne();
 
   const remaining = (doc.payments as unknown as { amountMinor?: number }[])
@@ -1907,6 +1958,7 @@ export async function deletePayment(
   applyInstalmentDue(doc as never);
 
   await doc.save();
+  await removePaymentLine(orgId, gone);
   await doc.populate("tagIds", "name color");
   feeUpdate(doc._id, "payment deleted");
   return toDTO(doc);
@@ -1968,7 +2020,9 @@ export async function recordPayment(
     proofKey = uploaded.key;
   }
 
-  const payment = {
+  // Its bank account: the one given ("" for none), else its method's (Settings → Where payments go).
+  const account = await resolvePaymentAccount(orgId, input.method, input.bankAccountId);
+  const payment: Record<string, unknown> = {
     method: input.method,
     amountMinor: input.amountMinor,
     paidOn: new Date(input.paidOn),
@@ -1990,7 +2044,9 @@ export async function recordPayment(
     proofUrl,
     proofKey,
     ...(from?.externalRef ? { externalRef: from.externalRef } : {}),
+    ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
   };
+  stampAccount(payment, account, doc.currency ?? "AED");
 
   (doc.payments as unknown[]).push(payment);
   const newPaid = (doc.amountPaidMinor ?? 0) + input.amountMinor;
@@ -2002,6 +2058,9 @@ export async function recordPayment(
   applyInstalmentDue(doc as never);
 
   await doc.save();
+  // Its line in the bank account.
+  const added = ((doc.payments as unknown as { _id: unknown }[]) ?? []).at(-1);
+  if (added) await syncPaymentLine(doc as never, added._id);
   await doc.populate("tagIds", "name color");
   // More of an enrolment paid opens more of its course in the LMS.
   void syncLmsAccess(doc);

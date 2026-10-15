@@ -120,7 +120,9 @@ function methodFor(raw: unknown): PaymentMethod {
   if ((PAYMENT_METHODS as readonly string[]).includes(exact) && exact !== "easebuzz_emi") return exact as PaymentMethod;
   if (/tabby/.test(v)) return "tabby";
   if (/tamara/.test(v)) return "tamara";
-  if (/link|billex/.test(v)) return "billexpro";
+  if (/link|billex|smart invoice/.test(v)) return "billexpro";
+  // Rupees — "INR TRANSFER", UPI — land in the INR account, not as a bank transfer (2026-10-16).
+  if (/\binr\b|upi|rupee/.test(v)) return "inr_bank_account";
   if (/cash/.test(v)) return "cash";
   if (/card/.test(v)) return "card";
   if (/bank|transfer|wire/.test(v)) return "bank_transfer";

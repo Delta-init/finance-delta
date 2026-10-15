@@ -58,6 +58,8 @@ const organizationSchema = new Schema(
       hsnSac:        { type: String, default: "" },
     },
     reminderIntervals: { type: [Number], default: [-3, 1, 7] },
+    /** Each payment method's Banking account (an id), by method — Settings → Where payments go (2026-10-16). */
+    paymentAccounts: { type: Schema.Types.Mixed, default: {} },
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },
     taxLabel:  { type: String, default: "VAT" },
     taxRates:  { type: [taxRateSchema], default: [] },

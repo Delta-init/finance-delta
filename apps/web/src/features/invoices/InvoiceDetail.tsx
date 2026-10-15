@@ -14,6 +14,7 @@ import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
   type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel,} from "@delta/shared";
 
+const NO_ACCOUNT = "__none__";
 const paymentFormSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
   amount: z.coerce.number().positive("Amount must be greater than zero"),
@@ -21,6 +22,10 @@ const paymentFormSchema = z.object({
   reference: z.string().max(200).default(""),
   notes: z.string().max(1000).default(""),
   accountName: z.string().max(100).default(""),
+  /** The Banking account it went into — "__none__" for none (2026-10-16). */
+  bankAccountId: z.string().default(NO_ACCOUNT),
+  /** What landed, in the account's currency, when that is not the invoice's. Typed as text; read on Save. */
+  bankAmount: z.string().default(""),
   charges: z.coerce.number().min(0).default(0),
   emi: emiDetailInputSchema.optional(),
 });
@@ -46,7 +51,7 @@ import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
 import { downloadInvoicePdf } from "@/features/invoices/invoice-pdf";
 import { useOrganization } from "@/features/organization/api";
 import { useCustomer } from "@/features/customers/api";
-import { useBankAccount } from "@/features/banking/api";
+import { useBankAccount, useBankAccounts } from "@/features/banking/api";
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 
 export function InvoiceDetail({ id }: { id: string }) {
@@ -454,7 +459,17 @@ export function InvoiceDetail({ id }: { id: string }) {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-foreground-muted align-top">{p.accountName || "—"}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted align-top">
+                    {p.accountName || "—"}
+                    {/* In the account's cash book and balance, or why not (2026-10-16). */}
+                    {p.bankNote ? (
+                      <span className="mt-0.5 block max-w-[220px] text-xs text-warning">{p.bankNote}</span>
+                    ) : p.inBank ? (
+                      <span className="mt-0.5 block text-xs text-foreground-subtle">
+                        In the account{p.bankCurrency && p.bankCurrency !== invoice.currency && p.bankAmountMinor ? ` · ${formatMoney(p.bankAmountMinor, p.bankCurrency)}` : ""}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
                   <td className="px-4 py-2.5 text-right align-top">
                     <span className="font-numeric font-medium text-success">{formatMoney(p.amountMinor, invoice.currency)}</span>
@@ -542,6 +557,16 @@ export function PaymentDialog({
   const record = useRecordPayment(invoiceId);
   const update = useUpdatePayment(invoiceId);
   const isEdit = !!editing;
+  // Where it went: the organization's Banking accounts, and each method's account (Settings → Where payments go).
+  const { data: org } = useOrganization();
+  const { data: accountList } = useBankAccounts({ isActive: "true", pageSize: 100 });
+  const accounts = accountList?.data ?? [];
+  const methodAccount = (m: string) => {
+    const id = org?.paymentAccounts?.[m] ?? "";
+    return accounts.some((a) => a.id === id) ? id : NO_ACCOUNT;
+  };
+  // Picked by hand: a change of method no longer moves it.
+  const [accountTouched, setAccountTouched] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -576,9 +601,12 @@ export function PaymentDialog({
         reference: editing.reference ?? "",
         notes: editing.notes ?? "",
         accountName: editing.accountName ?? "",
+        bankAccountId: editing.bankAccountId || NO_ACCOUNT,
+        bankAmount: editing.bankAmountMinor && editing.bankCurrency && editing.bankCurrency !== currency ? String(editing.bankAmountMinor / 100) : "",
         charges: (editing.chargesMinor ?? 0) / 100,
         emi: editing.emi ? { ...editing.emi } : undefined,
       });
+      setAccountTouched(true);
     } else {
       reset({
         method: "bank_transfer",
@@ -587,14 +615,25 @@ export function PaymentDialog({
         reference: "",
         notes: "",
         accountName: "",
+        bankAccountId: methodAccount("bank_transfer"),
+        bankAmount: "",
         charges: 0,
         emi: undefined,
       });
+      setAccountTouched(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
 
   const method = watch("method");
+  const bankAccountId = watch("bankAccountId");
+  const pickedAccount = accounts.find((a) => a.id === bankAccountId);
+  const foreignAccount = pickedAccount && pickedAccount.currency !== currency ? pickedAccount : null;
+  // The organization's settings can arrive after the form opened: a new payment takes its method's account then.
+  useEffect(() => {
+    if (open && !editing && !accountTouched) setValue("bankAccountId", methodAccount(method));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, org, accountList, method]);
 
   // The most this payment may be: what is still due — and, when it is being
   // edited, what it already counts towards that. Said here, as it is typed,
@@ -612,6 +651,7 @@ export function PaymentDialog({
 
   function handleMethodChange(v: string) {
     setValue("method", v as PaymentFormValues["method"]);
+    if (!accountTouched) setValue("bankAccountId", methodAccount(v));
     if (v === "easebuzz_emi") {
       setValue("emi", { bank: "", tenureMonths: 3, monthlyAmountMinor: 0, interestPct: 0, processingFeeMinor: 0, transactionId: "" });
     } else {
@@ -630,7 +670,10 @@ export function PaymentDialog({
       paidOn: data.paidOn,
       reference: data.reference,
       notes: data.notes,
-      accountName: data.accountName,
+      // A Banking account's name, or — none picked — whatever an older payment had typed.
+      accountName: pickedAccount ? pickedAccount.accountName : (editing?.bankAccountId ? "" : data.accountName),
+      bankAccountId: data.bankAccountId === NO_ACCOUNT ? "" : data.bankAccountId,
+      ...(foreignAccount && Number(data.bankAmount) > 0 ? { bankAmountMinor: Math.round(Number(data.bankAmount) * 100) } : {}),
       chargesMinor: Math.round((data.charges || 0) * 100),
       ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
     };
@@ -735,11 +778,30 @@ export function PaymentDialog({
               )}
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-foreground-muted">
-                Account <span className="text-foreground-subtle">(optional)</span>
-              </label>
-              <Input {...register("accountName")} placeholder="Bank account name…" />
+              <label className="mb-1 block text-xs font-medium text-foreground-muted">Account</label>
+              {/* The Banking account it went into — its method's to start with (Settings → Where payments go). The
+                  payment shows in that account's cash book and balance; changed here, it moves (2026-10-16). */}
+              <Select value={bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== currency ? ` (${a.currency})` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+            {foreignAccount && (
+              <div className="col-span-2">
+                <label className="mb-1 block text-xs font-medium text-foreground-muted">
+                  Received in {foreignAccount.currency} — what landed in {foreignAccount.accountName}
+                </label>
+                <Input type="number" step="0.01" min="0" placeholder="0.00" {...register("bankAmount")} />
+                <p className="mt-1 text-xs text-foreground-muted">
+                  The account is in {foreignAccount.currency} and this invoice in {currency}. Without it the payment keeps the account but stays out of its balance.
+                </p>
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Charges ({currency}) <span className="text-foreground-subtle">(optional)</span>

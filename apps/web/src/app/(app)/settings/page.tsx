@@ -7,6 +7,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   updateOrganizationSchema,
+  PAYMENT_METHODS,
+  paymentMethodLabel,
   taxNumberLabel,
   defaultInvoiceTitle,
   logoFor,
@@ -121,6 +123,7 @@ export default function SettingsPage() {
         registrationNumber: org.registrationNumber,
         invoiceDefaults: { ...org.invoiceDefaults },
         reminderIntervals: org.reminderIntervals ?? [-3, 1, 7],
+        paymentAccounts: Object.fromEntries(PAYMENT_METHODS.map((m) => [m, org.paymentAccounts?.[m] ?? ""])),
       });
     }
   }, [org, reset]);
@@ -392,6 +395,32 @@ export default function SettingsPage() {
         </section>
 
         {/* Branding */}
+        {/* Where payments go (the user, 2026-10-16) */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Where payments go</h2>
+            <p className="mt-1 text-xs text-foreground-muted">
+              The bank account each payment method lands in. A payment recorded with that method — by hand, or by an
+              approval — goes into it and shows in its cash book and balance. It can be changed on the payment itself.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {PAYMENT_METHODS.map((m) => (
+              <div key={m} className="space-y-1">
+                <label className="text-sm font-medium text-foreground">{paymentMethodLabel(m)}</label>
+                <select {...register(`paymentAccounts.${m}` as const)} className={FIELD}>
+                  <option value="">Not in a bank account</option>
+                  {(accounts?.data ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.accountName}{a.bankName ? ` — ${a.bankName}` : ""} ({a.currency})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
           <h2 className="text-sm font-semibold text-foreground">Branding</h2>
           <p className="text-xs text-foreground-muted">

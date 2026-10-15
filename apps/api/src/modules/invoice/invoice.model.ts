@@ -104,6 +104,13 @@ const paymentSubSchema = new Schema(
     externalRef: { type: String },
     /** The receipt issued for it (RCT-00001) — a course payment from Tetra Commission (the user, 2026-10-12). */
     receiptNumber: { type: String },
+    /** The Banking account it went into (payment-bank.ts, 2026-10-16), its line there, and what landed in the
+        account's currency — or why it is not in (bankNote). */
+    bankAccountId: { type: Schema.Types.ObjectId, default: null },
+    bankTransactionId: { type: Schema.Types.ObjectId, default: null },
+    bankAmountMinor: { type: Number, default: null },
+    bankCurrency: { type: String, default: "" },
+    bankNote: { type: String, default: "" },
   },
   { timestamps: true },
 );

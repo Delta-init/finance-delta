@@ -1,4 +1,5 @@
 import type { UpdateOrganizationInput, OrganizationSettings, UpsertTaxConfigInput, TaxConfig } from "@delta/shared";
+import { Types } from "mongoose";
 import { AppError } from "../../lib/http";
 import { LOGO_MAX_BYTES, logoKind } from "../../lib/logo";
 import { Organization, type OrganizationDoc } from "./organization.model";
@@ -49,6 +50,7 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
       hsnSac: (d.invoiceDefaults as Record<string, unknown>)?.hsnSac as string ?? "",
     },
     reminderIntervals: (doc.reminderIntervals as number[] | undefined) ?? [-3, 1, 7],
+    paymentAccounts: Object.fromEntries(Object.entries((d.paymentAccounts as Record<string, unknown>) ?? {}).filter(([, v]) => typeof v === "string" && v)) as Record<string, string>,
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
     taxLabel: (d.taxLabel as string) ?? "VAT",
     taxRates: ((d.taxRates as unknown[]) ?? []) as OrganizationSettings["taxRates"],
@@ -152,6 +154,18 @@ export async function updateOrganization(
     if (input.invoiceDefaults?.[k] !== undefined) flat[`invoiceDefaults.${k}`] = input.invoiceDefaults[k];
   }
   if (input.reminderIntervals !== undefined) flat.reminderIntervals = input.reminderIntervals;
+  if (input.paymentAccounts !== undefined) {
+    // Only payment methods, and only this organization's accounts; "" clears a method.
+    const { PAYMENT_METHODS } = await import("@delta/shared");
+    const { BankAccount } = await import("../banking/bank-account.model");
+    const ids = Object.values(input.paymentAccounts).filter((v) => v && Types.ObjectId.isValid(v));
+    const ours = new Set((await BankAccount.find({ organizationId: new Types.ObjectId(orgId), _id: { $in: ids.map((v) => new Types.ObjectId(v)) } }).select("_id").lean()).map((a) => String(a._id)));
+    for (const [method, id] of Object.entries(input.paymentAccounts)) {
+      if (!(PAYMENT_METHODS as readonly string[]).includes(method)) throw new AppError("VALIDATION_ERROR", `Unknown payment method ${method}`);
+      if (id && !ours.has(id)) throw new AppError("VALIDATION_ERROR", "A payment method's account must be one of this organization's bank accounts");
+      flat[`paymentAccounts.${method}`] = id;
+    }
+  }
 
   const doc = await Organization.findByIdAndUpdate(orgId, { $set: flat }, { new: true, runValidators: true });
   if (!doc) throw new AppError("NOT_FOUND", "Organization not found");

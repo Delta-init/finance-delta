@@ -73,6 +73,11 @@ export const updateOrganizationSchema = z.object({
   registrationNumber: z.string().max(40).optional(),
   invoiceDefaults: invoiceDefaultsSchema.partial().optional(),
   reminderIntervals: z.array(z.coerce.number().int().min(-365).max(365)).max(10).optional(),
+  /**
+   * Where payments go (the user, 2026-10-16): each payment method's Banking account, by method — an account id, or ""
+   * for none. A payment recorded with that method goes into it unless it is given another.
+   */
+  paymentAccounts: z.record(z.string().max(40), z.string().max(40)).optional(),
 });
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 
@@ -96,6 +101,7 @@ export const organizationSchema = z.object({
   registrationNumber: z.string().default(""),
   invoiceDefaults: invoiceDefaultsSchema,
   reminderIntervals: z.array(z.number()),
+  paymentAccounts: z.record(z.string(), z.string()).default({}),
   taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
   taxLabel: z.string().default("VAT"),
   taxRates: z.array(taxConfigItemSchema).default([]),

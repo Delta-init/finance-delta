@@ -102,6 +102,8 @@ export function useRecordPayment(invoiceId: string) {
       // A new payment belongs in the payments list straight away, for the same
       // reason an edited one does.
       qc.invalidateQueries({ queryKey: ["payments"] });
+      // Its line in its bank account moved too (payment-bank.ts, 2026-10-16).
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("bank") });
     },
   });
 }
@@ -119,6 +121,8 @@ export function useUpdatePayment(invoiceId: string) {
       // Without this an edit saved correctly and the page went on showing the
       // old figure until it was reloaded by hand.
       qc.invalidateQueries({ queryKey: ["payments"] });
+      // Its line in its bank account moved too (payment-bank.ts, 2026-10-16).
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("bank") });
     },
   });
 }
@@ -136,6 +140,8 @@ export function useDeletePayment(invoiceId: string) {
       // queries, and a payment that has just gone must not still be sitting in
       // either of them.
       qc.invalidateQueries({ queryKey: ["payments"] });
+      // Its line in its bank account moved too (payment-bank.ts, 2026-10-16).
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("bank") });
     },
   });
 }

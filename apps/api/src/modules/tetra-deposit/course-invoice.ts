@@ -21,6 +21,12 @@ import { TetraDepositModel } from "./tetra-deposit.model";
  *     for the same course with a balance — and on a new one when there is none,
  *     for what was paid now plus the balance Tetra Commission says is left.
  *
+ * A Bangalore team's bonus (the user, 2026-10-15) arrives in the Bangalore
+ * organization in rupees — `currency` INR, with `coursePayment.inrPerAed`, the
+ * rate Tetra Commission's AED figures were worked out at: its invoice is in
+ * rupees, the rupees paid recorded as they are and the balance turned into
+ * rupees at that rate.
+ *
  * Made invoices are external.source "tetra-course", need no approval (an
  * accountant approved the payment that made them) and carry no enrolment, so
  * the LMS and Tetra Commission's student flows leave them alone. Idempotent:
@@ -31,6 +37,15 @@ import { TetraDepositModel } from "./tetra-deposit.model";
 export const COURSE_INVOICE_SOURCE = "tetra-course";
 /** What Tetra Commission converts at — a bonus's course payment arrives in USD, its course priced in AED. */
 export const AED_PER_USD = 3.67;
+/** Its fixed rupee rate, 1 INR = 0.010 USD — so AED 1 = ₹27.25 — when a Bangalore request does not say its own. */
+const FIXED_INR_PER_AED = 1 / (AED_PER_USD * 0.01);
+
+/** The currency the course's invoice is in: rupees for a Bangalore team's bonus, else AED. */
+export const courseCurrencyOf = (row: Row): "AED" | "INR" => (String(row?.currency ?? "").toUpperCase() === "INR" ? "INR" : "AED");
+const inrPerAedOf = (row: Row) => (Number(row?.coursePayment?.inrPerAed) > 0 ? Number(row.coursePayment.inrPerAed) : FIXED_INR_PER_AED);
+/** One of Tetra Commission's AED figures (the balance, paid before), in minor units of the course's currency. */
+export const courseFigureMinor = (row: Row, aed: unknown): number =>
+  Math.round((Number(aed) || 0) * (courseCurrencyOf(row) === "INR" ? inrPerAedOf(row) : 1) * 100);
 
 type Row = any;
 
@@ -43,28 +58,29 @@ export function isCoursePayment(row: Row): boolean {
 const minorAed = (aed: unknown) => Math.round((Number(aed) || 0) * 100);
 
 /**
- * The AED it records, in fils. An upgrade's is the approved amount (AED). A bonus's is the AED
- * Tetra Commission says was paid — unless the accountant approved a different amount than was
- * asked, which is then converted at 3.67. A request in AED is taken as it is.
+ * What it records, in minor units of the course's currency (courseCurrencyOf). An upgrade's is the
+ * approved amount (AED). A bonus's is the AED Tetra Commission says was paid — unless the accountant
+ * approved a different amount than was asked, which is then converted at 3.67. A request in AED, or
+ * a Bangalore one in rupees, is taken as it is.
  */
 export function coursePaymentAedMinor(row: Row): number {
   const approved = Number(row?.decision?.approvedAmountMinor ?? row?.amountMinor) || 0;
   const currency = String(row?.currency ?? "AED").toUpperCase();
-  if (row?.type === "COURSE_UPGRADE" || currency === "AED") return approved;
+  if (row?.type === "COURSE_UPGRADE" || currency === "AED" || currency === "INR") return approved;
   const asked = Number(row?.amountMinor) || 0;
   const paidToday = minorAed(row?.coursePayment?.paidTodayAed);
   if (approved === asked && paidToday > 0) return paidToday;
   return currency === "USD" ? Math.round(approved * AED_PER_USD) : approved;
 }
 
-/** The course's price for a new invoice, in fils — never less than what is paid now. */
+/** The course's price for a new invoice, in its currency's minor units — never less than what is paid now. */
 export function coursePriceAedMinor(row: Row, paymentMinor: number): number {
   const cp = row?.coursePayment ?? {};
   const price = row?.type === "COURSE_UPGRADE"
     ? minorAed(cp.price)
     : cp.kind === "full"
       ? paymentMinor
-      : paymentMinor + minorAed(cp.balanceAed);
+      : paymentMinor + courseFigureMinor(row, cp.balanceAed);
   return Math.max(price, paymentMinor);
 }
 
@@ -132,7 +148,7 @@ async function openInvoiceFor(orgId: Types.ObjectId, customerId: unknown, row: R
   if (made) return { invoice: made, made: true };
   if (row.type === "COURSE_UPGRADE") return null;
   const theirs = await Invoice.find({
-    organizationId: orgId, customerId, currency: "AED", ...OPEN,
+    organizationId: orgId, customerId, currency: courseCurrencyOf(row), ...OPEN,
     "external.source": { $in: ["crm", "draw-crm", "banglore-crm"] },
     "approval.state": "approved", balanceMinor: { $gte: amountMinor },
   }).select("invoiceNumber enrolment.course lineItems.description balanceMinor currency").sort({ issueDate: 1 }).lean<any[]>();
@@ -141,7 +157,7 @@ async function openInvoiceFor(orgId: Types.ObjectId, customerId: unknown, row: R
   return match ? { invoice: match, made: false } : null;
 }
 
-/** A new invoice for the course: its price, AED, issued on the day it was paid, approved by the accountant who approved the payment. */
+/** A new invoice for the course: its price, in AED (rupees for Bangalore), issued on the day it was paid, approved by the accountant who approved the payment. */
 async function makeInvoice(orgId: Types.ObjectId, customerId: string, salespersonId: string, row: Row, amountMinor: number) {
   const { Invoice } = await import("../invoice/invoice.model");
   const { createInvoice } = await import("../invoice/invoice.service");
@@ -162,12 +178,13 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
     salespersonId,
     issueDate: day,
     dueDate: day,
-    currency: "AED",
+    currency: courseCurrencyOf(row),
     reference: `tetra:${upgrade ? "upgrade" : "course"}:${row.externalId}`,
     notes: [
       upgrade ? `${product} course upgrade, from Tetra Commission` : `${product} course, paid through Tetra Commission`,
       row.student?.code ? `Student ${row.student.code}` : "",
-      !upgrade && Number(cp.paidBeforeAed) > 0 ? `AED ${Number(cp.paidBeforeAed).toLocaleString("en-US")} paid before, not on this invoice` : "",
+      !upgrade && Number(cp.paidBeforeAed) > 0 ? `${formatMoney(courseFigureMinor(row, cp.paidBeforeAed), courseCurrencyOf(row))} paid before, not on this invoice` : "",
+      courseCurrencyOf(row) === "INR" ? `Bangalore — rupees at ${inrPerAedOf(row).toFixed(4)} per AED, Tetra Commission's rate` : "",
     ].filter(Boolean).join(" · "),
     taxInclusive: true,
     lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
@@ -336,7 +353,7 @@ export async function planCoursePayment(row: Row): Promise<{
   if (open) {
     const bal = Number(open.invoice.balanceMinor) || 0;
     return { amountMinor, onto: String(open.invoice.invoiceNumber), totalMinor: Number(open.invoice.totalMinor) || 0, handTyped,
-      ...(amountMinor > bal ? { refusal: `more than the ${formatMoney(bal, "AED")} left on ${open.invoice.invoiceNumber}` } : {}) };
+      ...(amountMinor > bal ? { refusal: `more than the ${formatMoney(bal, courseCurrencyOf(row))} left on ${open.invoice.invoiceNumber}` } : {}) };
   }
   return { amountMinor, onto: "", totalMinor: coursePriceAedMinor(row, amountMinor), handTyped };
 }

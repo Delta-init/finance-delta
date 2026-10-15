@@ -56,6 +56,11 @@ export const tetraCoursePaymentSchema = z.object({
   upgradeId: optionalText(40),
   /** The day the money was paid (YYYY-MM-DD), where Tetra Commission has it — the payment's date here. */
   paidOn: optionalText(10),
+  /**
+   * A Bangalore team's bonus, in rupees (the user, 2026-10-15): the rupees one AED of the figures above stands for, at
+   * Tetra Commission's rate — what its course invoice here, in rupees, turns the balance into.
+   */
+  inrPerAed: optionalAmount,
 });
 export type TetraCoursePayment = z.infer<typeof tetraCoursePaymentSchema>;
 
@@ -128,6 +133,8 @@ const inboundTetraDepositObject = z.object({
   amountOriginal: z.number().positive().max(90_000_000_000).optional(),
   amountCurrency: z.string().length(3).optional().transform((v) => v?.toUpperCase()),
   coursePayment: tetraCoursePaymentSchema.optional(),
+  /** "bangalore": a Bangalore team's bonus, sent to the Bangalore organization in rupees (the user, 2026-10-15). */
+  academy: z.enum(["dubai", "bangalore"]).optional(),
   student: z.object({
     id: optionalText(64),
     code: optionalText(40),
@@ -231,6 +238,8 @@ export const tetraDepositSchema = z.object({
   amountOriginal: z.number().optional(),
   amountCurrency: z.string().optional(),
   coursePayment: tetraCoursePaymentSchema.optional(),
+  /** A Bangalore team's bonus (in rupees, in the Bangalore organization). */
+  academy: z.literal("bangalore").optional(),
   student: z.object({ id: z.string(), code: z.string(), name: z.string(), email: z.string(), level: z.string() }),
   team: z.string(),
   paymentMethod: z.string(),

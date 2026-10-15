@@ -255,6 +255,99 @@ step("8. Send back: a bonus back to its CS to correct, and sent again");
     dto?.status === "pending" && dto?.resubmit?.reason === why && dto?.resubmit?.previousId === sb.id, j(dto?.resubmit));
 }
 
+/* ── 9. A Bangalore team's bonus, in rupees (the user, 2026-10-15) ──────── */
+step("9. A Bangalore team's bonus: the Bangalore organization's, in rupees");
+{
+  const blr = await Organization.create({ name: "Bangalore E2E", baseCurrency: "INR" });
+  const BLR = String(blr._id);
+  const authBlr = { ...auth, organizationId: BLR };
+  // Bangalore's accountant approves it there, a member of that organization.
+  await User.updateOne({ _id: asha._id }, { $push: { memberships: { organizationId: blr._id, roleId: new Types.ObjectId(), status: "active" } } });
+  const sv = student("STU-5000");
+  /** J Vijay's: INR 150,000 by bank transfer, MSNR part payment, $1,000 bonus, at Tetra Commission's ₹27.248 per AED. */
+  const cpOf = (extra: Record<string, unknown> = {}) => ({ product: "MSNR", kind: "partial", withBonus: true, bonusUsd: 1000, paidTodayAed: 5505, holdAed: 1505, balanceAed: 6495, paidBeforeAed: 0, inrPerAed: 27.247956, paidOn: "2026-10-14", ...extra });
+  const arriveBlr = async (amountMinor: number, cp: Record<string, unknown>, usd: number) => {
+    const externalId = new Types.ObjectId();
+    const input = inboundTetraDepositSchema.parse({ externalId: String(externalId), type: "BONUS", amountMinor, currency: "INR", amountOriginal: amountMinor / 100, amountCurrency: "INR", academy: "bangalore", student: sv, team: "Banglore Team", requestedBy: "Glorita", paymentMethod: "Bank Transfer", screenshotUrl: "https://files.e2e.test/r.png", coursePayment: cp });
+    await tcTxs.insertOne({ _id: externalId, type: "BONUS", status: "PENDING", student_id: sv.id, student_name: sv.name, amount_usd: usd, amount_currency: "INR", amount_original: amountMinor / 100, fx_rate_usd_per_inr: 0.01, finance_approval: { state: "sent", org: "bangalore", currency: "INR", amount_minor: amountMinor }, course_payment: { product: "MSNR", bonus_usd: 1000 } });
+    return svc.intakeTetraDeposit(BLR, input);
+  };
+  const v1 = await arriveBlr(15_000_000, cpOf(), 1500);
+  check("received in the Bangalore organization, INR 150,000, said to be Bangalore's, with its rate",
+    v1.currency === "INR" && v1.amountMinor === 15_000_000 && v1.academy === "bangalore" && v1.coursePayment?.inrPerAed === 27.247956, j({ c: v1.currency, a: v1.amountMinor, ac: v1.academy, r: v1.coursePayment?.inrPerAed }));
+  check("waiting in Bangalore's queue, not Delta HQ's",
+    (await svc.listTetraDeposits(BLR, "waiting")).some((d) => d.id === v1.id) && !(await svc.listTetraDeposits(ORG, "waiting")).some((d) => d.id === v1.id));
+  const done = await svc.decideTetraDeposit(authBlr as never, v1.id, { decision: "approved", amountMinor: 15_000_000, transactionId: "Y2M-E2E-1", paymentMethod: "bank_transfer", mt5Login: "", note: "INR transaction" } as never);
+  const inv = await invoiceOf(v1.id);
+  check("approved: an invoice made in the Bangalore organization, in rupees", !!inv && String(inv.organizationId) === BLR && inv.currency === "INR" && (await row(v1.id))?.courseInvoice?.created === true, j({ org: inv?.organizationId, cur: inv?.currency }));
+  check("for the rupees paid plus the AED 6,495 balance at ₹27.248 (₹176,975.47): ₹326,975.47",
+    inv?.totalMinor === 32_697_547 && inv?.amountPaidMinor === 15_000_000 && inv?.balanceMinor === 17_697_547, j({ t: inv?.totalMinor, p: inv?.amountPaidMinor, b: inv?.balanceMinor }));
+  const pay = (inv?.payments ?? [])[0];
+  check("the payment is INR 150,000 with a receipt number, paid on the day collected", pay?.amountMinor === 15_000_000 && /^RCT-\d+/.test(pay?.receiptNumber ?? "") && new Date(pay?.paidOn).toISOString().slice(0, 10) === "2026-10-14", j(pay));
+  check("the note says it is Bangalore's, in rupees at Tetra Commission's rate", /Bangalore — rupees at 27\.2480 per AED/.test(String(inv?.notes ?? "")), String(inv?.notes));
+  check("the accountant is told", /invoice made/.test(done.message ?? ""), done.message);
+  const t1 = await tcTxs.findOne({ _id: new Types.ObjectId(v1.externalId) });
+  check("Tetra Commission: still $1,500 paid (the rupees came back the same), the invoice in rupees, waiting for its broker admin",
+    t1?.amount_usd === 1500 && t1?.requested_amount_usd === undefined && t1?.course_invoice?.currency === "INR" && t1?.course_invoice?.balance_minor === 17_697_547 && t1?.status === "PENDING" && t1?.finance_approval?.decision === "approved",
+    j({ usd: t1?.amount_usd, ci: t1?.course_invoice, s: t1?.status }));
+  // The next payment for the course goes on the same rupee invoice.
+  const v2 = await arriveBlr(5_000_000, cpOf({ paidTodayAed: 1835, paidBeforeAed: 5505, holdAed: 0, balanceAed: 4660, bonusUsd: 500, paidOn: "2026-10-15" }), 500);
+  await svc.decideTetraDeposit(authBlr as never, v2.id, { decision: "approved", amountMinor: 5_000_000, transactionId: "Y2M-E2E-2", paymentMethod: "", mt5Login: "", note: "" } as never);
+  const inv2 = await invoiceOf(v2.id);
+  check("the next payment goes on the same invoice: ₹200,000 paid, ₹126,975.47 left", String(inv2?._id) === String(inv?._id) && inv2?.amountPaidMinor === 20_000_000 && inv2?.balanceMinor === 12_697_547, j({ same: String(inv2?._id) === String(inv?._id), p: inv2?.amountPaidMinor, b: inv2?.balanceMinor }));
+  // An accountant who corrects the rupees: Tetra Commission turns them back into dollars at its rate.
+  const v3 = await arriveBlr(1_000_000, cpOf({ paidTodayAed: 367, paidBeforeAed: 7340, holdAed: 0, balanceAed: 4293, bonusUsd: 0, paidOn: "2026-10-15" }), 100);
+  await svc.decideTetraDeposit(authBlr as never, v3.id, { decision: "approved", amountMinor: 900_000, transactionId: "Y2M-E2E-3", paymentMethod: "", mt5Login: "", note: "" } as never);
+  const t3 = await tcTxs.findOne({ _id: new Types.ObjectId(v3.externalId) });
+  const inv3 = await invoiceOf(v3.id);
+  check("corrected to ₹9,000: ₹9,000 on the invoice, and Tetra Commission has $90 (the $100 asked kept)",
+    (inv3?.payments ?? []).some((p: any) => p.amountMinor === 900_000) && t3?.amount_usd === 90 && t3?.requested_amount_usd === 100, j({ usd: t3?.amount_usd, req: t3?.requested_amount_usd }));
+}
+
+/* ── 10. Moving Bangalore bonuses that came to Delta HQ (the user, 2026-10-15) ── */
+step("10. The move: Bangalore bonuses approved in Delta HQ go to Bangalore, in rupees");
+{
+  const { moveBangaloreBonuses } = await import("./move-bangalore-bonuses");
+  const blr = await Organization.findOne({ name: "Bangalore E2E" }).lean<any>();
+  const BLR = String(blr._id);
+  // As before 2026-10-15: J Vijay's bonus came to Delta HQ in dollars ($1,500 = INR 150,000), approved onto an AED invoice.
+  const sj = student("STU-6000");
+  const cp = { product: "MSNR", kind: "partial", withBonus: true, bonusUsd: 1000, paidTodayAed: 5505, holdAed: 1505, balanceAed: 6495, paidOn: "2026-10-14" };
+  const old = await arrive({ type: "BONUS", amountMinor: 150_000, currency: "USD", amountOriginal: 150000, amountCurrency: "INR", team: "Banglore Team", student: sj, coursePayment: cp });
+  await approve(old.id, 150_000);
+  const hqInv = await invoiceOf(old.id);
+  check("before: an AED invoice in Delta HQ for it", hqInv?.currency === "AED" && String(hqInv?.organizationId) === ORG && (hqInv?.payments ?? []).length === 1, j({ c: hqInv?.currency }));
+  // …and one still pending there, and a Dubai team's that must stay.
+  const pend = await arrive({ type: "BONUS", amountMinor: 50_000, currency: "USD", amountOriginal: 50000, amountCurrency: "INR", team: "Banglore Team", student: student("STU-6001"), coursePayment: { ...cp, paidTodayAed: 1835 } });
+  const dubai = await arrive({ type: "BONUS", amountMinor: 54_496, currency: "USD", team: "Team Dubai", student: student("STU-6002"), coursePayment: { ...cp, paidTodayAed: 2000 } });
+
+  const dry = await moveBangaloreBonuses({ write: false, bangaloreOrgId: BLR, email: false });
+  const dryOf = (id: string) => dry.rows.find((r) => r.id === id);
+  check("dry run: it would move the approved one (payment off the HQ invoice, voided) and the pending one",
+    /would be payment .* off .*\(voided\); new rupee invoice/.test(dryOf(old.id)?.outcome ?? "") && /would be moved/.test(dryOf(pend.id)?.outcome ?? ""), j(dry.rows));
+  check("…not the Dubai team's", !dryOf(dubai.id));
+  check("…and wrote nothing", String((await row(old.id))?.organizationId) === ORG && (await Invoice.findById(hqInv._id).lean<any>())?.status !== "void");
+
+  const done = await moveBangaloreBonuses({ write: true, bangaloreOrgId: BLR, email: false });
+  check("written: both moved", done.rows.filter((r) => r.outcome.startsWith("moved")).length === 2, j(done.rows));
+  const hqAfter = await Invoice.findById(hqInv._id).lean<any>();
+  check("the Delta HQ invoice is voided, its payment taken off, its number kept", hqAfter?.status === "void" && (hqAfter?.payments ?? []).length === 0 && hqAfter?.invoiceNumber === hqInv.invoiceNumber, j({ s: hqAfter?.status }));
+  const moved = await row(old.id);
+  check("the approved one is Bangalore's now, in rupees: ₹150,000 asked and approved", String(moved?.organizationId) === BLR && moved?.currency === "INR" && moved?.amountMinor === 15_000_000 && moved?.decision?.approvedAmountMinor === 15_000_000 && moved?.academy === "bangalore", j({ o: moved?.organizationId, c: moved?.currency, a: moved?.amountMinor }));
+  const blrInv = await invoiceOf(old.id);
+  check("on a new rupee invoice in Bangalore: ₹150,000 paid, ₹176,975.47 left, a new receipt", String(blrInv?.organizationId) === BLR && blrInv?.currency === "INR" && blrInv?.amountPaidMinor === 15_000_000 && blrInv?.balanceMinor === 17_697_547 && /^RCT-/.test(moved?.courseInvoice?.receiptNumber ?? ""), j({ c: blrInv?.currency, p: blrInv?.amountPaidMinor, b: blrInv?.balanceMinor }));
+  check("its history says it moved", (moved?.events ?? []).some((e: any) => e.kind === "moved" && /voided/.test(e.text)), j(moved?.events?.slice(-2)));
+  const pmoved = await row(pend.id);
+  check("the pending one waits in Bangalore, ₹50,000", String(pmoved?.organizationId) === BLR && pmoved?.status === "pending" && pmoved?.amountMinor === 5_000_000 && (await svc.listTetraDeposits(BLR, "waiting")).some((d) => d.id === pend.id));
+  check("the Dubai team's is untouched", String((await row(dubai.id))?.organizationId) === ORG);
+  // Tetra Commission hears again, with the new invoice — the worker's pass.
+  await svc.drainTetraDepositDecisions();
+  const tj = await tcTxs.findOne({ _id: new Types.ObjectId(old.externalId) });
+  check("Tetra Commission shows the new rupee invoice", tj?.course_invoice?.currency === "INR" && tj?.course_invoice?.invoice_number === blrInv?.invoiceNumber, j(tj?.course_invoice));
+  const again = await moveBangaloreBonuses({ write: true, bangaloreOrgId: BLR, email: false });
+  check("run again: nothing left to move", again.rows.length === 0, j(again.rows));
+}
+
 await mongoose.disconnect();
 await tc.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

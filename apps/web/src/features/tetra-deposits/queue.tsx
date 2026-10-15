@@ -10,7 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useReopenTetraDeposit, useTetraDeposits } from "./api";
-import { TetraDepositReviewDialog, TetraTypeTag, isBonus, paidBy } from "./review-dialog";
+import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy } from "./review-dialog";
 
 /**
  * Tetra Commission's deposits on the Approvals page: the ones waiting for a
@@ -45,7 +45,11 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
         </p>
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 sm:flex-col sm:items-end">
-        <MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} className="font-semibold" />
+        <div className="text-right">
+          <MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} className="font-semibold" />
+          {/* The payment, not the bonus: that is credited in Tetra Commission (2026-10-15). */}
+          {isBonus(deposit) && <p className="text-[11px] text-foreground-muted">paid{mt5BonusOf(deposit) !== null ? ` · MT5 bonus $${mt5BonusOf(deposit)!.toLocaleString("en-US")}` : ""}</p>}
+        </div>
         <div className="flex gap-2">
           {/* Like an invoice's: back to the CS with what to correct (2026-10-13) — bonuses, which they can send again. */}
           {isBonus(deposit) && <Button size="sm" variant="ghost" onClick={onSendBack}>Send back</Button>}

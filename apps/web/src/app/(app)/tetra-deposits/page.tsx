@@ -15,7 +15,7 @@ import { useCan } from "@/lib/use-can";
 import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
 import { TetraDepositDetailsDialog } from "@/features/tetra-deposits/details-dialog";
-import { TetraTypeTag, paidBy, receiptsOf } from "@/features/tetra-deposits/review-dialog";
+import { TetraTypeTag, mt5BonusOf, paidBy, receiptsOf } from "@/features/tetra-deposits/review-dialog";
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -57,7 +57,8 @@ const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Payment method", value: (d) => methodOf(d) },
   { header: "MT5 login", value: (d) => d.decision?.mt5Login || d.mt5Login },
   { header: "Currency", value: (d) => d.currency },
-  { header: "Requested amount", value: (d) => d.amountMinor / 100 },
+  { header: "Paid / requested amount", value: (d) => d.amountMinor / 100 },
+  { header: "MT5 bonus (USD)", value: (d) => mt5BonusOf(d) ?? "" },
   { header: "Approved amount", value: (d) => { const a = approvedAmount(d); return a === undefined ? "" : a / 100; } },
   { header: "Transaction ID", value: (d) => d.decision?.transactionId ?? "" },
   { header: "Status", value: (d) => STATUS_LABELS[d.status] ?? d.status },
@@ -136,10 +137,20 @@ export default function TetraDepositsPage() {
     },
     {
       key: "amount",
-      header: "Amount",
+      header: "Paid",
       sortable: true,
       align: "right",
+      // A bonus's amount is the payment the student made; its MT5 bonus is credited in Tetra Commission (2026-10-15).
       cell: (d) => <MoneyDisplay minor={d.amountMinor} currency={d.currency} />,
+    },
+    {
+      key: "mt5Bonus",
+      header: "MT5 bonus",
+      align: "right",
+      cell: (d) => {
+        const b = mt5BonusOf(d);
+        return b === null ? <span className="text-foreground-muted">—</span> : <MoneyDisplay minor={Math.round(b * 100)} currency="USD" className="text-amber-800" />;
+      },
     },
     {
       key: "approvedAmount",

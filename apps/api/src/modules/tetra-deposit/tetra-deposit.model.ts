@@ -33,12 +33,16 @@ const tetraDepositSchema = new Schema({
       priceCurrency: { type: String, default: "" },
       upgradeId: { type: String, default: "" },
       paidOn: { type: String, default: "" },
+      /** A Bangalore bonus's: rupees per AED of the figures above (@delta/shared). */
+      inrPerAed: { type: Number, default: null },
     }, { _id: false }),
     default: undefined,
   },
   /** As requested; an approval may settle on another amount (decision.approvedAmountMinor). */
   amountMinor: { type: Number, required: true, min: 1 },
   currency: { type: String, required: true, uppercase: true, default: "USD" },
+  /** "bangalore" for a Bangalore team's bonus, in rupees in the Bangalore organization (2026-10-15). */
+  academy: { type: String, default: "" },
   student: {
     id: { type: String, default: "" },
     code: { type: String, default: "" },

@@ -115,6 +115,8 @@ export interface CommissionFundingDecision {
   financeId: string;
   decision: "approved" | "rejected";
   amountMinor?: number;
+  /** What `amountMinor` is in — the request's currency: USD, or INR for a Bangalore team's bonus (2026-10-15). */
+  currency?: string;
   transactionId?: string;
   paymentMethod?: string;
   mt5Login?: string;

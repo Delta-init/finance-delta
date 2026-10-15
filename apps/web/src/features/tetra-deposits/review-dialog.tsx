@@ -73,6 +73,26 @@ function financeMethodFor(raw: string): string {
 }
 const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi");
 
+/**
+ * A bonus's MT5 bonus, in dollars — what the broker admin credits in Tetra Commission, never the amount here, which is
+ * the payment (the user, 2026-10-15: "USD 1,500" was read as the bonus when the bonus was $1,000). null when none.
+ */
+export const mt5BonusOf = (d: TetraDeposit | null | undefined): number | null =>
+  isBonus(d) && d?.coursePayment?.withBonus && Number(d.coursePayment.bonusUsd) > 0 ? Number(d.coursePayment.bonusUsd) : null;
+/** What the amount is: a bonus's is the payment the student made. */
+export const amountWord = (d: TetraDeposit | null | undefined) => (isBonus(d) || isCourseUpgrade(d) || isBalancePayment(d) ? "paid" : "requested");
+
+/**
+ * One of a course payment's AED figures as the accountant reads it: a Bangalore team's bonus is in rupees (the user,
+ * 2026-10-15), so in rupees at Tetra Commission's rate, the AED beside it; anything else in AED.
+ */
+export function courseFigure(d: TetraDeposit, aed: number | null | undefined): string {
+  if (aed === null || aed === undefined) return "";
+  const rate = Number(d.coursePayment?.inrPerAed) || 0;
+  if (d.currency !== "INR" || !(rate > 0)) return amount(aed, "AED");
+  return `${amount(Math.round(aed * rate * 100) / 100, "INR")} (${amount(aed, "AED")})`;
+}
+
 /** "Bonus" or "Course payment" beside a request that is one. */
 export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
   if (isBalancePayment(deposit)) {
@@ -108,11 +128,11 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
       ? ([
           ["Course", cp.product],
           ["Payment", cp.kind === "full" ? "Full payment" : cp.kind === "partial" ? "Partial payment (instalment)" : ""],
-          ["Paid today", amount(cp.paidTodayAed, "AED")],
-          ["Paid before", cp.paidBeforeAed ? amount(cp.paidBeforeAed, "AED") : ""],
-          ["MT5 bonus to credit", cp.withBonus ? amount(cp.bonusUsd ?? 0, "USD") : "No bonus on this course"],
-          ["On hold", cp.holdAed ? amount(cp.holdAed, "AED") : ""],
-          ["Balance", amount(cp.balanceAed, "AED")],
+          ["Paid today", courseFigure(deposit, cp.paidTodayAed)],
+          ["Paid before", cp.paidBeforeAed ? courseFigure(deposit, cp.paidBeforeAed) : ""],
+          ["MT5 bonus to credit", cp.withBonus ? `${amount(cp.bonusUsd ?? 0, "USD")} — credited in Tetra Commission` : "No bonus on this course"],
+          ["On hold", cp.holdAed ? courseFigure(deposit, cp.holdAed) : ""],
+          ["Balance", courseFigure(deposit, cp.balanceAed)],
         ] as [string, string][])
       : []),
     ...(deposit.courseInvoice
@@ -126,6 +146,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
     ["Email", deposit.student.email],
     ["Level", levelLabel(deposit.student.level)],
     ["Team", deposit.team],
+    ["Organization", deposit.academy === "bangalore" ? "Bangalore — a Bangalore team's bonus, in rupees" : ""],
     ["Payment method", paidBy(deposit)],
     ["MT5 login", deposit.mt5Login],
     ["Raised by", deposit.requestedBy],
@@ -136,7 +157,12 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   ];
   return (
     <div className="rounded-lg bg-surface-muted p-3 text-sm">
-      <p className="text-lg font-semibold"><MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} /> <span className="text-xs font-normal text-foreground-muted">requested</span></p>
+      <p className="text-lg font-semibold"><MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} /> <span className="text-xs font-normal text-foreground-muted">{isBonus(deposit) ? "paid by the student" : amountWord(deposit)}</span></p>
+      {mt5BonusOf(deposit) !== null && (
+        <p className="text-xs text-foreground-muted">
+          The MT5 bonus is <span className="font-medium text-foreground">{amount(mt5BonusOf(deposit), "USD")}</span> — a broker admin credits it in Tetra Commission. Approve the payment above, not the bonus.
+        </p>
+      )}
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         {rows.filter(([, v]) => v).map(([k, v]) => (
           <div key={k} className="contents">

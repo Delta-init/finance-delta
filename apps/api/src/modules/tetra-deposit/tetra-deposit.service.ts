@@ -48,6 +48,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
     status: r.status,
     amountMinor: r.amountMinor,
     currency: r.currency ?? "USD",
+    ...(r.academy === "bangalore" ? { academy: "bangalore" as const } : {}),
     ...(typeof r.amountOriginal === "number" && r.amountCurrency ? { amountOriginal: r.amountOriginal, amountCurrency: r.amountCurrency } : {}),
     ...(r.coursePayment
       ? {
@@ -57,6 +58,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
             paidTodayAed: r.coursePayment.paidTodayAed ?? null, paidBeforeAed: r.coursePayment.paidBeforeAed ?? null,
             price: r.coursePayment.price ?? null, priceCurrency: r.coursePayment.priceCurrency ?? "",
             upgradeId: r.coursePayment.upgradeId ?? "", paidOn: r.coursePayment.paidOn ?? "",
+            inrPerAed: r.coursePayment.inrPerAed ?? null,
           },
         }
       : {}),
@@ -247,6 +249,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
       status: "pending",
       amountMinor: input.amountMinor,
       currency: input.currency,
+      ...(input.academy === "bangalore" ? { academy: "bangalore" } : {}),
       student: input.student,
       team: input.team,
       type: input.type,
@@ -514,6 +517,7 @@ function decisionFor(row: any): CommissionFundingDecision {
     ...(row.status === "approved"
       ? {
           amountMinor: d.approvedAmountMinor,
+          currency: String(row.currency ?? "USD"),
           transactionId: d.transactionId,
           ...(d.paymentMethod ? { paymentMethod: d.paymentMethod } : {}),
           ...(d.mt5Login ? { mt5Login: d.mt5Login } : {}),

@@ -55,6 +55,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     taxPct: expense.taxPct,
     taxInclusive: expense.taxInclusive ?? false,
     paymentAccount: expense.paymentAccount || "",
+    bankAccountId: expense.bankAccountId || "__none__",
     paymentMethod: expense.paymentMethod,
     reference: expense.reference || "",
     isRecurring: expense.isRecurring,

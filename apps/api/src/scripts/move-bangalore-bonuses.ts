@@ -155,5 +155,8 @@ if (import.meta.main) {
   for (const r of rows) console.log(`${r.status.padEnd(9)} ${r.student.slice(0, 28).padEnd(28)} ${r.team.slice(0, 18).padEnd(18)} ${r.amount.padEnd(34)} ${r.outcome}`);
   const done = rows.filter((r) => r.outcome.startsWith(write ? "moved" : "would")).length;
   console.log(`\n${rows.length} Bangalore bonus(es) outside the Bangalore organization; ${done} ${write ? "moved" : "would be moved"}${write ? "" : " — nothing written. Run again with --write to do it."}`);
+  // The receipts' emails finish before the database closes (2026-10-16: they were cut off).
+  const { settleCourseReceiptEmails } = await import("../modules/tetra-deposit/course-invoice");
+  await settleCourseReceiptEmails();
   await mongoose.disconnect();
 }

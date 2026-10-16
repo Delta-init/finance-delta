@@ -88,6 +88,10 @@ const expenseSchema = new Schema(
     // was typed rather than silently switching to the other reading.
     taxInclusive: { type: Boolean, default: false },
     paymentAccount: { type: String, default: "" },
+    /** The Banking account it is paid from (2026-10-16), its money-out line there once paid, or why it stays out. */
+    bankAccountId: { type: Schema.Types.ObjectId, default: null },
+    bankTransactionId: { type: Schema.Types.ObjectId, default: null },
+    bankNote: { type: String, default: "" },
     paymentMethod: {
       type: String,
       enum: ["bank_transfer", "cash", "cheque", "card", "online"],

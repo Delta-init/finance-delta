@@ -70,6 +70,8 @@ export const recordBillPaymentSchema = z.object({
   paidOn: z.string().min(1, "Payment date required"),
   reference: z.string().optional().default(""),
   accountName: z.string().optional().default(""),
+  /** The Banking account it was paid from (2026-10-16): "" for none; left out, its method's account. */
+  bankAccountId: z.string().max(40).optional(),
   notes: z.string().optional().default(""),
   /** Transaction/bank charges deducted, in minor units (informational). */
   chargesMinor: z.coerce.number().int().min(0).optional().default(0),
@@ -104,6 +106,10 @@ export const billSchema = z.object({
       paidOn: z.string(),
       reference: z.string(),
       accountName: z.string(),
+      /** The Banking account, whether its money-out line is there, or why not (2026-10-16). */
+      bankAccountId: z.string().optional(),
+      inBank: z.boolean().optional(),
+      bankNote: z.string().optional(),
       notes: z.string(),
       chargesMinor: z.number().default(0),
       emi: emiDetailSchema.optional(),

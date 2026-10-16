@@ -7,6 +7,8 @@ import { Bill, type BillDoc } from "./bill.model";
 import { Vendor } from "../vendor/vendor.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { notifyBillWaiting } from "./bill-notify.service";
+import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
+import { paymentAccountsOf } from "../invoice/payment-bank";
 
 function lineTotal(l: { quantity: number; unitPriceMinor: number; discountPct: number; taxPct: number }) {
   const sub = l.quantity * l.unitPriceMinor;
@@ -53,6 +55,9 @@ function toDTO(doc: BillDoc): BillDTO {
         paidOn: Date;
         reference: string;
         accountName: string;
+        bankAccountId?: { toString(): string } | null;
+        bankTransactionId?: unknown;
+        bankNote?: string;
         notes: string;
         chargesMinor?: number;
         emi?: {
@@ -72,6 +77,9 @@ function toDTO(doc: BillDoc): BillDTO {
         paidOn: dateOnly(pm.paidOn),
         reference: pm.reference ?? "",
         accountName: pm.accountName ?? "",
+        bankAccountId: pm.bankAccountId ? pm.bankAccountId.toString() : undefined,
+        inBank: pm.bankAccountId ? Boolean(pm.bankTransactionId) : undefined,
+        bankNote: pm.bankNote || undefined,
         notes: pm.notes ?? "",
         chargesMinor: pm.chargesMinor ?? 0,
         emi: pm.emi
@@ -268,6 +276,61 @@ export async function rejectBill(orgId: string, id: string): Promise<BillDTO> {
   return toDTO(doc as unknown as BillDoc);
 }
 
+/* ── The Banking account a payment came out of, and its line there (2026-10-16) ─────────────────────────────── */
+
+/** The account for a payment: the one named ("" for none), else the one it had, else its method's. Refused when named and not this organization's or closed. */
+async function billPaymentAccount(orgId: string, method: string, named: string | undefined, had?: unknown): Promise<{ id: Types.ObjectId | null; name?: string }> {
+  let id: string | null;
+  if (named !== undefined) id = named || null;
+  else if (had) id = String(had);
+  else id = (await paymentAccountsOf(orgId))[method] ?? null;
+  if (!id) return { id: null };
+  const acc = await debitAccount(orgId, id, "");
+  if ("note" in acc) {
+    if (named) throw new AppError("VALIDATION_ERROR", acc.note);
+    return { id: null };
+  }
+  return { id: new Types.ObjectId(acc.id), name: acc.name };
+}
+
+/** Brings one payment's money-out line into line with it. Never throws — what could not be done is said on the payment. */
+async function syncBillPaymentLine(orgId: string, billId: unknown, paymentId: unknown): Promise<void> {
+  const bill = await Bill.findOne({ _id: billId, organizationId: orgId }).lean<any>();
+  const p = (bill?.payments ?? []).find((x: any) => String(x._id) === String(paymentId));
+  if (!bill || !p) return;
+  let note = "";
+  let want: Parameters<typeof syncDebitLine>[2] = null;
+  if (p.bankAccountId) {
+    const acc = await debitAccount(orgId, String(p.bankAccountId), bill.currency ?? "AED");
+    if ("note" in acc) note = acc.note;
+    else {
+      want = {
+        accountId: acc.id,
+        date: new Date(p.paidOn),
+        amountMinor: p.amountMinor ?? 0,
+        description: `${bill.billNumber} · ${bill.vendorName ?? ""}`.trim(),
+        reference: String(p.reference || bill.billNumber),
+        match: { type: "bill", referenceId: String(bill._id), referenceNumber: bill.billNumber },
+      };
+    }
+  }
+  try {
+    const txId = await syncDebitLine(orgId, p.bankTransactionId, want);
+    await Bill.updateOne({ _id: bill._id, "payments._id": p._id }, { $set: { "payments.$.bankTransactionId": txId, "payments.$.bankNote": note } });
+  } catch (err) {
+    await Bill.updateOne({ _id: bill._id, "payments._id": p._id }, { $set: { "payments.$.bankNote": `Not put in the account: ${(err as Error).message}`.slice(0, 300) } });
+  }
+}
+
+/** For the backfill (scripts/bank-accounts-backfill.ts): one payment's line brought into line. */
+export const resyncBillPaymentLine = (orgId: string, billId: string, paymentId: string) => syncBillPaymentLine(orgId, billId, paymentId);
+
+/** The bill as saved, after its payments' lines. */
+async function billDTO(orgId: string, id: unknown): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  return toDTO(doc as unknown as BillDoc);
+}
+
 export async function recordBillPayment(orgId: string, id: string, input: RecordBillPaymentInput): Promise<BillDTO> {
   const doc = await Bill.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
@@ -287,6 +350,7 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
     paidOn: new Date(input.paidOn),
     reference: input.reference ?? "",
     accountName: input.accountName ?? "",
+    bankAccountId: null as Types.ObjectId | null,
     notes: input.notes ?? "",
     chargesMinor: input.chargesMinor ?? 0,
     emi:
@@ -302,12 +366,17 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
         : undefined,
     createdAt: new Date(),
   };
+  const acc = await billPaymentAccount(orgId, input.method, input.bankAccountId);
+  payment.bankAccountId = acc.id;
+  if (acc.name) payment.accountName = acc.name;
   (doc.payments as unknown[]).push(payment);
   doc.amountPaidMinor = ((doc.amountPaidMinor as number) ?? 0) + input.amountMinor;
   doc.balanceMinor = ((doc.balanceMinor as number) ?? 0) - input.amountMinor;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
-  return toDTO(doc as unknown as BillDoc);
+  const added = (doc.payments as unknown as { _id: unknown }[]).at(-1);
+  if (added) await syncBillPaymentLine(orgId, doc._id, added._id);
+  return billDTO(orgId, doc._id);
 }
 
 export async function updateBillNotes(orgId: string, id: string, notes: string): Promise<BillDTO> {
@@ -397,11 +466,18 @@ export async function updateBillPayment(
   }
 
   const p = pm as Record<string, unknown>;
+  const before = { amountMinor: p.amountMinor, paidOn: p.paidOn };
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
   p.reference = input.reference ?? "";
   p.accountName = input.accountName ?? "";
+  const acc = await billPaymentAccount(orgId, input.method, input.bankAccountId, p.bankAccountId);
+  const moves = String(p.bankAccountId ?? "") !== String(acc.id ?? "") || before.amountMinor !== input.amountMinor
+    || new Date(before.paidOn as Date).getTime() !== new Date(input.paidOn).getTime();
+  if (moves) await assertDebitMovable(orgId, p.bankTransactionId);
+  p.bankAccountId = acc.id;
+  if (acc.name) p.accountName = acc.name;
   p.notes = input.notes ?? "";
   p.chargesMinor = input.chargesMinor ?? 0;
   p.emi =
@@ -420,7 +496,8 @@ export async function updateBillPayment(
   doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - newPaid;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillPaymentLine(orgId, doc._id, paymentId);
+  return billDTO(orgId, doc._id);
 }
 
 /**
@@ -437,12 +514,15 @@ export async function deleteBillPayment(orgId: string, id: string, paymentId: st
   const list = doc.payments as unknown as { id: (pid: string) => ({ deleteOne: () => void }) | null };
   const pm = list.id(paymentId);
   if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+  const line = (pm as unknown as { bankTransactionId?: unknown }).bankTransactionId;
+  await assertDebitMovable(orgId, line);
   pm.deleteOne();
   const paid = (doc.payments as unknown as { amountMinor?: number }[]).reduce((s, p) => s + (p.amountMinor ?? 0), 0);
   doc.amountPaidMinor = paid;
   doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - paid;
   doc.status = paid === 0 ? "approved" : doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
+  if (line) await syncDebitLine(orgId, line, null);
   return toDTO(doc as unknown as BillDoc);
 }
 

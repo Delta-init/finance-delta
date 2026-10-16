@@ -96,6 +96,8 @@ export const createExpenseSchema = z.object({
    */
   taxInclusive: z.boolean().optional().default(false),
   paymentAccount: z.string().optional().default(""),
+  /** The Banking account it is paid from (2026-10-16): "" for none; left out, its method's account. */
+  bankAccountId: z.string().max(40).optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string().optional().default(""),
   /**
@@ -166,6 +168,10 @@ export const expenseSchema = z.object({
   totalMinor: z.number(),
   currency: z.string(),
   paymentAccount: z.string(),
+  /** The Banking account it is paid from, and whether its line is there (a paid one), or why not. */
+  bankAccountId: z.string().optional(),
+  inBank: z.boolean().optional(),
+  bankNote: z.string().optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string(),
   submittedById: z.string(),
@@ -241,6 +247,8 @@ export const markExpensePaidSchema = z.object({
   paidOn: z.string().min(1, "Payment date is required"),
   paymentMethod: expensePaymentMethodSchema.optional(),
   paymentAccount: z.string().max(120).optional(),
+  /** The Banking account it was paid from: "" for none; left out, the one it has, else its method's. */
+  bankAccountId: z.string().max(40).optional(),
   reference: z.string().max(120).optional(),
 });
 export type MarkExpensePaidInput = z.infer<typeof markExpensePaidSchema>;

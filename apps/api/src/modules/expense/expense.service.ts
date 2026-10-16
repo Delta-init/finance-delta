@@ -23,6 +23,8 @@ import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { categoryNameMap } from "../expense-category/expense-category.service";
+import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
+import { paymentAccountsOf } from "../invoice/payment-bank";
 
 /** Resolve a category's display name: denormalized value, then default label, then a humanized slug. */
 function categoryDisplay(slug: string, denorm?: string): string {
@@ -99,6 +101,9 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     totalMinor: (doc.totalMinor as number) ?? 0,
     currency: (doc.currency as string) ?? "AED",
     paymentAccount: (doc.paymentAccount as string) ?? "",
+    bankAccountId: d.bankAccountId ? String(d.bankAccountId) : undefined,
+    inBank: d.bankAccountId ? Boolean(d.bankTransactionId) : undefined,
+    bankNote: (d.bankNote as string) || undefined,
     paymentMethod: (d.paymentMethod as ExpenseDTO["paymentMethod"]) ?? undefined,
     reference: (doc.reference as string) ?? "",
     submittedById: String(doc.submittedById),
@@ -205,6 +210,98 @@ export async function getExpense(orgId: string, id: string, scope: Scope): Promi
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
+/* ── The Banking account it is paid from, and its line there (2026-10-16) ──────────────────────────────────────── */
+
+/**
+ * Sets the account on an expense about to be saved: the one named ("" for none), else the one it has, else its
+ * method's (Settings → Where payments go — cash to petty cash). Its name goes in `paymentAccount`, which every older
+ * screen shows. One named that is not this organization's, or is closed, is refused.
+ */
+export async function applyExpenseAccount(orgId: string, d: Record<string, unknown>, named: string | undefined): Promise<void> {
+  let id: string | null;
+  if (named !== undefined) {
+    id = named || null;
+    if (id) {
+      const acc = await debitAccount(orgId, id, "");
+      if ("note" in acc) throw new AppError("VALIDATION_ERROR", acc.note);
+    }
+  } else if (d.bankAccountId) {
+    id = String(d.bankAccountId);
+  } else {
+    const method = d.paymentMethod as string | undefined;
+    id = method ? (await paymentAccountsOf(orgId))[method] ?? null : null;
+  }
+  if (!id) {
+    d.bankAccountId = null;
+    return;
+  }
+  const acc = await debitAccount(orgId, id, "");
+  if ("note" in acc) {
+    // A method's account that has gone or closed is ignored; a named one was checked above.
+    d.bankAccountId = null;
+    return;
+  }
+  d.bankAccountId = new Types.ObjectId(acc.id);
+  d.paymentAccount = acc.name;
+}
+
+/**
+ * Brings a saved expense's money-out line into line with it: there while it is paid from an account in its currency
+ * and not voided or rejected; gone otherwise. Never throws — what could not be done is said on the expense.
+ */
+export async function syncExpenseLine(orgId: string, id: unknown): Promise<void> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).lean<any>();
+  if (!doc) return;
+  let note = "";
+  let want: Parameters<typeof syncDebitLine>[2] = null;
+  if (doc.bankAccountId && doc.paidOn && !["voided", "rejected"].includes(doc.status)) {
+    const acc = await debitAccount(orgId, String(doc.bankAccountId), doc.currency ?? "AED");
+    if ("note" in acc) note = acc.note;
+    else {
+      want = {
+        accountId: acc.id,
+        date: new Date(doc.paidOn),
+        amountMinor: doc.totalMinor ?? 0,
+        description: `${doc.expenseNumber} · ${doc.description ?? ""}`.trim(),
+        reference: String(doc.reference || doc.expenseNumber),
+        match: { type: "expense", referenceId: String(doc._id), referenceNumber: doc.expenseNumber },
+      };
+    }
+  }
+  try {
+    const txId = await syncDebitLine(orgId, doc.bankTransactionId, want);
+    await Expense.updateOne({ _id: doc._id }, { $set: { bankTransactionId: txId, bankNote: note } });
+  } catch (err) {
+    await Expense.updateOne({ _id: doc._id }, { $set: { bankNote: `Not put in the account: ${(err as Error).message}`.slice(0, 300) } });
+  }
+}
+
+/**
+ * An expense another part of finance made already paid — a salary advance or a one-time payment HR sent — put in its
+ * method's account (unless it has one), with its money-out line. Never throws.
+ */
+export async function placeExpenseInBank(orgId: string, id: unknown): Promise<void> {
+  try {
+    const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+    if (!doc) return;
+    const d = doc as unknown as Record<string, unknown>;
+    if (!d.bankAccountId) {
+      await applyExpenseAccount(orgId, d, undefined);
+      if (doc.isModified()) await doc.save();
+    }
+    await syncExpenseLine(orgId, doc._id);
+  } catch {
+    /* the payment is recorded; its line can be put in by editing it */
+  }
+}
+
+/** The expense as saved, its line in its account brought into line first. */
+async function syncedDTO(orgId: string, id: unknown): Promise<ExpenseDTO> {
+  await syncExpenseLine(orgId, id);
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
+  return toDTO(doc as unknown as ExpenseDoc);
+}
+
 export async function createExpense(
   orgId: string,
   userId: string,
@@ -254,7 +351,11 @@ export async function createExpense(
     taxMinor,
     totalMinor,
     currency: input.currency ?? "AED",
-    paymentAccount: input.paymentAccount ?? "",
+    ...(await (async () => {
+      const acc: Record<string, unknown> = { paymentMethod: input.paymentMethod, paymentAccount: input.paymentAccount ?? "" };
+      await applyExpenseAccount(orgId, acc, input.bankAccountId);
+      return { bankAccountId: acc.bankAccountId ?? null, paymentAccount: acc.paymentAccount };
+    })()),
     paymentMethod: input.paymentMethod,
     reference: input.reference ?? "",
     dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
@@ -280,8 +381,7 @@ export async function createExpense(
 
   // A freshly created document holds the raw id, so the DTO would report no
   // department on the one response that shows what was just saved.
-  if (doc.departmentId) await doc.populate("departmentId", "name");
-  return toDTO(doc as unknown as ExpenseDoc);
+  return syncedDTO(orgId, doc._id);
 }
 
 export async function updateExpense(
@@ -317,6 +417,9 @@ export async function updateExpense(
   if (input.currency !== undefined) d.currency = input.currency;
   if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
   if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
+  if (input.bankAccountId !== undefined || (input.paymentMethod !== undefined && !d.bankAccountId)) {
+    await applyExpenseAccount(orgId, d, input.bankAccountId);
+  }
   if (input.reference !== undefined) d.reference = input.reference;
   // Clearable: an empty string means "no date to meet", which is a real answer
   // and different from not mentioning the field at all.
@@ -379,9 +482,10 @@ export async function updateExpense(
       : undefined;
   }
 
+  // Its line in the bank follows — unless a bank statement was reconciled against it.
+  if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
   await doc.save();
-  if (doc.departmentId) await doc.populate("departmentId", "name");
-  return toDTO(doc as unknown as ExpenseDoc);
+  return syncedDTO(orgId, doc._id);
 }
 
 export async function submitExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
@@ -447,8 +551,9 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "Expense is already voided");
   doc.status = "voided";
+  await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
-  return toDTO(doc as unknown as ExpenseDoc);
+  return syncedDTO(orgId, doc._id);
 }
 
 /**
@@ -474,7 +579,11 @@ export async function deleteExpense(orgId: string, id: string): Promise<void> {
     throw new AppError("CONFLICT", `${doc.expenseNumber} was posted by a payroll payment — void it from the payroll run instead.`);
   }
   const keys = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []).map((a) => a.key).filter(Boolean) as string[];
+  // Its line in the bank goes with it — not once a bank statement was reconciled against it.
+  const line = (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId;
+  await assertDebitMovable(orgId, line);
   await doc.deleteOne();
+  if (line) await syncDebitLine(orgId, line, null);
   if (keys.length) {
     const { deleteFile } = await import("../../lib/storage");
     await Promise.all(keys.map((k) => deleteFile(k).catch(() => undefined)));
@@ -517,9 +626,11 @@ export async function markExpensePaid(
   d.paidOn = new Date(input.paidOn);
   if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
   if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
+  await applyExpenseAccount(orgId, d, input.bankAccountId);
   if (input.reference !== undefined) d.reference = input.reference;
+  if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
   await doc.save();
-  return toDTO(doc as unknown as ExpenseDoc);
+  return syncedDTO(orgId, doc._id);
 }
 
 /**
@@ -536,8 +647,9 @@ export async function markExpenseUnpaid(orgId: string, id: string): Promise<Expe
     throw new AppError("CONFLICT", "This expense is not marked paid");
   }
   (doc as unknown as Record<string, unknown>).paidOn = undefined;
+  await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
-  return toDTO(doc as unknown as ExpenseDoc);
+  return syncedDTO(orgId, doc._id);
 }
 
 export async function setRecurrenceActive(

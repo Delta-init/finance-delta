@@ -215,6 +215,49 @@ async function issueReceipt(orgId: Types.ObjectId, invoiceId: unknown, externalR
   return { paymentId: String(p._id), receiptNumber: kept?.receiptNumber ?? receiptNumber };
 }
 
+/*
+ * Receipts on their way out. A script that records course payments (move-bangalore-bonuses) waits for them before it
+ * closes the database, or the email is cut off half-way (2026-10-16: RCT-00001/2 were).
+ */
+const sending = new Set<Promise<void>>();
+export async function settleCourseReceiptEmails(): Promise<void> {
+  while (sending.size) await Promise.allSettled([...sending]);
+}
+function track(p: Promise<void>): void {
+  sending.add(p);
+  void p.finally(() => sending.delete(p));
+}
+
+/**
+ * A receipt sent again (scripts/resend-course-receipts.ts): the request's invoice, payment and receipt as recorded,
+ * to the student. Skipped when the email log shows it went, unless `force`.
+ */
+export async function resendCourseReceipt(depositId: string, opts: { force?: boolean } = {}): Promise<string> {
+  const row = await TetraDepositModel.findById(depositId).lean<any>();
+  if (!row?.courseInvoice?.invoiceId) return "no receipt recorded for it";
+  const { Invoice } = await import("../invoice/invoice.model");
+  const invoice = await Invoice.findById(row.courseInvoice.invoiceId).lean<any>();
+  const payment = (invoice?.payments ?? []).find((p: any) => String(p._id) === String(row.courseInvoice.paymentId));
+  if (!invoice || !payment?.receiptNumber) return "its invoice or payment is not there";
+  const { EmailLog } = await import("../email-log/email-log.model");
+  if (!opts.force) {
+    const sent = await EmailLog.exists({ kind: "course_payment_receipt", "ref.id": invoice._id, state: "sent", subject: { $regex: payment.receiptNumber } });
+    if (sent) return `already sent (${payment.receiptNumber}) — pass --force to send again`;
+  }
+  if (!String(row.student?.email ?? "").trim()) return "the student has no email";
+  await TetraDepositModel.updateOne({ _id: row._id }, { $unset: { "courseInvoice.emailedAt": "" } });
+  const from = new Date();
+  await emailReceipt(row, invoice, {
+    receiptNumber: payment.receiptNumber, amountMinor: payment.amountMinor,
+    paidOn: new Date(payment.paidOn).toISOString().slice(0, 10), method: String(payment.method ?? ""),
+  });
+  // What the mail log says of this try.
+  const log = await EmailLog.findOne({ kind: "course_payment_receipt", "ref.id": invoice._id, subject: { $regex: payment.receiptNumber }, createdAt: { $gte: from } })
+    .sort({ createdAt: -1 }).select("state error").lean<any>();
+  if (log?.state === "sent") return `sent ${payment.receiptNumber} to ${row.student.email}`;
+  return `not sent: ${log ? `${log.state}${log.error ? ` (${log.error})` : ""}` : "nothing was logged"} — see the server log`;
+}
+
 /** The client's receipt, by email — once per request. Never throws. */
 async function emailReceipt(row: Row, invoice: any, payment: { receiptNumber: string; amountMinor: number; paidOn: string; method: string }): Promise<void> {
   try {
@@ -243,6 +286,8 @@ async function emailReceipt(row: Row, invoice: any, payment: { receiptNumber: st
     });
   } catch (err) {
     logger.error({ err, depositId: String(row?._id) }, "Could not email the course payment receipt");
+    // Not sent after all: free it to be sent again.
+    await TetraDepositModel.updateOne({ _id: row?._id }, { $unset: { "courseInvoice.emailedAt": "" } }).catch(() => undefined);
   }
 }
 
@@ -323,7 +368,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
         },
       },
     });
-    if (opts.email !== false) void emailReceipt(row, after, { receiptNumber: receipt.receiptNumber, amountMinor, paidOn, method });
+    if (opts.email !== false) track(emailReceipt(row, after, { receiptNumber: receipt.receiptNumber, amountMinor, paidOn, method }));
     return { ok: true };
   } catch (err) {
     if (err instanceof AppError) return { ok: false, message: err.message };

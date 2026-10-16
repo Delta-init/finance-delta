@@ -21,6 +21,11 @@ import { useExpenseCategories } from "@/features/expense-categories/api";
 import { QuickCreateCategoryModal } from "@/features/expense-categories/QuickCreateCategoryModal";
 import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
+import { useOrganization } from "@/features/organization/api";
+import { useBankAccounts } from "@/features/banking/api";
+
+/** "Not in a bank account" in the account picker. */
+const NO_ACCOUNT = "__none__";
 
 const PAYMENT_METHODS = [
   { value: "bank_transfer", label: "Bank Transfer" },
@@ -48,6 +53,8 @@ const formSchema = z.object({
   taxPct: z.coerce.number().min(0).max(100).default(0),
   taxInclusive: z.boolean().default(false),
   paymentAccount: z.string().optional(),
+  /** The Banking account it is paid from — "__none__" for none (2026-10-16). */
+  bankAccountId: z.string().default(NO_ACCOUNT),
   paymentMethod: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]).optional(),
   reference: z.string().optional(),
   requiresApproval: z.boolean().default(false),
@@ -121,6 +128,25 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   }, [orgCurrency, isEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currency = watch("currency");
+
+  // Paid from: one of the organization's Banking accounts, its method's to start with (Settings → Where payments go).
+  // Once it is paid, it shows in that account as money out.
+  const { data: org } = useOrganization();
+  const { data: accountList } = useBankAccounts({ isActive: "true", pageSize: 100 });
+  const accounts = accountList?.data ?? [];
+  const methodAccount = (m?: string) => {
+    const id = m ? org?.paymentAccounts?.[m] ?? "" : "";
+    return accounts.some((a) => a.id === id) ? id : NO_ACCOUNT;
+  };
+  // Picked by hand (or already saved): a change of method no longer moves it.
+  const [accountTouched, setAccountTouched] = useState(isEdit);
+  useEffect(() => {
+    if (!accountTouched) setValue("bankAccountId", methodAccount(watch("paymentMethod")));
+  }, [org, accountList]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bankAccountId = watch("bankAccountId");
+  const pickedAccount = accounts.find((a) => a.id === bankAccountId);
+  // What was typed before there was a list to pick from — kept while no account is picked.
+  const typedAccount = (initialValues?.bankAccountId ?? NO_ACCOUNT) === NO_ACCOUNT ? (initialValues?.paymentAccount ?? "").trim() : "";
   // Shown back as it is entered, so nobody has to work out whether the figure
   // they typed was the one on the receipt.
   const taxInclusive = watch("taxInclusive");
@@ -146,7 +172,8 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       categoryOther: values.categoryOther ?? "",
       taxPct: values.taxPct ?? 0,
       taxInclusive: values.taxInclusive ?? false,
-      paymentAccount: values.paymentAccount ?? "",
+      paymentAccount: pickedAccount ? pickedAccount.accountName : typedAccount,
+      bankAccountId: pickedAccount ? pickedAccount.id : "",
       paymentMethod: values.paymentMethod,
       reference: values.reference ?? "",
       requiresApproval: values.requiresApproval,
@@ -381,7 +408,10 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               <Label>Payment Method</Label>
               <Select
                 value={watch("paymentMethod") ?? ""}
-                onValueChange={(v) => setValue("paymentMethod", v as ExpenseFormValues["paymentMethod"])}
+                onValueChange={(v) => {
+                  setValue("paymentMethod", v as ExpenseFormValues["paymentMethod"]);
+                  if (!accountTouched) setValue("bankAccountId", methodAccount(v));
+                }}
               >
                 <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
                 <SelectContent>
@@ -393,7 +423,22 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
             </div>
             <div className="space-y-1.5">
               <Label>Payment Account / Bank</Label>
-              <Input {...register("paymentAccount")} placeholder="e.g. Main current account" />
+              <Select value={bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== currency ? ` (${a.currency})` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pickedAccount && pickedAccount.currency !== currency ? (
+                <p className="text-xs text-warning">{pickedAccount.accountName} is in {pickedAccount.currency} and this expense in {currency} — it stays out of the account's balance.</p>
+              ) : pickedAccount ? (
+                <p className="text-xs text-foreground-muted">Once paid, it shows in {pickedAccount.accountName} as money out.</p>
+              ) : typedAccount ? (
+                <p className="text-xs text-foreground-muted">Written before: “{typedAccount}”</p>
+              ) : null}
             </div>
           </div>
           <div className="space-y-1.5">

@@ -110,6 +110,19 @@ const { EmailLog } = await import("../modules/email-log/email-log.model");
 let mail: any = null;
 for (let k = 0; k < 40 && !mail; k++) { mail = await EmailLog.findOne({ kind: "course_payment_receipt", to: s1.email }).lean(); if (!mail) await Bun.sleep(100); }
 check("the client is emailed the receipt (logged, once)", /^Payment receipt RCT-00001/.test(String(mail?.subject ?? "")) && Boolean((await row(p1.id))?.courseInvoice?.emailedAt), j(mail));
+{
+  // Sent again (scripts/resend-course-receipts.ts — 2026-10-16, RCT-00001/2 cut off by the move script).
+  const { resendCourseReceipt } = await import("../modules/tetra-deposit/course-invoice");
+  const tries = () => EmailLog.countDocuments({ kind: "course_payment_receipt", to: s1.email, subject: /RCT-00001/ });
+  const before = await tries();
+  const again = await resendCourseReceipt(p1.id);
+  check("a receipt whose email did not go is tried again, and says how it went", /^not sent: not_configured/.test(again) && (await tries()) === before + 1, `${again} · ${before} → ${await tries()}`);
+  await EmailLog.updateMany({ kind: "course_payment_receipt", to: s1.email }, { $set: { state: "sent" } });
+  const skipped = await resendCourseReceipt(p1.id);
+  check("…one the log shows went is not sent twice", /^already sent \(RCT-00001\)/.test(skipped) && (await tries()) === before + 1, skipped);
+  const forced = await resendCourseReceipt(p1.id, { force: true });
+  check("…unless forced", /^not sent/.test(forced) && (await tries()) === before + 2, forced);
+}
 
 const p2 = await arrive({ type: "COURSE_UPGRADE", amountMinor: 1_500_000, currency: "AED", student: s1, coursePayment: upgradeCp(up1, 20_000, { paidTodayAed: 15000, balanceAed: 0, paidOn: "2026-10-11" }) });
 await approve(p2.id, 1_500_000);

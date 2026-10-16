@@ -30,6 +30,11 @@ import {
   useDeleteBillPayment,
 } from "@/features/bills/api";
 import { useCan } from "@/lib/use-can";
+import { useOrganization } from "@/features/organization/api";
+import { useBankAccounts } from "@/features/banking/api";
+
+/** "Not in a bank account" in the account picker. */
+const NO_ACCOUNT = "__none__";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral", pending_approval: "warning", approved: "primary",
@@ -93,6 +98,22 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
   const method = watch("method");
 
+  // Paid from: one of the organization's Banking accounts, its method's to start with (Settings → Where payments go).
+  // The payment shows in that account as money out, and moves with it (2026-10-16).
+  const { data: org } = useOrganization();
+  const { data: accountList } = useBankAccounts({ isActive: "true", pageSize: 100 });
+  const accounts = accountList?.data ?? [];
+  const methodAccount = (m: string) => {
+    const aid = org?.paymentAccounts?.[m] ?? "";
+    return accounts.some((a) => a.id === aid) ? aid : NO_ACCOUNT;
+  };
+  const [accountTouched, setAccountTouched] = useState(false);
+  const bankAccountId = watch("bankAccountId") ?? NO_ACCOUNT;
+  const pickedAccount = accounts.find((a) => a.id === bankAccountId);
+  useEffect(() => {
+    if (paymentOpen && !editingPayment && !accountTouched) setValue("bankAccountId", methodAccount(watch("method")));
+  }, [paymentOpen, org, accountList]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (paymentOpen && editingPayment) {
       reset({
@@ -101,6 +122,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         paidOn: editingPayment.paidOn,
         reference: editingPayment.reference ?? "",
         accountName: editingPayment.accountName ?? "",
+        bankAccountId: editingPayment.bankAccountId || NO_ACCOUNT,
         notes: editingPayment.notes ?? "",
         chargesMinor: editingPayment.chargesMinor ?? 0,
         emi: editingPayment.emi ? { ...editingPayment.emi } : undefined,
@@ -114,14 +136,17 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         paidOn: new Date().toISOString().slice(0, 10),
         reference: "",
         accountName: "",
+        bankAccountId: methodAccount("bank_transfer"),
         notes: "",
       });
+      setAccountTouched(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentOpen, editingPayment, bill?.balanceMinor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleMethodChange(v: string) {
     setValue("method", v as RecordBillPaymentInput["method"]);
+    if (!editingPayment && !accountTouched) setValue("bankAccountId", methodAccount(v));
     if (v === "easebuzz_emi") {
       setValue("emi", { bank: "", tenureMonths: 3, monthlyAmountMinor: 0, interestPct: 0, processingFeeMinor: 0, transactionId: "" });
     } else {
@@ -140,6 +165,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
   async function onPaymentSubmit(values: RecordBillPaymentInput) {
     const payload: RecordBillPaymentInput = { ...values };
+    const picked = accounts.find((a) => a.id === values.bankAccountId);
+    payload.bankAccountId = picked ? picked.id : "";
+    // Typed before there was a list: kept while no account is picked.
+    payload.accountName = picked ? picked.accountName : (editingPayment?.bankAccountId ? "" : values.accountName ?? "");
     if (payload.method !== "easebuzz_emi") delete (payload as { emi?: unknown }).emi;
     try {
       if (editingPayment) {
@@ -385,7 +414,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-3 text-foreground-muted align-top">{p.accountName || "—"}</td>
+                      <td className="px-3 py-3 text-foreground-muted align-top">
+                        {p.accountName || "—"}
+                        {p.bankNote && <p className="text-xs text-warning">{p.bankNote}</p>}
+                      </td>
                       <td className="px-3 py-3 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
                       <td className="px-5 py-3 text-right align-top">
                         <MoneyDisplay minor={p.amountMinor} currency={bill.currency} className="font-medium" />
@@ -624,7 +656,20 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Account / Bank</Label>
-                <Input {...register("accountName")} placeholder="Account name" />
+                <Select value={bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>
+                    {accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== bill.currency ? ` (${a.currency})` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {pickedAccount && pickedAccount.currency !== bill.currency ? (
+                  <p className="text-xs text-warning">{pickedAccount.accountName} is in {pickedAccount.currency} and this bill in {bill.currency} — it stays out of the account's balance.</p>
+                ) : !pickedAccount && editingPayment?.accountName && !editingPayment.bankAccountId ? (
+                  <p className="text-xs text-foreground-muted">Written before: “{editingPayment.accountName}”</p>
+                ) : null}
               </div>
               <div className="space-y-1.5">
                 <Label>Reference</Label>

@@ -5,6 +5,7 @@ import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
 import { hrmsClient, type HrmsSalaryAdvance } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
+import { placeExpenseInBank } from "../expense/expense.service";
 import { categoryNameMap } from "../expense-category/expense-category.service";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
@@ -168,6 +169,8 @@ export async function approve(orgId: string, userId: string, id: string, input: 
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this advance and then voided. Reject the advance instead.`);
   }
   expense ??= await makeExpense(orgId, userId, input.hrmsOrgId, row, input);
+  // In its method's bank account, as money out (2026-10-16).
+  await placeExpenseInBank(orgId, expense._id);
 
   if (!expense.source?.deliveredAt) {
     try {

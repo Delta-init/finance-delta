@@ -39,6 +39,9 @@ import {
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
 import { useCan } from "@/lib/use-can";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useOrganization } from "@/features/organization/api";
+import { useBankAccounts } from "@/features/banking/api";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -88,6 +91,16 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const [rejectOpen, setRejectOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
+  // Paid from which Banking account — the expense's own, else its method's (Settings → Where payments go).
+  const { data: org } = useOrganization();
+  const { data: accountList } = useBankAccounts({ isActive: "true", pageSize: 100 });
+  const accounts = accountList?.data ?? [];
+  const [payAccount, setPayAccount] = useState("__none__");
+  function openPay() {
+    const id = expense?.bankAccountId || (expense?.paymentMethod ? org?.paymentAccounts?.[expense.paymentMethod] ?? "" : "");
+    setPayAccount(accounts.some((a) => a.id === id) ? id : "__none__");
+    setPayOpen(true);
+  }
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
     useForm<RejectFormValues>({ resolver: zodResolver(rejectFormSchema) });
@@ -245,7 +258,7 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
                 <Undo2 className="h-4 w-4" /> Mark unpaid
               </Button>
             ) : (
-              <Button size="sm" onClick={() => setPayOpen(true)}>
+              <Button size="sm" onClick={openPay}>
                 <BadgeCheck className="h-4 w-4" /> Mark as paid
               </Button>
             )
@@ -394,6 +407,8 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <div>
                 <p className="text-xs text-foreground-muted">Payment Account</p>
                 <p className="text-sm font-medium mt-0.5">{expense.paymentAccount}</p>
+                {expense.inBank && <p className="text-xs text-foreground-muted mt-0.5">Money out in this account</p>}
+                {expense.bankNote && <p className="text-xs text-warning mt-0.5">{expense.bankNote}</p>}
               </div>
             )}
 
@@ -480,13 +495,26 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               onChange={(e) => setPaidOn(e.target.value)}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label>Paid from</Label>
+            <Select value={payAccount} onValueChange={setPayAccount}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Not in a bank account</SelectItem>
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== expense.currency ? ` (${a.currency})` : ""}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-foreground-muted">It shows in that account as money out.</p>
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPayOpen(false)}>Cancel</Button>
             <Button
               loading={markPaid.isPending}
               disabled={!paidOn}
               onClick={async () => {
-                await handleAction(() => markPaid.mutateAsync({ paidOn }), "Marked as paid");
+                await handleAction(() => markPaid.mutateAsync({ paidOn, bankAccountId: payAccount === "__none__" ? "" : payAccount }), "Marked as paid");
                 setPayOpen(false);
               }}
             >

@@ -31,6 +31,10 @@ const billPaymentSchema = new Schema(
     paidOn: { type: Date, required: true },
     reference: { type: String, default: "" },
     accountName: { type: String, default: "" },
+    /** The Banking account it was paid from (2026-10-16), its money-out line there, or why it stays out. */
+    bankAccountId: { type: Schema.Types.ObjectId, default: null },
+    bankTransactionId: { type: Schema.Types.ObjectId, default: null },
+    bankNote: { type: String, default: "" },
     notes: { type: String, default: "" },
     chargesMinor: { type: Number, default: 0 },
     emi: { type: emiSubSchema, default: undefined },

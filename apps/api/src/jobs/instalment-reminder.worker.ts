@@ -6,13 +6,14 @@ import { Invoice } from "../modules/invoice/invoice.model";
 import { Customer } from "../modules/customer/customer.model";
 import { Organization } from "../modules/organization/organization.model";
 import { InstalmentReminder } from "../modules/invoice/instalment-reminder.model";
-import { LmsProvision, isForexEnrolment } from "../modules/integrations/lms-provision.model";
-import { addDays, isoDay, REMINDER_DAYS_BEFORE, uaeDay, uaeHour } from "../modules/invoice/instalments";
+import { addDays, isoDay, REMINDER_OFFSETS, uaeDay, uaeHour } from "../modules/invoice/instalments";
 
 /**
- * Reminds clients of a partial enrolment's next instalment, 3, 2 and 1 day
- * before it is due (the user, 2026-10-11) — Forex enrolments only, the ones
- * whose students go to Tetra Commission, where their CS is told the same days.
+ * Reminds clients of a part-paid invoice's next instalment, 3, 2 and 1 day
+ * before it is due (the user, 2026-10-11) — and, since 2026-10-16, on the day
+ * and when it is overdue (3, 7, 14 days late, then weekly to 8 weeks), for
+ * every programme (not only Forex) and invoices typed here too. A Forex
+ * student's CS is told in Tetra Commission, as before.
  *
  * Once a day at 10:00 UAE, on a plain timer in the process that runs the
  * schedulers — not the reminder queue, which needs Redis. Never twice: each
@@ -21,19 +22,21 @@ import { addDays, isoDay, REMINDER_DAYS_BEFORE, uaeDay, uaeHour } from "../modul
  * let go.
  */
 
-const CRM_SOURCES = ["crm", "draw-crm", "banglore-crm"];
 const RUN_AT_UAE_HOUR = 10;
 const CHECK_EVERY_MS = 5 * 60_000;
 
 const longDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
-/** A part-paid enrolment invoice, as the reminder needs it. */
+/**
+ * A part-paid invoice, as the reminder needs it: sent, something paid and something left — an enrolment from a CRM
+ * (approved) or one typed here (approved, or one that needs no approval).
+ */
+const APPROVED_STATES = ["approved", "not_required", null];
 const OWING = {
   status: { $in: ["sent", "viewed", "partial", "overdue"] },
   balanceMinor: { $gt: 0 },
   amountPaidMinor: { $gt: 0 },
-  "approval.state": "approved",
-  $or: [{ "external.source": { $in: CRM_SOURCES } }, { "enrolment.course": { $nin: [null, ""] } }],
+  "approval.state": { $in: APPROVED_STATES },
 };
 
 export interface InstalmentReminderRun {
@@ -45,26 +48,21 @@ export interface InstalmentReminderRun {
 }
 
 /**
- * One pass for the UAE day `now` falls on: every Forex partial enrolment due
- * 3, 2 or 1 days from today. Safe to run as often as you like — the claims
- * make a second pass a no-op. `now` is a parameter so the tests can travel.
+ * One pass for the UAE day `now` falls on: every part-paid invoice due 3, 2 or 1 days from today, today, or overdue
+ * by one of the reminder days. Safe to run as often as you like — the claims make a second pass a no-op. `now` is a
+ * parameter so the tests can travel.
  */
 export async function runInstalmentReminders(now = new Date()): Promise<InstalmentReminderRun> {
   const out: InstalmentReminderRun = { sent: 0, skipped: 0, failed: 0, already: 0 };
   const today = uaeDay(now);
-  for (const daysBefore of REMINDER_DAYS_BEFORE) {
+  for (const daysBefore of REMINDER_OFFSETS) {
     const dueDay = addDays(today, daysBefore);
     const candidates = await Invoice.find({ ...OWING, dueDate: { $gte: dueDay, $lt: addDays(dueDay, 1) } })
       .select("_id organizationId invoiceNumber")
       .lean<{ _id: Types.ObjectId; organizationId: Types.ObjectId; invoiceNumber: string }[]>();
     if (!candidates.length) continue;
-    const provisions = await LmsProvision.find({ invoiceId: { $in: candidates.map((c) => c._id) } })
-      .select("invoiceId lmsCourseProgram commission.state commission.course lmsCourseTitle")
-      .lean<{ invoiceId: Types.ObjectId; lmsCourseProgram?: string; commission?: { state?: string; course?: string }; lmsCourseTitle?: string }[]>();
-    const forex = new Map(provisions.filter((p) => isForexEnrolment(p)).map((p) => [String(p.invoiceId), p]));
 
     for (const candidate of candidates) {
-      if (!forex.has(String(candidate._id))) continue;
       const dueOn = isoDay(dueDay);
       // Claimed before anything is sent: whoever gets here second moves on.
       try {
@@ -98,7 +96,7 @@ async function sendOne(invoiceId: Types.ObjectId, dueOn: string, daysBefore: num
     const invoice = await Invoice.findById(invoiceId).lean<any>();
     const stillOwed = invoice
       && invoice.status !== "void"
-      && invoice.approval?.state === "approved"
+      && APPROVED_STATES.includes(invoice.approval?.state ?? null)
       && (invoice.balanceMinor ?? 0) > 0
       && invoice.dueDate && isoDay(new Date(invoice.dueDate)) === dueOn;
     if (!stillOwed) {
@@ -117,7 +115,8 @@ async function sendOne(invoiceId: Types.ObjectId, dueOn: string, daysBefore: num
       kind: "instalment_reminder",
       ref: { type: "invoice", id: String(invoice._id), label: invoice.invoiceNumber },
     };
-    const course = invoice.enrolment?.course || "your course";
+    // What it is for: the enrolment's course, else (an invoice typed here) its first line.
+    const course = invoice.enrolment?.course || invoice.lineItems?.[0]?.description || "your course";
     if (!to) {
       await logEmail(log, { to: [], subject: `Instalment reminder for invoice ${invoice.invoiceNumber}`, result: { error: "no_recipients" } });
       await settle("failed", { reason: `${invoice.customerName} has no email address`, balanceMinor: balance, currency });

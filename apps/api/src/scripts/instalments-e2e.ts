@@ -385,7 +385,7 @@ async function main() {
   await drain();
 
   /* ── D ── */
-  step("D. Client reminders 3, 2 and 1 day before");
+  step("D. Client reminders 3, 2 and 1 day before, on the day and overdue — every programme, typed ones too");
   // Paid six days ago, so no other invoice here shares its due date.
   const r1 = await close({ paid: 40_000, paidOn: dayOf(-6), course: "Delta Wave Theory" });
   await provision(r1);
@@ -405,41 +405,59 @@ async function main() {
   const emailOf = async (id: string) => `client${(await inv(id)).customerName.replace("Client ", "")}@e2e-test.com`;
   const mailTo = async (id: string) => { const e = await emailOf(id); return caught.filter((m) => m.to.includes(e)); };
 
+  // Typed here, not from a CRM (2026-10-16: reminded too): no enrolment, no approval needed — named by its first line.
+  const typed = await close({ paid: 40_000, paidOn: dayOf(-6) });
+  await Invoice.updateOne({ _id: typed }, {
+    $unset: { external: "", enrolment: "" },
+    $set: { "approval.state": "not_required", "lineItems.0.description": "Private coaching", dueDate: new Date(`${due}T00:00:00.000Z`) },
+  });
+
   let run = await runInstalmentReminders(uaeTen(plus(due, -4)));
   check("4 days before: nothing", run.sent === 0 && (await mailTo(r1)).length === 0, JSON.stringify(run));
   // 20:30 UTC is 00:30 the next day in the UAE: 3 days before there.
   run = await runInstalmentReminders(new Date(`${plus(due, -4)}T20:30:00.000Z`));
   let mine = await mailTo(r1);
-  check("3 days before (by the UAE day): the client is reminded", run.sent === 1 && mine.length === 1, `${JSON.stringify(run)} ${caught.map((c) => c.to).join(";")}`);
+  check("3 days before (by the UAE day): reminded — Forex, another programme, one with no LMS row and one typed here (2026-10-16)",
+    run.sent === 4 && mine.length === 1 && (await mailTo(notForex)).length === 1 && (await mailTo(noRow)).length === 1 && (await mailTo(typed)).length === 1,
+    `${JSON.stringify(run)} ${caught.map((c) => c.to).join(";")}`);
+  check("…the typed one named by its first line", /Private coaching/.test((await mailTo(typed))[0]?.subject ?? ""), (await mailTo(typed))[0]?.subject);
   const r1Doc = await inv(r1);
   const body3 = plain(mine[0]?.body ?? "");
   check("…of the balance, the course, the date and the invoice", /Delta Wave Theory/.test(mine[0]?.subject ?? "") && /in 3 days/.test(mine[0]?.subject ?? "")
     && body3.includes("AED 600.00") && body3.includes(r1Doc.invoiceNumber) && body3.includes("accounts@e2e-test.com"), `${mine[0]?.subject} :: ${body3.slice(0, 200)}`);
   check("…from Delta Finance", /From: .*Delta Finance/i.test(mine[0]?.body ?? ""), (mine[0]?.body ?? "").slice(0, 200));
   run = await runInstalmentReminders(uaeTen(plus(due, -3)));
-  check("the same day again: not twice", run.sent === 0 && run.already === 1 && (await mailTo(r1)).length === 1, JSON.stringify(run));
+  check("the same day again: not twice", run.sent === 0 && run.already === 4 && (await mailTo(r1)).length === 1, JSON.stringify(run));
   await runInstalmentReminders(uaeTen(plus(due, -2)));
   await runInstalmentReminders(uaeTen(plus(due, -1)));
   mine = await mailTo(r1);
   check("2 and 1 day before: one each", mine.length === 3 && /in 2 days/.test(mine[1]!.subject) && /tomorrow/.test(mine[2]!.subject), mine.map((m) => m.subject).join(" | "));
   await runInstalmentReminders(uaeTen(due));
+  mine = await mailTo(r1);
+  check("on the day: due today", mine.length === 4 && /is due today/.test(mine[3]!.subject), mine.map((m) => m.subject).join(" | "));
   await runInstalmentReminders(uaeTen(plus(due, 1)));
-  check("on the day and after: nothing more", (await mailTo(r1)).length === 3);
-  check("never for another programme, no LMS row, paid or void", (await mailTo(notForex)).length === 0 && (await mailTo(noRow)).length === 0
-    && (await mailTo(paidUp)).length === 0 && (await mailTo(voided)).length === 0);
-  const logged = await EmailLog.find({ kind: "instalment_reminder" }).lean();
-  check("each in the email log as an instalment reminder", logged.length === 3 && logged.every((l: any) => l.state === "sent" && String(l.ref?.id) === r1), JSON.stringify(logged.map((l: any) => l.state)));
-  check("…and claimed once each", (await InstalmentReminder.countDocuments({ invoiceId: r1 })) === 3);
+  await runInstalmentReminders(uaeTen(plus(due, 2)));
+  check("1 and 2 days late: nothing", (await mailTo(r1)).length === 4);
+  await runInstalmentReminders(uaeTen(plus(due, 3)));
+  mine = await mailTo(r1);
+  const body4 = plain(mine[4]?.body ?? "");
+  check("3 days late: overdue — it was due on the date, still unpaid", mine.length === 5 && /is overdue/.test(mine[4]!.subject) && /overdue by 3 days/.test(body4) && /still unpaid/.test(body4), `${mine[4]?.subject} :: ${body4.slice(0, 200)}`);
+  check("never for one paid in full or void", (await mailTo(paidUp)).length === 0 && (await mailTo(voided)).length === 0);
+  check("the other programme, the one with no LMS row and the typed one follow the same days", (await mailTo(notForex)).length === 5 && (await mailTo(noRow)).length === 5 && (await mailTo(typed)).length === 5);
+  const logged = await EmailLog.find({ kind: "instalment_reminder", "ref.id": r1 }).lean();
+  check("each in the email log as an instalment reminder", logged.length === 5 && logged.every((l: any) => l.state === "sent"), JSON.stringify(logged.map((l: any) => l.state)));
+  check("…and claimed once each", (await InstalmentReminder.countDocuments({ invoiceId: r1 })) === 5);
 
-  await request("POST", `/invoices/${r1}/payments`, { method: "cash", amountMinor: 10_000, paidOn: plus(due, -1) }, token);
-  const due2 = plus(due, 28);
+  await request("POST", `/invoices/${r1}/payments`, { method: "cash", amountMinor: 10_000, paidOn: plus(due, 3) }, token);
+  const due2 = plus(due, 32);
   check("another payment: a new due date", iso((await inv(r1)).dueDate) === due2, iso((await inv(r1)).dueDate));
   await runInstalmentReminders(uaeTen(plus(due2, -3)));
   mine = await mailTo(r1);
-  check("…whose reminders come round again, with the new balance", mine.length === 4 && plain(mine[3]!.body).includes("AED 500.00"), plain(mine[3]?.body ?? "").slice(0, 300));
+  check("…whose reminders come round again, with the new balance", mine.length === 6 && plain(mine[5]!.body).includes("AED 500.00"), plain(mine[5]?.body ?? "").slice(0, 300));
   await request("POST", `/invoices/${r1}/payments`, { method: "cash", amountMinor: 50_000, paidOn: plus(due2, -3) }, token);
   await runInstalmentReminders(uaeTen(plus(due2, -2)));
-  check("paid in full: no more", (await mailTo(r1)).length === 4);
+  await runInstalmentReminders(uaeTen(plus(due2, 3)));
+  check("paid in full: no more, not even overdue", (await mailTo(r1)).length === 6);
 
   /* ── E ── */
   step("E. A balance payment a CS records in Tetra Commission");

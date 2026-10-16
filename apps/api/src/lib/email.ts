@@ -461,9 +461,19 @@ export interface InstalmentReminderContent {
   log?: MailLog;
 }
 
+/** When the instalment is due, said for a reminder `daysBefore` days ahead — 0 today, negative overdue (2026-10-16). */
+export function instalmentWhen(daysBefore: number): string {
+  if (daysBefore > 1) return `is due in ${daysBefore} days`;
+  if (daysBefore === 1) return "is due tomorrow";
+  if (daysBefore === 0) return "is due today";
+  const late = -daysBefore;
+  return `is overdue by ${late} day${late === 1 ? "" : "s"}`;
+}
+
 export function instalmentReminderSubject(c: Pick<InstalmentReminderContent, "course" | "dueDateLong" | "daysBefore">): string {
-  const when = c.daysBefore === 1 ? "tomorrow" : `in ${c.daysBefore} days`;
-  return `Your next instalment for ${c.course} is due ${when} (${c.dueDateLong})`;
+  return c.daysBefore < 0
+    ? `Your instalment for ${c.course} is overdue (due on ${c.dueDateLong})`
+    : `Your next instalment for ${c.course} ${instalmentWhen(c.daysBefore)} (${c.dueDateLong})`;
 }
 
 function instalmentReminderHtml(c: InstalmentReminderContent): string {
@@ -485,9 +495,11 @@ function instalmentReminderHtml(c: InstalmentReminderContent): string {
   return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
 ${brandHeader({ orgName: c.orgName, logoUrl: c.logoUrl })}
 <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
-  <h2 style="margin:0 0 8px;font-size:18px">Your next instalment is due ${c.daysBefore === 1 ? "tomorrow" : `in ${c.daysBefore} days`}</h2>
+  <h2 style="margin:0 0 8px;font-size:18px">Your ${c.daysBefore < 0 ? "instalment" : "next instalment"} ${esc(instalmentWhen(c.daysBefore))}</h2>
   <p style="color:#64748b;margin:0 0 24px">Dear ${esc(c.customerName)},</p>
-  <p style="margin:0 0 16px">Your next instalment of <strong>${esc(c.balance)}</strong> for <strong>${esc(c.course)}</strong> is due on <strong>${esc(c.dueDateLong)}</strong>.</p>
+  <p style="margin:0 0 16px">${c.daysBefore < 0
+    ? `Your instalment of <strong>${esc(c.balance)}</strong> for <strong>${esc(c.course)}</strong> was due on <strong>${esc(c.dueDateLong)}</strong> and is still unpaid. Please pay it as soon as you can.`
+    : `Your next instalment of <strong>${esc(c.balance)}</strong> for <strong>${esc(c.course)}</strong> is due on <strong>${esc(c.dueDateLong)}</strong>.`}</p>
   <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:8px;margin-bottom:24px">
     ${row("Invoice", c.invoiceNumber)}
     ${row("Course fee", c.total)}

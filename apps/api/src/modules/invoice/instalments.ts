@@ -102,3 +102,9 @@ export function uaeHour(now: Date): number {
 
 /** How many days before an instalment is due its client is reminded. */
 export const REMINDER_DAYS_BEFORE = [3, 2, 1] as const;
+
+/**
+ * Every reminder, by days before the due date (the user, 2026-10-16: "and overdue too"): 3, 2 and 1 day before; on
+ * the day (0); then late — negative — by 3, 7 and 14 days, and every week after that up to 8 weeks.
+ */
+export const REMINDER_OFFSETS = [...REMINDER_DAYS_BEFORE, 0, -3, -7, -14, -21, -28, -35, -42, -49, -56] as const;

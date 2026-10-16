@@ -79,6 +79,7 @@ export function InvoiceManager() {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [rowDeleting, setRowDeleting] = useState<Invoice | null>(null);
   const [confirmingVoid, setConfirmingVoid] = useState(false);
   /** Bumped after a delete, to untick rows that are no longer there. */
   const [selectionResetKey, setSelectionResetKey] = useState(0);
@@ -269,6 +270,23 @@ export function InvoiceManager() {
         />
       ),
     },
+    // Delete on the row itself (the user, 2026-10-16), as on bills and expenses: once nothing is paid against it.
+    ...(canDelete ? [{
+      key: "actions",
+      header: "",
+      cell: (inv: Invoice) => (inv.amountPaidMinor === 0 ? (
+        <div className="flex justify-end" onClick={(ev) => ev.stopPropagation()}>
+          <button
+            type="button"
+            title="Delete"
+            onClick={() => setRowDeleting(inv)}
+            className="rounded p-1.5 text-foreground-muted hover:bg-danger/10 hover:text-danger"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null),
+    }] : []),
   ];
 
   return (
@@ -469,6 +487,38 @@ export function InvoiceManager() {
             <Button variant="secondary" onClick={() => setConfirmingVoid(false)}>Cancel</Button>
             <Button variant="destructive" loading={voidInvoice.isPending} onClick={voidSelected}>
               Void {voidable.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!rowDeleting} onOpenChange={(o) => { if (!o) setRowDeleting(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {rowDeleting?.invoiceNumber}?</DialogTitle>
+            <DialogDescription>
+              {rowDeleting?.customerName} — removed for good, leaving a gap in the numbering; void it instead to keep it on the record as
+              cancelled. An enrolment from a sales CRM keeps the LMS access and Tetra Commission account it already gave — remove those by
+              hand. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setRowDeleting(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={deleteInvoice.isPending}
+              onClick={async () => {
+                if (!rowDeleting) return;
+                try {
+                  await deleteInvoice.mutateAsync(rowDeleting.id);
+                  toast.success(`${rowDeleting.invoiceNumber} deleted`);
+                  setRowDeleting(null);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : "Could not delete this invoice");
+                }
+              }}
+            >
+              Delete invoice
             </Button>
           </DialogFooter>
         </DialogContent>

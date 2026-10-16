@@ -17,6 +17,8 @@ router.post("/:id/approve", requirePermission("bill:approve"), c.approve);
 router.post("/:id/reject", requirePermission("bill:approve"), c.reject);
 router.post("/:id/payments", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.recordPayment);
 router.patch("/:id/payments/:paymentId", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.updatePayment);
+// A payment recorded by mistake (2026-10-16): the bill's right to delete, as deleting the bill is.
+router.delete("/:id/payments/:paymentId", requirePermission("bill:delete"), c.deletePayment);
 router.patch("/:id/notes", requirePermission("bill:update"), validateBody(updateBillNotesSchema), c.updateNotes);
 router.post("/:id/attachments", requirePermission("bill:update"), parseUpload, c.addAttachment);
 router.delete("/:id/attachments/:attId", requirePermission("bill:update"), c.removeAttachment);

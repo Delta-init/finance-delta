@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
-import { useExpenses, useVoidExpense } from "@/features/expenses/api";
+import { useExpenses, useVoidExpense, useDeleteExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
@@ -60,28 +60,40 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Total", value: (e) => e.totalMinor / 100 },
 ];
 
+/*
+ * Void or delete (the user, 2026-10-16). This used to be called Delete and
+ * only voided; now both are offered and named for what they do: voiding keeps
+ * it on the record as cancelled, deleting removes it for good (one from HRMS
+ * or payroll keeps its number, so the server refuses that and says to void).
+ */
 function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const voidExpense = useVoidExpense(expense.id);
-  async function handleVoid() {
+  const deleteExpense = useDeleteExpense();
+  async function run(kind: "void" | "delete") {
     try {
-      await voidExpense.mutateAsync(undefined);
-      toast.success("Expense deleted");
+      if (kind === "void") await voidExpense.mutateAsync(undefined);
+      else await deleteExpense.mutateAsync(expense.id);
+      toast.success(kind === "void" ? `${expense.expenseNumber} voided` : `${expense.expenseNumber} deleted`);
       onClose();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to delete expense");
+      toast.error(e instanceof ApiError ? e.message : kind === "void" ? "Could not void this expense" : "Could not delete this expense");
     }
   }
+  const voided = expense.status === "voided";
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Delete expense?</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{voided ? "Delete" : "Void or delete"} {expense.expenseNumber}?</DialogTitle></DialogHeader>
         <p className="text-sm text-foreground-muted">
-          This voids <span className="font-medium text-foreground">{expense.expenseNumber}</span>
-          {expense.description ? ` — ${expense.description}` : ""}. It stays in history for audit but no longer counts toward totals.
+          <span className="font-medium text-foreground">{expense.expenseNumber}</span>
+          {expense.description ? ` — ${expense.description}` : ""}.{" "}
+          {voided ? "" : "Void keeps it on the record as cancelled, out of the totals. "}
+          Delete removes it for good, with its receipts. This cannot be undone.
         </p>
         <DialogFooter>
           <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          <Button variant="destructive" onClick={handleVoid} loading={voidExpense.isPending}>Delete expense</Button>
+          {!voided && <Button variant="secondary" onClick={() => void run("void")} loading={voidExpense.isPending}>Void</Button>}
+          <Button variant="destructive" onClick={() => void run("delete")} loading={deleteExpense.isPending}>Delete for good</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -116,6 +128,8 @@ export default function ExpensesPage() {
 
   // True when this person only ever sees their own claims.
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
+  // Voiding and deleting are both the expense's delete right, as on the server.
+  const canRemove = useCan().can("expense:delete");
 
   const columns: Column<Expense>[] = [
     {
@@ -220,10 +234,10 @@ export default function ExpensesPage() {
               <Pencil className="h-4 w-4" />
             </button>
           )}
-          {e.status !== "voided" && (
+          {canRemove && (
             <button
               type="button"
-              title="Delete"
+              title={e.status === "voided" ? "Delete" : "Void or delete"}
               onClick={() => setVoidTarget(e)}
               className="rounded p-1.5 text-foreground-muted hover:bg-danger/10 hover:text-danger"
             >

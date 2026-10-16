@@ -423,6 +423,29 @@ export async function updateBillPayment(
   return toDTO(doc as unknown as BillDoc);
 }
 
+/**
+ * Remove a payment recorded on a bill by mistake (the user, 2026-10-16: "bill
+ * also can't delete") — the wrong bill, a duplicate. Without it a bill with a
+ * payment could never be deleted, since deleting asks for its payments to go
+ * first. The bill's paid total, balance and status are worked out again from
+ * what is left: back to approved when nothing is.
+ */
+export async function deleteBillPayment(orgId: string, id: string, paymentId: string): Promise<BillDTO> {
+  const doc = await Bill.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
+  if (doc.status === "voided") throw new AppError("CONFLICT", "Cannot delete a payment on a voided bill");
+  const list = doc.payments as unknown as { id: (pid: string) => ({ deleteOne: () => void }) | null };
+  const pm = list.id(paymentId);
+  if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+  pm.deleteOne();
+  const paid = (doc.payments as unknown as { amountMinor?: number }[]).reduce((s, p) => s + (p.amountMinor ?? 0), 0);
+  doc.amountPaidMinor = paid;
+  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - paid;
+  doc.status = paid === 0 ? "approved" : doc.balanceMinor <= 0 ? "paid" : "partially_paid";
+  await doc.save();
+  return toDTO(doc as unknown as BillDoc);
+}
+
 export async function voidBill(orgId: string, id: string): Promise<BillDTO> {
   const doc = await Bill.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");

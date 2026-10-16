@@ -106,6 +106,19 @@ export function useUpdateBillPayment(id: string) {
   });
 }
 
+/** Remove a payment recorded on a bill by mistake (2026-10-16); its paid total and status are worked out again. */
+export function useDeleteBillPayment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (paymentId: string) => api.del<Bill>(`bills/${id}/payments/${paymentId}`),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
 export function useUpdateBillNotes(id: string) {
   const qc = useQueryClient();
   return useMutation({

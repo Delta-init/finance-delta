@@ -108,20 +108,15 @@ export function InvoiceManager() {
   const canDelete = can("invoice:write");
 
   const selected = (data?.data ?? []).filter((inv) => selectedIds.includes(inv.id));
-  // Only a draft can be deleted — the server refuses anything else, because an
-  // invoice that has been sent or paid is a record of something that happened.
   /*
-   * What can be removed outright.
-   *
-   * A draft never left the building. A voided one has been cancelled already,
-   * so the only thing deleting it costs is the gap in the numbering — but only
-   * when nothing was ever paid against it. The server checks further still (a
-   * credit note, a commission, a quotation converted into it) and refuses with
-   * a reason, which the toolbar reports rather than guessing at here.
+   * What can be removed outright: any invoice with nothing paid against it,
+   * whatever its status (the user, 2026-10-16). One with payments keeps them
+   * until each is deleted on the invoice, so money is never erased by this.
+   * The server checks further still (a credit note, a commission, a quotation,
+   * a balance or Tetra payment referring to it) and refuses with a reason,
+   * which the toolbar reports rather than guessing at here.
    */
-  const deletable = selected.filter(
-    (inv) => inv.status === "draft" || (inv.status === "void" && inv.amountPaidMinor === 0),
-  );
+  const deletable = selected.filter((inv) => inv.amountPaidMinor === 0);
   const undeletable = selected.length - deletable.length;
 
   /*
@@ -393,8 +388,8 @@ export function InvoiceManager() {
           {untouchable.length === 0 && undeletable > 0 && (
             <span className="text-xs text-foreground-muted">
               {undeletable === selectedIds.length
-                ? "None of these can be deleted — only drafts and voided invoices can. They can be voided."
-                : `${undeletable} of them can be voided but not deleted — only drafts and voided invoices can be.`}
+                ? "None of these can be deleted — they have payments recorded. Delete the payments on the invoice first, or void them."
+                : `${undeletable} of them have payments recorded, so they can be voided but not deleted.`}
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -489,7 +484,8 @@ export function InvoiceManager() {
               {undeletable > 0
                 ? `${undeletable} of the ${selectedIds.length} selected cannot be deleted and will be left alone. `
                 : ""}
-              A voided invoice leaves a gap in the numbering where it was. This cannot be undone.
+              Each leaves a gap in the numbering where it was. An enrolment from a sales CRM keeps the LMS access and
+              Tetra Commission account it already gave — remove those by hand. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">

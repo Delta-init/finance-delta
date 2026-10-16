@@ -1,11 +1,15 @@
 "use client";
 
-import { PAYMENT_METHODS, paymentMethodLabel } from "@delta/shared";
+import { PAYMENT_METHODS, formatMoney, paymentMethodLabel } from "@delta/shared";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { usePayments, type PaymentDTO } from "@/features/payments/api";
+import { usePayments, useDeletePaymentFromList, type PaymentDTO } from "@/features/payments/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useCan } from "@/lib/use-can";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +20,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ExportButton } from "@/components/ui/export-button";
 import { useTableQuery } from "@/lib/use-table-query";
 import type { ExportColumn } from "@/lib/export";
-import { CreditCard, Search, X, Printer } from "lucide-react";
+import { CreditCard, Search, X, Printer, Trash2 } from "lucide-react";
 
 // The list an invoice payment can actually use, so the filter cannot offer a
 // method no payment will ever have.
@@ -58,6 +62,11 @@ export default function PaymentsPage() {
     dateTo: dateTo || undefined,
   };
   const { data, isLoading } = usePayments(queryParams);
+  // Deleting a payment is the broad invoice right, as on the invoice itself (2026-10-16).
+  const { can } = useCan();
+  const canDelete = can("invoice:write");
+  const del = useDeletePaymentFromList();
+  const [deleting, setDeleting] = useState<PaymentDTO | null>(null);
 
   const hasFilters = method !== "all" || !!dateFrom || !!dateTo || !!t.q;
   const clear = () => { setMethod("all"); setDateFrom(""); setDateTo(""); t.setQ(""); };
@@ -112,13 +121,24 @@ export default function PaymentsPage() {
       key: "actions",
       header: "",
       cell: (p) => (
-        <button
-          onClick={(e) => { e.stopPropagation(); router.push(`/invoices/${p.invoiceId}/payments/${p.id}/receipt`); }}
-          className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
-          title="Receipt PDF"
-        >
-          <Printer className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); router.push(`/invoices/${p.invoiceId}/payments/${p.id}/receipt`); }}
+            className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
+            title="Receipt PDF"
+          >
+            <Printer className="h-3.5 w-3.5" />
+          </button>
+          {canDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeleting(p); }}
+              className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-danger"
+              title="Delete payment"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       ),
     },
   ];
@@ -195,6 +215,38 @@ export default function PaymentsPage() {
         isLoading={isLoading}
         emptyMessage="No payments found."
       />
+
+      <Dialog open={!!deleting} onOpenChange={(o) => { if (!o) setDeleting(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this payment?</DialogTitle>
+            <DialogDescription>
+              {deleting
+                ? `${formatMoney(deleting.amountMinor, deleting.currency)} recorded on ${deleting.paidOn} comes off ${deleting.invoiceNumber} (${deleting.customerName}): its balance goes back up by the same amount, and its receipt and bank line go with it. This cannot be undone.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={del.isPending}
+              onClick={async () => {
+                if (!deleting) return;
+                try {
+                  await del.mutateAsync({ invoiceId: deleting.invoiceId, paymentId: deleting.id });
+                  toast.success("Payment deleted");
+                  setDeleting(null);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : "Could not delete this payment");
+                }
+              }}
+            >
+              Delete payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

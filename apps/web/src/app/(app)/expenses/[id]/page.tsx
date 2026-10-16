@@ -2,12 +2,13 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, User,
-  Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2,
+  Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2, Trash2,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
 import {
@@ -34,6 +35,7 @@ import {
   usePauseRecurrence,
   useResumeRecurrence,
   useStopRecurrence,
+  useDeleteExpense,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
 import { useCan } from "@/lib/use-can";
@@ -79,6 +81,10 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const pauseRecurrence = usePauseRecurrence(id);
   const resumeRecurrence = useResumeRecurrence(id);
   const stopRecurrence = useStopRecurrence(id);
+  // Removing it for good (2026-10-16) — the same right as voiding.
+  const router = useRouter();
+  const deleteExpense = useDeleteExpense();
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
@@ -193,6 +199,39 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <Ban className="h-4 w-4" /> Void
             </Button>
           )}
+          {can("expense:delete") && (
+            <Button variant="outline" size="sm" onClick={() => setDeleteOpen(true)} className="text-danger hover:border-danger/50">
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          )}
+          <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Delete {expense.expenseNumber}?</DialogTitle>
+                <DialogDescription>
+                  It is removed for good, with its receipts — void it instead to keep it on the record as cancelled. This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
+                <Button
+                  variant="destructive"
+                  loading={deleteExpense.isPending}
+                  onClick={async () => {
+                    try {
+                      await deleteExpense.mutateAsync(id);
+                      toast.success(`${expense.expenseNumber} deleted`);
+                      router.push("/expenses");
+                    } catch (e) {
+                      toast.error(e instanceof ApiError ? e.message : "Could not delete this expense");
+                    }
+                  }}
+                >
+                  Delete for good
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {/* Voided and rejected claims are decided against, so there is
               nothing to settle and the server refuses it anyway. */}
           {canMarkPaid && (

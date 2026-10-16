@@ -40,6 +40,10 @@ export const updatePayment = asyncHandler(async (req, res) => {
   ok(res, await svc.updateBillPayment(org(req), req.params.id!, req.params.paymentId!, req.body));
 });
 
+export const deletePayment = asyncHandler(async (req, res) => {
+  ok(res, await svc.deleteBillPayment(org(req), req.params.id!, req.params.paymentId!));
+});
+
 export const voidBill = asyncHandler(async (req, res) => {
   ok(res, await svc.voidBill(org(req), req.params.id!));
 });

@@ -1256,63 +1256,74 @@ export async function removeAttachment(
 /**
  * Remove an invoice that should not be on the books at all.
  *
- * A draft never left the building, so it can go. A voided one is the other
- * case: it has been cancelled already, and somebody clearing up a mistaken
- * invoice should not have to leave the cancelled shell behind for ever. It
- * costs a gap in the numbering, which is the deliberate price of the choice —
- * voiding, which keeps the number, remains the ordinary way to cancel.
+ * Any status (the user, 2026-10-16: "we need delete option … some don't have
+ * delete option"): a draft, a voided one, and a sent, part-paid or paid one
+ * entered by mistake. Voiding, which keeps the number, remains the ordinary
+ * way to cancel a real one; deleting costs a gap in the numbering.
  *
- * Anything else is a record of something that happened, and the client has a
- * copy.
+ * Money is never erased by it: an invoice with payments recorded keeps them
+ * until each is deleted (each takes its bank line and receipt with it), so a
+ * delete is always a deliberate two steps. And it goes only when nothing else
+ * depends on it — a credit note, a commission, a quotation converted into it,
+ * a balance payment or a Tetra Commission course payment made from it — since
+ * each of those would be left referring to an invoice that no longer exists.
  *
- * A voided invoice still goes only when nothing depends on it. A payment, a
- * credit note, a commission or a quotation that was converted into it all
- * point at this document, and deleting it underneath them leaves rows
- * referring to an invoice that no longer exists — worse than the shell it was
- * tidying away.
+ * A sales CRM's enrolment can go too. What it already set going stays — the
+ * student's LMS access and their Tetra Commission account are removed by hand —
+ * but anything still queued for it is stopped: an LMS provisioning not yet
+ * done, and the instalment reminders.
  */
 export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   const doc = await findDoc(orgId, id);
-  const status = effectiveStatus(doc);
 
-  if (status !== "draft" && status !== "void") {
-    throw new AppError("CONFLICT", "Only draft or voided invoices can be deleted");
+  const payments = (doc.payments as unknown as unknown[]) ?? [];
+  if (payments.length > 0) {
+    throw new AppError(
+      "CONFLICT",
+      `This invoice has ${payments.length === 1 ? "a payment" : `${payments.length} payments`} recorded against it. Delete ${payments.length === 1 ? "it" : "them"} first (each takes its receipt and bank line with it), or void the invoice instead.`,
+    );
   }
 
-  if (status === "void") {
-    const payments = (doc.payments as unknown as unknown[]) ?? [];
-    if (payments.length > 0) {
-      throw new AppError(
-        "CONFLICT",
-        "This invoice has payments recorded against it. Remove them first, or leave it voided.",
-      );
-    }
+  const objectId = new Types.ObjectId(id);
+  const [{ CreditNote }, { CommissionRecord }, { Quotation }, { BalancePaymentModel }, { TetraDepositModel }] = await Promise.all([
+    import("../credit-note/credit-note.model"),
+    import("../commission/commission-record.model"),
+    import("../quotation/quotation.model"),
+    import("../balance-payment/balance-payment.model"),
+    import("../tetra-deposit/tetra-deposit.model"),
+  ]);
 
-    const objectId = new Types.ObjectId(id);
-    const [{ CreditNote }, { CommissionRecord }, { Quotation }] = await Promise.all([
-      import("../credit-note/credit-note.model"),
-      import("../commission/commission-record.model"),
-      import("../quotation/quotation.model"),
-    ]);
+  const [credited, commissioned, quoted, balance, deposit] = await Promise.all([
+    CreditNote.exists({ organizationId: orgId, invoiceId: objectId }),
+    CommissionRecord.exists({ organizationId: orgId, invoiceId: objectId }),
+    Quotation.exists({
+      organizationId: orgId,
+      $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
+    }),
+    BalancePaymentModel.exists({ organizationId: orgId, invoiceId: objectId }),
+    TetraDepositModel.exists({ organizationId: orgId, $or: [{ "courseInvoice.invoiceId": objectId }, { "enrolmentPayment.invoiceId": objectId }] }),
+  ]);
 
-    const [credited, commissioned, quoted] = await Promise.all([
-      CreditNote.exists({ organizationId: orgId, invoiceId: objectId }),
-      CommissionRecord.exists({ organizationId: orgId, invoiceId: objectId }),
-      Quotation.exists({
-        organizationId: orgId,
-        $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
-      }),
-    ]);
-
-    if (credited) throw new AppError("CONFLICT", "A credit note refers to this invoice, so it cannot be deleted");
-    if (commissioned) throw new AppError("CONFLICT", "A commission was calculated from this invoice, so it cannot be deleted");
-    if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
-  }
+  if (credited) throw new AppError("CONFLICT", "A credit note refers to this invoice, so it cannot be deleted");
+  if (commissioned) throw new AppError("CONFLICT", "A commission was calculated from this invoice, so it cannot be deleted");
+  if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
+  if (balance) throw new AppError("CONFLICT", "A balance payment from a sales CRM refers to this invoice, so it cannot be deleted");
+  if (deposit) throw new AppError("CONFLICT", "A Tetra Commission payment refers to this invoice, so it cannot be deleted");
 
   // Gone from the database once deleted, so Tetra Commission is told from what it was.
   const gone = doc.toObject();
   await doc.deleteOne();
   feeUpdate(gone as never, "delete", { deleted: true });
+
+  // Nothing still queued for it is done any more. What was done stays done.
+  const [{ LmsProvision }, { InstalmentReminder }] = await Promise.all([
+    import("../integrations/lms-provision.model"),
+    import("./instalment-reminder.model"),
+  ]);
+  await Promise.all([
+    LmsProvision.deleteOne({ invoiceId: objectId, status: { $ne: "sent" } }),
+    InstalmentReminder.deleteMany({ invoiceId: objectId }),
+  ]);
 }
 
 /**

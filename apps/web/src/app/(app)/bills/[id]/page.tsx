@@ -26,7 +26,10 @@ import {
   useUpdateBillNotes,
   useAddBillAttachment,
   useRemoveBillAttachment,
+  useDeleteBill,
+  useDeleteBillPayment,
 } from "@/features/bills/api";
+import { useCan } from "@/lib/use-can";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral", pending_approval: "warning", approved: "primary",
@@ -70,6 +73,12 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const updateNotes = useUpdateBillNotes(id);
   const addAttachment = useAddBillAttachment(id);
   const removeAttachment = useRemoveBillAttachment(id);
+  // Deleting a bill, or a payment on it entered by mistake (2026-10-16): the bill's delete right.
+  const { can } = useCan();
+  const canDelete = can("bill:delete");
+  const deleteBill = useDeleteBill();
+  const deleteBillPayment = useDeleteBillPayment(id);
+  const [confirming, setConfirming] = useState<{ kind: "bill" } | { kind: "payment"; payment: Bill["payments"][number] } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState<Bill["payments"][number] | null>(null);
   const isEdit = !!editingPayment;
@@ -237,8 +246,51 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
               <Ban className="h-4 w-4" /> Void
             </Button>
           )}
+          {canDelete && bill.amountPaidMinor === 0 && (
+            <Button variant="outline" size="sm" onClick={() => setConfirming({ kind: "bill" })} className="text-danger hover:border-danger/50">
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          )}
         </div>
       </div>
+
+      <Dialog open={!!confirming} onOpenChange={(o) => { if (!o) setConfirming(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{confirming?.kind === "payment" ? "Delete this payment?" : `Delete ${bill.billNumber}?`}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-foreground-muted">
+            {confirming?.kind === "payment"
+              ? `${formatMoney(confirming.payment.amountMinor, bill.currency)} paid on ${String(confirming.payment.paidOn).slice(0, 10)} comes off this bill, and its balance goes back up by the same amount. This cannot be undone.`
+              : "It is removed for good — void it instead to keep it on the record as cancelled. This cannot be undone."}
+          </p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirming(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={deleteBill.isPending || deleteBillPayment.isPending}
+              onClick={async () => {
+                if (!confirming) return;
+                try {
+                  if (confirming.kind === "payment") {
+                    await deleteBillPayment.mutateAsync(confirming.payment.id);
+                    toast.success("Payment deleted");
+                    setConfirming(null);
+                  } else {
+                    await deleteBill.mutateAsync(id);
+                    toast.success(`${bill.billNumber} deleted`);
+                    router.push("/bills");
+                  }
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : "Could not delete it");
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-4 sm:grid-cols-4">
         <div className="rounded-lg border border-border bg-surface p-4 space-y-1">
@@ -350,6 +402,16 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                             title="Edit payment"
                           >
                             <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {bill.status !== "voided" && canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirming({ kind: "payment", payment: p })}
+                            className="ml-2 inline-flex items-center text-foreground-muted hover:text-danger"
+                            title="Delete payment"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         )}
                       </td>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type QueryParams } from "@/lib/api";
 
 export interface PaymentDTO {
@@ -41,5 +41,25 @@ export function usePayment(id: string | undefined) {
     queryKey: [...KEY, id],
     queryFn: () => api.get<PaymentDTO>(`payments/${id}`),
     enabled: !!id,
+  });
+}
+
+/**
+ * Delete a payment from the Payments list (2026-10-16) — the invoice's own
+ * delete: its balance and status are worked out again, and its receipt and bank
+ * line go with it.
+ */
+export function useDeletePaymentFromList() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ invoiceId, paymentId }: { invoiceId: string; paymentId: string }) =>
+      api.del<unknown>(`invoices/${invoiceId}/payments/${paymentId}`),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoice", v.invoiceId] });
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("bank") });
+    },
   });
 }

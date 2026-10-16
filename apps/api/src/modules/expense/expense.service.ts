@@ -451,6 +451,36 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
   return toDTO(doc as unknown as ExpenseDoc);
 }
 
+/**
+ * Remove an expense that should not be on the books at all (the user,
+ * 2026-10-16: "expense delete also") — entered twice, against the wrong
+ * department, left by a test. Any status, paid ones too; voiding, which keeps
+ * it on the record as cancelled, remains the ordinary way to cancel a real one.
+ *
+ * Not one that came from somewhere else, which keeps its number: a purchase
+ * request, salary advance or one-time payment from HRMS (HRMS holds its EXP
+ * number, and a resend would record it a second time), or one a payroll payment
+ * posted. Those are voided. Its receipts go from storage with it.
+ */
+export async function deleteExpense(orgId: string, id: string): Promise<void> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  const kind = String((doc as unknown as { source?: { kind?: string } }).source?.kind ?? "");
+  if (kind.startsWith("hrms_")) {
+    throw new AppError("CONFLICT", `${doc.expenseNumber} came from HRMS, which keeps its number — void it instead.`);
+  }
+  const { PayrollRun } = await import("../payroll/payroll-run.model");
+  if (await PayrollRun.exists({ organizationId: orgId, "payments.expenseId": doc._id })) {
+    throw new AppError("CONFLICT", `${doc.expenseNumber} was posted by a payroll payment — void it from the payroll run instead.`);
+  }
+  const keys = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []).map((a) => a.key).filter(Boolean) as string[];
+  await doc.deleteOne();
+  if (keys.length) {
+    const { deleteFile } = await import("../../lib/storage");
+    await Promise.all(keys.map((k) => deleteFile(k).catch(() => undefined)));
+  }
+}
+
 // ── Recurring template controls ────────────────────────────────────────────────
 
 /** Pause (isActive=false) or resume (isActive=true) a recurring expense template.

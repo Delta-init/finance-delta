@@ -67,6 +67,16 @@ function useExpenseAction(action: string, id: string) {
   });
 }
 
+/** Remove an expense for good (2026-10-16) — voiding keeps it on the record; this does not. */
+export function useDeleteExpense() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (id: string) => api.del<void>(`expenses/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export const useSubmitExpense = (id: string) => useExpenseAction("submit", id);
 export const useApproveExpense = (id: string) => useExpenseAction("approve", id);
 export const useVoidExpense = (id: string) => useExpenseAction("void", id);

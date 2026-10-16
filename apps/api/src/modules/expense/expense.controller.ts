@@ -53,6 +53,11 @@ export const reject = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await svc.rejectExpense(org(req), req.params.id!, uid(req), approverName, req.body));
 });
 
+export const remove = asyncHandler(async (req, res) => {
+  await svc.deleteExpense(org(req), req.params.id!);
+  res.status(204).end();
+});
+
 export const voidExpense = asyncHandler(async (req, res) => {
   ok(res, await svc.voidExpense(org(req), req.params.id!));
 });

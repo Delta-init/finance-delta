@@ -44,7 +44,7 @@ import { TagList } from "@/features/tags/TagBadge";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { InvoiceEmailsCard } from "@/features/email-log/invoice-emails-card";
-import { useInvoice, useSendInvoice, useRestoreInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice } from "./api";
+import { useInvoice, useSendInvoice, useRestoreInvoice, useVoidInvoice, useRecordPayment, useUpdatePayment, useDeletePayment, useResendInvoice, useDeleteInvoice } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
@@ -70,6 +70,8 @@ export function InvoiceDetail({ id }: { id: string }) {
   const send = useSendInvoice();
   const restore = useRestoreInvoice();
   const voidInv = useVoidInvoice();
+  const deleteInv = useDeleteInvoice();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const resend = useResendInvoice();
   const [payOpen, setPayOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
@@ -236,8 +238,47 @@ export function InvoiceDetail({ id }: { id: string }) {
               <Ban className="h-3.5 w-3.5" /> Void
             </Button>
           )}
+          {/* Any status, once nothing is paid against it (2026-10-16). */}
+          {canManage && (invoice.payments?.length ?? 0) === 0 && (
+            <Button variant="outline" size="sm" onClick={() => setConfirmingDelete(true)} className="text-danger hover:border-danger/50">
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </Button>
+          )}
         </div>
       </div>
+
+      <Dialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {invoice.invoiceNumber}?</DialogTitle>
+            <DialogDescription>
+              It is removed for good and leaves a gap in the numbering — void it instead to keep it on the record as cancelled.
+              {invoice.enrolment
+                ? " This is an enrolment: the LMS access and Tetra Commission account it already gave the student stay, and must be removed by hand. Anything still queued for it stops."
+                : ""}
+              {" "}This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmingDelete(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={deleteInv.isPending}
+              onClick={async () => {
+                try {
+                  await deleteInv.mutateAsync(id);
+                  toast.success(`${invoice.invoiceNumber} deleted`);
+                  router.push("/invoices");
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : "Could not delete this invoice");
+                }
+              }}
+            >
+              Delete invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* An invoice that says Sent but was never delivered. The status means
           somebody pressed Send; this is whether the message actually left, and

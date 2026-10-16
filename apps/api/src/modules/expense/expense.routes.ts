@@ -32,6 +32,8 @@ router.delete(
 router.post("/:id/approve", requirePermission("expense:approve"), c.approve);
 router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectExpenseSchema), c.reject);
 router.post("/:id/void", requirePermission("expense:delete"), c.voidExpense);
+// Removing one outright (2026-10-16) — the same right as voiding it.
+router.delete("/:id", requirePermission("expense:delete"), c.remove);
 // Settling a claim is updating it, not approving it: the approver decides
 // whether it is owed, whoever pays it records that it went.
 router.post("/:id/mark-paid", requirePermission("expense:update"), validateBody(markExpensePaidSchema), c.markPaid);

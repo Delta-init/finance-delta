@@ -23,12 +23,18 @@ import { Organization } from "../organization/organization.model";
  * What lands: the payment less its charges, in the invoice's currency. An account in another currency (an INR account
  * for an AED invoice) needs the amount in its own currency — given on the payment, or the original the CRM kept at the
  * close — and without one the payment keeps the account but stays out of it, saying why (`bankNote`).
+ *
+ * Shown as two lines when there are charges (the user, 2026-10-16: "show as two lines, one the actual amount and the
+ * charges minus"): a credit of the full payment, as the invoice shows it, and a debit of its charges — so each line
+ * matches the invoice, and the balance still moves by what landed. In an account in another currency the charges are
+ * taken at the payment's own rate (what landed over the payment less charges).
  */
 
 type Account = { _id: Types.ObjectId; accountName: string; currency: string; accountType?: string; isActive?: boolean };
 type StoredPayment = {
   _id: Types.ObjectId; method: string; amountMinor: number; chargesMinor?: number; paidOn: Date; reference?: string;
   receiptNumber?: string; bankAccountId?: Types.ObjectId | null; bankTransactionId?: Types.ObjectId | null;
+  bankChargesTransactionId?: Types.ObjectId | null;
   bankAmountMinor?: number | null; bankCurrency?: string; bankNote?: string;
 };
 type InvoiceLike = { _id: Types.ObjectId; organizationId: Types.ObjectId; invoiceNumber: string; customerName?: string; currency?: string; payments?: unknown };
@@ -106,14 +112,16 @@ export function stampAccount(
   }
 }
 
-/** Whether a payment's line may move: not once a bank statement was reconciled against it (a tin's may). */
+/** Whether a payment's lines may move: not once a bank statement was reconciled against either (a tin's may). */
 export async function assertLineMovable(orgId: string, p: StoredPayment | undefined | null): Promise<void> {
-  if (!p?.bankTransactionId) return;
-  const tx = await BankTransaction.findOne({ _id: p.bankTransactionId, organizationId: oid(orgId) }).select("isReconciled accountId accountName").lean<any>();
-  if (!tx?.isReconciled) return;
-  const acc = await BankAccount.findById(tx.accountId).select("accountType").lean<any>();
-  if (acc?.accountType === "petty_cash") return;
-  throw new AppError("CONFLICT", `This payment's line in ${tx.accountName} has been reconciled against a bank statement — its account, amount and date can't change now`);
+  for (const id of [p?.bankTransactionId, p?.bankChargesTransactionId]) {
+    if (!id) continue;
+    const tx = await BankTransaction.findOne({ _id: id, organizationId: oid(orgId) }).select("isReconciled accountId accountName").lean<any>();
+    if (!tx?.isReconciled) continue;
+    const acc = await BankAccount.findById(tx.accountId).select("accountType").lean<any>();
+    if (acc?.accountType === "petty_cash") continue;
+    throw new AppError("CONFLICT", `This payment's line in ${tx.accountName} has been reconciled against a bank statement — its account, amount and date can't change now`);
+  }
 }
 
 async function removeLine(orgId: string, txId: Types.ObjectId | null | undefined): Promise<void> {
@@ -122,77 +130,104 @@ async function removeLine(orgId: string, txId: Types.ObjectId | null | undefined
   if (tx) await recalculateRunningBalances(orgId, tx.accountId);
 }
 
-/** The line a payment should have, or null. */
-function wantedLine(inv: InvoiceLike, p: StoredPayment) {
+/** The lines a payment should have, or null: its full credit, and its charges' debit (null when it has none). */
+function wantedLines(inv: InvoiceLike, p: StoredPayment) {
   if (!p.bankAccountId || p.bankNote || !(Number(p.bankAmountMinor) > 0)) return null;
   const method = paymentMethodLabel(p.method) || p.method;
+  const landed = Number(p.bankAmountMinor);
+  const charges = Number(p.chargesMinor) || 0;
+  const net = p.amountMinor - charges;
+  // In the account's currency: as given when it is the payment's own; else at the payment's rate.
+  const chargesHere = charges > 0 ? (landed === net ? charges : net > 0 ? Math.round((charges * landed) / net) : 0) : 0;
+  const base = `${inv.invoiceNumber}${inv.customerName ? ` · ${inv.customerName}` : ""} · ${method}`;
+  const reference = String(p.receiptNumber || p.reference || inv.invoiceNumber).slice(0, 200);
   return {
     accountId: String(p.bankAccountId),
-    amountMinor: Number(p.bankAmountMinor),
     date: new Date(p.paidOn),
-    description: `${inv.invoiceNumber}${inv.customerName ? ` · ${inv.customerName}` : ""} · ${method}`.slice(0, 300),
-    reference: String(p.receiptNumber || p.reference || inv.invoiceNumber).slice(0, 200),
+    credit: { amountMinor: landed + chargesHere, description: base.slice(0, 300), reference },
+    debit: chargesHere > 0 ? { amountMinor: chargesHere, description: `${base} charges`.slice(0, 300), reference } : null,
   };
 }
 
+type Line = { amountMinor: number; description: string; reference: string };
+
+/** One of a payment's lines brought into line: kept, its words updated, or removed and made again. Returns its id. */
+async function syncOne(
+  orgId: string, invoice: { _id: unknown; invoiceNumber: string }, haveId: Types.ObjectId | null | undefined,
+  want: { accountId: string; date: Date } | null, line: Line | null, type: "credit" | "debit",
+): Promise<{ id: Types.ObjectId | null; changed: boolean; missingAccount: boolean }> {
+  const have = haveId ? await BankTransaction.findOne({ _id: haveId, organizationId: oid(orgId) }).lean<any>() : null;
+  // Signed, as the account keeps it: a debit is negative (as payroll's is), so the balance moves by what landed.
+  const signed = line ? (type === "debit" ? -line.amountMinor : line.amountMinor) : 0;
+  if (have && want && line && String(have.accountId) === want.accountId && have.amountMinor === signed
+    && have.type === type && new Date(have.date).getTime() === want.date.getTime()) {
+    if (have.description !== line.description || have.reference !== line.reference) {
+      await BankTransaction.updateOne({ _id: have._id }, { $set: { description: line.description, reference: line.reference } });
+    }
+    return { id: have._id, changed: false, missingAccount: false };
+  }
+  if (have) await removeLine(orgId, have._id);
+  if (!want || !line) return { id: null, changed: !!have, missingAccount: false };
+  const account = await BankAccount.findOne({ _id: oid(want.accountId), organizationId: oid(orgId) }).select("accountName currency").lean<any>();
+  if (!account) return { id: null, changed: true, missingAccount: true };
+  const tx = await BankTransaction.create({
+    organizationId: oid(orgId), accountId: account._id, accountName: account.accountName, currency: account.currency,
+    date: want.date, description: line.description, reference: line.reference,
+    amountMinor: signed, type, runningBalanceMinor: 0, source: "manual", status: "matched",
+    matches: [{ type: "invoice", referenceId: String(invoice._id), referenceNumber: invoice.invoiceNumber, amountMinor: line.amountMinor }],
+    notes: type === "credit"
+      ? `Payment on invoice ${invoice.invoiceNumber} — it moves with the payment`
+      : `Charges on the payment on invoice ${invoice.invoiceNumber} — they move with the payment`,
+  });
+  return { id: tx._id, changed: true, missingAccount: false };
+}
+
 /**
- * Brings a payment's line in its account into line with the payment: made, moved, changed or removed. Called after the
- * invoice is saved. Never throws once the payment is saved — a line that could not be written is said on the payment.
+ * Brings a payment's lines in its account into line with the payment — its full credit and its charges' debit: made,
+ * moved, changed or removed. Called after the invoice is saved. Never throws once the payment is saved — a line that
+ * could not be written is said on the payment. Returns whether anything changed (the backfill counts it).
  */
-export async function syncPaymentLine(inv: InvoiceLike, paymentId: unknown): Promise<void> {
+export async function syncPaymentLine(inv: InvoiceLike, paymentId: unknown): Promise<boolean> {
   const orgId = String(inv.organizationId);
   const { Invoice } = await import("./invoice.model");
   const fresh = await Invoice.findById(inv._id).select("organizationId invoiceNumber customerName currency payments").lean<any>();
   const p: StoredPayment | undefined = (fresh?.payments ?? []).find((x: any) => String(x._id) === String(paymentId));
-  if (!fresh || !p) return;
-  const want = wantedLine(fresh, p);
+  if (!fresh || !p) return false;
+  const want = wantedLines(fresh, p);
   try {
-    const have = p.bankTransactionId
-      ? await BankTransaction.findOne({ _id: p.bankTransactionId, organizationId: oid(orgId) }).lean<any>()
-      : null;
-    if (have && want && String(have.accountId) === want.accountId && have.amountMinor === want.amountMinor
-      && new Date(have.date).getTime() === want.date.getTime()) {
-      if (have.description !== want.description || have.reference !== want.reference) {
-        await BankTransaction.updateOne({ _id: have._id }, { $set: { description: want.description, reference: want.reference } });
-      }
-      return;
+    const credit = await syncOne(orgId, fresh, p.bankTransactionId, want, want?.credit ?? null, "credit");
+    const debit = await syncOne(orgId, fresh, p.bankChargesTransactionId, want, want?.debit ?? null, "debit");
+    const changed = credit.changed || debit.changed;
+    if (changed && want) {
+      const account = await BankAccount.findOne({ _id: oid(want.accountId), organizationId: oid(orgId) }).select("_id").lean<any>();
+      if (account) await recalculateRunningBalances(orgId, account._id);
     }
-    if (have) await removeLine(orgId, have._id);
-    let txId: Types.ObjectId | null = null;
-    if (want) {
-      const account = await BankAccount.findOne({ _id: oid(want.accountId), organizationId: oid(orgId) }).select("accountName currency").lean<any>();
-      if (account) {
-        const tx = await BankTransaction.create({
-          organizationId: oid(orgId), accountId: account._id, accountName: account.accountName, currency: account.currency,
-          date: want.date, description: want.description, reference: want.reference,
-          amountMinor: want.amountMinor, type: "credit", runningBalanceMinor: 0, source: "manual", status: "matched",
-          matches: [{ type: "invoice", referenceId: String(fresh._id), referenceNumber: fresh.invoiceNumber, amountMinor: want.amountMinor }],
-          notes: `Payment on invoice ${fresh.invoiceNumber} — it moves with the payment`,
-        });
-        await recalculateRunningBalances(orgId, account._id);
-        txId = tx._id;
-      }
+    const note = want && !credit.id ? "The account has gone — pick another" : undefined;
+    if (changed || String(p.bankTransactionId ?? "") !== String(credit.id ?? "") || String(p.bankChargesTransactionId ?? "") !== String(debit.id ?? "")) {
+      await Invoice.updateOne({ _id: fresh._id, "payments._id": p._id }, {
+        $set: { "payments.$.bankTransactionId": credit.id, "payments.$.bankChargesTransactionId": debit.id, ...(note ? { "payments.$.bankNote": note } : {}) },
+      });
     }
-    const note = want && !txId ? "The account has gone — pick another" : undefined;
-    await Invoice.updateOne({ _id: fresh._id, "payments._id": p._id }, {
-      $set: { "payments.$.bankTransactionId": txId, ...(note ? { "payments.$.bankNote": note } : {}) },
-    });
     // The caller's copy too, so what it answers says where the payment is.
     const mine = ((inv.payments as { _id: unknown; set?: (k: string, v: unknown) => void }[] | undefined) ?? []).find((x) => String(x._id) === String(p._id));
     if (mine?.set) {
-      mine.set("bankTransactionId", txId);
+      mine.set("bankTransactionId", credit.id);
+      mine.set("bankChargesTransactionId", debit.id);
       if (note) mine.set("bankNote", note);
     }
+    return changed;
   } catch (err) {
     const { logger } = await import("../../lib/logger");
     logger.error({ err, invoiceId: String(fresh._id), paymentId: String(paymentId) }, "Could not put the payment in its bank account");
     await Invoice.updateOne({ _id: fresh._id, "payments._id": p._id }, {
       $set: { "payments.$.bankNote": `Not put in the account: ${(err as Error).message}`.slice(0, 300) },
     }).catch(() => undefined);
+    return false;
   }
 }
 
-/** A deleted payment's line goes with it. */
+/** A deleted payment's lines go with it — its credit and its charges' debit. */
 export async function removePaymentLine(orgId: string, p: StoredPayment | undefined | null): Promise<void> {
   if (p?.bankTransactionId) await removeLine(orgId, p.bankTransactionId);
+  if (p?.bankChargesTransactionId) await removeLine(orgId, p.bankChargesTransactionId);
 }

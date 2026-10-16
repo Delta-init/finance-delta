@@ -108,6 +108,8 @@ const paymentSubSchema = new Schema(
         account's currency — or why it is not in (bankNote). */
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
     bankTransactionId: { type: Schema.Types.ObjectId, default: null },
+    /** Its charges' own line in that account — a debit under the payment's full credit (2026-10-16). */
+    bankChargesTransactionId: { type: Schema.Types.ObjectId, default: null },
     bankAmountMinor: { type: Number, default: null },
     bankCurrency: { type: String, default: "" },
     bankNote: { type: String, default: "" },

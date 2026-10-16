@@ -5,7 +5,8 @@
  *
  *   1. Settings: each method's account, only this organization's accounts, "" clears one.
  *   2. Recorded by hand: its method's account, a matched credit in it, the balance up — or the one picked, or none.
- *   3. Charges: what lands is the payment less them.
+ *   3. Charges: what lands is the payment less them — shown as two lines (2026-10-16): the full payment's credit and
+ *      its charges' debit, each matched to the invoice; the balance moves by what landed.
  *   4. Edited (after approval too): another account — the line moves; another amount or date — the line follows;
  *      none — the line goes. Deleted: the line goes and the balance with it.
  *   5. An INR account for an AED invoice: kept, out of the balance, saying why, until the rupees are given.
@@ -14,6 +15,8 @@
  *   7. A Tetra Commission course payment ("INR TRANSFER") lands in the INR account.
  *   8. A bank statement reconciled against a line: the payment's account, amount and date no longer move; a petty
  *      cash tin's still do.
+ *   9. The backfill (charges-lines-backfill.ts): a payment from before, one net line, becomes the two — the balance
+ *      the same; a reconciled one is left; run again, nothing to do.
  *
  * Run through scripts/payment-bank-e2e.sh. Scratch databases only.
  */
@@ -107,10 +110,21 @@ check("a method with no account: none, as before", !lastPayment(d).bankAccountId
 check("another organization's account can't be picked", /not one of this organization's/.test(await refusal(pay(i1, { amountMinor: 1_000, bankAccountId: theirs.id }))));
 
 /* ── 3 ── */
-step("3. Charges: the payment less them lands");
+step("3. Charges: the payment less them lands — as two lines");
 d = await pay(i1, { method: "card", amountMinor: 100_000, chargesMinor: 2_500 });
 check("AED 1,000 by card, AED 25 charges → AED 975 in Bank Account", lastPayment(d).bankAmountMinor === 97_500 && (await balanceOf(bank.id)) === 297_500, String(await balanceOf(bank.id)));
 const cardId = lastPayment(d).id;
+{
+  const ls = await linesOf(bank.id);
+  const credit = ls.find((l) => l.type === "credit" && l.amountMinor === 100_000);
+  const debit = ls.find((l) => l.type === "debit" && l.amountMinor === -2_500);
+  check("two lines: a credit of the full AED 1,000 (as the invoice shows it) and a debit of the AED 25 charges",
+    !!credit && !!debit && /charges$/.test(debit.description) && debit.matches?.[0]?.referenceId === i1 && debit.matches?.[0]?.amountMinor === 2_500, j(ls));
+}
+d = await pay(i1, { method: "cash", amountMinor: 1_000, chargesMinor: 0, bankAccountId: petty.id });
+check("no charges: one line, as before", (await linesOf(petty.id)).filter((l) => l.matches?.[0]?.referenceId === i1 && l.amountMinor === 1_000).length === 1
+  && !(await linesOf(petty.id)).some((l) => l.type === "debit"));
+await inv.deletePayment(ORG, i1, lastPayment(d).id);
 
 /* ── 4 ── */
 step("4. Edited (after approval too) and deleted: the line follows");
@@ -120,14 +134,16 @@ const edit = (id: string, pid: string, over: Record<string, unknown>) => inv.upd
 d = await edit(i1, cardId, { bankAccountId: petty.id });
 check("moved to Petty Cash: out of Bank Account, into Petty Cash", (await balanceOf(bank.id)) === 200_000 && (await balanceOf(petty.id)) === 147_500 && d.payments.find((x: any) => x.id === cardId)?.accountName === "Petty Cash", `${await balanceOf(bank.id)} / ${await balanceOf(petty.id)}`);
 d = await edit(i1, cardId, { bankAccountId: petty.id, amountMinor: 120_000, paidOn: "2026-10-10" });
-const pl = (await linesOf(petty.id)).find((l) => l.amountMinor === 117_500);
-check("another amount and date: the line follows (AED 1,175 on 10 Oct)", !!pl && new Date(pl.date).toISOString().slice(0, 10) === "2026-10-10" && (await balanceOf(petty.id)) === 167_500, j(await linesOf(petty.id)));
+const pl = (await linesOf(petty.id)).find((l) => l.amountMinor === 120_000);
+const pc = (await linesOf(petty.id)).find((l) => l.amountMinor === -2_500);
+check("another amount and date: both lines follow (AED 1,200 less 25, on 10 Oct)", !!pl && !!pc && new Date(pl.date).toISOString().slice(0, 10) === "2026-10-10"
+  && new Date(pc.date).toISOString().slice(0, 10) === "2026-10-10" && (await balanceOf(petty.id)) === 167_500, j(await linesOf(petty.id)));
 d = await edit(i1, cardId, { bankAccountId: "", amountMinor: 120_000 });
 check("none: its line goes", (await balanceOf(petty.id)) === 50_000 && !d.payments.find((x: any) => x.id === cardId)?.bankAccountId);
 d = await edit(i1, cardId, { bankAccountId: bank.id, amountMinor: 120_000 });
 check("and back into Bank Account", (await balanceOf(bank.id)) === 317_500);
 await inv.deletePayment(ORG, i1, cardId);
-check("deleted: its line and its money gone from Bank Account", (await balanceOf(bank.id)) === 200_000 && (await linesOf(bank.id)).length === 1);
+check("deleted: both its lines and its money gone from Bank Account", (await balanceOf(bank.id)) === 200_000 && (await linesOf(bank.id)).length === 1);
 
 /* ── 5 ── */
 step("5. The INR account for an AED invoice");
@@ -194,6 +210,42 @@ const p6 = lastPayment(d);
 await BankTransaction.updateOne({ _id: (await Invoice.findById(i5).lean<any>()).payments[1].bankTransactionId }, { $set: { isReconciled: true } });
 d = await edit(i5, p6.id, { method: "cash", amountMinor: 40_000, chargesMinor: 0, bankAccountId: petty.id });
 check("a petty cash tin's counted line still moves", d.payments.find((x: any) => x.id === p6.id)?.amountMinor === 40_000);
+
+/* ── 9 ── */
+step("9. The backfill: a payment from before, as one net line, becomes two");
+{
+  const { splitChargesLines } = await import("./charges-lines-backfill");
+  const i9 = await invoice(500_000);
+  d = await pay(i9, { method: "tamara", amountMinor: 200_000, chargesMinor: 10_000 });
+  const p9 = lastPayment(d);
+  // As it was before 2026-10-16: one credit of the payment less charges, no charges line.
+  const doc9 = await Invoice.findById(i9).lean<any>();
+  const pp = doc9.payments.find((x: any) => String(x._id) === p9.id);
+  await BankTransaction.deleteOne({ _id: pp.bankChargesTransactionId });
+  await BankTransaction.updateOne({ _id: pp.bankTransactionId }, { $set: { amountMinor: 190_000 } });
+  await Invoice.updateOne({ _id: i9, "payments._id": pp._id }, { $set: { "payments.$.bankChargesTransactionId": null } });
+  const { recalculateRunningBalances } = await import("../modules/banking/banking.service");
+  await recalculateRunningBalances(ORG, new Types.ObjectId(bank.id));
+  const before = await balanceOf(bank.id);
+  let rows = await splitChargesLines({ write: false, invoices: [doc9.invoiceNumber] });
+  check("dry run: one payment would be split, nothing written", rows.length === 1 && !rows[0]!.skipped && (await linesOf(bank.id)).filter((l) => l.matches?.[0]?.referenceId === i9).length === 1, j(rows));
+  const backupDir = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "charges-lines-"));
+  rows = await splitChargesLines({ write: true, invoices: [doc9.invoiceNumber], backupDir });
+  const mine = (await linesOf(bank.id)).filter((l) => l.matches?.[0]?.referenceId === i9);
+  check("written: a credit of the full AED 2,000 and a debit of the AED 100 charges, the balance the same",
+    rows[0]?.done === true && mine.length === 2 && mine.some((l) => l.amountMinor === 200_000) && mine.some((l) => l.amountMinor === -10_000) && (await balanceOf(bank.id)) === before, j({ rows, mine, before, now: await balanceOf(bank.id) }));
+  check("…the line it replaced kept in the backup", (await import("node:fs")).readdirSync(backupDir).length === 1);
+  rows = await splitChargesLines({ write: false, invoices: [doc9.invoiceNumber] });
+  check("run again: nothing to do", rows.length === 0, j(rows));
+  // A reconciled one is left as it was.
+  d = await pay(i9, { method: "tamara", amountMinor: 100_000, chargesMinor: 5_000 });
+  const q = (await Invoice.findById(i9).lean<any>()).payments.find((x: any) => String(x._id) === lastPayment(d).id);
+  await BankTransaction.deleteOne({ _id: q.bankChargesTransactionId });
+  await BankTransaction.updateOne({ _id: q.bankTransactionId }, { $set: { amountMinor: 95_000, isReconciled: true } });
+  await Invoice.updateOne({ _id: i9, "payments._id": q._id }, { $set: { "payments.$.bankChargesTransactionId": null } });
+  rows = await splitChargesLines({ write: true, invoices: [doc9.invoiceNumber], backupDir });
+  check("a payment whose line was reconciled: skipped, saying why", rows.length === 1 && /reconciled/.test(rows[0]!.skipped ?? "") && !rows[0]!.done, j(rows));
+}
 
 // The approval's own emails and notices finish in the background first.
 await Bun.sleep(1500);

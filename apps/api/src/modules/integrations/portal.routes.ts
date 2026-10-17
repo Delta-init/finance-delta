@@ -11,6 +11,7 @@ import {
   setUserRoleFromPortal,
 } from "./portal-directory.service";
 import { pendingForPortal } from "./portal-pending.service";
+import { financeWatchForPortal } from "./portal-watch.service";
 
 const router = Router();
 
@@ -117,6 +118,17 @@ router.get(
   "/pending",
   asyncHandler(async (_req: Request, res: Response) => {
     res.json({ success: true, data: await pendingForPortal() });
+  }),
+);
+
+/**
+ * Approvals waiting (and the ones past 30 minutes) and entries typed with an
+ * old date — the Root portal's Pending → Finance tab; see financeWatchForPortal.
+ */
+router.get(
+  "/finance-watch",
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.json({ success: true, data: await financeWatchForPortal() });
   }),
 );
 

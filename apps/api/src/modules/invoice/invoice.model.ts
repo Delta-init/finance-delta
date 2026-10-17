@@ -187,6 +187,10 @@ const invoiceSchema = new Schema(
           },
           /** The fee less what was collected, as the counsellor was shown it. */
           declaredBalanceMinor: { type: Number },
+          /** The sales person's note from the close — internal, never printed
+              for the client — and when it last changed in the CRM. */
+          salesNote: { type: String, trim: true, maxlength: 2000 },
+          salesNoteUpdatedAt: { type: Date },
           /** Each payment taken at the close, with its own method and receipt —
               adding up to declaredPaidMinor. Absent before the CRMs sent them
               one by one. Recorded against the invoice on approval. */

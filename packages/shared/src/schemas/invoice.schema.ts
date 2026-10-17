@@ -399,6 +399,15 @@ export const enrolmentInputSchema = z.object({
    * what was collected, the bonus never in it. Declared, like the payment.
    */
   declaredBalanceMinor: z.number().int().min(0).optional(),
+  /**
+   * The note the sales person wrote at the close, for the people here (the
+   * owner, 2026-10-17). Internal: never printed on the invoice or put in an
+   * email to the client — that is what the invoice's own `notes` are for.
+   * Kept up to date from the CRM whenever it changes there.
+   */
+  salesNote: z.string().max(2000).optional(),
+  /** When the sales note last changed in the CRM (ISO). */
+  salesNoteUpdatedAt: z.string().optional(),
   /*
    * Which LMS course this enrolment is for, as the calling system named it.
    *
@@ -803,7 +812,10 @@ export const inboundEnrolmentSchema = z.object({
    * Callers from before send none.
    */
   payments: z.array(declaredPaymentSchema).min(1).max(10).optional(),
+  /** Printed on the client's invoice. Not where a sales note goes — see salesNote. */
   notes: z.string().max(2000).optional(),
+  /** The sales person's note from the close, for finance only — never printed for the client. */
+  salesNote: z.string().max(2000).optional(),
 }).refine((v) => Boolean(v.course) !== Boolean(v.courses), {
   message: "Send exactly one of course or courses, not both and not neither",
 }).refine((v) => !v.payments || v.payments.reduce((sum, p) => sum + p.amountMinor, 0) === v.declaredPaidMinor, {
@@ -811,6 +823,18 @@ export const inboundEnrolmentSchema = z.object({
   path: ["payments"],
 });
 export type InboundEnrolmentInput = z.infer<typeof inboundEnrolmentSchema>;
+
+/**
+ * A sales note changed in the CRM after the enrolment was sent: the same
+ * source and externalId the enrolment came with, and the note as it is now
+ * (empty clears it). Changes nothing else — not the approval, not the bill.
+ */
+export const inboundSalesNoteSchema = z.object({
+  externalId: z.string().min(1).max(120),
+  source: z.string().min(1).max(40).default("crm"),
+  salesNote: z.string().max(2000),
+});
+export type InboundSalesNote = z.infer<typeof inboundSalesNoteSchema>;
 export type InboundEnrolmentCourse = z.infer<typeof inboundEnrolmentCourseSchema>;
 
 /**

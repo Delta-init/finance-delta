@@ -7,6 +7,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { useCustomer } from "@/features/customers/api";
+import { SalesNote } from "./SalesNote";
 
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
 
@@ -86,6 +87,8 @@ export function EnrolmentDetailsDialog({
             <Row label="TRN / VAT number" value={customer?.vatNumber} loading={isLoading} />
             <Row label="Address" value={address} loading={isLoading} />
           </Section>
+
+          {e?.salesNote ? <SalesNote note={e.salesNote} updatedAt={e.salesNoteUpdatedAt} /> : null}
 
           {e && (
             <Section title="Enrolment">

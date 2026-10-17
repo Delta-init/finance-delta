@@ -1,9 +1,9 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundBalancePaymentSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundBalancePaymentSchema, inboundSalesNoteSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
-import { intakeEnrolment } from "./enrolment-intake.service";
+import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
 import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 import { intakeTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
@@ -88,6 +88,19 @@ export const enrolmentStatuses = asyncHandler(async (req: Request, res: Response
 });
 
 /** A sales CRM's balance payment (2026-10-13): waits for accounts; the enrolment's status says where it stands. */
+/**
+ * The sales note of an enrolment already sent, as it is now in the CRM. Only
+ * the note changes; 404 for an enrolment this organization does not have, so
+ * the CRM keeps it and tries again (it may simply not have been sent yet).
+ */
+export const updateEnrolmentSalesNote = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const input = inboundSalesNoteSchema.parse(req.body);
+  const updated = await updateSalesNote(orgId, input);
+  if (!updated) throw new AppError("NOT_FOUND", "No enrolment with that id here");
+  ok(res, updated);
+});
+
 export const takeBalancePayment = asyncHandler(async (req: Request, res: Response) => {
   const orgId = await organizationOf(req);
   const input = inboundBalancePaymentSchema.parse(req.body);

@@ -86,6 +86,16 @@ function enrolmentBonusDTO(enrolment: unknown, source?: string): { bonus?: { giv
   };
 }
 
+/** The sales note and when it last changed, where there is one. */
+function salesNoteDTO(enrolment: unknown): { salesNote?: string; salesNoteUpdatedAt?: string } {
+  const e = enrolment as { salesNote?: string | null; salesNoteUpdatedAt?: Date | null };
+  if (!e.salesNote) return {};
+  return {
+    salesNote: e.salesNote,
+    ...(e.salesNoteUpdatedAt ? { salesNoteUpdatedAt: new Date(e.salesNoteUpdatedAt).toISOString() } : {}),
+  };
+}
+
 type StoredDeclaredPayment = {
   method: DeclaredPayment["method"];
   amountMinor: number;
@@ -175,6 +185,8 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           crm: enrolmentCrm((doc.enrolment as { crm?: string }).crm, (doc as { external?: { source?: string } }).external?.source) ?? undefined,
           // The academy it was sold for — for a sales CRM's enrolment, or one that recorded it.
           ...enrolmentAcademyDTO(doc),
+          // The sales person's note — for the screens here only, never the client's invoice.
+          ...salesNoteDTO(doc.enrolment),
         }
       : undefined,
     approval: approvalDTO(doc),

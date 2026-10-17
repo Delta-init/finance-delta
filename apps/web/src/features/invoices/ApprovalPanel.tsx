@@ -6,6 +6,7 @@ import { bonusCurrency, formatMoney, formatOriginalPayment, paymentMethodLabel, 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AcademyTag, CrmTag } from "@/components/crm-tag";
+import { SalesNote } from "./SalesNote";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -122,6 +123,9 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
           ) : null}
         </div>
       )}
+
+      {/* What the sales person wrote at the close — read before deciding. */}
+      {e?.salesNote ? <SalesNote note={e.salesNote} updatedAt={e.salesNoteUpdatedAt} /> : null}
 
       {/* What finance flagged when a sales CRM handed it over — an unmapped
           course, a rep with no account here, an email that already belongs to

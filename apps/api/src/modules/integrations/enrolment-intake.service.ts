@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { CRM_BONUS_CURRENCY, enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
-import type { Academy, InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, StoredReceipt } from "@delta/shared";
+import type { Academy, InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, InboundSalesNote, StoredReceipt } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
@@ -202,6 +202,15 @@ export async function intakeEnrolment(
       return await resubmitReturned(orgId, String(existing._id), input, String(existing.customerId));
     }
 
+    // A resend of an enrolment already here changes nothing — but its sales
+    // note, when it carries one that differs, is kept up to date.
+    if (input.salesNote !== undefined) {
+      await Invoice.updateOne(
+        { _id: existing._id, "enrolment.salesNote": { $ne: input.salesNote.trim() } },
+        { $set: salesNoteSet(input.salesNote) },
+      );
+    }
+
     return {
       invoiceId: String(existing._id),
       invoiceNumber: existing.invoiceNumber as string,
@@ -357,6 +366,8 @@ export async function intakeEnrolment(
         // Each payment on its own, set here rather than through createInvoice,
         // which takes the enrolment block a counsellor types and no more.
         ...(input.payments ? { "enrolment.declaredPayments": input.payments } : {}),
+        // The sales person's note, kept apart from the invoice's printed notes.
+        ...salesNoteSet(input.salesNote),
       },
     },
   );
@@ -389,6 +400,41 @@ export async function intakeEnrolment(
  * back to the invoice's currency. `storedCrm`: the CRM the invoice already
  * has, for a resend that does not repeat it.
  */
+/**
+ * The sales note as $set paths, for a caller that sent one ("" clears it);
+ * nothing for a caller that did not, so an older CRM leaves the note alone.
+ */
+function salesNoteSet(salesNote: string | undefined): Record<string, unknown> {
+  if (salesNote === undefined) return {};
+  const note = salesNote.trim();
+  return { "enrolment.salesNote": note, "enrolment.salesNoteUpdatedAt": new Date() };
+}
+
+/**
+ * A sales note changed in the CRM after its enrolment was sent (the owner,
+ * 2026-10-17: every save reaches finance). Only the note: the approval, the
+ * bill and everything else stay as they are, whatever state the invoice is in.
+ * Null when this organization has no enrolment by that source and id.
+ */
+export async function updateSalesNote(
+  orgId: string,
+  input: InboundSalesNote,
+): Promise<{ invoiceId: string; invoiceNumber: string } | null> {
+  const doc = await Invoice.findOneAndUpdate(
+    {
+      organizationId: new Types.ObjectId(orgId),
+      "external.source": input.source,
+      "external.externalId": input.externalId,
+      enrolment: { $exists: true },
+    },
+    { $set: salesNoteSet(input.salesNote) },
+    { new: true, projection: { invoiceNumber: 1 } },
+  );
+  if (!doc) return null;
+  logger.info({ orgId, source: input.source, externalId: input.externalId, invoice: doc.invoiceNumber }, "Sales note updated from the CRM");
+  return { invoiceId: String(doc._id), invoiceNumber: doc.invoiceNumber };
+}
+
 function declaredBonusAndBalance(input: InboundEnrolmentInput, storedCrm?: string): { bonus?: { given: boolean; amountMinor: number; currency?: string }; declaredBalanceMinor?: number } {
   const currency = input.bonus?.currency || (enrolmentCrm(input.crm ?? storedCrm, input.source) ? CRM_BONUS_CURRENCY : undefined);
   return {
@@ -582,6 +628,8 @@ async function resubmitReturned(
       if (declaredBalanceMinor !== undefined) doc.set("enrolment.declaredBalanceMinor", declaredBalanceMinor);
       // A CRM that says which it is says so again; one that does not leaves it.
       if (input.crm) doc.set("enrolment.crm", input.crm);
+      // The sales note as resent; a caller that sends none leaves the one there.
+      for (const [path, value] of Object.entries(salesNoteSet(input.salesNote))) doc.set(path, value);
       /*
        * The academy is fixed per close (the user, 2026-10-10): the CRM sends a
        * correction to the organisation the close went to, and shows the academy

@@ -12,6 +12,7 @@ import {
 } from "./portal-directory.service";
 import { pendingForPortal } from "./portal-pending.service";
 import { financeWatchForPortal } from "./portal-watch.service";
+import { financeReportForPortal } from "./portal-report.service";
 
 const router = Router();
 
@@ -129,6 +130,20 @@ router.get(
   "/finance-watch",
   asyncHandler(async (_req: Request, res: Response) => {
     res.json({ success: true, data: await financeWatchForPortal() });
+  }),
+);
+
+/**
+ * One organization's expenses, approvals decided, invoices and budget over a
+ * period — the Root portal's Reports → Finance tab; see financeReportForPortal.
+ */
+router.get(
+  "/finance-report",
+  asyncHandler(async (req: Request, res: Response) => {
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    const data = await financeReportForPortal({ org: str(req.query.org), from: str(req.query.from), to: str(req.query.to) });
+    if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+    res.json({ success: true, data });
   }),
 );
 

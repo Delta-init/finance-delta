@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { tagRefSchema } from "./tag.schema";
 import { emiDetailInputSchema, emiDetailSchema } from "./emi.schema";
+import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
 export const TAX_CODES = ["VAT", "GST", "CGST", "SGST", "IGST", "TDS", "WHT", "NONE"] as const;
 export type TaxCode = (typeof TAX_CODES)[number];
@@ -129,6 +130,8 @@ export const recordPaymentSchema = z.object({
   bankAccountId: z.string().max(40).optional(),
   /** What landed, in the account's currency — needed when the account is in another currency than the invoice. */
   bankAmountMinor: z.coerce.number().int().positive().optional(),
+  /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
+  lateReason: lateReasonSchema,
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 
@@ -511,6 +514,8 @@ export const paymentSchema = z.object({
   bankCurrency: z.string().optional(),
   inBank: z.boolean().optional(),
   bankNote: z.string().optional(),
+  /** Typed in late: waiting for a manager, or what one decided. */
+  lateEntry: recordLateEntrySchema.optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;

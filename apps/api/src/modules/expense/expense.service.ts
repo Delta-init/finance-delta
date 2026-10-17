@@ -25,6 +25,8 @@ import { nextNumber } from "../sequence/sequence.service";
 import { categoryNameMap } from "../expense-category/expense-category.service";
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { paymentAccountsOf } from "../invoice/payment-bank";
+import { lateView, isLatePending } from "../late-entry/late-entry.model";
+import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 
 /** Resolve a category's display name: denormalized value, then default label, then a humanized slug. */
 function categoryDisplay(slug: string, denorm?: string): string {
@@ -104,6 +106,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     bankAccountId: d.bankAccountId ? String(d.bankAccountId) : undefined,
     inBank: d.bankAccountId ? Boolean(d.bankTransactionId) : undefined,
     bankNote: (d.bankNote as string) || undefined,
+    lateEntry: lateView(d.lateEntry),
     paymentMethod: (d.paymentMethod as ExpenseDTO["paymentMethod"]) ?? undefined,
     reference: (doc.reference as string) ?? "",
     submittedById: String(doc.submittedById),
@@ -254,7 +257,8 @@ export async function syncExpenseLine(orgId: string, id: unknown): Promise<void>
   if (!doc) return;
   let note = "";
   let want: Parameters<typeof syncDebitLine>[2] = null;
-  if (doc.bankAccountId && doc.paidOn && !["voided", "rejected"].includes(doc.status)) {
+  // Not while it waits for a manager to approve it being entered late.
+  if (doc.bankAccountId && doc.paidOn && !["voided", "rejected"].includes(doc.status) && !isLatePending(doc.lateEntry)) {
     const acc = await debitAccount(orgId, String(doc.bankAccountId), doc.currency ?? "AED");
     if ("note" in acc) note = acc.note;
     else {
@@ -306,6 +310,8 @@ export async function createExpense(
   orgId: string,
   userId: string,
   input: CreateExpenseInput,
+  /** Who is typing it in — only the Expenses screen passes it: dated too far back, it waits for a manager. */
+  late?: LateActor,
 ): Promise<ExpenseDTO> {
   const user = await User.findOne({ _id: userId, "memberships.organizationId": orgId });
   if (!user) throw new AppError("NOT_FOUND", "User not found");
@@ -338,9 +344,11 @@ export async function createExpense(
 
   if (input.departmentId) await requireOrgDepartment(orgId, input.departmentId);
 
+  const lateNow = await lateForDate(orgId, late, input.expenseDate, null, null);
   const doc = await Expense.create({
     organizationId: new Types.ObjectId(orgId),
     expenseNumber,
+    lateEntry: lateNow.next ?? null,
     category: input.category,
     categoryName: displayName,
     description: input.description,
@@ -379,6 +387,7 @@ export async function createExpense(
     notes: input.notes ?? "",
   });
 
+  if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, lateInfo(doc));
   // A freshly created document holds the raw id, so the DTO would report no
   // department on the one response that shows what was just saved.
   return syncedDTO(orgId, doc._id);
@@ -389,6 +398,7 @@ export async function updateExpense(
   id: string,
   input: UpdateExpenseInput,
   scope: Scope,
+  late?: LateActor,
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
@@ -413,6 +423,11 @@ export async function updateExpense(
     d.categoryName = resolveCategoryName(category, nm, input.categoryOther);
   }
   if (input.description !== undefined) doc.description = input.description;
+  // Its date moved: too far back and it waits for a manager; back within the days and it no longer does.
+  const lateNow = input.expenseDate !== undefined
+    ? await lateForDate(orgId, late, input.expenseDate, d.expenseDate as Date, d.lateEntry as never)
+    : null;
+  if (lateNow && lateNow.next !== undefined) d.lateEntry = lateNow.next;
   if (input.expenseDate !== undefined) d.expenseDate = new Date(input.expenseDate);
   if (input.currency !== undefined) d.currency = input.currency;
   if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
@@ -484,8 +499,28 @@ export async function updateExpense(
 
   // Its line in the bank follows — unless a bank statement was reconciled against it.
   if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
+  // Waiting for a manager again, a paid one leaves its account until it is approved.
+  if (d.bankTransactionId && lateNow?.pending) await assertDebitMovable(orgId, d.bankTransactionId);
   await doc.save();
+  if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, lateInfo(doc));
+  else if (lateNow?.withdraw) await withdrawLateFor(orgId, "expense", doc._id);
   return syncedDTO(orgId, doc._id);
+}
+
+/** What the managers are shown of it. */
+function lateInfo(doc: unknown) {
+  const x = doc as Record<string, any>;
+  return {
+    kind: "expense" as const, refId: x._id, number: String(x.expenseNumber ?? ""), title: String(x.description ?? ""),
+    amountMinor: Number(x.totalMinor ?? 0), currency: String(x.currency ?? "AED"),
+  };
+}
+
+/** Refused while a manager has still to approve it being entered late. */
+function assertNotWaiting(doc: unknown, what: string): void {
+  if (isLatePending((doc as { lateEntry?: unknown }).lateEntry)) {
+    throw new AppError("CONFLICT", `It was entered late and is waiting for a manager — it can't be ${what} until one approves it`);
+  }
 }
 
 export async function submitExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
@@ -494,6 +529,9 @@ export async function submitExpense(orgId: string, id: string, scope: Scope): Pr
   assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
+  if ((doc as unknown as { lateEntry?: { state?: string } }).lateEntry?.state === "rejected") {
+    throw new AppError("CONFLICT", "A manager rejected it being entered late — enter it again with its reason, or change its date");
+  }
   doc.status = "submitted";
   await doc.save();
   // Not awaited: the claim is submitted either way, and a mail outage must not
@@ -511,6 +549,7 @@ export async function approveExpense(
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (doc.status !== "submitted") throw new AppError("CONFLICT", "Only submitted expenses can be approved");
+  assertNotWaiting(doc, "approved");
 
   const d = doc as unknown as Record<string, unknown>;
   doc.status = "approved";
@@ -553,6 +592,7 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
   doc.status = "voided";
   await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
+  await withdrawLateFor(orgId, "expense", doc._id);
   return syncedDTO(orgId, doc._id);
 }
 
@@ -584,6 +624,7 @@ export async function deleteExpense(orgId: string, id: string): Promise<void> {
   await assertDebitMovable(orgId, line);
   await doc.deleteOne();
   if (line) await syncDebitLine(orgId, line, null);
+  await withdrawLateFor(orgId, "expense", doc._id);
   if (keys.length) {
     const { deleteFile } = await import("../../lib/storage");
     await Promise.all(keys.map((k) => deleteFile(k).catch(() => undefined)));
@@ -621,6 +662,7 @@ export async function markExpensePaid(
   const status = doc.status as string;
   if (status === "voided") throw new AppError("CONFLICT", "A voided expense cannot be marked paid");
   if (status === "rejected") throw new AppError("CONFLICT", "A rejected expense cannot be marked paid");
+  assertNotWaiting(doc, "marked paid");
 
   const d = doc as unknown as Record<string, unknown>;
   d.paidOn = new Date(input.paidOn);

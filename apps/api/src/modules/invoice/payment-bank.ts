@@ -35,7 +35,7 @@ type StoredPayment = {
   _id: Types.ObjectId; method: string; amountMinor: number; chargesMinor?: number; paidOn: Date; reference?: string;
   receiptNumber?: string; bankAccountId?: Types.ObjectId | null; bankTransactionId?: Types.ObjectId | null;
   bankChargesTransactionId?: Types.ObjectId | null;
-  bankAmountMinor?: number | null; bankCurrency?: string; bankNote?: string;
+  bankAmountMinor?: number | null; bankCurrency?: string; bankNote?: string; lateEntry?: { state?: string } | null;
 };
 type InvoiceLike = { _id: Types.ObjectId; organizationId: Types.ObjectId; invoiceNumber: string; customerName?: string; currency?: string; payments?: unknown };
 
@@ -133,6 +133,8 @@ async function removeLine(orgId: string, txId: Types.ObjectId | null | undefined
 /** The lines a payment should have, or null: its full credit, and its charges' debit (null when it has none). */
 function wantedLines(inv: InvoiceLike, p: StoredPayment) {
   if (!p.bankAccountId || p.bankNote || !(Number(p.bankAmountMinor) > 0)) return null;
+  // Not while it waits for a manager to approve it being entered late.
+  if (p.lateEntry?.state === "pending") return null;
   const method = paymentMethodLabel(p.method) || p.method;
   const landed = Number(p.bankAmountMinor);
   const charges = Number(p.chargesMinor) || 0;

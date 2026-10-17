@@ -124,6 +124,7 @@ export default function SettingsPage() {
         invoiceDefaults: { ...org.invoiceDefaults },
         reminderIntervals: org.reminderIntervals ?? [-3, 1, 7],
         paymentAccounts: Object.fromEntries(PAYMENT_METHODS.map((m) => [m, org.paymentAccounts?.[m] ?? ""])),
+        lateEntryDays: org.lateEntryDays ?? 7,
       });
     }
   }, [org, reset]);
@@ -418,6 +419,21 @@ export default function SettingsPage() {
                 </select>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Late entries (the user, 2026-10-17) */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Late entries</h2>
+            <p className="mt-1 text-xs text-foreground-muted">
+              An expense, bill or payment typed in with a date more than this many days back needs a reason, and waits
+              for somebody tagged Manager (Users → Edit user) to approve it. 0 turns this off.
+            </p>
+          </div>
+          <div className="max-w-[200px] space-y-1">
+            <label className="text-sm font-medium text-foreground">Days back</label>
+            <input type="number" min={0} max={365} {...register("lateEntryDays", { valueAsNumber: true })} className={FIELD} />
           </div>
         </section>
 

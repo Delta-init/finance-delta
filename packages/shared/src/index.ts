@@ -37,5 +37,6 @@ export * from "./schemas/inventory.schema";
 export * from "./schemas/reports.schema";
 export * from "./schemas/commission.schema";
 export * from "./schemas/loan.schema";
+export * from "./schemas/late-entry.schema";
 export * from "./i18n/print-labels";
 export * from "./pdf/invoice-pdf";

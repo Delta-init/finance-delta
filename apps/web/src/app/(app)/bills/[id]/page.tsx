@@ -32,6 +32,7 @@ import {
 import { useCan } from "@/lib/use-can";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
+import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 /** "Not in a bank account" in the account picker. */
 const NO_ACCOUNT = "__none__";
@@ -108,6 +109,9 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     return accounts.some((a) => a.id === aid) ? aid : NO_ACCOUNT;
   };
   const [accountTouched, setAccountTouched] = useState(false);
+  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  const lateDate = useLateDate(watch("paidOn"), editingPayment?.paidOn);
+  const [lateReason, setLateReason] = useState("");
   const bankAccountId = watch("bankAccountId") ?? NO_ACCOUNT;
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
   useEffect(() => {
@@ -115,6 +119,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   }, [paymentOpen, org, accountList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (paymentOpen) setLateReason("");
     if (paymentOpen && editingPayment) {
       reset({
         method: editingPayment.method,
@@ -164,7 +169,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   async function onPaymentSubmit(values: RecordBillPaymentInput) {
-    const payload: RecordBillPaymentInput = { ...values };
+    if (lateDate.late && !lateReason.trim()) {
+      toast.error("Give the reason it is entered late — a manager will need to approve it");
+      return;
+    }
+    const payload: RecordBillPaymentInput = { ...values, ...(lateDate.late ? { lateReason: lateReason.trim() } : {}) };
     const picked = accounts.find((a) => a.id === values.bankAccountId);
     payload.bankAccountId = picked ? picked.id : "";
     // Typed before there was a list: kept while no account is picked.
@@ -246,6 +255,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             {canApprove && <Badge tone="warning">Pending approval</Badge>}
           </div>
           <p className="text-sm text-foreground-muted">{bill.vendorName}</p>
+          {/* Entered late: waiting for a manager, or what one decided (2026-10-17). */}
+          {bill.lateEntry && <div className="mt-1.5"><LateBadge late={bill.lateEntry} full /></div>}
         </div>
         <div className="flex items-center gap-2">
           {bill.status !== "voided" && (
@@ -405,7 +416,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 <tbody className="divide-y divide-border">
                   {bill.payments.map((p) => (
                     <tr key={p.id}>
-                      <td className="px-5 py-3 text-foreground-muted align-top">{p.paidOn}</td>
+                      <td className="px-5 py-3 text-foreground-muted align-top">
+                        {p.paidOn}
+                        <div className="mt-0.5"><LateBadge late={p.lateEntry} /></div>
+                      </td>
                       <td className="px-3 py-3 align-top">
                         {METHOD_LABELS[p.method] ?? p.method.replace("_", " ")}
                         {p.emi && (
@@ -612,6 +626,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 {errors.paidOn && <p className="text-xs text-danger">{errors.paidOn.message}</p>}
               </div>
             </div>
+            <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="payment" />
 
             {method === "easebuzz_emi" && (
               <div className="rounded-md border border-border bg-surface-muted/40 p-3 space-y-3">

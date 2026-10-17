@@ -52,6 +52,7 @@ import { downloadInvoicePdf } from "@/features/invoices/invoice-pdf";
 import { useOrganization } from "@/features/organization/api";
 import { useCustomer } from "@/features/customers/api";
 import { useBankAccount, useBankAccounts } from "@/features/banking/api";
+import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 
 export function InvoiceDetail({ id }: { id: string }) {
@@ -491,7 +492,10 @@ export function InvoiceDetail({ id }: { id: string }) {
             <tbody>
               {invoice.payments.map((p) => (
                 <tr key={p.id} className="border-t border-border">
-                  <td className="px-4 py-2.5 text-foreground-muted align-top">{p.paidOn}</td>
+                  <td className="px-4 py-2.5 text-foreground-muted align-top">
+                    {p.paidOn}
+                    <div className="mt-0.5"><LateBadge late={p.lateEntry} /></div>
+                  </td>
                   <td className="px-4 py-2.5 align-top">
                     <span className="capitalize">{paymentMethodLabel(p.method)}</span>
                     {p.emi && (
@@ -608,6 +612,7 @@ export function PaymentDialog({
   };
   // Picked by hand: a change of method no longer moves it.
   const [accountTouched, setAccountTouched] = useState(false);
+  const [lateReason, setLateReason] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -634,6 +639,7 @@ export function PaymentDialog({
   // Sync the form to the payment being edited (or reset to defaults) each open.
   useEffect(() => {
     if (!open) return;
+    setLateReason("");
     if (editing) {
       reset({
         method: editing.method,
@@ -668,6 +674,8 @@ export function PaymentDialog({
 
   const method = watch("method");
   const bankAccountId = watch("bankAccountId");
+  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  const lateDate = useLateDate(watch("paidOn"), editing?.paidOn);
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
   const foreignAccount = pickedAccount && pickedAccount.currency !== currency ? pickedAccount : null;
   // The organization's settings can arrive after the form opened: a new payment takes its method's account then.
@@ -701,6 +709,10 @@ export function PaymentDialog({
   }
 
   async function onSubmit(data: PaymentFormValues) {
+    if (lateDate.late && !lateReason.trim()) {
+      toast.error("Give the reason it is entered late — a manager will need to approve it");
+      return;
+    }
     if (Math.round(data.amount * 100) > allowedMinor) {
       setError("amount", { message: overBalanceMessage });
       return;
@@ -717,6 +729,7 @@ export function PaymentDialog({
       ...(foreignAccount && Number(data.bankAmount) > 0 ? { bankAmountMinor: Math.round(Number(data.bankAmount) * 100) } : {}),
       chargesMinor: Math.round((data.charges || 0) * 100),
       ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
+      ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
     };
     try {
       if (editing) {
@@ -818,6 +831,11 @@ export function PaymentDialog({
                 <p className="mt-1 text-xs text-danger">{errors.paidOn.message}</p>
               )}
             </div>
+            {lateDate.late && (
+              <div className="col-span-2">
+                <LateReasonField late days={lateDate.days} value={lateReason} onChange={setLateReason} what="payment" />
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">Account</label>
               {/* The Banking account it went into — its method's to start with (Settings → Where payments go). The

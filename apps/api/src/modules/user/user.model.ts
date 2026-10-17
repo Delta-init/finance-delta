@@ -6,6 +6,8 @@ const membershipSchema = new Schema(
     roleId:         { type: Schema.Types.ObjectId, ref: "Role", required: true },
     departmentId:   { type: Schema.Types.ObjectId, ref: "Department" },
     status:         { type: String, enum: ["active", "invited", "suspended"], default: "active" },
+    /** Tagged Manager here: decides late entries (2026-10-17). */
+    isManager:      { type: Boolean, default: false },
   },
   { _id: false },
 );

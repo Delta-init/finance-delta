@@ -19,6 +19,7 @@ import { toast } from "@/lib/toast";
 import { useVendors } from "@/features/vendors/api";
 import { useCreateBill, useUpdateBill } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
+import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
@@ -109,6 +110,9 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const { fields, append, remove } = useFieldArray({ control, name: "lineItems" });
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
+  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  const lateDate = useLateDate(watch("billDate"), isEdit ? initialValues?.billDate : undefined);
+  const [lateReason, setLateReason] = useState("");
 
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -151,6 +155,10 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const belowPaid = amountPaidMinor > 0 && nextTotalMinor < amountPaidMinor;
 
   async function onSubmit(values: BillFormValues) {
+    if (lateDate.late && !lateReason.trim()) {
+      toast.error("Give the reason it is entered late — a manager will need to approve it");
+      return;
+    }
     const input: CreateBillInput = {
       vendorId: values.vendorId,
       sourcePOId: values.sourcePOId || undefined,
@@ -167,6 +175,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
         discountPct: l.discountPct,
         taxPct: l.taxPct,
       })),
+      ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
     };
     try {
       if (isEdit && billId) {
@@ -236,6 +245,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
               <Label>Bill Date *</Label>
               <Input type="date" {...register("billDate")} />
               {errors.billDate && <p className="text-xs text-danger">{errors.billDate.message}</p>}
+              <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="bill" />
             </div>
             <div className="space-y-1.5">
               <Label>Due Date *</Label>

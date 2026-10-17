@@ -78,6 +78,8 @@ export const updateOrganizationSchema = z.object({
    * for none. A payment recorded with that method goes into it unless it is given another.
    */
   paymentAccounts: z.record(z.string().max(40), z.string().max(40)).optional(),
+  /** Entries dated more than this many days back wait for a manager (2026-10-17); 0 turns it off. */
+  lateEntryDays: z.coerce.number().int().min(0).max(365).optional(),
 });
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 
@@ -102,6 +104,7 @@ export const organizationSchema = z.object({
   invoiceDefaults: invoiceDefaultsSchema,
   reminderIntervals: z.array(z.number()),
   paymentAccounts: z.record(z.string(), z.string()).default({}),
+  lateEntryDays: z.number().default(7),
   taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
   taxLabel: z.string().default("VAT"),
   taxRates: z.array(taxConfigItemSchema).default([]),

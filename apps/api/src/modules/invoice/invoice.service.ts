@@ -38,6 +38,8 @@ import { sendInvoiceEmail } from "../../lib/email";
 import { getExchangeRate } from "../../lib/exchange-rate";
 import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
+import { lateView } from "../late-entry/late-entry.model";
+import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 
 /**
  * Tell Tetra Commission the enrolment's money changed, if its student went
@@ -243,6 +245,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         bankAmountMinor?: number | null;
         bankCurrency?: string;
         bankNote?: string;
+        lateEntry?: unknown;
         createdAt: Date;
       };
       return {
@@ -275,6 +278,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
               ...(pm.bankNote ? { bankNote: pm.bankNote } : {}),
             }
           : {}),
+        ...(lateView(pm.lateEntry) ? { lateEntry: lateView(pm.lateEntry) } : {}),
         createdAt: pm.createdAt.toISOString(),
       };
     }),
@@ -1839,6 +1843,8 @@ export async function updatePayment(
   id: string,
   paymentId: string,
   input: RecordPaymentInput,
+  /** Who is typing it — only the invoice screen passes it: moved too far back, it waits for a manager. */
+  late?: LateActor,
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if (effectiveStatus(doc) === "void") throw new AppError("CONFLICT", "Cannot edit a payment on a voided invoice");
@@ -1877,7 +1883,10 @@ export async function updatePayment(
   const moves = String(next.bankAccountId ?? "") !== String(p.bankAccountId ?? "")
     || (next.bankNote ? null : next.bankAmountMinor ?? null) !== (p.bankNote ? null : p.bankAmountMinor ?? null)
     || new Date(input.paidOn).getTime() !== new Date(p.paidOn as Date).getTime();
-  if (moves) await assertLineMovable(orgId, p as never);
+  // Its date moved too far back: it waits for a manager again, out of its account meanwhile.
+  const lateNow = await lateForDate(orgId, late, input.paidOn, p.paidOn as Date, p.lateEntry as never);
+  if (moves || lateNow.pending) await assertLineMovable(orgId, p as never);
+  if (lateNow.next !== undefined) p.lateEntry = lateNow.next;
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
@@ -1906,6 +1915,8 @@ export async function updatePayment(
   applyInstalmentDue(doc as never);
 
   await doc.save();
+  if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, p));
+  else if (lateNow.withdraw) await withdrawLateFor(orgId, "invoice_payment", doc._id, paymentId);
   await syncPaymentLine(doc as never, paymentId);
   await doc.populate("tagIds", "name color");
   void syncLmsAccess(doc);
@@ -1970,6 +1981,7 @@ export async function deletePayment(
 
   await doc.save();
   await removePaymentLine(orgId, gone);
+  await withdrawLateFor(orgId, "invoice_payment", doc._id, paymentId);
   await doc.populate("tagIds", "name color");
   feeUpdate(doc._id, "payment deleted");
   return toDTO(doc);
@@ -1986,6 +1998,15 @@ async function _restoreInventory(orgId: string, doc: InvoiceDoc) {
   }
 }
 
+/** What the managers are shown of a payment typed in late. */
+function paymentLateInfo(doc: unknown, p: unknown) {
+  const d = doc as Record<string, any>, x = p as Record<string, any>;
+  return {
+    kind: "invoice_payment" as const, refId: d._id, paymentId: x._id, number: String(d.invoiceNumber ?? ""),
+    title: `${d.customerName ?? ""} · ${String(x.method ?? "").replace(/_/g, " ")}`, amountMinor: Number(x.amountMinor ?? 0), currency: String(d.currency ?? "AED"),
+  };
+}
+
 export async function recordPayment(
   orgId: string,
   id: string,
@@ -1997,6 +2018,8 @@ export async function recordPayment(
    * that makes recording it again a no-op.
    */
   from?: { externalRef: string; proofUrl?: string },
+  /** Who is typing it — only the invoice screen passes it: dated too far back, it waits for a manager. */
+  late?: LateActor,
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if (from?.externalRef && ((doc.payments as unknown as { externalRef?: string }[]) ?? []).some((p) => p.externalRef === from.externalRef)) {
@@ -2058,6 +2081,8 @@ export async function recordPayment(
     ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
   };
   stampAccount(payment, account, doc.currency ?? "AED");
+  const lateNow = await lateForDate(orgId, late, input.paidOn, null, null);
+  payment.lateEntry = lateNow.next ?? null;
 
   (doc.payments as unknown[]).push(payment);
   const newPaid = (doc.amountPaidMinor ?? 0) + input.amountMinor;
@@ -2071,6 +2096,7 @@ export async function recordPayment(
   await doc.save();
   // Its line in the bank account.
   const added = ((doc.payments as unknown as { _id: unknown }[]) ?? []).at(-1);
+  if (added && lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, added));
   if (added) await syncPaymentLine(doc as never, added._id);
   await doc.populate("tagIds", "name color");
   // More of an enrolment paid opens more of its course in the LMS.

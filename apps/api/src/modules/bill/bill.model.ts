@@ -1,4 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
+import { recordLateSchema } from "../late-entry/late-entry.model";
 
 const billLineSchema = new Schema(
   {
@@ -35,6 +36,8 @@ const billPaymentSchema = new Schema(
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
     bankTransactionId: { type: Schema.Types.ObjectId, default: null },
     bankNote: { type: String, default: "" },
+    /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */
+    lateEntry: { type: recordLateSchema, default: null },
     notes: { type: String, default: "" },
     chargesMinor: { type: Number, default: 0 },
     emi: { type: emiSubSchema, default: undefined },
@@ -83,6 +86,7 @@ const billSchema = new Schema(
     balanceMinor: { type: Number, default: 0 },
     payments: { type: [billPaymentSchema], default: [] },
     attachments: { type: [billAttachmentSchema], default: [] },
+    lateEntry: { type: recordLateSchema, default: null },
     notes: { type: String, default: "" },
     paymentTerms: { type: String, default: "" },
   },

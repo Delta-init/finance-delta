@@ -6,6 +6,7 @@ import type { User } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -52,12 +53,14 @@ export function EditUserDialog({
   const [name, setName] = useState(user.name);
   const [roleId, setRoleId] = useState(initialRole);
   const [departmentId, setDepartmentId] = useState(user.department?.id ?? "");
+  const [isManager, setIsManager] = useState(user.isManager ?? false);
 
   useEffect(() => {
     if (!open) return;
     setName(user.name);
     setRoleId(user.isSuperAdmin ? SUPER_ADMIN_OPTION : user.role.id);
     setDepartmentId(user.department?.id ?? "");
+    setIsManager(user.isManager ?? false);
   }, [open, user]);
 
   const adminRoleId = (roles?.data ?? []).find((r) => r.key === "admin")?.id;
@@ -76,6 +79,7 @@ export function EditUserDialog({
           name: name.trim(),
           roleId: wantsSuperAdmin ? adminRoleId! : roleId,
           departmentId: departmentId || null,
+          isManager,
           // Sent only when it changes, so an ordinary edit by an ordinary
           // administrator never touches the field they may not set.
           ...(wantsSuperAdmin !== (user.isSuperAdmin ?? false)
@@ -153,6 +157,17 @@ export function EditUserDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {/* The Manager tag (2026-10-17): approves or rejects what is entered with an old date. */}
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border p-3">
+            <Checkbox checked={isManager} onChange={() => setIsManager((v) => !v)} aria-label="Manager" className="mt-0.5" />
+            <span>
+              <span className="block text-sm font-medium">Manager</span>
+              <span className="block text-xs text-foreground-muted">
+                Sees Late Entries, and approves or rejects expenses, bills and payments entered with an old date.
+              </span>
+            </span>
+          </label>
         </div>
 
         <DialogFooter>

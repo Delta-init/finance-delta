@@ -34,6 +34,7 @@ function toDTO(
   doc: UserDoc,
   role: PopulatedRole,
   department: DepartmentRef = null,
+  isManager = false,
 ): UserDTO {
   return {
     id: doc._id.toString(),
@@ -44,6 +45,7 @@ function toDTO(
     isSuperAdmin: doc.isSuperAdmin ?? false,
     department,
     tags: [],
+    isManager,
     createdAt: doc.createdAt.toISOString(),
   };
 }
@@ -114,7 +116,7 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
     if (!role) continue;
     const deptId = membership.departmentId?.toString();
     const department = deptId && deptNames.has(deptId) ? { id: deptId, name: deptNames.get(deptId)! } : null;
-    results.push(toDTO(u as unknown as UserDoc, role as unknown as PopulatedRole, department));
+    results.push(toDTO(u as unknown as UserDoc, role as unknown as PopulatedRole, department, Boolean(membership.isManager)));
   }
 
   return { data: results, meta: pageMeta(total, query.page, query.pageSize) };
@@ -192,10 +194,11 @@ export async function createUser(
       roleId: role._id,
       departmentId: dept?._id,
       status: "active",
+      isManager: input.isManager ?? false,
     });
     if (input.isSuperAdmin) existing.isSuperAdmin = true;
     await existing.save();
-    return toDTO(existing as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef);
+    return toDTO(existing as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef, input.isManager ?? false);
   }
 
   const user = await User.create({
@@ -204,10 +207,10 @@ export async function createUser(
     passwordHash: await hashPassword(input.password),
     isSuperAdmin: input.isSuperAdmin ?? false,
     status: "active",
-    memberships: [{ organizationId: new Types.ObjectId(orgId), roleId: role._id, departmentId: dept?._id, status: "active" }],
+    memberships: [{ organizationId: new Types.ObjectId(orgId), roleId: role._id, departmentId: dept?._id, status: "active", isManager: input.isManager ?? false }],
   });
 
-  return toDTO(user as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef);
+  return toDTO(user as unknown as UserDoc, role as unknown as PopulatedRole, departmentRef, input.isManager ?? false);
 }
 
 export async function updateUser(
@@ -233,6 +236,8 @@ export async function updateUser(
     const role = await requireOrgRole(orgId, input.roleId);
     membership.roleId = role._id;
   }
+  // The Manager tag: decides late entries here (2026-10-17).
+  if (membership && input.isManager !== undefined) membership.isManager = input.isManager;
   if (membership && input.departmentId !== undefined) {
     if (input.departmentId) {
       const dept = await requireOrgDepartment(orgId, input.departmentId);
@@ -253,7 +258,7 @@ export async function updateUser(
     if (dept) department = { id: dept._id.toString(), name: dept.name };
   }
 
-  return toDTO(user as unknown as UserDoc, finalRole as unknown as PopulatedRole, department);
+  return toDTO(user as unknown as UserDoc, finalRole as unknown as PopulatedRole, department, Boolean(membership?.isManager));
 }
 
 /**

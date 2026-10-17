@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
@@ -54,7 +55,7 @@ const USERS_EXPORT_COLUMNS: ExportColumn<User>[] = [
   { header: "Email", value: (u) => u.email },
   { header: "Role", value: (u) => roleLabel(u) },
   { header: "Department", value: (u) => u.department?.name ?? "—" },
-  { header: "Tags", value: (u) => u.tags.map((tag) => tag.name).join(", ") },
+  { header: "Tags", value: (u) => [...(u.isManager ? ["Manager"] : []), ...u.tags.map((tag) => tag.name)].join(", ") },
   { header: "Status", value: (u) => u.status },
   { header: "Created", value: (u) => u.createdAt },
 ];
@@ -89,7 +90,7 @@ export function UserManager() {
   const { register, handleSubmit, control, reset, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<CreateUserInput>({
       resolver: zodResolver(createUserSchema),
-      defaultValues: { name: "", email: "", password: "", roleId: "", tagIds: [] },
+      defaultValues: { name: "", email: "", password: "", roleId: "", tagIds: [], isManager: false },
     });
 
   const columns: Column<User>[] = [
@@ -102,7 +103,17 @@ export function UserManager() {
         u.isSuperAdmin ? <Badge tone="primary">Super Admin</Badge> : u.role.name,
     },
     { key: "department", header: "Department", cell: (u) => u.department?.name ?? <span className="text-foreground-subtle">—</span> },
-    { key: "tags", header: "Tags", cell: (u) => <TagList tags={u.tags} /> },
+    {
+      key: "tags",
+      header: "Tags",
+      cell: (u) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {/* Decides late entries (2026-10-17). */}
+          {u.isManager && <Badge tone="warning">Manager</Badge>}
+          <TagList tags={u.tags} />
+        </div>
+      ),
+    },
     {
       key: "status",
       header: "Status",
@@ -180,7 +191,7 @@ export function UserManager() {
   }
 
   function openModal() {
-    reset({ name: "", email: "", password: "", roleId: "", tagIds: [] });
+    reset({ name: "", email: "", password: "", roleId: "", tagIds: [], isManager: false });
     setOpen(true);
   }
 
@@ -330,6 +341,13 @@ export function UserManager() {
               <Label>Tags</Label>
               <TagPicker value={watch("tagIds") ?? []} onChange={(v) => setValue("tagIds", v)} />
             </div>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border p-3">
+              <Checkbox checked={!!watch("isManager")} onChange={() => setValue("isManager", !watch("isManager"))} aria-label="Manager" className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-medium">Manager</span>
+                <span className="block text-xs text-foreground-muted">Approves or rejects what is entered with an old date (Late Entries).</span>
+              </span>
+            </label>
             <ResponsiveModalFooter>
               <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
               <Button type="submit" loading={isSubmitting}>Create user</Button>

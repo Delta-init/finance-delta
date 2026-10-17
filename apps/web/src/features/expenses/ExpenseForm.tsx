@@ -23,6 +23,7 @@ import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput } from
 import { useCurrency } from "@/lib/currency-context";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
+import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 /** "Not in a bank account" in the account picker. */
 const NO_ACCOUNT = "__none__";
@@ -128,6 +129,9 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   }, [orgCurrency, isEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currency = watch("currency");
+  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  const lateDate = useLateDate(watch("expenseDate"), isEdit ? initialValues?.expenseDate : undefined);
+  const [lateReason, setLateReason] = useState("");
 
   // Paid from: one of the organization's Banking accounts, its method's to start with (Settings → Where payments go).
   // Once it is paid, it shows in that account as money out.
@@ -162,6 +166,10 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   ];
 
   async function onSubmit(values: ExpenseFormValues) {
+    if (lateDate.late && !lateReason.trim()) {
+      toast.error("Give the reason it is entered late — a manager will need to approve it");
+      return;
+    }
     const input: CreateExpenseInput = {
       category: values.category,
       description: values.description,
@@ -199,6 +207,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       departmentId: values.departmentId || undefined,
       costCentre: values.costCentre ?? "",
       notes: values.notes ?? "",
+      ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
     };
 
     try {
@@ -288,6 +297,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               <Label>Expense Date *</Label>
               <Input type="date" {...register("expenseDate")} />
               {errors.expenseDate && <p className="text-xs text-danger">{errors.expenseDate.message}</p>}
+              <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="expense" />
             </div>
             <div className="space-y-1.5">
               <Label>Due Date</Label>

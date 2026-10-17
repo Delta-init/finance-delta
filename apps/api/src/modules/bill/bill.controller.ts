@@ -5,6 +5,8 @@ import { parseQuery } from "../../middleware/validate";
 import * as svc from "./bill.service";
 
 const org = (req: Request) => req.auth!.organizationId;
+/** Who is typing it, and why it is late when it is (late-entry.service.ts). */
+const late = (req: Request) => ({ userId: req.auth!.userId, reason: req.body?.lateReason as string | undefined });
 
 export const list = asyncHandler(async (req, res) => {
   const query = parseQuery(billQuerySchema, req.query);
@@ -17,11 +19,11 @@ export const get = asyncHandler(async (req, res) => {
 });
 
 export const create = asyncHandler(async (req, res) => {
-  created(res, await svc.createBill(org(req), req.body));
+  created(res, await svc.createBill(org(req), req.body, late(req)));
 });
 
 export const update = asyncHandler(async (req, res) => {
-  ok(res, await svc.updateBill(org(req), req.params.id!, req.body));
+  ok(res, await svc.updateBill(org(req), req.params.id!, req.body, late(req)));
 });
 
 export const approve = asyncHandler(async (req, res) => {
@@ -33,11 +35,11 @@ export const reject = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
-  ok(res, await svc.recordBillPayment(org(req), req.params.id!, req.body));
+  ok(res, await svc.recordBillPayment(org(req), req.params.id!, req.body, late(req)));
 });
 
 export const updatePayment = asyncHandler(async (req, res) => {
-  ok(res, await svc.updateBillPayment(org(req), req.params.id!, req.params.paymentId!, req.body));
+  ok(res, await svc.updateBillPayment(org(req), req.params.id!, req.params.paymentId!, req.body, late(req)));
 });
 
 export const deletePayment = asyncHandler(async (req, res) => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { emiDetailInputSchema, emiDetailSchema } from "./emi.schema";
+import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
 export const billStatusSchema = z.enum([
   "draft",
@@ -58,6 +59,8 @@ export const createBillSchema = z.object({
   notes: z.string().optional().default(""),
   paymentTerms: z.string().optional().default(""),
   requiresApproval: z.boolean().optional().default(false),
+  /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
+  lateReason: lateReasonSchema,
 });
 export type CreateBillInput = z.infer<typeof createBillSchema>;
 
@@ -77,6 +80,8 @@ export const recordBillPaymentSchema = z.object({
   chargesMinor: z.coerce.number().int().min(0).optional().default(0),
   /** Easebuzz EMI details — sent only when method is "easebuzz_emi". */
   emi: emiDetailInputSchema.optional(),
+  /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
+  lateReason: lateReasonSchema,
 });
 export type RecordBillPaymentInput = z.infer<typeof recordBillPaymentSchema>;
 
@@ -110,6 +115,8 @@ export const billSchema = z.object({
       bankAccountId: z.string().optional(),
       inBank: z.boolean().optional(),
       bankNote: z.string().optional(),
+      /** Typed in late: waiting for a manager, or what one decided. */
+      lateEntry: recordLateEntrySchema.optional(),
       notes: z.string(),
       chargesMinor: z.number().default(0),
       emi: emiDetailSchema.optional(),
@@ -117,6 +124,8 @@ export const billSchema = z.object({
     }),
   ),
   attachments: z.array(billAttachmentSchema).default([]),
+  /** Typed in late: waiting for a manager, or what one decided. */
+  lateEntry: recordLateEntrySchema.optional(),
   notes: z.string(),
   paymentTerms: z.string(),
   createdAt: z.string(),

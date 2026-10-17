@@ -42,6 +42,7 @@ import { useCan } from "@/lib/use-can";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
+import { LateBadge } from "@/features/late-entries/LateReason";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -265,6 +266,16 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
           )}
         </div>
       </div>
+
+      {/* Entered late: waiting for a manager, or what one decided (2026-10-17). */}
+      {expense.lateEntry && expense.lateEntry.state !== "withdrawn" && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <LateBadge late={expense.lateEntry} full />
+          {expense.lateEntry.state === "pending" && (
+            <p className="mt-1 text-xs text-foreground-muted">It can't be approved or marked paid until a manager approves it.</p>
+          )}
+        </div>
+      )}
 
       {/* Rejection notice */}
       {expense.status === "rejected" && expense.rejectedReason && (

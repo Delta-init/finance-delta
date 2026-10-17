@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { departmentRefSchema } from "./department.schema";
+import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
 export const expenseCategorySchema = z.enum([
   "salaries_wages",
@@ -100,6 +101,8 @@ export const createExpenseSchema = z.object({
   bankAccountId: z.string().max(40).optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string().optional().default(""),
+  /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
+  lateReason: lateReasonSchema,
   /**
    * When this should be settled by. Optional, and blank is a real answer: an
    * expense with no date to meet simply never falls overdue, which is better
@@ -172,6 +175,8 @@ export const expenseSchema = z.object({
   bankAccountId: z.string().optional(),
   inBank: z.boolean().optional(),
   bankNote: z.string().optional(),
+  /** Typed in late: waiting for a manager, or what one decided. */
+  lateEntry: recordLateEntrySchema.optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
   reference: z.string(),
   submittedById: z.string(),

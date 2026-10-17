@@ -32,10 +32,11 @@ import {
   ClipboardCheck,
   Coins,
   UserPlus,
-  type LucideIcon, MailCheck
+  type LucideIcon, MailCheck, Clock
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
+import { useLateEntriesMe } from "@/features/late-entries/api";
 import {
   Sidebar,
   SidebarContent,
@@ -85,6 +86,8 @@ interface NavItem {
    * itself, all of them. Only kinds the reader may decide are ever counted.
    */
   badge?: ApprovalType | "total";
+  /** Only for somebody tagged Manager (or a super admin), with what waits on them as its badge (2026-10-17). */
+  managerOnly?: boolean;
 }
 
 interface NavGroup {
@@ -117,6 +120,8 @@ const NAV: NavGroup[] = [
       // Everything waiting on a decision, of every kind, so anybody who decides
       // any of them belongs here.
       { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: [...APPROVER_PERMISSIONS], badge: "total" },
+      // Expenses, bills and payments typed in with an old date, for a manager to approve or reject.
+      { href: "/late-entries", label: "Late Entries", icon: Clock, enabled: true, managerOnly: true },
       // Taking an enrolment is the counsellor's whole job, so it is its own
       // entry rather than something reached through the invoice list.
       { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
@@ -211,6 +216,7 @@ export function AppSidebar({
   // is nothing it could count.
   const approver = user.isSuperAdmin || APPROVER_PERMISSIONS.some((p) => hasPermission(user.permissions, p));
   const { data: waiting } = useApprovalSummary(approver);
+  const { data: late } = useLateEntriesMe();
   const badgeFor = (key?: ApprovalType | "total") => {
     if (!key || !waiting) return 0;
     if (key === "total") return waiting.total;
@@ -236,6 +242,7 @@ export function AppSidebar({
         {NAV.map((group, gi) => {
           const items = group.items.filter((item) => {
             if (item.superAdminOnly && !user.isSuperAdmin) return false;
+            if (item.managerOnly && !late?.isManager) return false;
             if (
               item.hideWhenOwnScopedOnly &&
               ownScopedOnly &&
@@ -265,7 +272,7 @@ export function AppSidebar({
                         active={active}
                         disabled={!item.enabled}
                         onNavigate={closeOnMobile}
-                        badge={badgeFor(item.badge)}
+                        badge={item.managerOnly ? late?.pending ?? 0 : badgeFor(item.badge)}
                       />
                     </SidebarMenuItem>
                   );

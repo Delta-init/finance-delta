@@ -12,6 +12,8 @@ export const createUserSchema = z.object({
   roleId: z.string().min(1, "Select a role"),
   departmentId: z.string().optional(),
   tagIds: z.array(z.string()).optional().default([]),
+  /** Tagged Manager in this organization: decides late entries (2026-10-17). */
+  isManager: z.boolean().optional().default(false),
   /**
    * Platform-wide access: every organization, every permission. Not a role —
    * the person still holds one here, and the flag sits above it. Only an
@@ -29,6 +31,7 @@ export const updateUserSchema = z.object({
   departmentId: z.string().nullable().optional(),
   status: z.enum(["active", "suspended"]).optional(),
   tagIds: z.array(z.string()).optional(),
+  isManager: z.boolean().optional(),
   /** Granted and taken away only by somebody who already holds it. */
   isSuperAdmin: z.boolean().optional(),
 });
@@ -43,6 +46,8 @@ export const userSchema = z.object({
   isSuperAdmin: z.boolean().optional().default(false),
   department: departmentRefSchema.nullable().optional(),
   tags: z.array(tagRefSchema).default([]),
+  /** Tagged Manager in this organization: decides late entries. */
+  isManager: z.boolean().optional().default(false),
   createdAt: z.string(),
 });
 export type User = z.infer<typeof userSchema>;

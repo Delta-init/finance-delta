@@ -26,11 +26,11 @@ export const get = asyncHandler(async (req, res) => {
 });
 
 export const create = asyncHandler(async (req, res) => {
-  created(res, await svc.createExpense(org(req), uid(req), req.body));
+  created(res, await svc.createExpense(org(req), uid(req), req.body, { userId: uid(req), reason: req.body?.lateReason }));
 });
 
 export const update = asyncHandler(async (req, res) => {
-  ok(res, await svc.updateExpense(org(req), req.params.id!, req.body, writeScope(req)));
+  ok(res, await svc.updateExpense(org(req), req.params.id!, req.body, writeScope(req), { userId: uid(req), reason: req.body?.lateReason }));
 });
 
 export const submit = asyncHandler(async (req, res) => {

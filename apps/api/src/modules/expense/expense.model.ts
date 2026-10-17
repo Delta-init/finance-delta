@@ -1,4 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
+import { recordLateSchema } from "../late-entry/late-entry.model";
 
 const expenseMileageSchema = new Schema(
   {
@@ -92,6 +93,8 @@ const expenseSchema = new Schema(
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
     bankTransactionId: { type: Schema.Types.ObjectId, default: null },
     bankNote: { type: String, default: "" },
+    /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */
+    lateEntry: { type: recordLateSchema, default: null },
     paymentMethod: {
       type: String,
       enum: ["bank_transfer", "cash", "cheque", "card", "online"],

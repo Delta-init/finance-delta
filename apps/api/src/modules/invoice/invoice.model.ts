@@ -1,5 +1,6 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
 import { ACADEMIES, ENROLMENT_CRMS, PAYMENT_METHODS } from "@delta/shared";
+import { recordLateSchema } from "../late-entry/late-entry.model";
 
 const taxRateSchema = new Schema(
   { code: { type: String, required: true }, rate: { type: Number, required: true }, amountMinor: { type: Number, required: true } },
@@ -113,6 +114,8 @@ const paymentSubSchema = new Schema(
     bankAmountMinor: { type: Number, default: null },
     bankCurrency: { type: String, default: "" },
     bankNote: { type: String, default: "" },
+    /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */
+    lateEntry: { type: recordLateSchema, default: null },
   },
   { timestamps: true },
 );

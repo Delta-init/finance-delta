@@ -30,16 +30,21 @@ interface ExportButtonProps<T> {
   size?: "sm" | "md";
   /** The files it offers, in this order. Excel and PDF unless a page asks for others. */
   formats?: ExportFormat[];
+  /**
+   * Every row to export, for a list whose endpoint does not answer as the others do (payments) or needs its filter
+   * applied here (inventory's low stock) — the table's filters, every page. Left out: `resource` and `params`, paged.
+   */
+  fetchRows?: () => Promise<T[]>;
 }
 
-export function ExportButton<T>({ resource, params, columns, filename, title, disabled, size = "sm", formats = ["excel", "pdf"] }: ExportButtonProps<T>) {
+export function ExportButton<T>({ resource, params, columns, filename, title, disabled, size = "sm", formats = ["excel", "pdf"], fetchRows }: ExportButtonProps<T>) {
   const [busy, setBusy] = useState<null | ExportFormat>(null);
   const [open, setOpen] = useState(false);
 
   async function run(kind: ExportFormat) {
     setBusy(kind);
     try {
-      const rows = await fetchAllRows<T>(resource, params);
+      const rows = fetchRows ? await fetchRows() : await fetchAllRows<T>(resource, params);
       if (rows.length === 0) {
         toast.error("Nothing to export for the current filters");
         return;

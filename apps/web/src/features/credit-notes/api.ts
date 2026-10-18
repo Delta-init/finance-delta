@@ -2,12 +2,17 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CreditNote, CreateCreditNoteInput, ApplyCreditNoteInput } from "@delta/shared";
-import { api } from "@/lib/api";
+import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["credit-notes"] as const;
 
-export function useCreditNotes() {
-  return useQuery({ queryKey: KEY, queryFn: () => api.get<CreditNote[]>("credit-notes") });
+/** A page of credit notes, searched and filtered (2026-10-18 — it used to be the newest 200, unpaged). */
+export function useCreditNotes(params: QueryParams) {
+  return useQuery({
+    queryKey: [...KEY, params],
+    queryFn: () => api.getList<CreditNote>("credit-notes", params),
+    placeholderData: (prev) => prev,
+  });
 }
 
 export function useCreditNote(id: string) {

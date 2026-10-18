@@ -6,17 +6,19 @@ export function pageMeta(total: number, page: number, pageSize: number): PageMet
   return { page, pageSize, total, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
-/** Build a `{ field: 1 | -1 }` Mongo sort from a whitelisted sort key + direction. */
+/**
+ * Build a `{ field: 1 | -1 }` Mongo sort from a whitelisted sort key + direction — ending in `_id`, so rows that share
+ * the sorted value (a status, a date, a name) always come in the same order: paging, and an export reading every page,
+ * never shows one twice or skips one (2026-10-18).
+ */
 export function buildSort(
   allowed: Record<string, string>,
   sort: string | undefined,
   dir: "asc" | "desc",
   fallback: Record<string, 1 | -1> = { createdAt: -1 },
 ): Record<string, 1 | -1> {
-  if (sort && allowed[sort]) {
-    return { [allowed[sort]]: dir === "asc" ? 1 : -1 };
-  }
-  return fallback;
+  const picked = sort && allowed[sort] ? { [allowed[sort]]: (dir === "asc" ? 1 : -1) as 1 | -1 } : fallback;
+  return "_id" in picked ? picked : { ...picked, _id: Object.values(picked)[0] ?? -1 };
 }
 
 /** Case-insensitive regex match helper for `$or` search across fields. */

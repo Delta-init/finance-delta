@@ -88,7 +88,8 @@ export function InvoiceManager() {
 
   useEffect(() => t.resetPage(), [status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useInvoices({
+  // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
+  const listParams = {
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     approval: approval === "all" ? undefined : approval,
@@ -98,7 +99,8 @@ export function InvoiceManager() {
     dueFrom: dueFrom || undefined,
     dueTo: dueTo || undefined,
     tagIds: tagIds.length ? tagIds : undefined,
-  });
+  };
+  const { data, isLoading } = useInvoices(listParams);
 
   // Somebody who only sees their own invoices has one salesperson to choose
   // from — themselves — and cannot read the user list to build the picker.
@@ -299,16 +301,7 @@ export function InvoiceManager() {
           <div className="flex items-center gap-2">
             <ExportButton
               resource="invoices"
-              params={{
-                ...t.baseParams,
-                status: status === "all" ? undefined : status,
-                salespersonId: salespersonId || undefined,
-                issueFrom: issueFrom || undefined,
-                issueTo: issueTo || undefined,
-                dueFrom: dueFrom || undefined,
-                dueTo: dueTo || undefined,
-                tagIds: tagIds.length ? tagIds : undefined,
-              }}
+              params={listParams}
               columns={INVOICE_EXPORT_COLUMNS}
               filename="invoices"
               title="Invoices"

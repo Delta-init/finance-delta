@@ -14,7 +14,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useItems, useLowStockItems } from "@/features/inventory/api";
 import { ExportButton } from "@/components/ui/export-button";
-import type { ExportColumn } from "@/lib/export";
+import { fetchAllRows, type ExportColumn } from "@/lib/export";
 
 const INVENTORY_EXPORT_COLUMNS: ExportColumn<Item>[] = [
   { header: "Item #", value: (i) => i.itemNumber },
@@ -37,12 +37,14 @@ export default function InventoryPage() {
   const [isActive, setIsActive] = useState("all");
   useEffect(() => t.resetPage(), [type, lowStock, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useItems({
+  // One set of filters for the table and its export (2026-10-18).
+  const listParams = {
     ...t.baseParams,
     type: type === "all" ? undefined : type,
     lowStock: lowStock ? "true" : undefined,
     isActive: isActive === "all" ? undefined : isActive,
-  });
+  };
+  const { data, isLoading } = useItems(listParams);
   const { data: lowStockItems } = useLowStockItems();
   const lowStockCount = lowStockItems?.length ?? 0;
 
@@ -162,13 +164,11 @@ export default function InventoryPage() {
               <BarChart3 className="h-4 w-4" /> Valuation
             </Button>
             <ExportButton
-              resource="inventory"
-              params={{
-                ...t.baseParams,
-                type: type === "all" ? undefined : type,
-                lowStock: lowStock ? "true" : undefined,
-                isActive: isActive === "all" ? undefined : isActive,
-              }}
+              resource="inventory/items"
+              params={listParams}
+              // Low stock: every item read and the low ones kept here, so the export is whole whichever API answers —
+              // one deployed before 2026-10-18 found them only among a page's items.
+              fetchRows={lowStock ? async () => (await fetchAllRows<Item>("inventory/items", { ...listParams, lowStock: undefined })).filter((i) => i.isLowStock) : undefined}
               columns={INVENTORY_EXPORT_COLUMNS}
               filename="inventory"
               title="Inventory"

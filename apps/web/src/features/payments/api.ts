@@ -36,6 +36,25 @@ export function usePayments(params: QueryParams = {}) {
   });
 }
 
+/**
+ * Every payment the Payments table's filters match, every page — for its export (2026-10-18). This list answers in its
+ * own shape ({ data, meta: { totalPages } } inside the envelope), so the shared export reader could not page it.
+ */
+export async function fetchAllPayments(params: QueryParams = {}): Promise<PaymentDTO[]> {
+  const rows: PaymentDTO[] = [];
+  for (let page = 1; page <= 1000; page++) {
+    const query = { ...params, page, pageSize: 100 };
+    const res = await api.get<{ data: PaymentDTO[]; meta: { totalPages: number } }>(
+      `payments?${new URLSearchParams(
+        Object.fromEntries(Object.entries(query).filter(([, v]) => v !== undefined && v !== null && String(v) !== "").map(([k, v]) => [k, String(v)])),
+      ).toString()}`,
+    );
+    rows.push(...(res?.data ?? []));
+    if (page >= (res?.meta?.totalPages ?? 1) || !res?.data?.length) break;
+  }
+  return rows;
+}
+
 export function usePayment(id: string | undefined) {
   return useQuery({
     queryKey: [...KEY, id],

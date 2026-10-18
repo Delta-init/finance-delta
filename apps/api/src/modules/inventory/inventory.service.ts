@@ -322,10 +322,33 @@ export async function listItems(
 
   const orClauses = searchOr(q, ["name", "sku", "description", "itemNumber"]);
   if (orClauses) Object.assign(filter, { $or: orClauses });
+  const order = buildSort(ITEM_SORT, sort, dir, { createdAt: -1 });
+
+  // Low stock is worked out from the stock levels, so it is found before paging (2026-10-18): it used to be applied to
+  // one page's items after paging, so a page — and an export reading every page — only found the low ones among them.
+  if (lowStock) {
+    const tracked = await Item.find({ ...filter, trackStock: true }).sort(order).select("_id reorderPoint").lean<{ _id: Types.ObjectId; reorderPoint?: number }[]>();
+    const sums = await StockLevel.aggregate<{ _id: Types.ObjectId; qty: number }>([
+      { $match: { organizationId: new Types.ObjectId(orgId), itemId: { $in: tracked.map((t) => t._id) } } },
+      { $group: { _id: "$itemId", qty: { $sum: "$quantityOnHand" } } },
+    ]);
+    const qtyOf = new Map(sums.map((x) => [String(x._id), x.qty ?? 0]));
+    const low = tracked.filter((t) => (qtyOf.get(String(t._id)) ?? 0) <= (t.reorderPoint ?? 0)).map((t) => t._id);
+    const ids = low.slice(skipFor(page, pageSize), skipFor(page, pageSize) + pageSize);
+    const lowDocs = await Item.find({ _id: { $in: ids } }).populate("departmentId", "name").lean();
+    const byId = new Map((lowDocs as unknown as ItemDoc[]).map((d) => [String(d._id), d]));
+    return {
+      data: ids.flatMap((id) => {
+        const d = byId.get(String(id));
+        return d ? [itemToDTO(d, qtyOf.get(String(id)) ?? 0)] : [];
+      }),
+      meta: pageMeta(low.length, page, pageSize),
+    };
+  }
 
   const [docs, total] = await Promise.all([
     Item.find(filter)
-      .sort(buildSort(ITEM_SORT, sort, dir, { createdAt: -1 }))
+      .sort(order)
       .skip(skipFor(page, pageSize))
       .limit(pageSize)
       .populate("departmentId", "name")
@@ -346,15 +369,11 @@ export async function listItems(
     stockMap.set(key, (stockMap.get(key) ?? 0) + ((l.quantityOnHand as number) ?? 0));
   }
 
-  let items = (docs as unknown as ItemDoc[]).map((d) =>
+  const items = (docs as unknown as ItemDoc[]).map((d) =>
     itemToDTO(d, stockMap.get(d._id.toString()) ?? 0),
   );
 
-  if (lowStock) {
-    items = items.filter((i) => i.isLowStock);
-  }
-
-  return { data: items, meta: pageMeta(lowStock ? items.length : total, page, pageSize) };
+  return { data: items, meta: pageMeta(total, page, pageSize) };
 }
 
 export async function deleteItem(orgId: string, id: string): Promise<void> {

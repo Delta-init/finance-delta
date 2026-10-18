@@ -1,13 +1,20 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FileX, Search, X } from "lucide-react";
 import { formatMoney, type CreditNote } from "@delta/shared";
 import { useCreditNotes } from "@/features/credit-notes/api";
+import { PageHeader } from "@/components/page-header";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExportButton } from "@/components/ui/export-button";
+import { useTableQuery } from "@/lib/use-table-query";
 import type { ExportColumn } from "@/lib/export";
-import { FileX } from "lucide-react";
 
 const STATUS_TONE: Record<string, BadgeProps["tone"]> = {
   draft: "neutral",
@@ -27,82 +34,94 @@ const CREDIT_NOTES_EXPORT_COLUMNS: ExportColumn<CreditNote>[] = [
   { header: "Remaining", value: (cn) => (cn.totalMinor - cn.amountAppliedMinor) / 100 },
 ];
 
+/**
+ * Credit notes, a page at a time, searched and filtered by status (2026-10-18). It used to list the newest 200 with no
+ * paging, and its export stopped there too; the export now takes the table's search and status, every page.
+ */
 export default function CreditNotesPage() {
-  const { data, isLoading } = useCreditNotes();
+  const router = useRouter();
+  const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
+  const [status, setStatus] = useState("all");
+  useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const listParams = { ...t.baseParams, status: status === "all" ? undefined : status };
+  const { data, isLoading } = useCreditNotes(listParams);
+  const hasFilters = status !== "all" || !!t.q;
+
+  const columns: Column<CreditNote>[] = [
+    {
+      key: "number", header: "Number", sortable: true,
+      cell: (cn) => <span className="font-medium text-primary">{cn.creditNoteNumber}</span>,
+    },
+    { key: "customer", header: "Customer", sortable: true, cell: (cn) => cn.customerName },
+    {
+      key: "invoice", header: "Invoice", sortable: true,
+      cell: (cn) => (
+        <Link href={`/invoices/${cn.invoiceId}`} onClick={(e) => e.stopPropagation()} className="text-foreground-muted hover:text-foreground hover:underline">
+          {cn.invoiceNumber}
+        </Link>
+      ),
+    },
+    {
+      key: "status", header: "Status", sortable: true,
+      cell: (cn) => <Badge tone={STATUS_TONE[cn.status] ?? "neutral"} className="capitalize">{cn.status}</Badge>,
+    },
+    { key: "createdAt", header: "Created", sortable: true, cell: (cn) => <span className="text-foreground-muted">{cn.createdAt.slice(0, 10)}</span> },
+    { key: "total", header: "Total", align: "right", sortable: true, cell: (cn) => <span className="font-numeric">{formatMoney(cn.totalMinor, cn.currency)}</span> },
+    {
+      key: "remaining", header: "Remaining", align: "right",
+      cell: (cn) => <span className="font-numeric">{formatMoney(cn.totalMinor - cn.amountAppliedMinor, cn.currency)}</span>,
+    },
+  ];
 
   return (
-    <div className="space-y-4 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Credit Notes</h1>
-          <p className="text-sm text-foreground-muted">Issue credits against invoices</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="space-y-4 p-4 md:p-6">
+      <PageHeader
+        icon={FileX}
+        title="Credit Notes"
+        description="Issue credits against invoices"
+        action={
           <ExportButton
             resource="credit-notes"
-            params={{}}
+            params={listParams}
             columns={CREDIT_NOTES_EXPORT_COLUMNS}
             filename="credit-notes"
             title="Credit Notes"
             size="md"
           />
+        }
+      />
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
+          <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search number, customer, invoice…" className="pl-8" />
         </div>
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            {["draft", "issued", "applied", "voided"].map((s) => (
+              <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {hasFilters && <Button variant="ghost" size="sm" onClick={() => { setStatus("all"); t.setQ(""); }}><X className="h-4 w-4" /> Clear</Button>}
       </div>
-
-      {isLoading ? (
-        <div className="flex h-48 items-center justify-center text-sm text-foreground-muted">
-          Loading…
-        </div>
-      ) : !data?.length ? (
-        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border">
-          <FileX className="h-8 w-8 text-foreground-subtle" />
-          <p className="text-sm text-foreground-muted">No credit notes yet</p>
-          <p className="text-xs text-foreground-subtle">Issue a credit note from an invoice to get started</p>
-        </div>
-      ) : (
-        <div className="rounded-xl border border-border bg-card">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-foreground-muted">
-                <th className="px-4 py-3 font-medium">Number</th>
-                <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Invoice</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Created</th>
-                <th className="px-4 py-3 text-right font-medium">Total</th>
-                <th className="px-4 py-3 text-right font-medium">Remaining</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((cn) => (
-                <tr key={cn.id} className="border-t border-border hover:bg-accent/30 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link href={`/credit-notes/${cn.id}`} className="font-medium text-primary hover:underline">
-                      {cn.creditNoteNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">{cn.customerName}</td>
-                  <td className="px-4 py-3">
-                    <Link href={`/invoices/${cn.invoiceId}`} className="text-foreground-muted hover:text-foreground hover:underline">
-                      {cn.invoiceNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge tone={STATUS_TONE[cn.status] ?? "neutral"} className="capitalize">
-                      {cn.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-foreground-muted">{cn.createdAt.slice(0, 10)}</td>
-                  <td className="px-4 py-3 text-right font-numeric">{formatMoney(cn.totalMinor, cn.currency)}</td>
-                  <td className="px-4 py-3 text-right font-numeric">
-                    {formatMoney(cn.totalMinor - cn.amountAppliedMinor, cn.currency)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        data={data?.data}
+        getRowId={(cn) => cn.id}
+        total={data?.meta.total ?? 0}
+        page={t.page}
+        pageSize={t.pageSize}
+        sort={t.sort}
+        onPageChange={t.setPage}
+        onPageSizeChange={t.setPageSize}
+        onSortChange={t.handleSort}
+        onRowClick={(cn) => router.push(`/credit-notes/${cn.id}`)}
+        isLoading={isLoading}
+        emptyMessage={hasFilters ? "No credit notes match these filters." : "No credit notes yet — issue one from an invoice."}
+      />
     </div>
   );
 }

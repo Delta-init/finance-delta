@@ -5,7 +5,7 @@ import { PAYMENT_METHODS, formatMoney, paymentMethodLabel } from "@delta/shared"
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { usePayments, useDeletePaymentFromList, type PaymentDTO } from "@/features/payments/api";
+import { usePayments, useDeletePaymentFromList, fetchAllPayments, type PaymentDTO } from "@/features/payments/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -153,6 +153,7 @@ export default function PaymentsPage() {
           <ExportButton
             resource="payments"
             params={queryParams}
+            fetchRows={() => fetchAllPayments(queryParams)}
             columns={PAYMENTS_EXPORT_COLUMNS}
             filename="payments"
             title="Payments"

@@ -41,10 +41,15 @@ export async function listPayments(
   const paymentMatch: Record<string, unknown> = {};
   if (params.method) paymentMatch["payments.method"] = params.method;
   if (params.dateFrom || params.dateTo) {
-    const range: Record<string, string> = {};
-    if (params.dateFrom) range.$gte = params.dateFrom;
-    if (params.dateTo) range.$lte = params.dateTo;
-    paymentMatch["payments.paidOn"] = range;
+    // paidOn is a date (the day, at midnight UTC): compared as one — as text it matched nothing (2026-10-18), so the
+    // page's From/To always came back empty.
+    const day = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00.000Z`) : null;
+    const range: Record<string, Date> = {};
+    const from = params.dateFrom ? day(params.dateFrom) : null;
+    const to = params.dateTo ? day(params.dateTo) : null;
+    if (from) range.$gte = from;
+    if (to) range.$lt = new Date(to.getTime() + 86_400_000);
+    if (Object.keys(range).length) paymentMatch["payments.paidOn"] = range;
   }
 
   const hasPaymentFilter = Object.keys(paymentMatch).length > 0;
@@ -75,7 +80,8 @@ export async function listPayments(
     { $unwind: "$payments" },
     ...(hasPaymentFilter ? [{ $match: paymentMatch }] : []),
     ...(params.q ? [{ $match: searchMatch }] : []),
-    { $sort: { [sortField]: sortDir as 1 | -1, "payments.createdAt": -1 } },
+    // Ending in the payment's id, so paging (and an export reading every page) never repeats or skips one.
+    { $sort: { [sortField]: sortDir as 1 | -1, "payments.createdAt": -1, "payments._id": -1 } },
   ];
 
   const [rows, countResult] = await Promise.all([

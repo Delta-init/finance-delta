@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
-import type { CreateCreditNoteInput, CreditNote as DTO, ApplyCreditNoteInput } from "@delta/shared";
+import type { CreateCreditNoteInput, CreditNote as DTO, ApplyCreditNoteInput, ListQuery, Paginated } from "@delta/shared";
+import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { AppError } from "../../lib/http";
 import { nextNumber } from "../sequence/sequence.service";
 import { Invoice } from "../invoice/invoice.model";
@@ -78,8 +79,29 @@ export async function createCreditNote(orgId: string, input: CreateCreditNoteInp
 }
 
 export async function listCreditNotes(orgId: string): Promise<DTO[]> {
-  const docs = await CreditNote.find({ organizationId: orgId }).sort({ createdAt: -1 }).limit(200);
+  const docs = await CreditNote.find({ organizationId: orgId }).sort({ createdAt: -1, _id: -1 }).limit(200);
   return docs.map((d) => toDTO(d as unknown as CreditNoteDoc));
+}
+
+const CREDIT_NOTE_SORT = {
+  number: "creditNoteNumber", customer: "customerName", invoice: "invoiceNumber", status: "status",
+  total: "totalMinor", createdAt: "createdAt",
+} as const;
+
+/**
+ * Credit notes a page at a time, searched and filtered (2026-10-18): the list used to stop at the newest 200, for the
+ * table and its export alike. Asked for with `page`; without it, the newest 200 as before.
+ */
+export async function listCreditNotesPaged(orgId: string, query: ListQuery & { status?: string }): Promise<Paginated<DTO>> {
+  const filter: Record<string, unknown> = { organizationId: new Types.ObjectId(orgId) };
+  if (query.status) filter.status = query.status;
+  const or = searchOr(query.q, ["creditNoteNumber", "customerName", "invoiceNumber", "reason"]);
+  if (or) filter.$or = or;
+  const [docs, total] = await Promise.all([
+    CreditNote.find(filter).sort(buildSort(CREDIT_NOTE_SORT, query.sort, query.dir)).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize),
+    CreditNote.countDocuments(filter),
+  ]);
+  return { data: docs.map((d) => toDTO(d as unknown as CreditNoteDoc)), meta: pageMeta(total, query.page, query.pageSize) };
 }
 
 export async function getCreditNote(orgId: string, id: string): Promise<DTO> {

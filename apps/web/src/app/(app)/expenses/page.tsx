@@ -113,7 +113,8 @@ export default function ExpensesPage() {
   const [dateTo, setDateTo] = useState("");
   useEffect(() => t.resetPage(), [status, payment, category, recurring, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useExpenses({
+  // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
+  const listParams = {
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     paymentStatus: payment === "all" ? undefined : payment,
@@ -121,7 +122,8 @@ export default function ExpensesPage() {
     isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
-  });
+  };
+  const { data, isLoading } = useExpenses(listParams);
 
   const hasFilters =
     status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
@@ -259,14 +261,7 @@ export default function ExpensesPage() {
           <div className="flex items-center gap-2">
             <ExportButton
               resource="expenses"
-              params={{
-                ...t.baseParams,
-                status: status === "all" ? undefined : status,
-                category: category === "all" ? undefined : category,
-                isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
-                dateFrom: dateFrom || undefined,
-                dateTo: dateTo || undefined,
-              }}
+              params={listParams}
               columns={EXPENSE_EXPORT_COLUMNS}
               filename="expenses"
               title="Expenses"

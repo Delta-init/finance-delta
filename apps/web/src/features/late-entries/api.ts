@@ -6,7 +6,10 @@ import { api } from "@/lib/api";
 
 const KEY = ["late-entries"] as const;
 
-/** Whether the reader decides late entries, how many wait, and the organization's days (2026-10-17). */
+/**
+ * Whether the reader decides late entries, reads them (all, or only their own — 2026-10-20), how many wait, and
+ * the organization's days (2026-10-17). An older API answers isManager only: then only managers read them.
+ */
 export function useLateEntriesMe() {
   return useQuery({
     queryKey: [...KEY, "me"],
@@ -16,13 +19,16 @@ export function useLateEntriesMe() {
   });
 }
 
-export function useLateEntries(state: "pending" | "decided", enabled = true) {
+export function useLateEntries(state: "pending" | "decided" | "all", enabled = true) {
   return useQuery({
     queryKey: [...KEY, state],
     queryFn: () => api.get<LateEntry[]>(`late-entries?state=${state}`),
     enabled,
   });
 }
+
+/** Reads the late entries page: a manager, or (since 2026-10-20) whoever sees expenses or bills, or their own. */
+export const canViewLate = (me: { isManager: boolean; canView?: boolean } | undefined) => Boolean(me?.canView ?? me?.isManager);
 
 export function useDecideLateEntry() {
   const qc = useQueryClient();

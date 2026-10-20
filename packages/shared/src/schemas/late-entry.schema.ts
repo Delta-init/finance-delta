@@ -82,7 +82,7 @@ export const lateEntrySchema = z.object({
 export type LateEntry = z.infer<typeof lateEntrySchema>;
 
 export const lateEntryQuerySchema = z.object({
-  state: z.enum(["pending", "decided"]).default("pending"),
+  state: z.enum(["pending", "decided", "all"]).default("pending"),
 });
 export type LateEntryQuery = z.infer<typeof lateEntryQuerySchema>;
 
@@ -91,10 +91,20 @@ export const decideLateEntrySchema = z.object({
 });
 export type DecideLateEntryInput = z.infer<typeof decideLateEntrySchema>;
 
-/** The reader: whether they decide late entries, how many wait, and the organization's rule. */
+/**
+ * The reader: whether they decide late entries, how many wait, and the organization's rule. Since 2026-10-20 the
+ * page is not only for managers: whoever sees expenses or bills reads every late entry ("all"), whoever only has
+ * their own expenses reads their own ("own"); only managers decide. `canView`/`scope`/`managers` are absent from an
+ * API older than that.
+ */
 export const lateEntryMeSchema = z.object({
   isManager: z.boolean(),
+  /** Waiting: all of them for whoever reads them all, their own for "own". */
   pending: z.number(),
   days: z.number(),
+  canView: z.boolean().optional(),
+  scope: z.enum(["all", "own", "none"]).optional(),
+  /** Who decides them: the people tagged Manager — or, with none tagged, the super admins. */
+  managers: z.array(z.string()).optional(),
 });
 export type LateEntryMe = z.infer<typeof lateEntryMeSchema>;

@@ -3,7 +3,7 @@ import type { ApproveAdvanceInput, RejectAdvanceInput } from "@delta/shared";
 import { computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
-import { hrmsClient, type HrmsSalaryAdvance } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsAdvanceHistoryStatus, type HrmsSalaryAdvance, type HrmsSalaryAdvanceRecord } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
 import { placeExpenseInBank } from "../expense/expense.service";
 import { categoryNameMap } from "../expense-category/expense-category.service";
@@ -74,6 +74,45 @@ export async function listWaiting(orgId: string): Promise<AdvanceRow[]> {
     })
     // Soonest needed first; one with no date sorts last.
     .sort((a, b) => (a.neededBy ?? "9999").localeCompare(b.neededBy ?? "9999"));
+}
+
+export const ADVANCE_HISTORY_STATUSES = ["pending", "approved", "rejected", "all"] as const satisfies readonly HrmsAdvanceHistoryStatus[];
+
+export interface AdvanceHistoryRow extends HrmsSalaryAdvanceRecord {
+  hrmsOrgId: string;
+  /** The expense finance recorded when it paid it out, when there is one. */
+  expense: { id: string; expenseNumber: string; status: string } | null;
+}
+
+/**
+ * Finance's full record of salary advances (the user, 2026-10-20): still with
+ * HR ("pending"), paid out, refused — by HR or by finance — or all of them,
+ * across every linked HRMS organisation, newest first. Read live from HRMS like
+ * the queue; a paid one carries the expense recorded for it.
+ */
+export async function listHistory(orgId: string, status: HrmsAdvanceHistoryStatus): Promise<AdvanceHistoryRow[]> {
+  if (!hrmsClient.isConfigured()) throw new AppError("CONFLICT", "The HRMS integration is not configured.");
+  const hrmsOrgIds = await linkedOrgIds(orgId);
+  const rows: Array<HrmsSalaryAdvanceRecord & { hrmsOrgId: string }> = [];
+  for (const hrmsOrgId of hrmsOrgIds) {
+    const got = await hrmsClient.salaryAdvanceHistory(hrmsOrgId, status);
+    // An HRMS from before the full record ignores ?status= and sends its queue: say so rather than show the wrong list.
+    if (status !== "all" && got.some((r) => r.status !== status)) {
+      throw new AppError("UNAVAILABLE", "HRMS needs updating before finance can show the full record of advances.");
+    }
+    rows.push(...got.map((r) => ({ ...r, hrmsOrgId })));
+  }
+  const made = rows.length
+    ? await Expense.find({ organizationId: new Types.ObjectId(orgId), "source.key": { $in: rows.map((r) => sourceKey(r.hrmsOrgId, r._id)) } })
+      .select("expenseNumber status source").lean()
+    : [];
+  const madeFor = new Map(made.map((e) => [String(e.source?.key), e]));
+  return rows
+    .map((r) => {
+      const e = madeFor.get(sourceKey(r.hrmsOrgId, r._id));
+      return { ...r, expense: e ? { id: String(e._id), expenseNumber: String(e.expenseNumber), status: String(e.status) } : null };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 async function requireRow(orgId: string, hrmsOrgId: string, id: string): Promise<HrmsSalaryAdvance> {

@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import {
-  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, isLateDate,
+  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, hasPermission, isLateDate,
   type LateEntry, type LateEntryKind, type LateEntryMe, type LateEntryQuery,
 } from "@delta/shared";
 import { env } from "../../config/env";
@@ -132,7 +132,7 @@ async function requireManager(orgId: string, userId: string): Promise<void> {
 const hrefOf = (e: any): string =>
   e.kind === "expense" ? `/expenses/${e.refId}` : e.kind === "invoice_payment" ? `/invoices/${e.refId}` : `/bills/${e.refId}`;
 
-function toDTO(e: any, userId: string): LateEntry {
+function toDTO(e: any, userId: string, manager: boolean): LateEntry {
   return {
     id: String(e._id), kind: e.kind, refId: String(e.refId), ...(e.paymentId ? { paymentId: String(e.paymentId) } : {}),
     number: e.number ?? "", title: e.title ?? "", amountMinor: e.amountMinor ?? 0, currency: e.currency ?? "AED",
@@ -143,7 +143,7 @@ function toDTO(e: any, userId: string): LateEntry {
     ...(e.decidedAt ? { decidedAt: new Date(e.decidedAt).toISOString() } : {}),
     ...(e.decisionNote ? { decisionNote: e.decisionNote } : {}),
     href: hrefOf(e),
-    canDecide: e.state === "pending" && String(e.enteredById) !== String(userId),
+    canDecide: manager && e.state === "pending" && String(e.enteredById) !== String(userId),
   };
 }
 
@@ -235,27 +235,58 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
 
 // ── The page ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-export async function lateEntryMe(orgId: string, userId: string): Promise<LateEntryMe> {
-  const [manager, days] = await Promise.all([isManager(orgId, userId), lateEntryDaysOf(orgId)]);
-  const pending = manager ? await LateEntryModel.countDocuments({ organizationId: oid(orgId), state: "pending" }) : 0;
-  return { isManager: manager, pending, days };
+/**
+ * Who reads the page (the user, 2026-10-20: "why are late entries not visible"): managers and whoever sees
+ * expenses or bills read every one; whoever only has their own expenses reads their own; nobody else. Only
+ * managers decide.
+ */
+type LateScope = "all" | "own" | "none";
+function scopeOf(manager: boolean, permissions: string[]): LateScope {
+  if (manager || hasPermission(permissions, "expense:read") || hasPermission(permissions, "bill:read")) return "all";
+  if (hasPermission(permissions, "expense:read:own") || hasPermission(permissions, "expense:write:own")) return "own";
+  return "none";
 }
 
-export async function listLateEntries(orgId: string, userId: string, q: LateEntryQuery): Promise<LateEntry[]> {
-  await requireManager(orgId, userId);
-  if (q.state === "pending") {
-    const rows = await LateEntryModel.find({ organizationId: oid(orgId), state: "pending" }).sort({ createdAt: 1 }).limit(500).lean<any[]>();
+/** The names of whoever decides: the people tagged Manager, or with none tagged the super admins. */
+async function managerNames(orgId: string): Promise<string[]> {
+  const tagged = await User.find({
+    status: "active",
+    memberships: { $elemMatch: { organizationId: oid(orgId), isManager: true, status: "active" } },
+  }).select("name").lean<any[]>();
+  const people = tagged.length ? tagged : await User.find({ status: "active", isSuperAdmin: true }).select("name").lean<any[]>();
+  return people.map((u) => String(u.name ?? "")).filter(Boolean).sort();
+}
+
+export async function lateEntryMe(orgId: string, userId: string, permissions: string[] = []): Promise<LateEntryMe> {
+  const [manager, days, managers] = await Promise.all([isManager(orgId, userId), lateEntryDaysOf(orgId), managerNames(orgId)]);
+  const scope = scopeOf(manager, permissions);
+  const pending = scope === "none" ? 0 : await LateEntryModel.countDocuments({
+    organizationId: oid(orgId), state: "pending", ...(scope === "own" ? { enteredById: oid(userId) } : {}),
+  });
+  return { isManager: manager, pending, days, canView: scope !== "none", scope, managers };
+}
+
+export async function listLateEntries(orgId: string, userId: string, q: LateEntryQuery, permissions: string[] = []): Promise<LateEntry[]> {
+  const manager = await isManager(orgId, userId);
+  const scope = scopeOf(manager, permissions);
+  if (scope === "none") throw new AppError("FORBIDDEN", "Late entries are for people who see expenses or bills");
+  const base = { organizationId: oid(orgId), ...(scope === "own" ? { enteredById: oid(userId) } : {}) };
+
+  const waiting = async () => {
+    const rows = await LateEntryModel.find({ ...base, state: "pending" }).sort({ createdAt: 1 }).limit(500).lean<any[]>();
     const live: any[] = [];
     for (const e of rows) {
       // The record went, or was moved on without this request: nothing left to decide.
       if (await stillAsked(e)) live.push(e);
       else await LateEntryModel.updateOne({ _id: e._id, state: "pending" }, { $set: { state: "withdrawn", decidedAt: new Date() } });
     }
-    return live.map((e) => toDTO(e, userId));
-  }
-  const rows = await LateEntryModel.find({ organizationId: oid(orgId), state: { $in: ["approved", "rejected", "withdrawn"] } })
+    return live;
+  };
+  const decided = () => LateEntryModel.find({ ...base, state: { $in: ["approved", "rejected", "withdrawn"] } })
     .sort({ decidedAt: -1, updatedAt: -1 }).limit(200).lean<any[]>();
-  return rows.map((e) => toDTO(e, userId));
+
+  const rows = q.state === "pending" ? await waiting() : q.state === "decided" ? await decided() : [...(await waiting()), ...(await decided())];
+  return rows.map((e) => toDTO(e, userId, manager));
 }
 
 export async function decideLateEntry(
@@ -289,7 +320,7 @@ export async function decideLateEntry(
     throw err;
   }
   void notifyEnterer(orgId, claimed);
-  return toDTO(claimed, userId);
+  return toDTO(claimed, userId, true);
 }
 
 // ── Who is told ───────────────────────────────────────────────────────────────────────────────────────────────

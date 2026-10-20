@@ -277,6 +277,28 @@ export interface HrmsSalaryAdvance {
   createdAt: string;
 }
 
+/** Which advances finance's full record asks HRMS for (2026-10-20): still with HR, paid out, refused, or all. */
+export type HrmsAdvanceHistoryStatus = "pending" | "approved" | "rejected" | "all";
+
+/** A salary advance as finance's full record has it — any status, with both decisions. */
+export interface HrmsSalaryAdvanceRecord extends Omit<HrmsSalaryAdvance, "months" | "startMonth"> {
+  status: "pending" | "hr_approved" | "approved" | "rejected";
+  /** HR sets the recovery when it approves; none yet while it is with HR, or when HR refused it. */
+  months: number | null;
+  startMonth: string | null;
+  rejectedBy?: "hr" | "finance" | null;
+  financeReviewedAt?: string | null;
+  financeNote?: string;
+  /** What finance gave HRMS when it paid — the expense number. */
+  financeRef?: string;
+  paidOn?: string | null;
+  paymentMethod?: string;
+  /** HR, when HR raised it for the employee. */
+  raisedBy?: { _id: string; name: string } | null;
+  overLimit?: boolean;
+  updatedAt?: string;
+}
+
 /** A hiring request HR has approved whose cost is not budgeted, waiting on finance (2026-10-15). */
 export interface HrmsHiringRequest {
   _id: string;
@@ -498,6 +520,11 @@ export const hrmsClient = {
   /** Advances HR has approved and set the recovery for, waiting on finance. */
   async salaryAdvances(organizationId: string): Promise<HrmsSalaryAdvance[]> {
     return (await request<HrmsSalaryAdvance[]>("GET", "/advances/requests", { query: { organizationId } })).data;
+  },
+
+  /** Finance's full record (2026-10-20): advances of one status, or all — newest first. HRMS before then answers only its queue. */
+  async salaryAdvanceHistory(organizationId: string, status: HrmsAdvanceHistoryStatus): Promise<HrmsSalaryAdvanceRecord[]> {
+    return (await request<HrmsSalaryAdvanceRecord[]>("GET", "/advances/requests", { query: { organizationId, status } })).data;
   },
 
   /** Finance agreed to pay it: HRMS starts recovering it from the employee's pay. */

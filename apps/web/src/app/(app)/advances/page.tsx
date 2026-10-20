@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { HandCoins, Check, X, Loader2, Send, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -11,17 +11,35 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useSalaryAdvances, useApproveAdvance, useRejectAdvance, type SalaryAdvanceRequest } from "@/features/advances/api";
+import {
+  useAdvanceHistory, useSalaryAdvances, useApproveAdvance, useRejectAdvance,
+  type AdvanceHistoryStatus, type SalaryAdvanceRecord, type SalaryAdvanceRequest,
+} from "@/features/advances/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
-import { PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
+import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useAllDepartments } from "@/features/departments/api";
 
 /** Radix reads "" as unset, so "no department" needs a value of its own. */
 const NO_DEPARTMENT = "__none__";
 
+type Tab = "pending" | "approved" | "rejected" | "all";
+const TABS: Array<{ key: Tab; label: string }> = [
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" },
+];
+const isTab = (v: string | null): v is Tab => TABS.some((t) => t.key === v);
+
 /**
- * Salary advances HR has approved in HRMS, waiting on finance.
+ * Salary advances — finance's full record (the user, 2026-10-20), in tabs kept in the URL (?tab=):
+ *
+ *  - Pending: HR has approved them and they wait on finance — decided here — and, below, the ones still with HR.
+ *  - Approved: paid out, with the expense recorded and the recovery HRMS is making.
+ *  - Rejected: refused by HR or by finance, and why.
+ *  - All: every one, newest first.
  *
  * The amount and the recovery are HR's — HRMS takes exactly that back from the
  * employee's pay, on that schedule — so nothing here changes them. "Mark paid"
@@ -29,35 +47,158 @@ const NO_DEPARTMENT = "__none__";
  * reference — and tells HRMS, which shows it Paid and starts the recovery.
  */
 export default function AdvancesPage() {
-  const { data, isLoading, error } = useSalaryAdvances();
-  const rows = data ?? [];
+  const [tab, setTabState] = useState<Tab>("pending");
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (isTab(t)) setTabState(t);
+  }, []);
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    const p = new URLSearchParams(window.location.search);
+    if (t === "pending") p.delete("tab"); else p.set("tab", t);
+    window.history.replaceState(null, "", `${window.location.pathname}${p.size ? `?${p}` : ""}`);
+  };
+
+  const waiting = useSalaryAdvances();
+  const waitingRows = waiting.data ?? [];
 
   return (
     <div className="space-y-4 p-4 md:p-6">
       <PageHeader
         icon={HandCoins}
         title="Salary advances"
-        description="Advances HR has approved, waiting on finance to pay them. Marking one paid records a paid expense and starts the recovery from pay in HRMS."
-        action={rows.length > 0 ? <Badge tone="warning">{rows.length} waiting</Badge> : undefined}
+        description="Every advance from HRMS: waiting on finance, still with HR, paid out and refused. Marking one paid records a paid expense and starts the recovery from pay in HRMS."
+        action={waitingRows.length > 0 ? <Badge tone="warning">{waitingRows.length} waiting</Badge> : undefined}
       />
 
+      <div className="flex w-fit gap-1 rounded-lg border border-border bg-surface p-1 text-sm" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`rounded-md px-3 py-1.5 font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
+          >
+            {t.label}
+            {t.key === "pending" && waitingRows.length > 0 && <span className="ml-1.5 tabular-nums">({waitingRows.length})</span>}
+          </button>
+        ))}
+      </div>
+
+      {tab === "pending" ? (
+        <>
+          {waiting.isLoading ? (
+            <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>
+          ) : waiting.error ? (
+            <Card className="px-5 py-12 text-center text-sm text-foreground-muted">
+              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-danger" />
+              Could not reach HRMS. Check the integration settings and try again.
+            </Card>
+          ) : !waitingRows.length ? (
+            <Card className="px-5 py-10 text-center text-sm text-foreground-muted">
+              <HandCoins className="mx-auto mb-3 h-8 w-8 opacity-40" />
+              Nothing is waiting on finance.
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {waitingRows.map((r) => <AdvanceCard key={`${r.hrmsOrgId}:${r._id}`} advance={r} />)}
+            </div>
+          )}
+          <History status="pending" title="Still with HR" empty="Nothing is with HR." />
+        </>
+      ) : (
+        <History status={tab} empty={tab === "approved" ? "No advance has been paid out yet." : tab === "rejected" ? "No advance has been refused." : "No advances yet."} />
+      )}
+    </div>
+  );
+}
+
+// ── Finance's full record ─────────────────────────────────────────────────────
+
+const STATUS: Record<SalaryAdvanceRecord["status"], { label: string; tone: "neutral" | "warning" | "success" | "danger" }> = {
+  pending: { label: "With HR", tone: "neutral" },
+  hr_approved: { label: "Waiting on finance", tone: "warning" },
+  approved: { label: "Paid", tone: "success" },
+  rejected: { label: "Rejected", tone: "danger" },
+};
+const day = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
+const methodLabel = (m?: string) => (m ? (PAYOUT_METHOD_LABELS as Record<string, string>)[m] ?? m.replace(/_/g, " ") : "");
+
+function History({ status, title, empty }: { status: AdvanceHistoryStatus; title?: string; empty: string }) {
+  const { data, isLoading, error } = useAdvanceHistory(status);
+  const rows = data ?? [];
+  const message = error instanceof ApiError
+    ? error.status === 404 ? "The finance API needs updating before it can show this." : error.message
+    : "Could not reach HRMS. Check the integration settings and try again.";
+
+  return (
+    <section className="space-y-3">
+      {title && (
+        <h2 className="pt-2 text-sm font-semibold text-foreground">
+          {title}{rows.length > 0 && <span className="ml-1.5 font-normal text-foreground-muted">({rows.length})</span>}
+        </h2>
+      )}
       {isLoading ? (
-        <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>
+        <Card className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>
       ) : error ? (
-        <Card className="px-5 py-12 text-center text-sm text-foreground-muted">
+        <Card className="px-5 py-10 text-center text-sm text-foreground-muted" data-testid="advance-history-error">
           <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-danger" />
-          Could not reach HRMS. Check the integration settings and try again.
+          {message}
         </Card>
       ) : !rows.length ? (
-        <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
-          <HandCoins className="mx-auto mb-3 h-8 w-8 opacity-40" />
-          Nothing is waiting for a decision.
-        </Card>
+        <Card className="px-5 py-8 text-center text-sm text-foreground-muted">{empty}</Card>
       ) : (
-        <div className="space-y-4">
-          {rows.map((r) => <AdvanceCard key={`${r.hrmsOrgId}:${r._id}`} advance={r} />)}
-        </div>
+        <Card className="divide-y divide-border overflow-hidden">
+          {rows.map((r) => <RecordRow key={`${r.hrmsOrgId}:${r._id}`} r={r} />)}
+        </Card>
       )}
+    </section>
+  );
+}
+
+function RecordRow({ r }: { r: SalaryAdvanceRecord }) {
+  const st = STATUS[r.status];
+  const facts = [r.employee?.employeeCode, r.employee?.designation, r.employee?.department?.name].filter(Boolean);
+  const perMonthMinor = r.months ? Math.round((r.amount * 100) / Math.max(1, r.months)) : 0;
+  const hrRefused = r.status === "rejected" && r.rejectedBy === "hr";
+  const financeRefused = r.status === "rejected" && r.rejectedBy === "finance";
+  const expense = r.expense && r.expense.status !== "voided" ? r.expense : null;
+
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-semibold">{r.employee?.name ?? "Employee"}</h3>
+          <Badge tone={st.tone}>{hrRefused ? "Rejected by HR" : financeRefused ? "Rejected by finance" : st.label}</Badge>
+          {r.overLimit && <Badge tone="warning">Over one month&apos;s salary</Badge>}
+        </div>
+        {facts.length > 0 && <p className="text-sm text-foreground-muted">{facts.join(" · ")}</p>}
+        {r.reason && <p className="text-sm">{r.reason}</p>}
+        <div className="flex flex-wrap gap-x-5 gap-y-1 pt-1 text-xs text-foreground-muted">
+          <span>Asked <span className="text-foreground">{day(r.createdAt)}</span>{r.raisedBy?.name ? <> by HR (<span className="text-foreground">{r.raisedBy.name}</span>)</> : null}</span>
+          {r.neededBy && <span>Needed by <span className="text-foreground">{day(r.neededBy)}</span></span>}
+          {r.hrReviewedBy?.name && r.status !== "pending" && (
+            <span>{hrRefused ? "Refused" : "Approved"} by HR: <span className="text-foreground">{r.hrReviewedBy.name}</span>{r.hrReviewedAt ? `, ${day(r.hrReviewedAt)}` : ""}</span>
+          )}
+          {r.hrNote && <span>HR&apos;s note: <span className="text-foreground">{r.hrNote}</span></span>}
+          {r.months && r.startMonth && !hrRefused && (
+            <span>Recovery: <span className="text-foreground"><MoneyDisplay minor={perMonthMinor} currency={r.currency} /> a month × {r.months}, from {r.startMonth}</span></span>
+          )}
+          {r.status === "approved" && (
+            <span>
+              Paid{r.paidOn ? <> on <span className="text-foreground">{day(r.paidOn)}</span></> : null}
+              {r.paymentMethod ? <> by <span className="text-foreground">{methodLabel(r.paymentMethod)}</span></> : null}
+              {expense ? <> — <Link href={`/expenses/${expense.id}`} className="font-medium text-primary hover:underline">{expense.expenseNumber}</Link></> : r.financeRef ? <> — <span className="text-foreground">{r.financeRef}</span></> : null}
+            </span>
+          )}
+          {financeRefused && r.financeReviewedAt && <span>Refused by finance on <span className="text-foreground">{day(r.financeReviewedAt)}</span></span>}
+          {r.financeNote && <span>Finance&apos;s note: <span className="text-foreground">{r.financeNote}</span></span>}
+        </div>
+      </div>
+      <div className="shrink-0 sm:text-right">
+        <MoneyDisplay minor={Math.round(r.amount * 100)} currency={r.currency} className="text-base font-semibold" />
+      </div>
     </div>
   );
 }

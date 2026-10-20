@@ -14,6 +14,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requirePermission("expense:approve"), c.list);
+// Finance's full record: still with HR, paid, refused, or all (2026-10-20).
+router.get("/history", requirePermission("expense:approve"), c.history);
 router.post("/:id/approve", requirePermission("expense:approve"), validateBody(approveAdvanceSchema), c.approve);
 router.post("/:id/reject", requirePermission("expense:approve"), validateBody(rejectAdvanceSchema), c.reject);
 

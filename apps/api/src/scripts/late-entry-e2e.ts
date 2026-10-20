@@ -114,7 +114,7 @@ check("the managers are emailed (Mona — not Asha, not Omar)", mail?.to?.includ
 check("waiting: it can't be marked paid", /waiting for a manager/.test(await refusal(ex.markExpensePaid(ORG, e1.id, { paidOn: RECENT } as never))));
 const e1b = await expense(OLD, "Late receipt", { requiresApproval: true });
 check("…nor approved as a claim", /waiting for a manager/.test(await refusal(ex.approveExpense(ORG, e1b.id, OMAR, "Omar"))));
-check("Omar (not a manager) can't see the page", /tagged Manager/.test(await refusal(late.listLateEntries(ORG, OMAR, { state: "pending" }))));
+check("Omar (not a manager, no expense or bill access) can't see the page", /see expenses or bills/.test(await refusal(late.listLateEntries(ORG, OMAR, { state: "pending" }))));
 check("…nor decide", /tagged Manager/.test(await refusal(late.decideLateEntry(ORG, OMAR, String(le1._id), "approved", ""))));
 check("Mona sees both waiting, oldest first", (await late.listLateEntries(ORG, MONA, { state: "pending" })).map((x) => x.refId).join() === [e1.id, e1b.id].join());
 await users.updateUser(ORG, ASHA, { isManager: true }, { userId: MONA, isSuperAdmin: false });
@@ -240,11 +240,35 @@ const m6 = await EmailLog.findOne({ kind: "late_entry", "ref.id": new Types.Obje
 check("nobody tagged: the super admins are emailed", m6?.to?.includes("root@e2e-late.test"), j(m6?.to));
 const me = await late.lateEntryMe(ORG, String(root._id));
 check("a super admin is a manager here, and sees what waits", me.isManager && me.pending >= 1 && me.days === 7, j(me));
-check("Omar: not a manager, nothing counted", JSON.stringify(await late.lateEntryMe(ORG, OMAR)) === JSON.stringify({ isManager: false, pending: 0, days: 7 }));
+const omarMe = await late.lateEntryMe(ORG, OMAR);
+check("Omar: not a manager, can't read them, nothing counted — and told who decides (the super admins, nobody tagged)",
+  !omarMe.isManager && omarMe.pending === 0 && omarMe.days === 7 && omarMe.canView === false && omarMe.scope === "none" && omarMe.managers?.join() === "Root Admin", j(omarMe));
 await late.decideLateEntry(ORG, String(root._id), String((await entryFor(e6.id))._id), "approved", "");
 check("…and decides", (await ex.getExpense(ORG, e6.id, ALL)).lateEntry?.state === "approved");
 const decided = await late.listLateEntries(ORG, String(root._id), { state: "decided" });
 check("decided ones listed, newest first, with who decided", decided[0]?.refId === e6.id && decided[0]?.decidedByName === "Root Admin" && decided.some((x) => x.state === "rejected"), j(decided[0]));
+
+/* ── 9 ── */
+step("9. Who reads them (2026-10-20): expense or bill access reads all, own-expense access reads their own");
+const OTHER_REF = new Types.ObjectId();
+await LateEntryModel.collection.insertOne({
+  organizationId: new Types.ObjectId(ORG), kind: "expense", refId: OTHER_REF, number: "EXP-OMAR", title: "Omar's taxi", amountMinor: 5_000,
+  currency: "AED", date: new Date(OLD), reason: "Forgot", state: "approved", enteredById: new Types.ObjectId(OMAR), enteredByName: "Omar Other",
+  decidedByName: "Root Admin", decidedAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
+});
+const e9 = await expense(OLD, "Another late one");
+const reader = await late.lateEntryMe(ORG, OMAR, ["expense:read"]);
+check("Omar with expense:read: reads them all, isn't a manager, counts what waits", reader.canView === true && reader.scope === "all" && !reader.isManager && reader.pending >= 1, j(reader));
+const allRows = await late.listLateEntries(ORG, OMAR, { state: "all" }, ["expense:read"]);
+check("…All: waiting and decided together, his own and Asha's", allRows.some((x) => x.state === "pending" && x.refId === e9.id) && allRows.some((x) => x.number === "EXP-OMAR") && allRows.some((x) => x.state === "approved" && x.refId !== String(OTHER_REF)), j(allRows.map((x) => [x.number, x.state])));
+check("…never a button: he can't decide", allRows.every((x) => !x.canDecide) && /tagged Manager/.test(await refusal(late.decideLateEntry(ORG, OMAR, String((await entryFor(e9.id))._id), "approved", ""))));
+check("bill:read reads them too", (await late.lateEntryMe(ORG, OMAR, ["bill:read"])).scope === "all");
+const own = await late.listLateEntries(ORG, OMAR, { state: "all" }, ["expense:read:own"]);
+check("Omar with only his own expenses: only his own", own.length === 1 && own[0]?.number === "EXP-OMAR", j(own.map((x) => x.number)));
+const ownMe = await late.lateEntryMe(ORG, OMAR, ["expense:write:own"]);
+check("…/me says own, counting only his own waiting (none)", ownMe.scope === "own" && ownMe.canView === true && ownMe.pending === 0, j(ownMe));
+const waitingNow = await late.listLateEntries(ORG, String(root._id), { state: "pending" });
+check("a manager still decides them, and sees the buttons", waitingNow.some((x) => x.refId === e9.id && x.canDecide), j(waitingNow.map((x) => [x.number, x.canDecide])));
 
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();

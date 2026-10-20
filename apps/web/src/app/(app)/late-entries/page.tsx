@@ -11,30 +11,33 @@ import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useDecideLateEntry, useLateEntries, useLateEntriesMe } from "@/features/late-entries/api";
+import { canViewLate, useDecideLateEntry, useLateEntries, useLateEntriesMe } from "@/features/late-entries/api";
 
 /**
  * Late entries (the user, 2026-10-17): expenses, bills and payments typed in with a date more than the organization's
  * days back, each with the reason it was late — for somebody tagged Manager (or a super admin) to approve, or reject
- * with a reason. Nobody decides their own.
+ * with a reason. Nobody decides their own. Since 2026-10-20 whoever sees expenses or bills reads them all too (and
+ * whoever only has their own expenses, their own) — Waiting, Decided and All — without the buttons.
  */
 export default function LateEntriesPage() {
   const { data: me, isLoading: meLoading } = useLateEntriesMe();
-  const [tab, setTab] = useState<"pending" | "decided">("pending");
-  const { data, isLoading } = useLateEntries(tab, !!me?.isManager);
+  const [tab, setTab] = useState<"pending" | "decided" | "all">("pending");
+  const canView = canViewLate(me);
+  const { data, isLoading } = useLateEntries(tab, canView);
   const rows = data ?? [];
 
   if (meLoading) return <Card className="m-4 flex justify-center py-16 md:m-6"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;
-  if (!me?.isManager) {
+  if (!me || !canView) {
     return (
       <div className="p-4 md:p-6">
         <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
           <ShieldAlert className="mx-auto mb-3 h-8 w-8 opacity-40" />
-          Only people tagged Manager decide late entries.
+          Late entries are for people who see expenses or bills.
         </Card>
       </div>
     );
   }
+  const deciders = (me.managers ?? []).join(", ");
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -44,14 +47,23 @@ export default function LateEntriesPage() {
         description={`Expenses, bills and payments dated more than ${me.days} day${me.days === 1 ? "" : "s"} back. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back.`}
         action={me.pending > 0 ? <Badge tone="warning">{me.pending} waiting</Badge> : undefined}
       />
+      {!me.isManager && (
+        <Card className="flex items-start gap-2 px-4 py-3 text-sm text-foreground-muted">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {me.scope === "own" ? "Your own late entries. " : ""}
+            Only people tagged Manager approve or reject them{deciders ? ` — ${deciders}` : ""}.
+          </span>
+        </Card>
+      )}
       <div className="flex gap-1 rounded-lg border border-border bg-surface p-1 text-sm w-fit">
-        {(["pending", "decided"] as const).map((t) => (
+        {(["pending", "decided", "all"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-md px-3 py-1.5 font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
           >
-            {t === "pending" ? "Waiting" : "Decided"}
+            {t === "pending" ? "Waiting" : t === "decided" ? "Decided" : "All"}
           </button>
         ))}
       </div>
@@ -60,11 +72,11 @@ export default function LateEntriesPage() {
       ) : !rows.length ? (
         <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
           <Clock className="mx-auto mb-3 h-8 w-8 opacity-40" />
-          {tab === "pending" ? "Nothing entered late is waiting." : "Nothing decided yet."}
+          {tab === "pending" ? "Nothing entered late is waiting." : tab === "decided" ? "Nothing decided yet." : "Nothing has been entered late."}
         </Card>
       ) : (
         <div className="space-y-3">
-          {rows.map((e) => <EntryCard key={e.id} entry={e} />)}
+          {rows.map((e) => <EntryCard key={e.id} entry={e} isManager={me.isManager} />)}
         </div>
       )}
     </div>
@@ -74,7 +86,7 @@ export default function LateEntriesPage() {
 const STATE_TONE = { pending: "warning", approved: "success", rejected: "danger", withdrawn: "neutral" } as const;
 const STATE_LABEL = { pending: "Waiting", approved: "Approved", rejected: "Rejected", withdrawn: "No longer asked" } as const;
 
-function EntryCard({ entry: e }: { entry: LateEntry }) {
+function EntryCard({ entry: e, isManager }: { entry: LateEntry; isManager: boolean }) {
   const decide = useDecideLateEntry();
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState("");
@@ -148,7 +160,9 @@ function EntryCard({ entry: e }: { entry: LateEntry }) {
             </div>
           </div>
         ) : (
-          <p className="text-right text-xs text-foreground-muted">You entered this — another manager decides it.</p>
+          <p className="text-right text-xs text-foreground-muted">
+            {isManager ? "You entered this — another manager decides it." : "Waiting for a manager to decide it."}
+          </p>
         )
       )}
     </Card>

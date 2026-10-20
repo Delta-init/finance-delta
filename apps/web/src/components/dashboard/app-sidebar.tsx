@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
-import { useLateEntriesMe } from "@/features/late-entries/api";
+import { canViewLate, useLateEntriesMe } from "@/features/late-entries/api";
 import {
   Sidebar,
   SidebarContent,
@@ -120,7 +120,8 @@ const NAV: NavGroup[] = [
       // Everything waiting on a decision, of every kind, so anybody who decides
       // any of them belongs here.
       { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: [...APPROVER_PERMISSIONS], badge: "total" },
-      // Expenses, bills and payments typed in with an old date, for a manager to approve or reject.
+      // Expenses, bills and payments typed in with an old date, for a manager to approve or reject — and, since
+      // 2026-10-20, for whoever sees expenses or bills to read (their own, with only their own expenses).
       { href: "/late-entries", label: "Late Entries", icon: Clock, enabled: true, managerOnly: true },
       // Taking an enrolment is the counsellor's whole job, so it is its own
       // entry rather than something reached through the invoice list.
@@ -242,7 +243,7 @@ export function AppSidebar({
         {NAV.map((group, gi) => {
           const items = group.items.filter((item) => {
             if (item.superAdminOnly && !user.isSuperAdmin) return false;
-            if (item.managerOnly && !late?.isManager) return false;
+            if (item.managerOnly && !canViewLate(late)) return false;
             if (
               item.hideWhenOwnScopedOnly &&
               ownScopedOnly &&
@@ -272,7 +273,7 @@ export function AppSidebar({
                         active={active}
                         disabled={!item.enabled}
                         onNavigate={closeOnMobile}
-                        badge={item.managerOnly ? late?.pending ?? 0 : badgeFor(item.badge)}
+                        badge={item.managerOnly ? (late?.isManager ? late.pending : 0) : badgeFor(item.badge)}
                       />
                     </SidebarMenuItem>
                   );

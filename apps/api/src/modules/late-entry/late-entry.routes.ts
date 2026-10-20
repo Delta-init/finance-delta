@@ -7,17 +7,18 @@ import { decideLateEntry, lateEntryMe, listLateEntries } from "./late-entry.serv
 
 /*
  * Late entries (2026-10-17). No permission of their own: the Manager tag decides, and the service checks it on every
- * call — /me answers anybody, with isManager false and nothing counted for most people.
+ * call. Since 2026-10-20 whoever sees expenses or bills reads them all, and whoever only has their own expenses reads
+ * their own (late-entry.service.ts, scopeOf); /me answers anybody with which.
  */
 const router = Router();
 router.use(authenticate);
 
 router.get("/me", asyncHandler(async (req, res) => {
-  ok(res, await lateEntryMe(req.auth!.organizationId, req.auth!.userId));
+  ok(res, await lateEntryMe(req.auth!.organizationId, req.auth!.userId, req.auth!.permissions));
 }));
 
 router.get("/", asyncHandler(async (req, res) => {
-  ok(res, await listLateEntries(req.auth!.organizationId, req.auth!.userId, parseQuery(lateEntryQuerySchema, req.query)));
+  ok(res, await listLateEntries(req.auth!.organizationId, req.auth!.userId, parseQuery(lateEntryQuerySchema, req.query), req.auth!.permissions));
 }));
 
 router.post("/:id/approve", validateBody(decideLateEntrySchema), asyncHandler(async (req, res) => {

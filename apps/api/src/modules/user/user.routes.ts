@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createUserSchema, updateUserSchema } from "@delta/shared";
+import { convertSalespersonSchema, createCrmSalespersonSchema, createUserSchema, updateUserSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission, requireAnyPermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -24,6 +24,21 @@ router.post(
   requirePermission("user:create"),
   validateBody(createUserSchema),
   userController.create,
+);
+// Salespeople (2026-10-20): payroll-only accounts and CRM salespeople with none, and making either a real user.
+// Before "/:id" so "salespeople" is never read as an id.
+router.get("/salespeople", requirePermission("user:read"), userController.listSalespeople);
+router.post(
+  "/salespeople",
+  requirePermission("user:create"),
+  validateBody(createCrmSalespersonSchema),
+  userController.createCrmSalesperson,
+);
+router.post(
+  "/:id/convert",
+  requirePermission("user:create"),
+  validateBody(convertSalespersonSchema),
+  userController.convertSalesperson,
 );
 // Granting somebody a way in is a change to their access, so it sits behind
 // the same permission as editing them.

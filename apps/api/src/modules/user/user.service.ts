@@ -227,6 +227,17 @@ export async function updateUser(
 
   if (input.name !== undefined) user.name = input.name;
   if (input.status !== undefined) user.status = input.status;
+  // Their sign-in email (2026-10-20). Unique across every organization: one person, one account.
+  if (input.email !== undefined) {
+    const email = input.email.trim().toLowerCase();
+    if (email !== user.email) {
+      const taken = await User.exists({ email, _id: { $ne: user._id } });
+      if (taken) throw new AppError("CONFLICT", `${email} already belongs to another account`);
+      user.email = email;
+    }
+  }
+  // A new password, set by an administrator (2026-10-20).
+  if (input.password) user.passwordHash = await hashPassword(input.password);
 
   const superAdmin = superAdminChange(user.isSuperAdmin ?? false, input.isSuperAdmin, actor, userId);
   if (superAdmin !== null) user.isSuperAdmin = superAdmin;

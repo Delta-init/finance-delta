@@ -36,6 +36,7 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EditUserDialog } from "@/features/users/EditUserDialog";
+import { SalespeopleTab } from "./SalespeopleTab";
 import { SUPER_ADMIN_OPTION, roleLabel } from "./super-admin";
 import {
   Dialog as ConfirmDialog,
@@ -64,6 +65,8 @@ export function UserManager() {
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
   const [status, setStatus] = useState("all");
   const [tagIds, setTagIds] = useState<string[]>([]);
+  // The team who can sign in, or the salespeople who can't yet (2026-10-20).
+  const [tab, setTab] = useState<"team" | "salespeople">("team");
   useEffect(() => t.resetPage(), [status, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data, isLoading } = useUsers({
@@ -219,7 +222,7 @@ export function UserManager() {
       <PageHeader
         icon={Users2}
         title="Users"
-        description="Team members who can sign in, scoped by their role."
+        description={tab === "team" ? "Team members who can sign in, scoped by their role." : "Salespeople from the payroll and the CRMs — make any of them a user."}
         action={
           <div className="flex items-center gap-2">
             <ExportButton
@@ -244,7 +247,24 @@ export function UserManager() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
+      <div className="flex gap-1 border-b border-border" role="tablist">
+        {([["team", "Team"], ["salespeople", "Salespeople"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === key ? "border-primary text-foreground" : "border-transparent text-foreground-muted hover:text-foreground"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "salespeople" && <SalespeopleTab />}
+
+      {tab === "team" && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search users…" className="pl-8" />
@@ -262,7 +282,7 @@ export function UserManager() {
         <div className="w-[220px]">
           <TagPicker value={tagIds} onChange={setTagIds} placeholder="Filter by tags…" />
         </div>
-      </div>
+      </div>}
 
       <ResponsiveModal open={open} onOpenChange={setOpen}>
         <ResponsiveModalContent>
@@ -356,7 +376,7 @@ export function UserManager() {
         </ResponsiveModalContent>
       </ResponsiveModal>
 
-      <DataTable
+      {tab === "team" && <DataTable
         columns={columns}
         data={data?.data}
         getRowId={(u) => u.id}
@@ -370,7 +390,7 @@ export function UserManager() {
         selectable
         isLoading={isLoading}
         emptyMessage="No users match your filters."
-      />
+      />}
       {editing && (
         <EditUserDialog user={editing} open onClose={() => setEditing(null)} />
       )}

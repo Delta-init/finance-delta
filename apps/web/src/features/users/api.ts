@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { CreateUserInput, UpdateUserInput, User } from "@delta/shared";
+import type { ConvertSalespersonInput, CreateCrmSalespersonInput, CreateUserInput, UpdateUserInput, User } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["users"] as const;
@@ -63,5 +63,52 @@ export function useColleagues() {
     queryKey: [...KEY, "colleagues"],
     queryFn: () => api.get<{ id: string; name: string }[]>("users/colleagues"),
     staleTime: 5 * 60_000,
+  });
+}
+
+/* ── Salespeople (2026-10-20): payroll-only accounts, CRM salespeople with none, and making either a real user ── */
+
+export interface SalespersonRow {
+  id: string; name: string; email: string; department: { id: string; name: string } | null
+  status: "active" | "suspended"; invoices: number; lastSaleAt: string | null; crms: string[]
+}
+export interface MissingSalespersonRow {
+  email: string; name: string; invoices: number; lastSaleAt: string | null; crms: string[]; elsewhere: boolean
+}
+export interface InviteOutcome { delivered: boolean; email: string; message: string }
+
+export function useSalespeople(q: string) {
+  return useQuery({
+    queryKey: [...KEY, "salespeople", q],
+    queryFn: () => api.get<{ payroll: SalespersonRow[]; missing: MissingSalespersonRow[] }>(`users/salespeople${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useConvertSalesperson() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ id, input }: { id: string; input: ConvertSalespersonInput }) =>
+      api.post<{ id: string; name: string; email: string; invite: InviteOutcome | null }>(`users/${id}/convert`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useCreateCrmSalesperson() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: CreateCrmSalespersonInput) =>
+      api.post<{ id: string; name: string; email: string; moved: number; invite: InviteOutcome | null }>("users/salespeople", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** An email with a link to set their own password (POST /users/:id/invite). */
+export function useInviteUser() {
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (id: string) => api.post<InviteOutcome>(`users/${id}/invite`, {}),
   });
 }

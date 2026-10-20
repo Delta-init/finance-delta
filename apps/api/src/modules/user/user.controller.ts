@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { userQuerySchema } from "@delta/shared";
+import * as salespeople from "./salespeople.service";
 import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as userService from "./user.service";
@@ -56,4 +57,29 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
 
 export const colleagues = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await userService.listColleagues(req.auth!.organizationId));
+});
+
+/* ── Salespeople (2026-10-20): salespeople.service.ts ── */
+
+export const listSalespeople = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await salespeople.listSalespeople(req.auth!.organizationId, String(req.query.q ?? "")));
+});
+
+/** The invite, when asked for, after the account can be signed into — its outcome reported, not hidden. */
+async function maybeInvite(orgId: string, userId: string, send: boolean) {
+  if (!send) return null;
+  const r = await inviteUser(orgId, userId);
+  return { ...r, message: r.delivered ? `Invite sent to ${r.email}.` : `Could not send to ${r.email} — check the mail configuration.` };
+}
+
+export const convertSalesperson = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = req.auth!.organizationId;
+  const user = await salespeople.convertSalesperson(orgId, req.params.id!, req.body);
+  ok(res, { ...user, invite: await maybeInvite(orgId, user.id, !!req.body.sendInvite) });
+});
+
+export const createCrmSalesperson = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = req.auth!.organizationId;
+  const user = await salespeople.createFromCrm(orgId, req.body);
+  created(res, { ...user, invite: await maybeInvite(orgId, user.id, !!req.body.sendInvite) });
 });

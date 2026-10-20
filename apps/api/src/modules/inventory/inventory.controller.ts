@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { itemQuerySchema, warehouseQuerySchema, stockMovementQuerySchema } from "@delta/shared";
-import { asyncHandler, created, ok } from "../../lib/http";
+import { AppError, asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as svc from "./inventory.service";
 
@@ -21,6 +21,12 @@ export const getItem = asyncHandler(async (req, res) => {
 
 export const createItem = asyncHandler(async (req, res) => {
   created(res, await svc.createItem(org(req), req.body));
+});
+
+/** A product photo picked on the item form (2026-10-20). */
+export const uploadItemPhoto = asyncHandler(async (req, res) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await svc.uploadItemPhoto(org(req), req.file));
 });
 
 export const updateItem = asyncHandler(async (req, res) => {

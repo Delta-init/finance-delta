@@ -70,11 +70,14 @@ export async function uploadFile(opts: {
     }),
   );
 
-  const url = env.R2_PUBLIC_URL
-    ? `${env.R2_PUBLIC_URL.replace(/\/$/, "")}/${opts.key}`
-    : `https://${env.R2_BUCKET_NAME}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${opts.key}`;
+  return { key: opts.key, url: publicUrlFor(opts.key), size: opts.buffer.byteLength, mimeType: opts.mimeType, originalName: opts.originalName };
+}
 
-  return { key: opts.key, url, size: opts.buffer.byteLength, mimeType: opts.mimeType, originalName: opts.originalName };
+/** The address a stored key is served from — built here, never taken from a client. */
+export function publicUrlFor(key: string): string {
+  return env.R2_PUBLIC_URL
+    ? `${env.R2_PUBLIC_URL.replace(/\/$/, "")}/${key}`
+    : `https://${env.R2_BUCKET_NAME}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
 }
 
 /** Delete a previously uploaded key from R2. Silently ignores missing keys. */

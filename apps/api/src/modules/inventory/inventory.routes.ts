@@ -7,6 +7,7 @@ import {
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
+import { parseUpload } from "../../middleware/upload";
 import * as c from "./inventory.controller";
 
 const router = Router();
@@ -17,6 +18,8 @@ router.get("/items", requirePermission("inventory:read"), c.listItems);
 router.get("/items/low-stock", requirePermission("inventory:read"), c.getLowStock);
 router.get("/items/:id", requirePermission("inventory:read"), c.getItem);
 router.post("/items", requirePermission("inventory:write"), validateBody(createItemSchema), c.createItem);
+// The product photo is uploaded, never pasted (2026-10-20): stored here, then saved with the item.
+router.post("/uploads", requirePermission("inventory:write"), parseUpload, c.uploadItemPhoto);
 router.patch("/items/:id", requirePermission("inventory:write"), validateBody(updateItemSchema), c.updateItem);
 router.delete("/items/:id", requirePermission("inventory:delete"), c.deleteItem);
 

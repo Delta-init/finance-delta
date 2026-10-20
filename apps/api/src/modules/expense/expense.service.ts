@@ -8,6 +8,8 @@ import type {
   RejectExpenseInput,
   ExpensePaymentStatus,
   MarkExpensePaidInput,
+  ExpenseAttachmentInput,
+  UploadedExpenseFile,
 } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { AppError } from "../../lib/http";
@@ -380,7 +382,7 @@ export async function createExpense(
         }
       : undefined,
     mileage,
-    attachments: (input.attachments ?? []).map((a) => ({ name: a.name, url: a.url })),
+    attachments: await resolveAttachments(orgId, input.attachments ?? [], []),
     projectName: input.projectName ?? "",
     departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
     costCentre: input.costCentre ?? "",
@@ -461,8 +463,15 @@ export async function updateExpense(
         }
       : undefined;
   }
+  // Kept whole — key, size, type — so a later delete still finds the file (they used to lose the key here).
+  let droppedKeys: string[] = [];
   if (input.attachments !== undefined) {
-    d.attachments = input.attachments.map((a) => ({ name: a.name, url: a.url }));
+    // Plain copies: Mongoose subdocuments would carry their own fields along.
+    const before = JSON.parse(JSON.stringify(d.attachments ?? [])) as StoredAttachment[];
+    const next = await resolveAttachments(orgId, input.attachments, before);
+    const kept = new Set(next.map((a) => a.key).filter(Boolean));
+    droppedKeys = before.map((a) => a.key).filter((k): k is string => !!k && !kept.has(k));
+    d.attachments = next;
   }
 
   if (
@@ -504,6 +513,7 @@ export async function updateExpense(
   await doc.save();
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, lateInfo(doc));
   else if (lateNow?.withdraw) await withdrawLateFor(orgId, "expense", doc._id);
+  if (droppedKeys.length) await deleteUnusedFiles(orgId, droppedKeys, doc._id);
   return syncedDTO(orgId, doc._id);
 }
 
@@ -626,8 +636,8 @@ export async function deleteExpense(orgId: string, id: string): Promise<void> {
   if (line) await syncDebitLine(orgId, line, null);
   await withdrawLateFor(orgId, "expense", doc._id);
   if (keys.length) {
-    const { deleteFile } = await import("../../lib/storage");
-    await Promise.all(keys.map((k) => deleteFile(k).catch(() => undefined)));
+    // A recurring expense's copies share its files: only one nothing else holds goes.
+    await deleteUnusedFiles(orgId, keys, doc._id);
   }
 }
 
@@ -731,6 +741,58 @@ export async function stopRecurrence(orgId: string, id: string): Promise<Expense
  * to put files.
  */
 const MAX_ATTACHMENTS = 10;
+
+// ── Supporting documents: uploaded, never pasted (2026-10-20) ─────────────────
+
+interface StoredAttachment { name: string; url: string; key?: string; size?: number; mimeType?: string; uploadedAt?: Date }
+
+/** Where the expense form's uploads wait until the expense is saved with them. */
+const uploadPrefix = (orgId: string) => `expenses/${orgId}/uploads/`;
+
+/**
+ * A file picked on the New / Edit Expense form, stored before the expense is saved — so whoever only enters their
+ * own claims can attach documents too (a claim created submitted or approved takes no receipts afterwards).
+ */
+export async function uploadFormFile(orgId: string, file: ParsedFile): Promise<UploadedExpenseFile> {
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+  // The uploader's filename never becomes the key on its own (see addAttachment).
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const key = `${uploadPrefix(orgId)}${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safe}`;
+  const up = await uploadFile({ key, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+  return { name: file.originalName.slice(0, 200), key: up.key, url: up.url, size: up.size, mimeType: up.mimeType };
+}
+
+/**
+ * The documents to save: each one already on the expense (by key, or an old link by its url) as it was stored, and
+ * each new one uploaded through uploadFormFile for this organization — its address built here. A pasted link, or a
+ * key from anywhere else, is refused.
+ */
+async function resolveAttachments(orgId: string, input: ExpenseAttachmentInput[], existing: StoredAttachment[]): Promise<StoredAttachment[]> {
+  if (input.length > MAX_ATTACHMENTS) throw new AppError("VALIDATION_ERROR", `An expense can hold at most ${MAX_ATTACHMENTS} documents`);
+  const { publicUrlFor } = await import("../../lib/storage");
+  const out: StoredAttachment[] = [];
+  for (const a of input) {
+    const name = a.name.trim().slice(0, 200);
+    const had = existing.find((e) => (a.key ? e.key === a.key : !e.key && e.url === a.url));
+    if (had) { out.push({ ...had, name: name || had.name }); continue; }
+    if (!a.key) throw new AppError("VALIDATION_ERROR", "Upload the document — links are not accepted");
+    if (!a.key.startsWith(uploadPrefix(orgId)) || a.key.includes("..")) {
+      throw new AppError("VALIDATION_ERROR", "That document was not uploaded here — upload it again");
+    }
+    out.push({ name, url: publicUrlFor(a.key), key: a.key, size: a.size, mimeType: a.mimeType, uploadedAt: new Date() });
+  }
+  return out;
+}
+
+/** Deletes the stored files that no expense of this organization holds any more (copies of a recurring one share them). */
+async function deleteUnusedFiles(orgId: string, keys: string[], exceptId: unknown): Promise<void> {
+  const held = await Expense.find({ organizationId: orgId, _id: { $ne: exceptId }, "attachments.key": { $in: keys } })
+    .select("attachments.key").lean<{ attachments?: { key?: string }[] }[]>();
+  const stillUsed = new Set(held.flatMap((e) => (e.attachments ?? []).map((a) => a.key)));
+  const { deleteFile } = await import("../../lib/storage");
+  await Promise.all(keys.filter((k) => !stillUsed.has(k)).map((k) => deleteFile(k).catch(() => undefined)));
+}
 
 /**
  * A claim only takes receipts while it is still the claimant's.

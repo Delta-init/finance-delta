@@ -121,7 +121,12 @@ async function main() {
 
   const today = new Date().toISOString().slice(0, 10);
   const later = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-  const setOrgLogo = (logoUrl: string) => request("PATCH", "/organizations/settings", { branding: { logoUrl } }, tAdmin);
+  // Settings no longer take a pasted link (2026-10-20), but invoices made under an old linked logo still exist and
+  // must still draw — so the links these cases need are put on the organization directly.
+  const setOrgLogo = async (logoUrl: string) => {
+    await Organization.updateOne({ _id: org._id }, { $set: { "branding.logoUrl": logoUrl } });
+    return { status: 200, body: {} };
+  };
   /** An invoice made while the organization's logo was `logoUrl` — so it keeps that one. */
   async function invoiceUnder(logoUrl: string, totalMinor = 100_000, salespersonId = String(admin._id)): Promise<string> {
     const set = await setOrgLogo(logoUrl);
@@ -148,6 +153,7 @@ async function main() {
   check("a good PNG on a server with no file storage: it says so, plainly",
     noStorage.status === 422 && /storage is not set up/.test(noStorage.body?.error?.message ?? ""), show(noStorage.body));
   check("and the logo is left as it was", (await request("GET", "/organizations/settings", undefined, tAdmin)).body?.data?.branding?.logoUrl === "");
+  check("a pasted link in settings is refused (2026-10-20)", (await request("PATCH", "/organizations/settings", { branding: { logoUrl: `${IMAGES}/own.png` } }, tAdmin)).status === 422);
   check("somebody who may not change the settings cannot upload one", (await upload("/organizations/logo", png, tRep)).status === 403);
   check("nor can nobody", (await upload("/organizations/logo", png)).status === 401);
 

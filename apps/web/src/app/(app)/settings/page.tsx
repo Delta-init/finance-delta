@@ -475,17 +475,6 @@ export default function SettingsPage() {
             <p className="text-xs text-foreground-muted">
               PNG or JPG, up to 2 MB, for invoices, receipts, quotations and credit notes. {logoUrl ? "" : "Until you add one, they carry Delta's logo."}
             </p>
-            <div className="space-y-1">
-              <label className="text-xs text-foreground-muted">Or a link to one</label>
-              <input
-                {...register("branding.logoUrl")}
-                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                placeholder="https://example.com/logo.png"
-              />
-              {errors.branding?.logoUrl && (
-                <p className="text-xs text-danger">{errors.branding.logoUrl.message}</p>
-              )}
-            </div>
           </div>
 
           <div className="space-y-1">

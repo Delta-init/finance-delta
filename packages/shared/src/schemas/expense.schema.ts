@@ -71,6 +71,29 @@ export const expenseRecurrenceFrequencySchema = z.enum([
 ]);
 export type ExpenseRecurrenceFrequency = z.infer<typeof expenseRecurrenceFrequencySchema>;
 
+/** One supporting document as the expense form sends it. */
+export const expenseAttachmentInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    /** Where the uploaded file is stored — from POST /expenses/uploads. */
+    key: z.string().min(1).max(400).optional(),
+    /** Only an old link already on the expense; a new one is refused. */
+    url: z.string().min(1).optional(),
+    size: z.number().int().min(0).optional(),
+    mimeType: z.string().max(100).optional(),
+  })
+  .refine((a) => !!a.key || !!a.url, "Upload the document");
+export type ExpenseAttachmentInput = z.infer<typeof expenseAttachmentInputSchema>;
+
+/** What POST /expenses/uploads answers: the stored file, to send back with the expense. */
+export interface UploadedExpenseFile {
+  name: string;
+  key: string;
+  url: string;
+  size: number;
+  mimeType: string;
+}
+
 export const createExpenseSchema = z.object({
   // Category is a managed-category slug (see expense-category.schema). Kept as a
   // string so custom, org-defined categories validate alongside the defaults.
@@ -125,13 +148,13 @@ export const createExpenseSchema = z.object({
       ratePerKmMinor: z.number().min(0, "Rate must be non-negative"),
     })
     .optional(),
+  /**
+   * Supporting documents (2026-10-20: uploaded, never a pasted link). A new one is a file uploaded through
+   * POST /expenses/uploads, sent back by its `key`; an old link already on the expense is kept by its `url`.
+   */
   attachments: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        url: z.string().min(1),
-      }),
-    )
+    .array(expenseAttachmentInputSchema)
+    .max(10, "An expense can hold at most 10 documents")
     .optional()
     .default([]),
   projectName: z.string().optional().default(""),

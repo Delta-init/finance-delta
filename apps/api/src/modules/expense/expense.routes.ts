@@ -12,6 +12,8 @@ router.use(authenticate);
 router.get("/", requireAnyPermission("expense:read", "expense:read:own"), c.list);
 router.get("/:id", requireAnyPermission("expense:read", "expense:read:own"), c.get);
 router.post("/", requireAnyPermission("expense:create", "expense:write:own"), validateBody(createExpenseSchema), c.create);
+// Supporting documents are uploaded, never pasted (2026-10-20): the form stores each file here, then saves the expense with it.
+router.post("/uploads", requireAnyPermission("expense:create", "expense:write:own"), parseUpload, c.uploadFormFile);
 router.patch("/:id", requireAnyPermission("expense:update", "expense:write:own"), validateBody(updateExpenseSchema), c.update);
 router.post("/:id/submit", requireAnyPermission("expense:create", "expense:write:own"), c.submit);
 

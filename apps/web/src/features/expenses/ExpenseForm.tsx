@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Plus, Trash2, Paperclip, RefreshCw, MapPin } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Paperclip, RefreshCw, MapPin, Upload, FileText, Loader2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,12 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAllDepartments } from "@/features/departments/api";
 import { QuickCreateDepartmentModal } from "@/features/departments/QuickCreateDepartmentModal";
 import { useCan } from "@/lib/use-can";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { QuickCreateCategoryModal } from "@/features/expense-categories/QuickCreateCategoryModal";
-import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput } from "@delta/shared";
+import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput, type UploadedExpenseFile } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
@@ -70,8 +70,27 @@ const formSchema = z.object({
   departmentId: z.string().optional(),
   costCentre: z.string().optional(),
   notes: z.string().optional(),
-  attachments: z.array(z.object({ name: z.string(), url: z.string() })).default([]),
+  // Uploaded files (by key); an old pasted link already on the expense keeps its url (2026-10-20).
+  attachments: z.array(z.object({
+    name: z.string().trim().min(1, "Name the document"),
+    key: z.string().optional(),
+    url: z.string().optional(),
+    size: z.number().optional(),
+    mimeType: z.string().optional(),
+  })).default([]),
 });
+/** Supporting documents: the same files the receipts box on an expense takes. */
+const UPLOAD_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,application/pdf";
+const UPLOAD_TYPES = new Set(UPLOAD_ACCEPT.split(","));
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENTS = 10;
+function readableSize(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export type ExpenseFormValues = z.infer<typeof formSchema>;
 
 /** Radix reads "" as unset, so "no department" needs a value that is not it. */
@@ -122,6 +141,34 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
   const { fields: attachmentFields, append: addAttachment, remove: removeAttachment } =
     useFieldArray({ control, name: "attachments" });
+
+  // Each picked file is stored at once (POST /expenses/uploads) and saved with the expense by its key.
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState<Array<{ id: string; name: string; size: number }>>([]);
+  async function onFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    if (fileRef.current) fileRef.current.value = ""; // the same file can be picked again after a failure
+    const room = MAX_DOCUMENTS - attachmentFields.length - uploading.length;
+    if (picked.length > room) toast.error(`At most ${MAX_DOCUMENTS} documents — ${room > 0 ? `only ${room} more` : "remove one first"}`);
+    for (const file of picked.slice(0, Math.max(0, room))) {
+      if (!UPLOAD_TYPES.has(file.type)) { toast.error(`${file.name}: only JPG, PNG, WebP, GIF or PDF`); continue; }
+      if (file.size > MAX_UPLOAD_BYTES) { toast.error(`${file.name} is ${readableSize(file.size)} — the limit is 10 MB`); continue; }
+      const id = `${Date.now()}-${Math.random()}`;
+      setUploading((u) => [...u, { id, name: file.name, size: file.size }]);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const up = await api.postForm<UploadedExpenseFile>("expenses/uploads", form);
+        addAttachment({ name: up.name, key: up.key, url: up.url, size: up.size, mimeType: up.mimeType });
+      } catch (err) {
+        toast.error(err instanceof ApiError && err.status === 404
+          ? "Uploading needs the latest finance API — ask for it to be updated"
+          : `${file.name}: ${err instanceof ApiError ? err.message : "could not upload"}`);
+      } finally {
+        setUploading((u) => u.filter((x) => x.id !== id));
+      }
+    }
+  }
 
   useEffect(() => {
     // In create mode, follow the org's display currency. In edit mode, keep the saved currency.
@@ -202,7 +249,10 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               ratePerKmMinor: toMinor(values.mileageRateDisplay),
             }
           : undefined,
-      attachments: values.attachments ?? [],
+      // A new document goes by the key it was uploaded under; only an old link keeps its url.
+      attachments: (values.attachments ?? []).map((a) => (a.key
+        ? { name: a.name, key: a.key, size: a.size, mimeType: a.mimeType }
+        : { name: a.name, url: a.url })),
       projectName: values.projectName ?? "",
       departmentId: values.departmentId || undefined,
       costCentre: values.costCentre ?? "",
@@ -552,43 +602,59 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
           )}
         </div>
 
-        {/* Attachments */}
+        {/* Supporting documents — uploaded, never pasted (2026-10-20) */}
         <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Paperclip className="h-4 w-4 text-foreground-muted" />
               <h2 className="text-sm font-semibold">Supporting Documents</h2>
             </div>
+            <input ref={fileRef} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden" onChange={onFilesPicked} data-testid="expense-file-input" />
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => addAttachment({ name: "", url: "" })}
+              onClick={() => fileRef.current?.click()}
+              disabled={attachmentFields.length + uploading.length >= MAX_DOCUMENTS}
             >
-              <Plus className="h-3.5 w-3.5" /> Add document
+              <Upload className="h-3.5 w-3.5" /> Upload files
             </Button>
           </div>
-          {attachmentFields.length === 0 ? (
-            <p className="text-sm text-foreground-muted">No attachments added. Click "Add document" to attach a receipt or supporting file.</p>
+          {attachmentFields.length === 0 && uploading.length === 0 ? (
+            <p className="text-sm text-foreground-muted">
+              No documents yet. Upload the receipt or any supporting file — JPG, PNG, WebP, GIF or PDF, up to 10&nbsp;MB each, at most {MAX_DOCUMENTS}.
+            </p>
           ) : (
             <div className="space-y-2">
-              {attachmentFields.map((field, i) => (
-                <div key={field.id} className="grid grid-cols-[1fr_1.5fr_auto] gap-2 items-center">
-                  <Input
-                    {...register(`attachments.${i}.name`)}
-                    placeholder="Document name"
-                  />
-                  <Input
-                    {...register(`attachments.${i}.url`)}
-                    placeholder="https://... or file path"
-                  />
-                  <Button type="button" variant="ghost" size="sm" onClick={() => removeAttachment(i)}>
-                    <Trash2 className="h-4 w-4 text-foreground-muted" />
-                  </Button>
+              {attachmentFields.map((field, i) => {
+                const a = watch(`attachments.${i}`);
+                return (
+                  <div key={field.id} className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
+                    <FileText className="h-4 w-4 shrink-0 text-foreground-muted" />
+                    <Input {...register(`attachments.${i}.name`)} placeholder="Document name" className="h-8 min-w-0 flex-1" aria-label="Document name" />
+                    {a?.size ? <span className="shrink-0 text-xs text-foreground-muted">{readableSize(a.size)}</span> : null}
+                    {!a?.key && <span className="shrink-0 text-xs text-foreground-muted" title="Added as a link before documents had to be uploaded">Old link</span>}
+                    {a?.url && (
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" className="shrink-0 rounded p-1 text-foreground-muted hover:text-foreground" aria-label="Open">
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    )}
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeAttachment(i)} aria-label="Remove">
+                      <Trash2 className="h-4 w-4 text-foreground-muted" />
+                    </Button>
+                  </div>
+                );
+              })}
+              {uploading.map((u) => (
+                <div key={u.id} className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-foreground-muted">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  <span className="min-w-0 flex-1 truncate">Uploading {u.name}…</span>
+                  <span className="shrink-0 text-xs">{readableSize(u.size)}</span>
                 </div>
               ))}
             </div>
           )}
+          {errors.attachments && <p className="text-xs text-danger">Name every document.</p>}
         </div>
 
         {/* Notes & Approval */}
@@ -620,7 +686,9 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => router.push(isEdit && expenseId ? `/expenses/${expenseId}` : "/expenses")}>Cancel</Button>
-          <Button type="submit" loading={isSubmitting}>{isEdit ? "Save Changes" : "Create Expense"}</Button>
+          <Button type="submit" loading={isSubmitting} disabled={uploading.length > 0} title={uploading.length ? "Wait for the uploads to finish" : undefined}>
+            {isEdit ? "Save Changes" : "Create Expense"}
+          </Button>
         </div>
       </form>
 

@@ -83,7 +83,7 @@ export async function uploadLogo(orgId: string, file: { buffer: Buffer }): Promi
   if (!kind) throw new AppError("VALIDATION_ERROR", "The logo must be a PNG or JPG image");
   const { uploadFile, storageConfigured } = await import("../../lib/storage");
   if (!storageConfigured()) {
-    throw new AppError("VALIDATION_ERROR", "File storage is not set up on this server, so a logo cannot be uploaded — give a link to one instead");
+    throw new AppError("VALIDATION_ERROR", "File storage is not set up on this server, so a logo cannot be uploaded");
   }
   const ext = kind === "png" ? "png" : "jpg";
   const uploaded = await uploadFile({
@@ -138,7 +138,16 @@ export async function updateOrganization(
   if (input.name !== undefined) flat.name = input.name;
   if (input.legalName !== undefined) flat.legalName = input.legalName;
   if (input.baseCurrency !== undefined) flat.baseCurrency = input.baseCurrency;
-  if (input.branding?.logoUrl !== undefined) flat["branding.logoUrl"] = input.branding.logoUrl;
+  if (input.branding?.logoUrl !== undefined) {
+    // Uploaded, never a pasted link (2026-10-20): cleared, kept as it is, or one this organization's upload stored.
+    const next = input.branding.logoUrl;
+    const current = (await Organization.findById(orgId).select("branding.logoUrl").lean<{ branding?: { logoUrl?: string } } | null>())?.branding?.logoUrl ?? "";
+    const { publicUrlFor } = await import("../../lib/storage");
+    if (next && next !== current && !next.startsWith(publicUrlFor(`branding/${orgId}/`))) {
+      throw new AppError("VALIDATION_ERROR", "Upload the logo — links are not accepted");
+    }
+    flat["branding.logoUrl"] = next;
+  }
   if (input.branding?.primaryColor !== undefined) flat["branding.primaryColor"] = input.branding.primaryColor;
   if (input.branding?.footerText !== undefined) flat["branding.footerText"] = input.branding.footerText;
   // Dotted paths rather than whole sub-documents: a form that sends only the

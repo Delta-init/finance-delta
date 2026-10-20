@@ -1,16 +1,17 @@
 "use client";
 
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateItem } from "@/features/inventory/api";
 import { useAllDepartments } from "@/features/departments/api";
@@ -49,6 +50,25 @@ export default function NewItemPage() {
 
   const type = watch("type");
   const trackStock = watch("trackStock");
+
+  // The photo is uploaded, never a pasted link (2026-10-20): stored at once, saved with the item by its address.
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  async function uploadPhoto(file: File) {
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) { toast.error("The photo must be a JPG, PNG, WebP or GIF image"); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error("The photo must be 10 MB or smaller"); return; }
+    setPhotoBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const up = await api.postForm<{ url: string; key: string }>("inventory/uploads", form);
+      setValue("photoUrl", up.url, { shouldDirty: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError && e.status === 404 ? "Uploading needs the latest finance API — ask for it to be updated" : e instanceof ApiError ? e.message : "Could not upload the photo");
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   async function onSubmit(values: FormValues) {
     try {
@@ -215,20 +235,35 @@ export default function NewItemPage() {
         {/* Photo */}
         <div className="rounded-lg border border-border bg-surface p-6 space-y-4">
           <h2 className="text-sm font-semibold text-foreground-muted uppercase tracking-wide">Product Photo</h2>
-          <div className="space-y-1">
-            <Label htmlFor="photoUrl">Photo URL</Label>
-            <Input id="photoUrl" {...register("photoUrl")} placeholder="https://…" />
-            <p className="text-xs text-foreground-subtle">Paste a publicly accessible image URL</p>
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadPhoto(f); }}
+          />
+          <div className="flex flex-wrap items-center gap-4">
+            {watch("photoUrl") && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={watch("photoUrl")} alt="Preview" className="h-24 w-24 rounded-lg object-cover border border-border" />
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" loading={photoBusy} disabled={photoBusy} onClick={() => photoInput.current?.click()}>
+                <Upload className="h-3.5 w-3.5" /> {watch("photoUrl") ? "Replace photo" : "Upload photo"}
+              </Button>
+              {watch("photoUrl") && (
+                <Button type="button" variant="ghost" size="sm" disabled={photoBusy} onClick={() => setValue("photoUrl", "", { shouldDirty: true })}>
+                  <X className="h-3.5 w-3.5" /> Remove
+                </Button>
+              )}
+            </div>
           </div>
-          {watch("photoUrl") && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={watch("photoUrl")} alt="Preview" className="h-24 w-24 rounded-lg object-cover border border-border" />
-          )}
+          <p className="text-xs text-foreground-subtle">JPG, PNG, WebP or GIF, up to 10&nbsp;MB.</p>
         </div>
 
         <div className="flex items-center justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => router.push("/inventory")}>Cancel</Button>
-          <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creating…" : "Create Item"}</Button>
+          <Button type="submit" disabled={isSubmitting || photoBusy}>{isSubmitting ? "Creating…" : "Create Item"}</Button>
         </div>
       </form>
     </div>

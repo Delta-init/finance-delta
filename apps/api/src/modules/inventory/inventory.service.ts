@@ -10,6 +10,7 @@ import type {
   Paginated, ValuationReport,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
+import type { ParsedFile } from "../../middleware/upload";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { nextNumber } from "../sequence/sequence.service";
 import { Item, itemLmsCourses, lmsCourseFields, type ItemDoc } from "./item.model";
@@ -228,6 +229,30 @@ const ITEM_SORT: Record<string, string> = {
   price: "unitPriceMinor", cost: "costPriceMinor", createdAt: "createdAt",
 };
 
+// ── Product photos: uploaded, never a pasted link (2026-10-20) ─────────────────
+
+const photoPrefix = (orgId: string) => `inventory/${orgId}/`;
+const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+/** A product photo picked on the item form, stored before the item is saved with it. */
+export async function uploadItemPhoto(orgId: string, file: ParsedFile): Promise<{ url: string; key: string }> {
+  if (!PHOTO_TYPES.has(file.mimeType)) throw new AppError("VALIDATION_ERROR", "The photo must be a JPG, PNG, WebP or GIF image");
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+  const safe = file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  const up = await uploadFile({ key: `${photoPrefix(orgId)}${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safe}`, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+  return { url: up.url, key: up.key };
+}
+
+/** The photo to save: none, the one the item already has, or one this organization uploaded — never a pasted link. */
+async function checkedPhoto(orgId: string, photoUrl: string | undefined, current: string | undefined): Promise<string> {
+  if (!photoUrl) return "";
+  if (photoUrl === current) return photoUrl;
+  const { publicUrlFor } = await import("../../lib/storage");
+  if (!photoUrl.startsWith(publicUrlFor(photoPrefix(orgId)))) throw new AppError("VALIDATION_ERROR", "Upload the photo — links are not accepted");
+  return photoUrl;
+}
+
 export async function createItem(
   orgId: string,
   input: CreateItemInput,
@@ -246,7 +271,7 @@ export async function createItem(
     itemNumber,
     ...rest,
     ...(lmsCourseFields({ lmsCourseSlug, lmsCourseSlugs }) ?? {}),
-    photoUrl: input.photoUrl || undefined,
+    photoUrl: (await checkedPhoto(orgId, input.photoUrl, undefined)) || undefined,
     departmentId: dept?._id,
   });
   await doc.populate("departmentId", "name");
@@ -267,15 +292,23 @@ export async function updateItem(
     if (conflict) throw new AppError("CONFLICT", `SKU "${input.sku}" already exists`);
   }
   const { departmentId, lmsCourseSlug, lmsCourseSlugs, ...rest } = input;
+  // The photo only when it is sent — a save that leaves it out no longer clears it.
+  const { photoUrl: _photo, ...fields } = rest as typeof rest & { photoUrl?: string };
   const update: Record<string, unknown> = {
-    $set: { ...rest, ...(lmsCourseFields({ lmsCourseSlug, lmsCourseSlugs }) ?? {}), photoUrl: input.photoUrl || undefined },
+    $set: { ...fields, ...(lmsCourseFields({ lmsCourseSlug, lmsCourseSlugs }) ?? {}) },
   };
+  if (input.photoUrl !== undefined) {
+    const current = (await Item.findOne({ _id: id, organizationId: orgId }).select("photoUrl").lean<{ photoUrl?: string } | null>())?.photoUrl;
+    const photo = await checkedPhoto(orgId, input.photoUrl, current);
+    if (photo) (update.$set as Record<string, unknown>).photoUrl = photo;
+    else update.$unset = { ...((update.$unset as object) ?? {}), photoUrl: 1 };
+  }
   if (departmentId !== undefined) {
     if (departmentId) {
       const dept = await requireOrgDepartment(orgId, departmentId);
       (update.$set as Record<string, unknown>).departmentId = dept._id;
     } else {
-      update.$unset = { departmentId: 1 };
+      update.$unset = { ...((update.$unset as object) ?? {}), departmentId: 1 };
     }
   }
   const doc = await Item.findOneAndUpdate(

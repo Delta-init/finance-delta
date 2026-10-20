@@ -82,6 +82,12 @@ export const stopRecurrence = asyncHandler(async (req, res) => {
   ok(res, await svc.stopRecurrence(org(req), req.params.id!));
 });
 
+/** A document picked on the expense form, stored before the expense is saved with it (2026-10-20). */
+export const uploadFormFile = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  ok(res, await svc.uploadFormFile(org(req), req.file));
+});
+
 export const addAttachment = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
   ok(res, await svc.addAttachment(org(req), req.params.id!, req.file, writeScope(req)));

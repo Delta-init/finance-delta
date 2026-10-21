@@ -166,6 +166,11 @@ export const createExpenseSchema = z.object({
    * field stays on records that already carry one rather than being thrown away.
    */
   departmentId: z.string().optional(),
+  /**
+   * The salesperson it is for (the user, 2026-10-21) — their fuel, their Nol card, their advance. Optional; "" clears
+   * it. It shows on their page (Reports → Salesperson) and counts in their cost there.
+   */
+  salespersonId: z.union([z.literal(""), z.string().regex(/^[a-f\d]{24}$/i, "Invalid salesperson")]).optional(),
   costCentre: z.string().optional().default(""),
   notes: z.string().optional().default(""),
 });
@@ -244,6 +249,8 @@ export const expenseSchema = z.object({
   ),
   projectName: z.string(),
   department: departmentRefSchema.nullable().optional(),
+  /** The salesperson it is for, when it is for one. */
+  salesperson: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
   costCentre: z.string(),
   notes: z.string(),
   createdAt: z.string(),

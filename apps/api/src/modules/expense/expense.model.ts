@@ -127,6 +127,9 @@ const expenseSchema = new Schema(
     attachments: { type: [expenseAttachmentSchema], default: [] },
     projectName: { type: String, default: "" },
     departmentId: { type: Schema.Types.ObjectId, ref: "Department" },
+    /** The salesperson it is for (2026-10-21), and their name as it was then. */
+    salespersonId: { type: Schema.Types.ObjectId, ref: "User" },
+    salespersonName: { type: String },
     /**
      * The free-text cost centre this replaced.
      *
@@ -145,6 +148,7 @@ expenseSchema.index({ organizationId: 1, expenseNumber: 1 }, { unique: true });
 expenseSchema.index({ organizationId: 1, expenseDate: 1, status: 1 });
 expenseSchema.index({ organizationId: 1, submittedById: 1 });
 expenseSchema.index({ organizationId: 1, category: 1 });
+expenseSchema.index({ organizationId: 1, salespersonId: 1, expenseDate: 1 });
 // Listing the unpaid and the overdue, which is what the payment filter asks for.
 expenseSchema.index({ organizationId: 1, paidOn: 1, dueDate: 1 });
 // One expense per purchase request and round, however many times it is approved.

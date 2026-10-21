@@ -15,6 +15,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useExpenses, useVoidExpense, useDeleteExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { useUsers } from "@/features/users/api";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
@@ -111,7 +112,15 @@ export default function ExpensesPage() {
   const [recurring, setRecurring] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  useEffect(() => t.resetPage(), [status, payment, category, recurring, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One salesperson's expenses (2026-10-21) — also from a link (?salespersonId=), as the expense page gives.
+  const [salesperson, setSalesperson] = useState("all");
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search).get("salespersonId");
+    if (sp) setSalesperson(sp);
+  }, []);
+  const canPickSalesperson = useCan().can("user:read");
+  const { data: userList } = useUsers({ pageSize: 100, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
+  useEffect(() => t.resetPage(), [status, payment, category, recurring, dateFrom, dateTo, salesperson]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -122,11 +131,12 @@ export default function ExpensesPage() {
     isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    salespersonId: salesperson === "all" ? undefined : salesperson,
   };
   const { data, isLoading } = useExpenses(listParams);
 
   const hasFilters =
-    status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || !!t.q;
+    status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || salesperson !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
@@ -321,6 +331,18 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
 
+        {canPickSalesperson && (
+          <Select value={salesperson} onValueChange={setSalesperson}>
+            <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All salespeople</SelectItem>
+              {(userList?.data ?? []).map((u) => (
+                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         <Select value={recurring} onValueChange={setRecurring}>
           <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -356,6 +378,7 @@ export default function ExpensesPage() {
               setRecurring("all");
               setDateFrom("");
               setDateTo("");
+              setSalesperson("all");
               t.setQ("");
             }}
           >

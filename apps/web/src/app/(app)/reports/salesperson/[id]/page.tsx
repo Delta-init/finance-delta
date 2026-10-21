@@ -107,11 +107,16 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         />
       </Section>
 
-      <Section title="Expenses" description="Claims they submitted, counted the same way the profit and loss counts them.">
+      <Section title="Expenses" description="Expenses entered for them, and their own claims for nobody else — counted the same way the profit and loss counts them.">
         <Table
-          head={["Date", "Expense", "Category", "Status", "Amount"]}
+          head={["Date", "Expense", "Category", "For them / own", "Status", "Amount"]}
           rows={expenses.map((e) => [
-            day(e.expenseDate), e.expenseNumber || e.description, e.categoryName || "—",
+            day(e.expenseDate),
+            <Link key="x" href={`/expenses/${e.id}`} className="underline">{e.expenseNumber || e.description}</Link>,
+            e.categoryName || "—",
+            e.how === "for"
+              ? <span key="h">For them{e.enteredBy ? <span className="text-foreground-muted"> · entered by {e.enteredBy}</span> : null}</span>
+              : "Own claim",
             <Badge key="s" tone={e.status === "approved" ? "success" : "warning"}>{e.status}</Badge>,
             <MoneyDisplay key="a" minor={e.totalMinor} currency={e.currency} />,
           ])}

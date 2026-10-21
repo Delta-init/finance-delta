@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAllDepartments } from "@/features/departments/api";
+import { useUsers } from "@/features/users/api";
 import { QuickCreateDepartmentModal } from "@/features/departments/QuickCreateDepartmentModal";
 import { useCan } from "@/lib/use-can";
 import { ApiError, api } from "@/lib/api";
@@ -68,6 +69,8 @@ const formSchema = z.object({
   mileageRateDisplay: z.string().optional(),
   projectName: z.string().optional(),
   departmentId: z.string().optional(),
+  /** The salesperson it is for (2026-10-21); "" for nobody. */
+  salespersonId: z.string().optional(),
   costCentre: z.string().optional(),
   notes: z.string().optional(),
   // Uploaded files (by key); an old pasted link already on the expense keeps its url (2026-10-20).
@@ -95,11 +98,14 @@ export type ExpenseFormValues = z.infer<typeof formSchema>;
 
 /** Radix reads "" as unset, so "no department" needs a value that is not it. */
 const NO_DEPARTMENT = "__none__";
+/** Radix reads "" as unset, so "for nobody" needs a value of its own (2026-10-21). */
+const NO_SALESPERSON = "__no_salesperson__";
 
 interface ExpenseFormProps {
   mode: "create" | "edit";
   expenseId?: string;
-  initialValues?: Partial<ExpenseFormValues>;
+  /** On an edit, the salesperson's name too — shown even if they are no longer in the list. */
+  initialValues?: Partial<ExpenseFormValues> & { salespersonName?: string };
 }
 
 export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps) {
@@ -111,6 +117,11 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const { data: departments } = useAllDepartments();
   const { can } = useCan();
   const canAddDepartment = can("department:create");
+  // The people an expense can be for — the invoice form's salesperson list (2026-10-21). Reading users needs
+  // user:read; without it the field isn't offered.
+  const canPickSalesperson = can("user:read");
+  const { data: userList } = useUsers({ pageSize: 100, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
+  const salespeople = (userList?.data ?? []).filter((u) => u.status !== "suspended");
   const [deptModalOpen, setDeptModalOpen] = useState(false);
   // Shown only where a claim already carries one; there is no way to type a new
   // one, which is the point of replacing it.
@@ -129,6 +140,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         currency: orgCurrency,
         categoryOther: "",
         departmentId: "",
+        salespersonId: "",
         taxPct: 0,
         taxInclusive: false,
         requiresApproval: false,
@@ -255,6 +267,8 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         : { name: a.name, url: a.url })),
       projectName: values.projectName ?? "",
       departmentId: values.departmentId || undefined,
+      // "" on an edit takes a salesperson off; nothing on a new one.
+      salespersonId: isEdit ? values.salespersonId ?? "" : values.salespersonId || undefined,
       costCentre: values.costCentre ?? "",
       notes: values.notes ?? "",
       ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
@@ -511,6 +525,34 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
           <h2 className="text-sm font-semibold">Project &amp; Department</h2>
           <div className="grid gap-4 sm:grid-cols-2">
+            {(canPickSalesperson || watch("salespersonId")) && (
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Salesperson (optional)</Label>
+                {/* Picking one brings their department with them (2026-10-21) — still changeable below. */}
+                <Select
+                  value={watch("salespersonId") || NO_SALESPERSON}
+                  onValueChange={(v) => {
+                    const id = v === NO_SALESPERSON ? "" : v;
+                    setValue("salespersonId", id, { shouldDirty: true });
+                    const dept = salespeople.find((u) => u.id === id)?.department?.id;
+                    if (dept) setValue("departmentId", dept, { shouldDirty: true });
+                  }}
+                  disabled={!canPickSalesperson}
+                >
+                  <SelectTrigger><SelectValue placeholder="Not for a salesperson" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_SALESPERSON}>Not for a salesperson</SelectItem>
+                    {salespeople.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                    ))}
+                    {watch("salespersonId") && !salespeople.some((u) => u.id === watch("salespersonId")) && (
+                      <SelectItem value={watch("salespersonId")!}>{initialValues?.salespersonName ?? "Current salesperson"}</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-foreground-muted">It shows on their page under Reports → Salesperson, and counts in their cost there.</p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Project Name</Label>
               <Input {...register("projectName")} placeholder="e.g. Website Redesign" />

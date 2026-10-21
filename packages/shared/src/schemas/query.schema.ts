@@ -136,6 +136,8 @@ export const expenseQuerySchema = listQuerySchema.extend({
   projectName: z.string().optional(),
   costCentre: z.string().optional(),
   departmentId: z.string().optional(),
+  /** Expenses for one salesperson (2026-10-21). */
+  salespersonId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   isRecurring: queryBool,
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;

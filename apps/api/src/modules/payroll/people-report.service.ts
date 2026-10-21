@@ -136,20 +136,22 @@ export async function peopleReport(orgId: string, query: Query) {
     }
   }
 
-  // ── Expenses they claimed ───────────────────────────────────────────────
+  // ── Their expenses ──────────────────────────────────────────────────────
   // Same statuses the profit and loss counts, so a person's cost here and the
-  // expense total in the accounts cannot disagree.
+  // expense total in the accounts cannot disagree. An expense entered for a
+  // salesperson (2026-10-21) is theirs, whoever typed it; one for nobody is the
+  // claimant's — each counted once, for one person.
   const expenseAgg = userIds.length
     ? await Expense.aggregate([
         {
           $match: {
             organizationId: org,
-            submittedById: { $in: userIds },
             expenseDate: { $gte: from, $lte: to },
             status: { $in: ["approved", "submitted"] },
+            $or: [{ salespersonId: { $in: userIds } }, { salespersonId: null, submittedById: { $in: userIds } }],
           },
         },
-        { $group: { _id: "$submittedById", total: { $sum: "$totalMinor" } } },
+        { $group: { _id: { $ifNull: ["$salespersonId", "$submittedById"] }, total: { $sum: "$totalMinor" } } },
       ])
     : [];
   const expenses = new Map(expenseAgg.map((r) => [String(r._id), r.total as number]));
@@ -250,8 +252,12 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
           .lean()
       : [],
     uid
-      ? Expense.find({ organizationId: org, submittedById: uid, expenseDate: { $gte: from, $lte: to }, status: { $in: ["approved", "submitted"] } })
-          .select("expenseNumber description categoryName expenseDate totalMinor status currency")
+      ? Expense.find({
+          organizationId: org, expenseDate: { $gte: from, $lte: to }, status: { $in: ["approved", "submitted"] },
+          // Entered for them (2026-10-21), or their own claim for nobody — as the cost above counts them.
+          $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
+        })
+          .select("expenseNumber description categoryName expenseDate totalMinor status currency salespersonId submittedByName")
           .sort({ expenseDate: -1 })
           .limit(200)
           .lean()
@@ -315,6 +321,9 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
       id: String(e._id), expenseNumber: e.expenseNumber, description: e.description,
       categoryName: e.categoryName ?? "", expenseDate: (e.expenseDate as Date).toISOString(),
       totalMinor: e.totalMinor ?? 0, status: e.status, currency: e.currency ?? "AED",
+      /** "for": entered for them (by whoever); "own": their own claim. */
+      how: e.salespersonId ? ("for" as const) : ("own" as const),
+      enteredBy: e.submittedByName ?? "",
     })),
     commissions: commissions.map((c) => ({
       id: String(c._id), invoiceNumber: c.invoiceNumber, commissionMinor: c.commissionMinor,

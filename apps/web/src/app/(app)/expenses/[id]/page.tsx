@@ -430,12 +430,20 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               </div>
             )}
 
-            {(expense.projectName || expense.department || expense.costCentre) && (
+            {(expense.projectName || expense.department || expense.costCentre || expense.salesperson) && (
               <div className="border-t border-border pt-3 space-y-2">
                 {expense.projectName && (
                   <div>
                     <p className="text-xs text-foreground-muted">Project</p>
                     <p className="text-sm font-medium mt-0.5">{expense.projectName}</p>
+                  </div>
+                )}
+                {expense.salesperson && (
+                  <div>
+                    <p className="text-xs text-foreground-muted">Salesperson</p>
+                    <Link href={`/expenses?salespersonId=${expense.salesperson.id}`} className="text-sm font-medium mt-0.5 text-primary hover:underline" title="Their expenses">
+                      {expense.salesperson.name}
+                    </Link>
                   </div>
                 )}
                 {expense.department && (

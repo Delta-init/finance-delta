@@ -46,6 +46,14 @@ function toDepartmentRef(raw: unknown): { id: string; name: string } | null {
   return null;
 }
 
+/** A salesperson has to be somebody in this organization — their name kept with the expense. */
+async function requireOrgSalesperson(orgId: string, userId: string): Promise<{ id: Types.ObjectId; name: string }> {
+  const u = await User.findOne({ _id: userId, memberships: { $elemMatch: { organizationId: new Types.ObjectId(orgId), status: "active" } } })
+    .select("name").lean<{ _id: Types.ObjectId; name?: string } | null>();
+  if (!u) throw new AppError("VALIDATION_ERROR", "Invalid salesperson selected");
+  return { id: u._id, name: u.name ?? "" };
+}
+
 /** A department has to belong to this organization, or it is not one. */
 async function requireOrgDepartment(orgId: string, departmentId: string) {
   const { Department } = await import("../department/department.model");
@@ -144,6 +152,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     })),
     projectName: (doc.projectName as string) ?? "",
     department: toDepartmentRef((doc as unknown as { departmentId?: unknown }).departmentId),
+    salesperson: d.salespersonId ? { id: String(d.salespersonId), name: String(d.salespersonName ?? "") } : null,
     costCentre: (doc.costCentre as string) ?? "",
     notes: (doc.notes as string) ?? "",
     createdAt: doc.createdAt.toISOString(),
@@ -177,6 +186,7 @@ export async function listExpenses(
   if (query.projectName) and.push({ projectName: { $regex: query.projectName, $options: "i" } });
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
   if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });
+  if (query.salespersonId) and.push({ salespersonId: new Types.ObjectId(query.salespersonId) });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
 
   // The derived status, expressed as the query that produces it, so filtering
@@ -345,6 +355,7 @@ export async function createExpense(
   const displayName = resolveCategoryName(input.category, catName, input.categoryOther);
 
   if (input.departmentId) await requireOrgDepartment(orgId, input.departmentId);
+  const salesperson = input.salespersonId ? await requireOrgSalesperson(orgId, input.salespersonId) : null;
 
   const lateNow = await lateForDate(orgId, late, input.expenseDate, null, null);
   const doc = await Expense.create({
@@ -385,6 +396,7 @@ export async function createExpense(
     attachments: await resolveAttachments(orgId, input.attachments ?? [], []),
     projectName: input.projectName ?? "",
     departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
+    ...(salesperson ? { salespersonId: salesperson.id, salespersonName: salesperson.name } : {}),
     costCentre: input.costCentre ?? "",
     notes: input.notes ?? "",
   });
@@ -443,6 +455,16 @@ export async function updateExpense(
   if (input.dueDate !== undefined) d.dueDate = input.dueDate ? new Date(input.dueDate) : undefined;
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.projectName !== undefined) d.projectName = input.projectName;
+  if (input.salespersonId !== undefined) {
+    if (input.salespersonId) {
+      const sp = await requireOrgSalesperson(orgId, input.salespersonId);
+      d.salespersonId = sp.id;
+      d.salespersonName = sp.name;
+    } else {
+      d.salespersonId = undefined;
+      d.salespersonName = undefined;
+    }
+  }
   if (input.departmentId !== undefined) {
     if (input.departmentId) {
       await requireOrgDepartment(orgId, input.departmentId);

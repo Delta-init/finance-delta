@@ -293,6 +293,8 @@ export interface PersonDetail {
   expenses: Array<{
     id: string; expenseNumber: string; description: string; categoryName: string;
     expenseDate: string; totalMinor: number; status: string; currency: string;
+    /** "for": entered for them (2026-10-21); "own": their own claim. Absent from an older API. */
+    how?: "for" | "own"; enteredBy?: string;
   }>;
   commissions: Array<{
     id: string; invoiceNumber: string; commissionMinor: number;

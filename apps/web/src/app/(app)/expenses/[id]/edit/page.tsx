@@ -37,7 +37,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  const initialValues: Partial<ExpenseFormValues> = {
+  const initialValues: Partial<ExpenseFormValues> & { salespersonName?: string } = {
     category: expense.category,
     // The typed name lives in categoryName. Left blank when it is just the
     // category's own label, so an untouched claim does not reopen looking as
@@ -67,6 +67,8 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     mileageRateDisplay: expense.mileage ? (expense.mileage.ratePerKmMinor / 100).toString() : undefined,
     projectName: expense.projectName || "",
     departmentId: expense.department?.id ?? "",
+    salespersonId: expense.salesperson?.id ?? "",
+    salespersonName: expense.salesperson?.name ?? "",
     costCentre: expense.costCentre || "",
     notes: expense.notes || "",
     attachments: expense.attachments,

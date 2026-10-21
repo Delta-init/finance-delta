@@ -10,10 +10,20 @@ import { api } from "@/lib/api";
 
 const KEY = ["expense-categories"] as const;
 
+/**
+ * An API from before subcategories (2026-10-21) sends neither the list nor the
+ * P&L flag; the website deploys first, so every screen reads them filled in —
+ * none, and counting in the P&L — rather than crashing on a missing list.
+ */
+function complete(c: ExpenseCategoryRecord): ExpenseCategoryRecord {
+  const raw = c as Partial<ExpenseCategoryRecord> & ExpenseCategoryRecord;
+  return { ...raw, inPnl: raw.inPnl !== false, subcategories: raw.subcategories ?? [] };
+}
+
 export function useExpenseCategories() {
   return useQuery({
     queryKey: KEY,
-    queryFn: () => api.get<ExpenseCategoryRecord[]>("expense-categories"),
+    queryFn: async () => (await api.get<ExpenseCategoryRecord[]>("expense-categories")).map(complete),
     staleTime: 60_000,
   });
 }
@@ -22,8 +32,8 @@ export function useCreateExpenseCategory() {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (input: CreateExpenseCategoryInput) =>
-      api.post<ExpenseCategoryRecord>("expense-categories", input),
+    mutationFn: async (input: CreateExpenseCategoryInput) =>
+      complete(await api.post<ExpenseCategoryRecord>("expense-categories", input)),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -32,8 +42,8 @@ export function useUpdateExpenseCategory(id: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (input: UpdateExpenseCategoryInput) =>
-      api.patch<ExpenseCategoryRecord>(`expense-categories/${id}`, input),
+    mutationFn: async (input: UpdateExpenseCategoryInput) =>
+      complete(await api.patch<ExpenseCategoryRecord>(`expense-categories/${id}`, input)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       // Category names are denormalized onto expenses — refresh those too.

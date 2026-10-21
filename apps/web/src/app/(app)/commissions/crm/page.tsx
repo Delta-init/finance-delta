@@ -23,9 +23,11 @@ import {
 
 /*
  * The sales CRMs' commission (the user, 2026-10-21: "commission of each CRM needs to show here, a manager approves,
- * then accounts mark it paid with the receipt"). A month, per CRM: each person's commission as the CRM counts it
- * (salesperson, team leader, sales manager lines added up) and the sales behind it. A manager approves a person's
- * month — its amount frozen — and accounts pay it with the receipt: a paid expense in its bank or cash book.
+ * then accounts mark it paid with the receipt"). A month, per CRM: what each person is paid of their commission — the
+ * CRM's My Pay "commission payable", the commission earned (salesperson, team leader, sales manager lines added up)
+ * × their salary-slab level's percent (2026-10-21) — with the earned figure and the sales behind it. A manager
+ * approves a person's month — its amount frozen — and accounts pay it with the receipt: a paid expense in its bank or
+ * cash book. The CRM's My Pay shows where it stands.
  */
 
 const NO_DEPARTMENT = "__none__";
@@ -50,7 +52,7 @@ export default function CrmCommissionPage() {
       <PageHeader
         icon={Users}
         title="CRM commission"
-        description="Each sales CRM's commission for the month, as the CRM counts it. A manager approves a person's month, then accounts mark it paid with the receipt."
+        description="Each sales CRM's commission payable for the month, as the CRM's My Pay works it out (commission earned × the slab level's %). A manager approves a person's month, then accounts mark it paid with the receipt."
         action={
           <div className="flex items-center gap-2">
             <Label htmlFor="crm-commission-month" className="text-sm text-foreground-muted">Month</Label>
@@ -80,10 +82,11 @@ export default function CrmCommissionPage() {
               return (
                 <Card key={c.code} className="p-4">
                   <p className="text-sm font-semibold">{c.name}</p>
-                  <p className="mt-1 text-xl font-bold font-numeric">{money(c.totalMinor, c.currency)}</p>
+                  <p className="mt-1 text-xl font-bold font-numeric">{c.payError ? "—" : money(c.totalMinor, c.currency)}</p>
                   <p className="mt-1 text-xs text-foreground-muted">
-                    {c.people.length} {c.people.length === 1 ? "person" : "people"} · approved {money(approved, c.currency)} · paid {money(paid, c.currency)}
+                    payable of {money(c.earnedTotalMinor, c.currency)} earned · {c.people.length} {c.people.length === 1 ? "person" : "people"}
                   </p>
+                  <p className="text-xs text-foreground-muted">approved {money(approved, c.currency)} · paid {money(paid, c.currency)}</p>
                 </Card>
               );
             })}
@@ -121,10 +124,15 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
         <h2 className="font-semibold">{crm.name}</h2>
         <p className="text-xs text-foreground-muted">
-          {money(crm.totalMinor, crm.currency)} counted
+          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned
           {crm.pending.progress + crm.pending.waiting > 0 && ` · ${crm.pending.progress + crm.pending.waiting} sale${crm.pending.progress + crm.pending.waiting === 1 ? "" : "s"} still finishing their steps`}
         </p>
       </div>
+      {!crm.error && crm.payError && (
+        <p className="flex items-center gap-2 border-b border-border bg-warning/5 px-4 py-2 text-xs text-warning">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> My Pay's figures aren't available: {crm.payError} Nothing can be approved until they are.
+        </p>
+      )}
       {crm.error ? (
         <p className="flex items-center gap-2 px-4 py-6 text-sm text-warning"><AlertTriangle className="h-4 w-4" /> {crm.error}</p>
       ) : !crm.people.length ? (
@@ -136,7 +144,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
               <tr>
                 <th className="px-4 py-2 font-medium">Person</th>
                 <th className="px-4 py-2 text-right font-medium">Sales</th>
-                <th className="px-4 py-2 text-right font-medium">Commission</th>
+                <th className="px-4 py-2 text-right font-medium" title="My Pay's commission payable: earned × the slab level's %">Payable</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 text-right font-medium" />
               </tr>
@@ -158,7 +166,10 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">{p.sales}</td>
                       <td className="px-4 py-2.5 text-right font-numeric font-semibold">
-                        {money(p.payout?.amountMinor ?? p.amountMinor, crm.currency)}
+                        {p.payout ? money(p.payout.amountMinor, crm.currency) : p.payableKnown ? money(p.amountMinor, crm.currency) : "—"}
+                        <span className="block text-xs font-normal text-foreground-muted">
+                          {p.percent !== null ? `${p.percent}% of ` : ""}{money(p.earnedMinor, crm.currency)} earned{p.level ? ` · ${p.level}` : ""}
+                        </span>
                         {p.changed && (
                           <span className="block text-xs font-normal text-warning" title="The CRM's figure changed after it was approved">
                             CRM counts {money(p.amountMinor, crm.currency)} now
@@ -169,7 +180,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                         <StatusCell p={p} />
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                        {p.state === "earned" && canApprove && p.amountMinor > 0 && (
+                        {p.state === "earned" && canApprove && p.payableKnown && p.amountMinor > 0 && (
                           <Button size="sm" onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
                         )}
                         {p.state === "approved" && (
@@ -180,7 +191,8 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                             {canPay && <Button size="sm" onClick={() => onPay(p)}><Wallet className="h-3.5 w-3.5" /> Mark paid</Button>}
                           </div>
                         )}
-                        {p.state === "earned" && !canApprove && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
+                        {p.state === "earned" && p.payableKnown && p.amountMinor === 0 && <span className="text-xs text-foreground-muted">Nothing payable at this level</span>}
+                        {p.state === "earned" && !canApprove && p.amountMinor > 0 && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
                         {p.state === "approved" && !canPay && !canApprove && <span className="text-xs text-foreground-muted">Waiting for accounts</span>}
                       </td>
                     </tr>
@@ -271,7 +283,7 @@ function ApproveDialog({ pick, month, onClose }: { pick: Pick | null; month: str
         <DialogHeader>
           <DialogTitle>Approve commission</DialogTitle>
           <DialogDescription>
-            {pick ? `${pick.person.name} · ${pick.crm.name} · ${monthLabel(month)} — ${money(pick.person.amountMinor, pick.crm.currency)} for ${pick.person.sales} sale${pick.person.sales === 1 ? "" : "s"}. The amount is frozen as approved; accounts then pay it.` : ""}
+            {pick ? `${pick.person.name} · ${pick.crm.name} · ${monthLabel(month)} — ${money(pick.person.amountMinor, pick.crm.currency)} payable (${pick.person.percent ?? 0}% of ${money(pick.person.earnedMinor, pick.crm.currency)} earned on ${pick.person.sales} sale${pick.person.sales === 1 ? "" : "s"}${pick.person.level ? `, ${pick.person.level}` : ""}). The amount is frozen as approved; accounts then pay it, and the CRM's My Pay shows it.` : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">

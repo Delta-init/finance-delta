@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundBalancePaymentSchema, inboundSalesNoteSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
+import { CRM_COMMISSION_MONTH } from "@delta/shared";
+import { payoutsForCrm } from "../crm-commission/crm-commission.service";
 import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
 import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
@@ -144,3 +146,17 @@ export const takeTetraDeposit = asyncHandler(async (req: Request, res: Response)
   const parsed = inboundTetraDepositSchema.parse(req.body);
   ok(res, await intakeTetraDeposit(orgId, parsed));
 });
+
+/**
+ * GET /integrations/crm-commission/payouts?crm=&month= — a sales CRM asking where finance stands on its people's
+ * commission for a month, for its My Pay (2026-10-21): approved (by whom, when, the amount frozen then) or paid
+ * (when, how, the reference). Read-only; nothing about a month nobody approved.
+ */
+export const crmCommissionPayouts = asyncHandler(async (req: Request, res: Response) => {
+  const crm = String(req.query.crm ?? "").trim();
+  const month = String(req.query.month ?? "");
+  if (!/^[a-z0-9-]{1,40}$/.test(crm)) throw new AppError("VALIDATION_ERROR", "crm is required");
+  if (!CRM_COMMISSION_MONTH.test(month)) throw new AppError("VALIDATION_ERROR", "month is YYYY-MM");
+  ok(res, await payoutsForCrm(crm, month));
+});
+

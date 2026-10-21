@@ -43,4 +43,7 @@ router.post("/funding-requests/status", c.fundingRequestStatuses);
 // approve. Idempotent on its own id; the decision is sent back to it.
 router.post("/tetra-deposits", c.takeTetraDeposit);
 
+// A sales CRM's My Pay asking where finance stands on its people's commission for a month (2026-10-21).
+router.get("/crm-commission/payouts", c.crmCommissionPayouts);
+
 export default router;

@@ -24,8 +24,20 @@ import { CrmCommissionPayout } from "./crm-commission-payout.model";
  * receipt — a paid expense, in its method's bank or cash book, the receipt on it.
  */
 
-interface RootPerson { userId: string; name: string; roles: string[]; amount: number; sales: number; lines: CrmCommissionLine[] }
-interface RootCrm { code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number } }
+/**
+ * A person as Root gives them: `amount` the commission earned (every line added up); `payable` what the CRM's My Pay
+ * pays of it — the slab level's percent (2026-10-21: "finance pays My Pay's commission payable"), null when the CRM
+ * couldn't say.
+ */
+interface RootPerson {
+  userId: string; name: string; roles: string[]; amount: number; sales: number; lines: CrmCommissionLine[];
+  payable?: number | null; percent?: number | null; level?: string | null;
+}
+interface RootCrm {
+  code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number };
+  /** Why the CRM's My Pay figures are missing, when they are. */
+  payError?: string | null; payableTotal?: number | null;
+}
 
 const keyOf = (crm: string, month: string, userId: string) => `${crm}:${month}:${userId}`;
 const minor = (major: number) => Math.round((Number(major) || 0) * 100);
@@ -89,15 +101,18 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   };
 
   const out: CrmCommissionCrm[] = crms.map((c) => ({
-    code: c.code, name: c.name, currency: c.currency || "AED", error: c.error, totalMinor: minor(c.total), pending: c.pending ?? { progress: 0, waiting: 0 },
+    code: c.code, name: c.name, currency: c.currency || "AED", error: c.error, totalMinor: minor(c.payableTotal ?? 0),
+    earnedTotalMinor: minor(c.total), payError: c.payError ?? (c.payableTotal === undefined ? "The Root portal needs updating to give My Pay's figures." : null),
+    pending: c.pending ?? { progress: 0, waiting: 0 },
     people: (c.people ?? []).map((p) => {
       const payout = byKey.get(keyOf(c.code, month, p.userId));
-      const amountMinor = minor(p.amount);
+      const payable = typeof p.payable === "number" ? minor(p.payable) : null;
       return {
-        userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor, sales: p.sales ?? 0, lines: p.lines ?? [],
+        userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor: payable ?? 0, payableKnown: payable !== null,
+        earnedMinor: minor(p.amount), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0, lines: p.lines ?? [],
         state: payout ? payout.state : "earned",
         payout: payout ? view(payout) : null,
-        changed: !!payout && payout.amountMinor !== amountMinor,
+        changed: !!payout && payable !== null && payout.amountMinor !== payable,
       };
     }),
   }));
@@ -105,7 +120,10 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   for (const p of payouts) {
     const crm = out.find((c) => c.code === p.crm);
     if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
-    crm.people.push({ userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, sales: 0, lines: [], state: p.state, payout: view(p), changed: true });
+    crm.people.push({
+      userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, percent: null, level: null,
+      sales: 0, lines: [], state: p.state, payout: view(p), changed: true,
+    });
   }
 
   return {
@@ -121,20 +139,25 @@ async function personNow(input: { crm: string; month: string; userId: string }) 
   if (!crm) throw new AppError("NOT_FOUND", "That CRM is not in the Root portal.");
   if (crm.error) throw new AppError("UNAVAILABLE", `${crm.name} can't be read right now: ${crm.error}`);
   const person = crm.people.find((p) => p.userId === input.userId);
-  if (!person || !(person.amount > 0)) throw new AppError("NOT_FOUND", "Nothing is counted for this person in this month.");
-  return { crm, person };
+  if (!person) throw new AppError("NOT_FOUND", "Nothing is counted for this person in this month.");
+  if (typeof person.payable !== "number") {
+    throw new AppError("UNAVAILABLE", `${crm.name}'s My Pay figures aren't available${crm.payError ? ` (${crm.payError})` : ""} — what is payable can't be known yet.`);
+  }
+  if (!(person.payable > 0)) throw new AppError("CONFLICT", `Nothing is payable to ${person.name} for this month — their slab level pays ${person.percent ?? 0}% of the commission.`);
+  return { crm, person, payable: person.payable };
 }
 
 /** A manager approves a person's month: its amount is frozen as the CRM counts it now. */
 export async function approveCrmCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: ApproveCrmCommissionInput) {
   if (!isSuperAdmin && !(await canApprove(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager approves commission");
-  const { crm, person } = await personNow(input);
+  const { crm, person, payable } = await personNow(input);
   const key = keyOf(input.crm, input.month, input.userId);
   if (await CrmCommissionPayout.exists({ key })) throw new AppError("CONFLICT", `${person.name}'s ${input.month} commission is already approved`);
   try {
     await CrmCommissionPayout.create({
       key, organizationId: new Types.ObjectId(orgId), crm: crm.code, crmName: crm.name, month: input.month, userId: input.userId,
-      personName: person.name, roles: person.roles, currency: crm.currency || "AED", amountMinor: minor(person.amount), sales: person.sales,
+      personName: person.name, roles: person.roles, currency: crm.currency || "AED", amountMinor: minor(payable), earnedMinor: minor(person.amount),
+      percent: person.percent ?? null, level: person.level ?? null, sales: person.sales,
       saleIds: [...new Set(person.lines.map((l) => l.saleId))], state: "approved",
       approvedById: new Types.ObjectId(userId), approvedByName: await userName(userId), approvedAt: new Date(), approvalNote: input.note ?? "",
     });
@@ -222,3 +245,20 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
     throw err;
   }
 }
+
+/** A CRM's payouts for a month — what its My Pay shows (GET /integrations/crm-commission/payouts, 2026-10-21). */
+export async function payoutsForCrm(crm: string, month: string) {
+  const rows = await CrmCommissionPayout.find({ crm, month }).lean<any[]>();
+  return rows.map((p) => ({
+    userId: String(p.userId),
+    state: p.state as "approved" | "paid",
+    amount: (p.amountMinor ?? 0) / 100,
+    currency: p.currency ?? "AED",
+    approvedByName: p.approvedByName ?? "",
+    approvedAt: new Date(p.approvedAt).toISOString(),
+    paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : null,
+    paymentMethod: p.paymentMethod ?? null,
+    reference: p.reference ?? null,
+  }));
+}
+

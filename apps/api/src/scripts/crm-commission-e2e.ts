@@ -12,6 +12,9 @@
  *     the receipt on it, and can't be paid twice — not from another organization either;
  *   - a figure that changes in the CRM after approval is flagged; a payout whose sales all went still shows;
  *   - Root not set up, out of date or down says so.
+ *   - what is approved and paid is the CRM's My Pay "commission payable" (2026-10-21) — earned × the slab level's
+ *     percent — shown with the earned figure; nothing payable, or a CRM whose My Pay figures are missing, can't be
+ *     approved; the CRMs read their payouts back for My Pay.
  *
  * Run through scripts/crm-commission-e2e.sh (throwaway mongod, no .env anywhere).
  */
@@ -46,19 +49,24 @@ const refusal = async (p: Promise<unknown>) => p.then(() => "", (e: Error & { co
 
 /* ── A stand-in Root: the month's counted commission, changeable mid-test ── */
 const RIA = new Types.ObjectId().toString(), ABRAR = new Types.ObjectId().toString(), IRFANA = new Types.ObjectId().toString();
+const LENA = new Types.ObjectId().toString(), NUSRA = new Types.ObjectId().toString();
 const line = (role: string, amount: number, student = "S1") => ({ saleId: `sale-${student}`, saleDate: "2026-10-03T08:00:00.000Z", student, course: "Delta Wave Theory", invoiceNumber: `IN-${student}`, role, amount });
 const root = {
   mode: "ok" as "ok" | "old" | "down",
   hits: [] as Array<{ month: string | null; signed: boolean }>,
   crms: [
-    { code: "delta", name: "Sales CRM", currency: "AED", error: null, total: 1320, pending: { progress: 1, waiting: 0 }, people: [
-      { userId: RIA, name: "Ria", roles: ["sales"], amount: 1200, sales: 2, lines: [line("sales", 500), line("sales", 700, "S2")] },
-      { userId: ABRAR, name: "Abrar", roles: ["sm"], amount: 120, sales: 2, lines: [line("sm", 50), line("sm", 70, "S2")] },
+    { code: "delta", name: "Sales CRM", currency: "AED", error: null, total: 1320, payableTotal: 720, payError: null, pending: { progress: 1, waiting: 0 }, people: [
+      { userId: RIA, name: "Ria", roles: ["sales"], amount: 1200, payable: 600, percent: 50, level: "Level 2", sales: 2, lines: [line("sales", 500), line("sales", 700, "S2")] },
+      { userId: ABRAR, name: "Abrar", roles: ["sm"], amount: 120, payable: 120, percent: 100, level: "Level 1", sales: 2, lines: [line("sm", 50), line("sm", 70, "S2")] },
+      { userId: LENA, name: "Lena", roles: ["tl"], amount: 300, payable: 0, percent: 0, level: "Base", sales: 1, lines: [line("tl", 300, "S3")] },
     ] },
-    { code: "draw", name: "Draw", currency: "AED", error: null, total: 250, pending: { progress: 0, waiting: 0 }, people: [
-      { userId: IRFANA, name: "Irfana", roles: ["sales"], amount: 250, sales: 1, lines: [line("sales", 250, "D1")] },
+    { code: "draw", name: "Draw", currency: "AED", error: null, total: 250, payableTotal: 100, payError: null, pending: { progress: 0, waiting: 0 }, people: [
+      { userId: IRFANA, name: "Irfana", roles: ["sales"], amount: 250, payable: 100, percent: 40, level: "Level 1", sales: 1, lines: [line("sales", 250, "D1")] },
     ] },
-    { code: "banglore", name: "Banglore CRM", currency: "INR", error: "No database URI configured", total: 0, pending: { progress: 0, waiting: 0 }, people: [] },
+    { code: "remote", name: "Remote CRM", currency: "AED", error: null, total: 90, payableTotal: null, payError: "Remote CRM is not configured on this server — set REMOTE_API_URL", pending: { progress: 0, waiting: 0 }, people: [
+      { userId: NUSRA, name: "Nusra", roles: ["sales"], amount: 90, payable: null, percent: null, level: null, sales: 1, lines: [line("sales", 90, "R1")] },
+    ] },
+    { code: "banglore", name: "Banglore CRM", currency: "INR", error: "No database URI configured", total: 0, payableTotal: null, payError: null, pending: { progress: 0, waiting: 0 }, people: [] },
   ] as any[],
 };
 const server = http.createServer((req, res) => {
@@ -99,7 +107,9 @@ const pay = (who: string, o = ORG, extra: Record<string, unknown> = {}) => svc.p
 step("1. The month, per CRM and person");
 let view = await svc.crmCommissionMonth(ORG, ASHA, ["commission:read", "commission:write"], false, M);
 const delta = view.crms.find((c) => c.code === "delta")!;
-check("each CRM, its people, amounts in minor units, earned", delta.people.map((p) => [p.name, p.amountMinor, p.state]).join("|") === "Ria,120000,earned|Abrar,12000,earned" && delta.totalMinor === 132000, j(delta.people));
+check("each CRM, its people: My Pay's payable (minor units) with the earned figure, %, level — earned state",
+  delta.people.map((p) => [p.name, p.amountMinor, p.earnedMinor, p.percent, p.level, p.state]).join("|") === "Ria,60000,120000,50,Level 2,earned|Abrar,12000,12000,100,Level 1,earned|Lena,0,30000,0,Base,earned"
+  && delta.totalMinor === 72000 && delta.earnedTotalMinor === 132000 && delta.payError === null, j(delta.people));
 check("…with the sales behind them and what is still on its way", delta.people[0]!.lines.length === 2 && delta.pending.progress === 1);
 check("a CRM that can't be read says so", view.crms.find((c) => c.code === "banglore")?.error === "No database URI configured");
 check("asked of Root with finance's secret and the month", root.hits.at(-1)?.signed === true && root.hits.at(-1)?.month === M, j(root.hits.at(-1)));
@@ -112,7 +122,11 @@ check("paying before an approval: refused", /manager has to approve it first/.te
 await approve(MONA, RIA, "delta", "October, all good");
 view = await svc.crmCommissionMonth(ORG, ASHA, ["commission:write"], false, M);
 let ria = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === RIA)!;
-check("approved: frozen at 1,200, by Mona, with her note", ria.state === "approved" && ria.payout?.amountMinor === 120000 && ria.payout.approvedByName === "Mona Manager" && ria.payout.approvalNote === "October, all good", j(ria.payout));
+check("approved: frozen at the 600 payable (not the 1,200 earned), by Mona, with her note", ria.state === "approved" && ria.payout?.amountMinor === 60000 && ria.payout.approvedByName === "Mona Manager" && ria.payout.approvalNote === "October, all good", j(ria.payout));
+check("nothing payable at her level (0% of 300): can't be approved", /Nothing is payable to Lena/.test(await refusal(approve(MONA, LENA))));
+check("a CRM whose My Pay figures are missing: can't be approved, saying why", /My Pay figures aren't available/.test(await refusal(approve(MONA, NUSRA, "remote"))));
+const remoteView = view.crms.find((c) => c.code === "remote")!;
+check("…and the page says so: payable unknown", !remoteView.people[0]!.payableKnown && /REMOTE_API_URL/.test(remoteView.payError ?? ""), j(remoteView));
 check("only once", /already approved/.test(await refusal(approve(MONA, RIA))));
 check("someone with nothing counted: refused", /Nothing is counted/.test(await refusal(approve(MONA, new Types.ObjectId().toString()))));
 check("a super admin approves too", !!(await svc.approveCrmCommission(ORG, ASHA, true, approveCrmCommissionSchema.parse({ crm: "draw", month: M, userId: IRFANA }))).approved);
@@ -126,7 +140,7 @@ check("…nor another organization's upload", /Upload the receipt here first/.te
 check("no receipt at all: refused by the form", !payCrmCommissionSchema.safeParse({ crm: "delta", month: M, userId: RIA, paidOn: "2026-11-02", paymentMethod: "cash", category: "salaries_wages" }).success);
 const paid = await pay(RIA);
 const exp = await Expense.findById(paid.expense.id).lean<any>();
-check("one paid expense for the approved 1,200, the receipt on it", exp?.status === "approved" && !!exp.paidOn && exp.totalMinor === 120000 && exp.attachments?.[0]?.key === receiptKey() && /Sales commission — Ria \(Sales CRM, 2026-10\)/.test(exp.description), j(exp));
+check("one paid expense for the approved 600, the receipt on it", exp?.status === "approved" && !!exp.paidOn && exp.totalMinor === 60000 && exp.attachments?.[0]?.key === receiptKey() && /Sales commission — Ria \(Sales CRM, 2026-10\)/.test(exp.description), j(exp));
 check("…dated and referenced as paid, approved by the manager", new Date(exp.paidOn).toISOString().startsWith("2026-11-02") && exp.reference === "TRX-1" && exp.approvedByName === "Mona Manager");
 view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
 ria = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === RIA)!;
@@ -140,9 +154,18 @@ check("one expense in all", (await Expense.countDocuments({ description: "Sales 
 step("4. The CRM's figure moves after approval");
 await approve(MONA, ABRAR);
 root.crms[0].people[1].amount = 70; // a sale reversed
+root.crms[0].people[1].payable = 70;
 view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
 const abrar = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === ABRAR)!;
-check("flagged: approved at 120, the CRM counts 70 now", abrar.changed && abrar.payout?.amountMinor === 12000 && abrar.amountMinor === 7000, j(abrar));
+check("flagged: approved at 120, the CRM's My Pay says 70 payable now", abrar.changed && abrar.payout?.amountMinor === 12000 && abrar.amountMinor === 7000, j(abrar));
+
+/* ── 4b ── */
+step("4b. The CRMs read their payouts back, for My Pay");
+const back = await svc.payoutsForCrm("delta", M);
+const backRia = back.find((x) => x.userId === RIA), backAbrar = back.find((x) => x.userId === ABRAR);
+check("Ria: paid 600 on 2 November by bank transfer, TRX-1", backRia?.state === "paid" && backRia.amount === 600 && backRia.paidOn === "2026-11-02" && backRia.paymentMethod === "bank_transfer" && backRia.reference === "TRX-1", j(backRia));
+check("Abrar: approved 120 by Mona, not paid", backAbrar?.state === "approved" && backAbrar.amount === 120 && backAbrar.approvedByName === "Mona Manager" && !backAbrar.paidOn, j(backAbrar));
+check("another CRM's month: only its own", (await svc.payoutsForCrm("draw", M)).length === 0);
 root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== RIA);
 view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
 const gone = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === RIA);

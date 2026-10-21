@@ -16,8 +16,12 @@ const payoutSchema = new Schema(
     personName: { type: String, default: "" },
     roles: { type: [String], default: [] },
     currency: { type: String, default: "AED" },
-    /** What the manager approved — frozen then. */
+    /** What the manager approved — My Pay's commission payable then (2026-10-21), frozen. */
     amountMinor: { type: Number, required: true, min: 0 },
+    /** The commission earned it is a share of, the slab level's percent and its name — as they stood then. */
+    earnedMinor: { type: Number },
+    percent: { type: Number },
+    level: { type: String },
     sales: { type: Number, default: 0 },
     saleIds: { type: [String], default: [] },
     state: { type: String, enum: ["approved", "paid"], required: true },

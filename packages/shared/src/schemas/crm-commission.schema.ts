@@ -6,7 +6,8 @@ import { expensePaymentMethodSchema } from "./expense.schema";
  * approves, then accounts mark it paid with the receipt"). Each CRM counts commission per sale (salesperson, team
  * leader, sales manager); finance reads a month of it through the Root portal, per CRM and person, and pays it:
  *
- *   earned    counted in the CRM — nothing to pay yet
+ *   earned    counted in the CRM — nothing to pay yet. What is paid is the CRM's My Pay "commission payable" (the
+ *             commission earned × the person's salary-slab level percent — the user, 2026-10-21), not salary
  *   approved  a manager (tagged Manager in finance, or a super admin) approved the person's month — its amount frozen
  *   paid      accounts recorded the payment with its receipt — a paid expense in the books
  *
@@ -66,8 +67,16 @@ export interface CrmCommissionPayoutView {
 
 export interface CrmCommissionPerson {
   userId: string; name: string; roles: string[];
-  /** Counted in the CRM now, minor units. */
+  /**
+   * What finance pays: the CRM's My Pay "commission payable" now — the commission earned × the person's slab level
+   * percent (2026-10-21) — minor units; 0 while unknown (payableKnown false).
+   */
   amountMinor: number;
+  payableKnown: boolean;
+  /** The commission earned it is a share of (every line added up), the level's percent and name. */
+  earnedMinor: number;
+  percent: number | null;
+  level: string | null;
   sales: number;
   lines: CrmCommissionLine[];
   state: CrmCommissionState;
@@ -78,7 +87,11 @@ export interface CrmCommissionPerson {
 
 export interface CrmCommissionCrm {
   code: string; name: string; currency: string; error: string | null;
+  /** Payable this month (My Pay's figures); the commission earned it comes from. */
   totalMinor: number;
+  earnedTotalMinor: number;
+  /** Why My Pay's figures are missing for this CRM, when they are — nothing can be approved then. */
+  payError: string | null;
   pending: { progress: number; waiting: number };
   people: CrmCommissionPerson[];
 }

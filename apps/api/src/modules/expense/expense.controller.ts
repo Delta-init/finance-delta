@@ -21,6 +21,12 @@ export const list = asyncHandler(async (req, res) => {
   ok(res, result.data, result.meta);
 });
 
+/** The list's cards: what the same filters match, per currency (2026-10-21). */
+export const summary = asyncHandler(async (req, res) => {
+  const query = parseQuery(expenseQuerySchema, req.query);
+  ok(res, await svc.expenseSummary(org(req), query, readScope(req)));
+});
+
 export const get = asyncHandler(async (req, res) => {
   ok(res, await svc.getExpense(org(req), req.params.id!, readScope(req)));
 });

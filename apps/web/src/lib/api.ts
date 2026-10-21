@@ -66,7 +66,7 @@ export interface PageMeta {
 
 export type QueryParams = Record<string, string | number | string[] | undefined | null>;
 
-function qs(params?: QueryParams): string {
+export function qs(params?: QueryParams): string {
   if (!params) return "";
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {

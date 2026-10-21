@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
-import { useExpenses, useVoidExpense, useDeleteExpense } from "@/features/expenses/api";
+import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from "@/features/expenses/api";
+import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import { useUsers } from "@/features/users/api";
@@ -142,6 +143,8 @@ export default function ExpensesPage() {
     salespersonId: salesperson === "all" ? undefined : salesperson,
   };
   const { data, isLoading } = useExpenses(listParams);
+  // The cards above the table: what these same filters match, per currency (2026-10-21).
+  const summary = useExpenseSummary(listParams);
 
   const hasFilters =
     status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || salesperson !== "all" || !!t.q;
@@ -427,6 +430,9 @@ export default function ExpensesPage() {
           </Button>
         )}
       </div>
+
+      {/* An API from before the cards answers 404: the page then simply has none. */}
+      {!summary.error && <ExpenseSummaryCards summary={summary.data} loading={summary.isLoading} />}
 
       <DataTable
         columns={columns}

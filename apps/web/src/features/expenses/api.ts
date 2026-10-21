@@ -5,9 +5,10 @@ import type {
   CreateExpenseInput,
   UpdateExpenseInput,
   Expense,
+  ExpenseSummary,
   RejectExpenseInput,
 } from "@delta/shared";
-import { api, type QueryParams } from "@/lib/api";
+import { api, qs, type QueryParams } from "@/lib/api";
 
 const KEY = ["expenses"] as const;
 
@@ -20,6 +21,17 @@ export function useExpenses(params: QueryParams = {}, options?: { enabled?: bool
     // given, so every existing caller is unaffected. It exists so a component
     // that is about to render nothing does not fetch first.
     ...(options?.enabled === undefined ? {} : { enabled: options.enabled }),
+  });
+}
+
+/** The list's cards: what the same filters match, per currency (2026-10-21). No paging — the cards are the whole match. */
+export function useExpenseSummary(params: QueryParams = {}) {
+  const { page: _p, pageSize: _s, sort: _o, dir: _d, ...filters } = params as Record<string, unknown>;
+  return useQuery({
+    queryKey: [...KEY, "summary", filters],
+    queryFn: () => api.get<ExpenseSummary>(`expenses/summary${qs(filters as QueryParams)}`),
+    placeholderData: (prev) => prev,
+    retry: false,
   });
 }
 

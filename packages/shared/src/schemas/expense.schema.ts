@@ -263,6 +263,31 @@ export const expenseSchema = z.object({
 });
 export type Expense = z.infer<typeof expenseSchema>;
 
+/** One currency's figures in the Expenses list's cards (2026-10-21) — currencies are never added together. */
+export interface ExpenseSummaryCurrency {
+  currency: string;
+  /** Expenses whose money is counted here. */
+  count: number;
+  totalMinor: number;
+  paidMinor: number;
+  paidCount: number;
+  /** Not paid, and not yet due (or with no due date). */
+  unpaidMinor: number;
+  unpaidCount: number;
+  /** Not paid, and past their due date. */
+  overdueMinor: number;
+  overdueCount: number;
+}
+
+/** The Expenses list's cards: what its filters match, per currency. */
+export interface ExpenseSummary {
+  /** Every expense the filters match — what the table lists. */
+  count: number;
+  /** Matched but not money spent — voided or rejected — so not in the amounts, unless filtered for. */
+  leftOut: number;
+  byCurrency: ExpenseSummaryCurrency[];
+}
+
 /**
  * What to store as a claim's category name.
  *

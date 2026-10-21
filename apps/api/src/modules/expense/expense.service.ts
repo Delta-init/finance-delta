@@ -4,6 +4,8 @@ import type {
   UpdateExpenseInput,
   Expense as ExpenseDTO,
   ExpenseQuery,
+  ExpenseSummary,
+  ExpenseSummaryCurrency,
   Paginated,
   RejectExpenseInput,
   ExpensePaymentStatus,
@@ -172,11 +174,11 @@ const SORT = {
   createdAt: "createdAt",
 } as const;
 
-export async function listExpenses(
-  orgId: string,
-  query: ExpenseQuery,
-  scope: Scope,
-): Promise<Paginated<ExpenseDTO>> {
+/**
+ * What the Expenses list's filters match — the table, its export and its cards (2026-10-21) read the same
+ * filter, so they cannot disagree.
+ */
+function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scope): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
   // Notes too: an imported row's "[Needs review]", its old account, its accountant's note (2026-10-21).
   const or = searchOr(query.q, ["expenseNumber", "description", "submittedByName", "notes"]);
@@ -213,6 +215,15 @@ export async function listExpenses(
   };
   if (and.length) filter.$and = and;
 
+  return filter;
+}
+
+export async function listExpenses(
+  orgId: string,
+  query: ExpenseQuery,
+  scope: Scope,
+): Promise<Paginated<ExpenseDTO>> {
+  const filter = expenseListFilter(orgId, query, scope);
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
     Expense.find(filter).sort(sort).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize)
@@ -220,6 +231,42 @@ export async function listExpenses(
     Expense.countDocuments(filter),
   ]);
   return { data: rows.map((r) => toDTO(r as unknown as ExpenseDoc)), meta: pageMeta(total, query.page, query.pageSize) };
+}
+
+/**
+ * The Expenses list's cards (the user, 2026-10-21): how many the filters match and their money — total,
+ * paid, unpaid, overdue — per currency, never added across currencies. Voided and rejected ones are
+ * counted but their money left out (it was not spent), unless the status filter asks for them.
+ */
+export async function expenseSummary(orgId: string, query: ExpenseQuery, scope: Scope): Promise<ExpenseSummary> {
+  const filter = Expense.find().cast(Expense, expenseListFilter(orgId, query, scope));
+  const todayStart = new Date(new Date().toISOString().slice(0, 10));
+  const notSpent = query.status === "voided" || query.status === "rejected" ? [] : ["voided", "rejected"];
+  const unpaid = { $eq: [{ $ifNull: ["$paidOn", null] }, null] };
+  const overdue = { $and: [unpaid, { $ne: [{ $ifNull: ["$dueDate", null] }, null] }, { $lt: ["$dueDate", todayStart] }] };
+  const sumIf = (cond: unknown, what: unknown) => ({ $sum: { $cond: [cond, what, 0] } });
+  const [all, groups] = await Promise.all([
+    Expense.countDocuments(filter),
+    Expense.aggregate<{ _id: string | null } & Omit<ExpenseSummaryCurrency, "currency">>([
+      { $match: { ...filter, status: { $nin: notSpent } } },
+      {
+        $group: {
+          _id: "$currency",
+          count: { $sum: 1 },
+          totalMinor: { $sum: "$totalMinor" },
+          paidMinor: sumIf({ $not: [unpaid] }, "$totalMinor"),
+          paidCount: sumIf({ $not: [unpaid] }, 1),
+          unpaidMinor: sumIf({ $and: [unpaid, { $not: [overdue] }] }, "$totalMinor"),
+          unpaidCount: sumIf({ $and: [unpaid, { $not: [overdue] }] }, 1),
+          overdueMinor: sumIf(overdue, "$totalMinor"),
+          overdueCount: sumIf(overdue, 1),
+        },
+      },
+      { $sort: { totalMinor: -1 } },
+    ]),
+  ]);
+  const byCurrency = groups.map(({ _id, ...g }) => ({ currency: _id || "AED", ...g }));
+  return { count: all, leftOut: all - byCurrency.reduce((n, g) => n + g.count, 0), byCurrency };
 }
 
 export async function getExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {

@@ -10,6 +10,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requireAnyPermission("expense:read", "expense:read:own"), c.list);
+// Before "/:id", or "summary" is read as an expense id.
+router.get("/summary", requireAnyPermission("expense:read", "expense:read:own"), c.summary);
 router.get("/:id", requireAnyPermission("expense:read", "expense:read:own"), c.get);
 router.post("/", requireAnyPermission("expense:create", "expense:write:own"), validateBody(createExpenseSchema), c.create);
 // Supporting documents are uploaded, never pasted (2026-10-20): the form stores each file here, then saves the expense with it.

@@ -106,7 +106,7 @@ export async function financeReportForPortal(q: { org?: string; from?: string; t
     tally(byMethod, meth, amount);
     expenseRows.push({ at: new Date(e.expenseDate).toISOString(), id: String(e._id), number: e.expenseNumber, title: String(e.description ?? ""), category: cat, department: dept,
       owner_id: String(e.submittedByName ?? ""), owner: String(e.submittedByName ?? ""), team: dept, amount, paid, paid_on: e.paidOn ? new Date(e.paidOn).toISOString() : "",
-      method: String(e.paymentMethod ?? ""), from_hrms: !!e.source?.kind, href: `/expenses/${e._id}` });
+      method: String(e.paymentMethod ?? ""), from_hrms: String(e.source?.kind ?? "").startsWith("hrms_"), imported: e.source?.kind === "import", href: `/expenses/${e._id}` });
   }
 
   /* ── Approvals decided ── */

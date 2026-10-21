@@ -723,8 +723,8 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["submitted"], approved: ["approved"], rejected: ["rejected"] });
       const { docs, total } = await newest(
         Expense,
-        // A purchase request's expense is listed as the purchase request.
-        narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $ne: "hrms_procurement" } }, ctx, "expense"),
+        // A purchase request's expense is listed as the purchase request; an imported row of the old books was never decided here.
+        narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $nin: ["hrms_procurement", "import"] } }, ctx, "expense"),
         { $cond: [{ $eq: ["$status", "submitted"] }, "$updatedAt", firstOf("$approvedAt", "$updatedAt")] },
         "expenseNumber category categoryName subcategoryName description submittedByName totalMinor currency status approvedByName approvedAt rejectedReason updatedAt createdAt",
         ctx,

@@ -79,7 +79,8 @@ export async function backfillBankAccounts(opts: {
   }
 
   // 3. Expenses in no account.
-  const expenses = await Expense.find({ organizationId: org._id, status: { $nin: ["voided", "rejected"] }, bankAccountId: { $in: [null, undefined] } })
+  // Never the old books' imported rows (2026-10-21): they stay out of the cash books.
+  const expenses = await Expense.find({ organizationId: org._id, status: { $nin: ["voided", "rejected"] }, bankAccountId: { $in: [null, undefined] }, "source.kind": { $ne: "import" } })
     .select("expenseNumber status paidOn paymentMethod paymentAccount").lean<any[]>();
   for (const e of expenses) {
     const typed = String(e.paymentAccount ?? "").trim();

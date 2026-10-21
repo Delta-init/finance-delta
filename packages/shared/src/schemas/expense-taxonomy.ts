@@ -32,7 +32,9 @@ export const EXPENSE_TAXONOMY: readonly TaxonomyCategory[] = [
   { slug: "office_supplies", name: "Office Supplies & Pantry", inPnl: true, subcategories: [
     sub("stationery", "Stationery"), sub("printing", "Printing"), sub("pantry_supplies", "Pantry Supplies"), sub("cleaning_supplies", "Cleaning Supplies")] },
   { slug: "other_unclassified", name: "Other / Unclassified", inPnl: true, subcategories: [
-    sub("pending_classification", "Pending Classification"), sub("other_approved", "Other Approved Expenses")] },
+    sub("pending_classification", "Pending Classification"), sub("other_approved", "Other Approved Expenses"),
+    // Not costs (2026-10-21, the old books' import): partners' shares are equity, intercompany/investment payments assets.
+    sub("partner_distributions", "Partner Distributions", false), sub("intercompany_investments", "Intercompany & Investments", false)] },
   { slug: "payroll_benefits", name: "Payroll & Employee Benefits", inPnl: true, subcategories: [
     sub("basic_salary", "Basic Salary"), sub("allowances", "Allowances"), sub("overtime", "Overtime"), sub("bonuses", "Bonuses"),
     sub("employer_benefits", "Employer Benefits")] },

@@ -178,7 +178,8 @@ export async function listExpenses(
   scope: Scope,
 ): Promise<Paginated<ExpenseDTO>> {
   const and: Record<string, unknown>[] = [];
-  const or = searchOr(query.q, ["expenseNumber", "description", "submittedByName"]);
+  // Notes too: an imported row's "[Needs review]", its old account, its accountant's note (2026-10-21).
+  const or = searchOr(query.q, ["expenseNumber", "description", "submittedByName", "notes"]);
   if (or) and.push({ $or: or });
   if (query.status) and.push({ status: query.status });
   if (query.category) and.push({ category: query.category });

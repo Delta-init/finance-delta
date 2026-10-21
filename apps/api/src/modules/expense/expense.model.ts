@@ -55,10 +55,11 @@ const expenseAttachmentSchema = new Schema(
  */
 const expenseSourceSchema = new Schema(
   {
-    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time"], required: true },
+    // "import": a row of the old books, brought in by scripts/expense-import.ts (2026-10-21) — key "import:<batch>:<row>".
+    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time", "import"], required: true },
     key: { type: String, required: true },
-    hrmsOrgId: { type: String, required: true },
-    requestId: { type: String, required: true },
+    hrmsOrgId: { type: String, required: function (this: { kind?: string }) { return this.kind !== "import"; } },
+    requestId: { type: String, required: function (this: { kind?: string }) { return this.kind !== "import"; } },
     round: { type: Number, default: 0 },
     deliveredAt: { type: Date },
   },

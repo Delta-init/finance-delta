@@ -568,13 +568,15 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
             {(canPickSalesperson || watch("salespersonId")) && (
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Salesperson (optional)</Label>
-                {/* Picking one brings their department with them (2026-10-21) — still changeable below. */}
+                {/* Picking one brings their department with them (2026-10-21) — their user's, else their payroll
+                    record's from HRMS (2026-10-22) — still changeable below. */}
                 <Select
                   value={watch("salespersonId") || NO_SALESPERSON}
                   onValueChange={(v) => {
                     const id = v === NO_SALESPERSON ? "" : v;
                     setValue("salespersonId", id, { shouldDirty: true });
-                    const dept = salespeople.find((u) => u.id === id)?.department?.id;
+                    const who = salespeople.find((u) => u.id === id);
+                    const dept = who?.department?.id ?? who?.employeeDepartment?.id;
                     if (dept) setValue("departmentId", dept, { shouldDirty: true });
                   }}
                   disabled={!canPickSalesperson}

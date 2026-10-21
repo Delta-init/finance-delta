@@ -98,6 +98,21 @@ check("Suhail's page lists the fuel, \"for them\", entered by Farhan", dSuhail.e
 const dFarhan = await people.personDetail(ORG, String(eFarhan._id), range);
 check("Farhan's page: his own claim only, \"own\"", dFarhan.expenses.map((x: any) => [x.description, x.how]).join("|") === "Farhan's own taxi,own", j(dFarhan.expenses));
 
+/* ── 5 ── */
+step("5. The department picking a salesperson brings (2026-10-22)");
+// Nadia's user has no department of her own; her payroll record (from HRMS) says Marketing.
+const marketing = await Department.create({ organizationId: org._id, name: "Marketing" });
+const nadia = await User.create({ name: "Nadia", email: "nadia@e2e-expsp.test", passwordHash: "x", status: "active",
+  memberships: [{ organizationId: org._id, roleId: role._id, status: "active" }] });
+await Employee.create({ organizationId: org._id, hrmsOrgId: "h1", hrmsEmployeeId: "E9", employeeCode: "E9", name: "Nadia", userId: nadia._id, status: "active", departmentId: marketing._id });
+const users = await import("../modules/user/user.service");
+const { userQuerySchema } = await import("@delta/shared");
+const people5 = (await users.listUsers(ORG, userQuerySchema.parse({ page: 1, pageSize: 100 }) as never)).data;
+const n = people5.find((u) => u.name === "Nadia"), su = people5.find((u) => u.name === "Suhail"), ab = people5.find((u) => u.name === "Abshar");
+check("Nadia: no user department, her payroll record's Marketing", !n?.department && n?.employeeDepartment?.name === "Marketing", j(n));
+check("Suhail: his user's Sales, and his payroll record's Sales", su?.department?.name === "Sales" && su?.employeeDepartment?.name === "Sales", j(su));
+check("Abshar: no payroll record — none", ab?.employeeDepartment === null, j(ab));
+
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();
 process.exit(failures ? 1 : 0);

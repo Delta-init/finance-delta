@@ -12,6 +12,7 @@ import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { User } from "./user.model";
 import { Role } from "../role/role.model";
 import { Department } from "../department/department.model";
+import { Employee } from "../employee/employee.model";
 
 interface PopulatedRole {
   _id: Types.ObjectId;
@@ -108,6 +109,10 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
   ]);
 
   const deptNames = await departmentMap(orgId);
+  // Each one's payroll employee record, for the department an expense entered for them takes (2026-10-22).
+  const employees = await Employee.find({ organizationId: orgId, userId: { $in: rows.map((u) => u._id) } })
+    .select("userId departmentId").lean<{ userId: Types.ObjectId; departmentId?: Types.ObjectId | null }[]>();
+  const employeeDept = new Map(employees.map((e) => [String(e.userId), e.departmentId ? String(e.departmentId) : ""]));
   const results: UserDTO[] = [];
   for (const u of rows) {
     const membership = u.memberships.find((m) => m.organizationId.equals(orgId));
@@ -116,7 +121,10 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
     if (!role) continue;
     const deptId = membership.departmentId?.toString();
     const department = deptId && deptNames.has(deptId) ? { id: deptId, name: deptNames.get(deptId)! } : null;
-    results.push(toDTO(u as unknown as UserDoc, role as unknown as PopulatedRole, department, Boolean(membership.isManager)));
+    const dto = toDTO(u as unknown as UserDoc, role as unknown as PopulatedRole, department, Boolean(membership.isManager));
+    const eDept = employeeDept.get(String(u._id));
+    dto.employeeDepartment = eDept && deptNames.has(eDept) ? { id: eDept, name: deptNames.get(eDept)! } : null;
+    results.push(dto);
   }
 
   return { data: results, meta: pageMeta(total, query.page, query.pageSize) };

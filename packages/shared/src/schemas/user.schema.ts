@@ -71,6 +71,11 @@ export const userSchema = z.object({
   role: z.object({ id: z.string(), key: z.string(), name: z.string() }),
   isSuperAdmin: z.boolean().optional().default(false),
   department: departmentRefSchema.nullable().optional(),
+  /**
+   * Their department on their payroll employee record (from HRMS), in the list only (2026-10-22) — what an expense
+   * entered for them takes when their user has none of its own.
+   */
+  employeeDepartment: departmentRefSchema.nullable().optional(),
   tags: z.array(tagRefSchema).default([]),
   /** Tagged Manager in this organization: decides late entries. */
   isManager: z.boolean().optional().default(false),

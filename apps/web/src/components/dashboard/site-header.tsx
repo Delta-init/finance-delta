@@ -132,6 +132,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   commissions: "Commissions",
   structures: "Structures",
   records: "Records",
+  crm: "CRM commission",
   report: "Report",
   loans: "Loans & Credit",
   "tetra-deposits": "Tetra Deposits",

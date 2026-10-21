@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Banknote, Check, X, Loader2, Send, AlertTriangle } from "lucide-react";
 import { EXPENSE_DEFAULTS } from "@delta/shared";
@@ -12,23 +12,52 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useOneTimePayments, useMarkOneTimePaid, useRejectOneTimePayment, type OneTimePaymentRequest } from "@/features/one-time-payments/api";
+import {
+  useOneTimePayments, useOneTimeHistory, useMarkOneTimePaid, useRejectOneTimePayment,
+  type OneTimeHistoryStatus, type OneTimePaymentRecord, type OneTimePaymentRequest,
+} from "@/features/one-time-payments/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories/CategoryPicker";
 import { useAllDepartments } from "@/features/departments/api";
-import { PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
+import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 
 /** Radix reads "" as unset, so "no department" needs a value of its own. */
 const NO_DEPARTMENT = "__none__";
+
+type Tab = "pending" | "paid" | "rejected" | "all";
+const TABS: Array<{ key: Tab; label: string }> = [
+  { key: "pending", label: "Pending" },
+  { key: "paid", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" },
+];
+const isTab = (v: string | null): v is Tab => TABS.some((t) => t.key === v);
 
 /**
  * One-time payments from HRMS — a bonus or commission HR sent for finance to
  * pay directly rather than putting on a payslip. The amount is HR's. "Mark
  * paid" records a paid expense — when, how, the bank reference — and HRMS
  * shows the payment as Paid to the employee.
+ *
+ * Finance's full record (the user, 2026-10-21), in tabs kept in the URL (?tab=):
+ * Pending — waiting on finance, decided here; Approved — paid, with the expense
+ * recorded; Rejected — refused by finance, and why; All — every one, newest first.
  */
 export default function OneTimePaymentsPage() {
+  const [tab, setTabState] = useState<Tab>("pending");
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (isTab(t)) setTabState(t);
+  }, []);
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    const p = new URLSearchParams(window.location.search);
+    if (t === "pending") p.delete("tab"); else p.set("tab", t);
+    window.history.replaceState(null, "", `${window.location.pathname}${p.size ? `?${p}` : ""}`);
+  };
+
   const { data, isLoading, error } = useOneTimePayments();
   const rows = data ?? [];
 
@@ -37,11 +66,28 @@ export default function OneTimePaymentsPage() {
       <PageHeader
         icon={Banknote}
         title="One-time payments"
-        description="Bonuses and other one-off payments HR sent from HRMS for finance to pay directly. They are not on any payslip — marking one paid records it as a paid expense."
+        description="Bonuses and other one-off payments HR sent from HRMS for finance to pay directly: waiting, paid and refused. They are not on any payslip — marking one paid records it as a paid expense."
         action={rows.length > 0 ? <Badge tone="warning">{rows.length} waiting</Badge> : undefined}
       />
 
-      {isLoading ? (
+      <div className="flex w-fit gap-1 rounded-lg border border-border bg-surface p-1 text-sm" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`rounded-md px-3 py-1.5 font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
+          >
+            {t.label}
+            {t.key === "pending" && rows.length > 0 && <span className="ml-1.5 tabular-nums">({rows.length})</span>}
+          </button>
+        ))}
+      </div>
+
+      {tab !== "pending" ? (
+        <History status={tab} empty={tab === "paid" ? "No one-time payment has been paid yet." : tab === "rejected" ? "No one-time payment has been refused." : "No one-time payments yet."} />
+      ) : isLoading ? (
         <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>
       ) : error ? (
         <Card className="px-5 py-12 text-center text-sm text-foreground-muted">
@@ -58,6 +104,76 @@ export default function OneTimePaymentsPage() {
           {rows.map((r) => <PaymentCard key={`${r.hrmsOrgId}:${r._id}`} payment={r} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Finance's full record ─────────────────────────────────────────────────────
+
+const STATUS: Record<OneTimePaymentRecord["financeStatus"], { label: string; tone: "warning" | "success" | "danger" }> = {
+  with_finance: { label: "Waiting on finance", tone: "warning" },
+  paid: { label: "Paid", tone: "success" },
+  rejected: { label: "Rejected", tone: "danger" },
+};
+const day = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
+const methodLabel = (m?: string) => (m ? (PAYOUT_METHOD_LABELS as Record<string, string>)[m] ?? m.replace(/_/g, " ") : "");
+
+function History({ status, empty }: { status: OneTimeHistoryStatus; empty: string }) {
+  const { data, isLoading, error } = useOneTimeHistory(status);
+  const rows = data ?? [];
+  const message = error instanceof ApiError
+    ? error.status === 404 ? "The finance API needs updating before it can show this." : error.message
+    : "Could not reach HRMS. Check the integration settings and try again.";
+
+  if (isLoading) return <Card className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;
+  if (error) {
+    return (
+      <Card className="px-5 py-10 text-center text-sm text-foreground-muted" data-testid="one-time-history-error">
+        <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-danger" />
+        {message}
+      </Card>
+    );
+  }
+  if (!rows.length) return <Card className="px-5 py-8 text-center text-sm text-foreground-muted">{empty}</Card>;
+  return (
+    <Card className="divide-y divide-border overflow-hidden">
+      {rows.map((r) => <RecordRow key={`${r.hrmsOrgId}:${r._id}`} r={r} />)}
+    </Card>
+  );
+}
+
+function RecordRow({ r }: { r: OneTimePaymentRecord }) {
+  const st = STATUS[r.financeStatus] ?? STATUS.with_finance;
+  const facts = [r.employee?.employeeCode, r.employee?.designation, r.employee?.department?.name, r.month ? `For ${r.month}` : ""].filter(Boolean);
+  const currency = (r.employee?.currency || "AED").toUpperCase();
+  const expense = r.expense && r.expense.status !== "voided" ? r.expense : null;
+
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-semibold">{r.label}{r.employee?.name ? ` · ${r.employee.name}` : ""}</h3>
+          <Badge tone={st.tone}>{st.label}</Badge>
+        </div>
+        {facts.length > 0 && <p className="text-sm text-foreground-muted">{facts.join(" · ")}</p>}
+        {r.notes && <p className="text-sm">{r.notes}</p>}
+        <div className="flex flex-wrap gap-x-5 gap-y-1 pt-1 text-xs text-foreground-muted">
+          <span>Sent <span className="text-foreground">{day(r.createdAt)}</span>{r.createdBy?.name ? <> by <span className="text-foreground">{r.createdBy.name}</span></> : null}</span>
+          {r.financeStatus === "paid" && (
+            <span>
+              Paid{r.paidOn ? <> on <span className="text-foreground">{day(r.paidOn)}</span></> : null}
+              {r.paymentMethod ? <> by <span className="text-foreground">{methodLabel(r.paymentMethod)}</span></> : null}
+              {r.paymentRef ? <> · ref <span className="text-foreground">{r.paymentRef}</span></> : null}
+              {expense ? <> — <Link href={`/expenses/${expense.id}`} className="font-medium text-primary hover:underline">{expense.expenseNumber}</Link></> : null}
+            </span>
+          )}
+          {r.financeStatus === "rejected" && r.financeDecidedAt && <span>Refused on <span className="text-foreground">{day(r.financeDecidedAt)}</span></span>}
+          {r.financeNote && <span>Finance&apos;s note: <span className="text-foreground">{r.financeNote}</span></span>}
+        </div>
+      </div>
+      <div className="shrink-0 sm:text-right">
+        <MoneyDisplay minor={Math.round(r.amount * 100)} currency={currency} className="text-base font-semibold" />
+      </div>
     </div>
   );
 }

@@ -22,6 +22,29 @@ export interface OneTimePaymentRequest {
   expense: { id: string; expenseNumber: string; status: string } | null;
 }
 
+/** Which part of finance's full record a tab shows (2026-10-21). */
+export type OneTimeHistoryStatus = "paid" | "rejected" | "all";
+
+/** One payment in finance's full record — any status, with finance's decision. */
+export interface OneTimePaymentRecord extends Omit<OneTimePaymentRequest, "suggestedDepartmentId"> {
+  financeStatus: "with_finance" | "paid" | "rejected";
+  paidOn?: string | null;
+  paymentMethod?: string;
+  paymentRef?: string;
+  financeNote?: string;
+  financeDecidedAt?: string | null;
+}
+
+/** Paid, refused, or every one HR sent to finance — newest first, read live from HRMS. */
+export function useOneTimeHistory(status: OneTimeHistoryStatus, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, "history", status],
+    queryFn: () => api.get<OneTimePaymentRecord[]>(`one-time-payments/history?status=${status}`),
+    enabled,
+    retry: false,
+  });
+}
+
 /** Read live from HRMS on every load. */
 export function useOneTimePayments() {
   return useQuery({

@@ -3,7 +3,7 @@ import type { MarkOneTimePaidInput, RejectOneTimePaymentInput } from "@delta/sha
 import { EXPENSE_DEFAULTS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
-import { hrmsClient, type HrmsOneTimePayment } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsOneTimeHistoryStatus, type HrmsOneTimePayment, type HrmsOneTimePaymentRecord } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
 import { placeExpenseInBank } from "../expense/expense.service";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
@@ -65,6 +65,45 @@ export async function listWaiting(orgId: string): Promise<OneTimePaymentRow[]> {
       };
     })
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export const ONE_TIME_HISTORY_STATUSES = ["paid", "rejected", "all"] as const satisfies readonly HrmsOneTimeHistoryStatus[];
+
+export interface OneTimeHistoryRow extends HrmsOneTimePaymentRecord {
+  hrmsOrgId: string;
+  /** The expense finance recorded when it paid it, when there is one. */
+  expense: { id: string; expenseNumber: string; status: string } | null;
+}
+
+/**
+ * Finance's full record of one-time payments (the user, 2026-10-21): paid,
+ * refused by finance, or every one HR sent to finance — across every linked
+ * HRMS organisation, newest first. Read live from HRMS like the queue; a paid
+ * one carries the expense recorded for it.
+ */
+export async function listHistory(orgId: string, status: HrmsOneTimeHistoryStatus): Promise<OneTimeHistoryRow[]> {
+  if (!hrmsClient.isConfigured()) throw new AppError("CONFLICT", "The HRMS integration is not configured.");
+  const hrmsOrgIds = await linkedOrgIds(orgId);
+  const rows: Array<HrmsOneTimePaymentRecord & { hrmsOrgId: string }> = [];
+  for (const hrmsOrgId of hrmsOrgIds) {
+    const got = await hrmsClient.oneTimePaymentHistory(hrmsOrgId, status);
+    // An HRMS from before the full record ignores ?status= and sends its queue: say so rather than show the wrong list.
+    if (status !== "all" && got.some((r) => r.financeStatus !== status)) {
+      throw new AppError("UNAVAILABLE", "HRMS needs updating before finance can show the full record of one-time payments.");
+    }
+    rows.push(...got.map((r) => ({ ...r, hrmsOrgId })));
+  }
+  const made = rows.length
+    ? await Expense.find({ organizationId: new Types.ObjectId(orgId), "source.key": { $in: rows.map((r) => sourceKey(r.hrmsOrgId, r._id)) } })
+      .select("expenseNumber status source").lean()
+    : [];
+  const madeFor = new Map(made.map((e) => [String(e.source?.key), e]));
+  return rows
+    .map((r) => {
+      const e = madeFor.get(sourceKey(r.hrmsOrgId, r._id));
+      return { ...r, expense: e ? { id: String(e._id), expenseNumber: String(e.expenseNumber), status: String(e.status) } : null };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 async function requireRow(orgId: string, hrmsOrgId: string, id: string): Promise<HrmsOneTimePayment> {

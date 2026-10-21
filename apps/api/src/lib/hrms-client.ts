@@ -339,6 +339,20 @@ export interface HrmsOneTimePayment {
   createdAt: string;
 }
 
+/** Which one-time payments finance's full record asks HRMS for (2026-10-21): paid, refused, or all sent to finance. */
+export type HrmsOneTimeHistoryStatus = "paid" | "rejected" | "all";
+
+/** A one-time payment as finance's full record has it — any status, with finance's decision. */
+export interface HrmsOneTimePaymentRecord extends HrmsOneTimePayment {
+  financeStatus: "with_finance" | "paid" | "rejected";
+  paidOn?: string | null;
+  paymentMethod?: string;
+  paymentRef?: string;
+  financeNote?: string;
+  financeDecidedAt?: string | null;
+  updatedAt?: string;
+}
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -567,6 +581,11 @@ export const hrmsClient = {
   /** One-time payments HR sent to finance to pay, not yet paid or refused. */
   async oneTimePayments(organizationId: string): Promise<HrmsOneTimePayment[]> {
     return (await request<HrmsOneTimePayment[]>("GET", "/one-time-payments/requests", { query: { organizationId } })).data;
+  },
+
+  /** Finance's full record (2026-10-21): payments of one status, or all sent to finance — newest first. HRMS before then answers only its queue. */
+  async oneTimePaymentHistory(organizationId: string, status: HrmsOneTimeHistoryStatus): Promise<HrmsOneTimePaymentRecord[]> {
+    return (await request<HrmsOneTimePaymentRecord[]>("GET", "/one-time-payments/requests", { query: { organizationId, status } })).data;
   },
 
   /** Paid: HRMS marks it Paid and tells the employee. */

@@ -24,7 +24,7 @@ import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { lateView, isLatePending } from "../late-entry/late-entry.model";
@@ -104,6 +104,8 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     expenseNumber: doc.expenseNumber,
     category: doc.category as string,
     categoryName: categoryDisplay(doc.category as string, d.categoryName as string | undefined),
+    ...(d.subcategory ? { subcategory: d.subcategory as string, subcategoryName: (d.subcategoryName as string) || (d.subcategory as string) } : {}),
+    ...((d.legacyCategory as { name?: string } | undefined)?.name ? { legacyCategoryName: (d.legacyCategory as { name: string }).name } : {}),
     description: doc.description,
     expenseDate: dateOnly(doc.expenseDate as unknown as Date),
     amountMinor: (doc.amountMinor as number) ?? 0,
@@ -180,6 +182,7 @@ export async function listExpenses(
   if (or) and.push({ $or: or });
   if (query.status) and.push({ status: query.status });
   if (query.category) and.push({ category: query.category });
+  if (query.subcategory) and.push({ subcategory: query.subcategory });
   if (query.submittedById) and.push({ submittedById: new Types.ObjectId(query.submittedById) });
   if (query.dateFrom) and.push({ expenseDate: { $gte: new Date(query.dateFrom) } });
   if (query.dateTo) and.push({ expenseDate: { $lte: new Date(query.dateTo) } });
@@ -349,10 +352,8 @@ export async function createExpense(
 
   const status = input.requiresApproval ? "submitted" : "approved";
 
-  const catMap = await categoryNameMap(orgId);
-  const catName = catMap.get(input.category);
-  if (!catName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
-  const displayName = resolveCategoryName(input.category, catName, input.categoryOther);
+  const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
+  const displayName = resolveCategoryName(cat.category, cat.categoryName, input.categoryOther);
 
   if (input.departmentId) await requireOrgDepartment(orgId, input.departmentId);
   const salesperson = input.salespersonId ? await requireOrgSalesperson(orgId, input.salespersonId) : null;
@@ -362,8 +363,10 @@ export async function createExpense(
     organizationId: new Types.ObjectId(orgId),
     expenseNumber,
     lateEntry: lateNow.next ?? null,
-    category: input.category,
+    category: cat.category,
     categoryName: displayName,
+    subcategory: cat.subcategory,
+    subcategoryName: cat.subcategoryName,
     description: input.description,
     expenseDate: new Date(input.expenseDate),
     amountMinor: netMinor,
@@ -428,13 +431,16 @@ export async function updateExpense(
 
   const d = doc as unknown as Record<string, unknown>;
 
-  if (input.category !== undefined || input.categoryOther !== undefined) {
+  if (input.category !== undefined || input.subcategory !== undefined || input.categoryOther !== undefined) {
     const category = input.category ?? (d.category as string);
-    const catMap = await categoryNameMap(orgId);
-    const nm = catMap.get(category);
-    if (!nm) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${category}"`);
-    d.category = category;
-    d.categoryName = resolveCategoryName(category, nm, input.categoryOther);
+    const same = category === d.category;
+    // Its category kept: its subcategory stays unless changed, and an older expense without one may stay so.
+    const sub = input.subcategory !== undefined ? input.subcategory : same ? (d.subcategory as string | null) : null;
+    const cat = await resolveExpenseCategory(orgId, category, sub, { optionalSub: same && input.subcategory === undefined });
+    d.category = cat.category;
+    d.categoryName = resolveCategoryName(cat.category, cat.categoryName, input.categoryOther);
+    d.subcategory = cat.subcategory;
+    d.subcategoryName = cat.subcategoryName;
   }
   if (input.description !== undefined) doc.description = input.description;
   // Its date moved: too far back and it waits for a manager; back within the days and it no longer does.

@@ -4,6 +4,7 @@ import { Employee } from "../employee/employee.model";
 import { Department } from "../department/department.model";
 import { Invoice } from "../invoice/invoice.model";
 import { Expense } from "../expense/expense.model";
+import { pnlExpenseFilter } from "../expense-category/expense-category.service";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { PayrollRun } from "./payroll-run.model";
 
@@ -149,6 +150,7 @@ export async function peopleReport(orgId: string, query: Query) {
             expenseDate: { $gte: from, $lte: to },
             status: { $in: ["approved", "submitted"] },
             $or: [{ salespersonId: { $in: userIds } }, { salespersonId: null, submittedById: { $in: userIds } }],
+            ...(await pnlExpenseFilter(orgId)),
           },
         },
         { $group: { _id: { $ifNull: ["$salespersonId", "$submittedById"] }, total: { $sum: "$totalMinor" } } },
@@ -243,6 +245,7 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
 
   const uid = employee.userId;
 
+  const pnl = await pnlExpenseFilter(orgId);
   const [invoices, expenses, commissions] = await Promise.all([
     uid
       ? Invoice.find({ organizationId: org, salespersonId: uid, issueDate: { $gte: from, $lte: to }, status: { $nin: ["void", "draft"] } })
@@ -256,6 +259,7 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
           organizationId: org, expenseDate: { $gte: from, $lte: to }, status: { $in: ["approved", "submitted"] },
           // Entered for them (2026-10-21), or their own claim for nobody — as the cost above counts them.
           $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
+          ...pnl,
         })
           .select("expenseNumber description categoryName expenseDate totalMinor status currency salespersonId submittedByName")
           .sort({ expenseDate: -1 })

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ClipboardList, Check, X, Loader2, Send, AlertTriangle } from "lucide-react";
+import { EXPENSE_DEFAULTS } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import {
   useProcurementRequests, useApproveProcurement, useRejectProcurement, type ProcurementRequest,
 } from "@/features/procurement/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories/CategoryPicker";
 import { useAllDepartments } from "@/features/departments/api";
 
 /** Radix reads "" as unset, so "no department" needs a value of its own. */
@@ -74,15 +76,16 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
   const reject = useRejectProcurement();
 
   const [amount, setAmount] = useState(r.estimatedCost > 0 ? String(r.estimatedCost) : "");
-  const [category, setCategory] = useState<string | null>(null);
   const [categoryOther, setCategoryOther] = useState(r.category ?? "");
   const [department, setDepartment] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
-  // Defaults wait for the lists they come from: "Other" when this org has it,
-  // and the finance department HR's is linked to, when that still exists.
+  // Defaults wait for the lists they come from: Other / Unclassified › Pending
+  // Classification when this org has it (2026-10-21), and the finance
+  // department HR's is linked to, when that still exists.
   const categoryList = categories.data ?? [];
-  const chosenCategory = category ?? (categoryList.some((c) => c.slug === "other") ? "other" : categoryList[0]?.slug ?? "");
+  const cat = useCategoryChoice(categoryList, EXPENSE_DEFAULTS.procurement);
+  const chosenCategory = cat.value.category;
   const departmentList = departments.data ?? [];
   const suggested = r.suggestedDepartmentId && departmentList.some((d) => d.id === r.suggestedDepartmentId)
     ? r.suggestedDepartmentId : NO_DEPARTMENT;
@@ -107,6 +110,7 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
       ...(made ? {} : {
         amountMinor,
         category: chosenCategory,
+        subcategory: cat.value.subcategory || undefined,
         categoryOther: chosenCategory === "other" ? categoryOther.trim() : "",
         departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment,
       }),
@@ -192,17 +196,7 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
                 </p>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={id("category")}>Category</Label>
-              <Select value={chosenCategory} onValueChange={setCategory} disabled={categories.isLoading}>
-                <SelectTrigger id={id("category")}>
-                  <SelectValue placeholder={categories.isLoading ? "Loading…" : "Choose a category"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {categoryList.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            <CategoryPicker categories={categoryList} value={cat.value} onChange={cat.set} idPrefix={id("expense")} loading={categories.isLoading} />
             {chosenCategory === "other" && (
               <div className="space-y-1.5">
                 <Label htmlFor={id("other")}>What it is</Label>
@@ -233,7 +227,7 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
             {!voided && (
               <Button
                 onClick={() => void onApprove().catch(() => undefined)}
-                disabled={busy || (!made && (!amountValid || !chosenCategory))}
+                disabled={busy || (!made && (!amountValid || !cat.complete))}
               >
                 {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                 {made ? "Send approval to HR" : "Approve as expense"}

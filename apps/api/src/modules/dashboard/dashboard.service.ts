@@ -2,7 +2,7 @@ import { Types } from "mongoose";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
 
 function oid(id: string) { return new Types.ObjectId(id); }
 function startOf(d: Date) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
@@ -50,6 +50,9 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
   // 6 months back for cashflow
   const sixMonthsAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
 
+  // Expense figures here are profit-and-loss ones: advances, payroll clearing, VAT, loan principal are left out.
+  const pnl = await pnlExpenseFilter(orgId);
+
   const [
     revMtdAgg, revLmAgg,
     receivablesAgg, payablesAgg,
@@ -88,7 +91,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
         { $group: { _id: null, total: { $sum: "$subtotalMinor" } } },
       ]),
       Expense.aggregate([
-        { $match: { organizationId: oid(orgId), expenseDate: { $gte: mtdStart, $lte: mtdEnd }, status: { $in: ["approved", "submitted"] } } },
+        { $match: { organizationId: oid(orgId), expenseDate: { $gte: mtdStart, $lte: mtdEnd }, status: { $in: ["approved", "submitted"] }, ...pnl } },
         { $group: { _id: null, total: { $sum: "$totalMinor" } } },
       ]),
     ]),
@@ -99,7 +102,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
         { $group: { _id: null, total: { $sum: "$subtotalMinor" } } },
       ]),
       Expense.aggregate([
-        { $match: { organizationId: oid(orgId), expenseDate: { $gte: lmStart, $lte: lmEnd }, status: { $in: ["approved", "submitted"] } } },
+        { $match: { organizationId: oid(orgId), expenseDate: { $gte: lmStart, $lte: lmEnd }, status: { $in: ["approved", "submitted"] }, ...pnl } },
         { $group: { _id: null, total: { $sum: "$totalMinor" } } },
       ]),
     ]),
@@ -122,7 +125,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
     ]),
     // Expense by category (last 3 months)
     Expense.aggregate([
-      { $match: { organizationId: oid(orgId), expenseDate: { $gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1)) }, status: { $in: ["approved", "submitted"] } } },
+      { $match: { organizationId: oid(orgId), expenseDate: { $gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1)) }, status: { $in: ["approved", "submitted"] }, ...pnl } },
       { $group: { _id: "$category", total: { $sum: "$totalMinor" } } },
       { $sort: { total: -1 } },
       { $limit: 6 },

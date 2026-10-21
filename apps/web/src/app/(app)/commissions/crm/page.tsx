@@ -3,7 +3,7 @@
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Loader2, Upload, Users, Wallet, X } from "lucide-react";
-import type { CrmCommissionCrm, CrmCommissionPerson, UploadedExpenseFile } from "@delta/shared";
+import { EXPENSE_DEFAULTS, type CrmCommissionCrm, type CrmCommissionPerson, type UploadedExpenseFile } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories/CategoryPicker";
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import {
@@ -304,15 +305,16 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
   const departments = useAllDepartments();
   const pay = usePayCrmCommission();
   const [payout, setPayout] = useState<Payout>(emptyPayout);
-  const [category, setCategory] = useState<string | null>(null);
   const [department, setDepartment] = useState(NO_DEPARTMENT);
   const [receipt, setReceipt] = useState<UploadedExpenseFile | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const categoryList = categories.data ?? [];
-  const chosenCategory = category ?? (categoryList.some((c) => c.slug === "salaries_wages") ? "salaries_wages" : categoryList[0]?.slug ?? "");
-  const reset = () => { setPayout(emptyPayout()); setCategory(null); setDepartment(NO_DEPARTMENT); setReceipt(null); };
+  // Sales Commission › Sales Commission, or › Team Leader Commission for someone paid only as a team leader.
+  const tlOnly = !!pick && pick.person.roles.length > 0 && pick.person.roles.every((r) => r === "tl");
+  const cat = useCategoryChoice(categoryList, tlOnly ? EXPENSE_DEFAULTS.crmCommissionTeamLeader : EXPENSE_DEFAULTS.crmCommission);
+  const reset = () => { setPayout(emptyPayout()); cat.reset(); setDepartment(NO_DEPARTMENT); setReceipt(null); };
   const close = () => { reset(); onClose(); };
 
   const pickFile = async (file: File) => {
@@ -332,7 +334,7 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
     if (!pick || !receipt) return;
     try {
       const res = await pay.mutateAsync({
-        crm: pick.crm.code, month, userId: pick.person.userId, ...payout, category: chosenCategory,
+        crm: pick.crm.code, month, userId: pick.person.userId, ...payout, category: cat.value.category, subcategory: cat.value.subcategory || undefined,
         departmentId: department === NO_DEPARTMENT ? "" : department,
         receipt: { name: receipt.name, key: receipt.key, size: receipt.size, mimeType: receipt.mimeType },
       });
@@ -356,14 +358,8 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
         <div className="grid gap-4 sm:grid-cols-3">
           <PayoutFields value={payout} onChange={setPayout} idPrefix="crm-commission" />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="crm-commission-category">Category</Label>
-            <Select value={chosenCategory} onValueChange={setCategory} disabled={categories.isLoading}>
-              <SelectTrigger id="crm-commission-category"><SelectValue placeholder="Choose a category" /></SelectTrigger>
-              <SelectContent>{categoryList.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <CategoryPicker categories={categoryList} value={cat.value} onChange={cat.set} idPrefix="crm-commission" loading={categories.isLoading} />
           <div className="space-y-1.5">
             <Label htmlFor="crm-commission-department">Department (optional)</Label>
             <Select value={department} onValueChange={setDepartment} disabled={departments.isLoading}>
@@ -394,7 +390,7 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={close}>Cancel</Button>
-          <Button loading={pay.isPending} disabled={!receipt || uploading || !chosenCategory || !payoutValid(payout)} onClick={() => void submit()}>
+          <Button loading={pay.isPending} disabled={!receipt || uploading || !cat.complete || !payoutValid(payout)} onClick={() => void submit()}>
             <Wallet className="h-4 w-4" /> Mark paid
           </Button>
         </DialogFooter>

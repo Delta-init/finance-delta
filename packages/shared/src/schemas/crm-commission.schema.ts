@@ -36,6 +36,8 @@ export const payCrmCommissionSchema = z.object({
   reference: z.string().trim().max(120).optional().default(""),
   /** A managed expense-category slug for the expense it records. */
   category: z.string().trim().min(1, "Choose an expense category"),
+  /** One of the category's subcategories (2026-10-21) — needed when it has any; the page's default fills it. */
+  subcategory: z.string().trim().max(60).optional(),
   departmentId: z.union([z.literal(""), z.string().regex(/^[a-f\d]{24}$/i, "Invalid department")]).optional().default(""),
   /** The receipt, uploaded first (POST /commissions/crm/uploads) — required. */
   receipt: z.object({

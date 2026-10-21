@@ -15,6 +15,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { useExpenses, useVoidExpense, useDeleteExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import { useUsers } from "@/features/users/api";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
@@ -54,6 +55,7 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Expense #", value: (e) => e.expenseNumber },
   { header: "Description", value: (e) => e.description },
   { header: "Category", value: (e) => e.categoryName || e.category },
+  { header: "Subcategory", value: (e) => e.subcategoryName ?? "" },
   { header: "Date", value: (e) => e.expenseDate },
   { header: "Submitted By", value: (e) => e.submittedByName },
   { header: "Salesperson", value: (e) => e.salesperson?.name ?? "" },
@@ -110,6 +112,10 @@ export default function ExpensesPage() {
   const [status, setStatus] = useState("all");
   const [payment, setPayment] = useState("all");
   const [category, setCategory] = useState("all");
+  // One of the chosen category's subcategories (2026-10-21); a new category starts from all of them.
+  const [subcategory, setSubcategory] = useState("all");
+  useEffect(() => setSubcategory("all"), [category]);
+  const subOptions = category === "all" ? [] : subcategoriesOf(categoryList, category);
   const [recurring, setRecurring] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -121,7 +127,7 @@ export default function ExpensesPage() {
   }, []);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: 100, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
-  useEffect(() => t.resetPage(), [status, payment, category, recurring, dateFrom, dateTo, salesperson]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => t.resetPage(), [status, payment, category, subcategory, recurring, dateFrom, dateTo, salesperson]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -129,6 +135,7 @@ export default function ExpensesPage() {
     status: status === "all" ? undefined : status,
     paymentStatus: payment === "all" ? undefined : payment,
     category: category === "all" ? undefined : category,
+    subcategory: category === "all" || subcategory === "all" ? undefined : subcategory,
     isRecurring: recurring === "all" ? undefined : recurring === "recurring" ? "true" : "false",
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
@@ -176,7 +183,12 @@ export default function ExpensesPage() {
       key: "category",
       header: "Category",
       sortable: true,
-      cell: (e) => <span className="text-foreground-muted">{e.categoryName || e.category}</span>,
+      cell: (e) => (
+        <span className="text-foreground-muted">
+          {e.categoryName || e.category}
+          {e.subcategoryName && <span className="block text-xs">{e.subcategoryName}</span>}
+        </span>
+      ),
     },
     {
       // Who the expense is for, when it is for a salesperson (2026-10-21) — a click lists just theirs.
@@ -349,6 +361,16 @@ export default function ExpensesPage() {
             ))}
           </SelectContent>
         </Select>
+
+        {subOptions.length > 0 && (
+          <Select value={subcategory} onValueChange={setSubcategory}>
+            <SelectTrigger className="w-[180px]" aria-label="Subcategory"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All subcategories</SelectItem>
+              {subOptions.map((s) => <SelectItem key={s.slug} value={s.slug}>{s.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
 
         {canPickSalesperson && (
           <Select value={salesperson} onValueChange={setSalesperson}>

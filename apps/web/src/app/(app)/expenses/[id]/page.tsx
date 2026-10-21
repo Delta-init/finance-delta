@@ -399,7 +399,11 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-xs text-foreground-muted">Category</p>
               <p className="text-sm font-medium mt-0.5">
                 {expense.categoryName || expense.category}
+                {expense.subcategoryName && <span className="text-foreground-muted"> › {expense.subcategoryName}</span>}
               </p>
+              {expense.legacyCategoryName && (
+                <p className="mt-0.5 text-xs text-foreground-muted">Before the new categories: {expense.legacyCategoryName}</p>
+              )}
             </div>
 
             <div>

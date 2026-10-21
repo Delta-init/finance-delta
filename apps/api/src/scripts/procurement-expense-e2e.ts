@@ -32,6 +32,7 @@ import { Role } from "../modules/role/role.model";
 import { User } from "../modules/user/user.model";
 import { Department } from "../modules/department/department.model";
 import { Expense } from "../modules/expense/expense.model";
+import { ExpenseCategory } from "../modules/expense-category/expense-category.model";
 import { PayrollOrgLink } from "../modules/payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../modules/payroll-mapping/dept-link.model";
 
@@ -182,6 +183,11 @@ async function main() {
   step("Finance: two organizations, the HRMS link, and who decides what");
   const org = await Organization.create({ name: "Procurement E2E", baseCurrency: "AED" });
   const other = await Organization.create({ name: "Somebody Else", baseCurrency: "AED" });
+  // An organization not yet moved onto the taxonomy (2026-10-21): its old "Other" (named as typed) and "Rent".
+  await ExpenseCategory.insertMany([
+    { organizationId: org._id, slug: "other", name: "Other", isSystem: true },
+    { organizationId: org._id, slug: "rent", name: "Rent", isSystem: true },
+  ]);
   for (const o of [org, other]) {
     for (const def of SYSTEM_ROLES) {
       await Role.create({ organizationId: o._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });

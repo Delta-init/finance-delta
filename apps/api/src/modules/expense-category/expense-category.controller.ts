@@ -9,11 +9,11 @@ export const list = asyncHandler(async (req, res) => {
 });
 
 export const create = asyncHandler(async (req, res) => {
-  created(res, await svc.createCategory(org(req), req.body.name));
+  created(res, await svc.createCategory(org(req), req.body));
 });
 
 export const update = asyncHandler(async (req, res) => {
-  ok(res, await svc.updateCategory(org(req), req.params.id!, req.body.name));
+  ok(res, await svc.updateCategory(org(req), req.params.id!, req.body));
 });
 
 export const remove = asyncHandler(async (req, res) => {

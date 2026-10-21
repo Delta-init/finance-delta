@@ -1,11 +1,11 @@
 import { Types } from "mongoose";
 import type { ApproveProcurementInput, RejectProcurementInput } from "@delta/shared";
-import { computeExpenseTax, resolveCategoryName } from "@delta/shared";
+import { EXPENSE_DEFAULTS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
 import { hrmsClient, type HrmsProcurementRequest } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
@@ -131,8 +131,7 @@ async function makeExpense(
   const user = await User.findById(userId).select("name").lean();
   if (!user) throw new AppError("NOT_FOUND", "User not found");
 
-  const categoryName = (await categoryNameMap(orgId)).get(category);
-  if (!categoryName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${category}"`);
+  const cat = await resolveExpenseCategory(orgId, category, input.subcategory, { fallbackSub: EXPENSE_DEFAULTS.procurement.subcategory });
   if (input.departmentId && !(await Department.exists({ _id: input.departmentId, organizationId: orgId }))) {
     throw new AppError("VALIDATION_ERROR", "That department is not in this organization.");
   }
@@ -154,8 +153,10 @@ async function makeExpense(
     return await Expense.create({
       organizationId: new Types.ObjectId(orgId),
       expenseNumber,
-      category,
-      categoryName: resolveCategoryName(category, categoryName, input.categoryOther),
+      category: cat.category,
+      categoryName: resolveCategoryName(cat.category, cat.categoryName, input.categoryOther),
+      subcategory: cat.subcategory,
+      subcategoryName: cat.subcategoryName,
       description: `${quantity} × ${row.item}`,
       // Dated the way a typed-in expense is — the day, at midnight UTC — which
       // is what the Expenses list's date filter compares against.

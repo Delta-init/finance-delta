@@ -1,5 +1,6 @@
 import { Types, type Model, type PipelineStage } from "mongoose";
 import {
+  categoryLabel,
   enrolmentAcademy,
   enrolmentCrm,
   hasPermission,
@@ -174,14 +175,14 @@ const KINDS: Kind[] = [
       const [count, rows] = await Promise.all([
         Expense.countDocuments(filter),
         Expense.find(filter).sort({ updatedAt: -1 }).limit(LATEST)
-          .select("expenseNumber category description submittedByName totalMinor currency updatedAt createdAt").lean(),
+          .select("expenseNumber category categoryName subcategoryName description submittedByName totalMinor currency updatedAt createdAt").lean(),
       ]);
       return {
         count,
         items: rows.map((r: any) => ({
           id: String(r._id),
-          title: r.description || r.category,
-          subtitle: [r.expenseNumber, r.category, r.submittedByName].filter(Boolean).join(" · "),
+          title: r.description || r.categoryName || r.category,
+          subtitle: [r.expenseNumber, categoryLabel(r.categoryName || r.category, r.subcategoryName), r.submittedByName].filter(Boolean).join(" · "),
           amountMinor: r.totalMinor ?? 0, currency: r.currency ?? "AED",
           at: iso(r.updatedAt ?? r.createdAt), href: `/expenses/${r._id}`,
         })),
@@ -448,7 +449,7 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   fund_request: { text: ["title", "requestedByName", "platform"], raiser: ["requestedByName"] },
   tetra_deposit: { text: ["student.name", "student.code", "student.email", "requestedBy", "initiatingMentor", "team"], raiser: ["requestedBy", "initiatingMentor"] },
   balance_payment: { text: ["customerName", "invoiceNumber", "course", "recordedBy.name"], raiser: ["recordedBy.name"] },
-  expense: { text: ["description", "expenseNumber", "categoryName", "submittedByName"], raiser: ["submittedByName"] },
+  expense: { text: ["description", "expenseNumber", "categoryName", "subcategoryName", "submittedByName"], raiser: ["submittedByName"] },
   bill: { text: ["vendorName", "billNumber"], raiser: [] },
   payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
   procurement: { text: ["description", "expenseNumber"], raiser: [] },
@@ -725,7 +726,7 @@ const LIST_KINDS: ListKind[] = [
         // A purchase request's expense is listed as the purchase request.
         narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $ne: "hrms_procurement" } }, ctx, "expense"),
         { $cond: [{ $eq: ["$status", "submitted"] }, "$updatedAt", firstOf("$approvedAt", "$updatedAt")] },
-        "expenseNumber category categoryName description submittedByName totalMinor currency status approvedByName approvedAt rejectedReason updatedAt createdAt",
+        "expenseNumber category categoryName subcategoryName description submittedByName totalMinor currency status approvedByName approvedAt rejectedReason updatedAt createdAt",
         ctx,
       );
       return {
@@ -736,7 +737,7 @@ const LIST_KINDS: ListKind[] = [
             id: String(r._id),
             type: "expense",
             title: r.description || r.categoryName || r.category,
-            subtitle: [r.expenseNumber, r.categoryName || r.category].filter(Boolean).join(" · "),
+            subtitle: [r.expenseNumber, categoryLabel(r.categoryName || r.category, r.subcategoryName)].filter(Boolean).join(" · "),
             amountMinor: r.totalMinor ?? 0,
             currency: r.currency ?? "AED",
             raisedBy: r.submittedByName || undefined,

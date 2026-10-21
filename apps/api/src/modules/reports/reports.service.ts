@@ -24,11 +24,11 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, PAYMENT_METHOD_LABELS, enrolmentCrm, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, type PaymentMethod } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
 
@@ -315,11 +315,12 @@ export async function getDailyReport(
     }
   }
 
-  // Expenses carry no department, so they are always org-wide.
+  // Expenses carry no department, so they are always org-wide — and only those counting in the P&L.
   const expenses = await Expense.find({
     organizationId: oid(orgId),
     expenseDate: { $gte: fromDate, $lte: toDate },
     status: { $in: ["approved", "submitted"] },
+    ...(await pnlExpenseFilter(orgId)),
   })
     .select("expenseDate totalMinor")
     .lean();
@@ -360,7 +361,7 @@ async function departmentSalespeople(orgId: string, departmentId?: string): Prom
 const DAILY_GROUPS: Record<DailyBreakdownKind, Array<{ key: string; label: string }>> = {
   income: [{ key: "method", label: "Payment method" }, { key: "salesperson", label: "Salesperson" }, { key: "crm", label: "CRM" }],
   revenue: [{ key: "salesperson", label: "Salesperson" }, { key: "crm", label: "CRM" }],
-  expense: [{ key: "category", label: "Category" }, { key: "department", label: "Department" }, { key: "submittedBy", label: "Submitted by" }, { key: "status", label: "Status" }],
+  expense: [{ key: "category", label: "Category" }, { key: "subcategory", label: "Subcategory" }, { key: "department", label: "Department" }, { key: "submittedBy", label: "Submitted by" }, { key: "status", label: "Status" }],
 };
 
 /** Which CRM an invoice came from — or typed in finance. */
@@ -415,21 +416,23 @@ export async function getDailyBreakdown(
       }
     }
   } else {
-    // As the report: approved and submitted expenses dated in the range, organization-wide.
+    // As the report: approved and submitted expenses dated in the range, organization-wide, counting in the P&L.
     const expenses = await Expense.find({
       organizationId: oid(orgId),
       expenseDate: { $gte: fromDate, $lte: toDate },
       status: { $in: ["approved", "submitted"] },
+      ...(await pnlExpenseFilter(orgId)),
     })
-      .select("expenseNumber categoryName description expenseDate totalMinor currency submittedByName status departmentId")
+      .select("expenseNumber categoryName subcategoryName description expenseDate totalMinor currency submittedByName status departmentId")
       .populate("departmentId", "name")
       .lean();
     for (const e of expenses as any[]) {
       records.push({
-        id: String(e._id), date: dateOnly(new Date(e.expenseDate)), number: e.expenseNumber, title: e.categoryName || "Expense",
+        id: String(e._id), date: dateOnly(new Date(e.expenseDate)), number: e.expenseNumber, title: categoryLabel(e.categoryName, e.subcategoryName) || "Expense",
         detail: e.description ?? "", amountMinor: e.totalMinor ?? 0, currency: e.currency ?? "AED", href: `/expenses/${e._id}`,
         groups: {
           category: e.categoryName || "—",
+          subcategory: categoryLabel(e.categoryName, e.subcategoryName) || "—",
           department: (e.departmentId as { name?: string } | null)?.name || "No department",
           submittedBy: e.submittedByName || "—",
           status: e.status === "approved" ? "Approved" : "Waiting for approval",
@@ -570,13 +573,15 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
       .select("subtotalMinor")
       .lean(),
 
-    Expense.find({
+    // Only what counts in the P&L: advances, payroll clearing, VAT, loan principal are recorded but not expenses.
+    pnlExpenseFilter(orgId).then((pnl) => Expense.find({
       organizationId: oid(orgId),
       expenseDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $in: ["approved", "submitted"] },
+      ...pnl,
     })
       .select("category totalMinor")
-      .lean(),
+      .lean()),
   ]);
 
   const incomeTotal = invoices.reduce((s, i) => s + ((i.subtotalMinor as number) ?? 0), 0);
@@ -879,17 +884,20 @@ export async function getExpenseByCategory(
   to: string,
   currency = "AED",
 ): Promise<ExpenseByCategoryReport> {
+  // Per category and subcategory (2026-10-21), of what counts in the P&L.
   const agg = await Expense.aggregate([
     {
       $match: {
         organizationId: oid(orgId),
         expenseDate: { $gte: startOf(from), $lte: endOf(to) },
         status: { $in: ["approved", "submitted"] },
+        ...(await pnlExpenseFilter(orgId)),
       },
     },
     {
       $group: {
-        _id: "$category",
+        _id: { c: "$category", s: "$subcategory" },
+        sub: { $first: "$subcategoryName" },
         count: { $sum: 1 },
         totalMinor: { $sum: "$totalMinor" },
       },
@@ -898,8 +906,8 @@ export async function getExpenseByCategory(
   ]);
 
   const nameMap = await categoryNameMap(orgId);
-  const categories = agg.map((a: { _id: string; count: number; totalMinor: number }) => ({
-    category: nameMap.get(a._id) ?? a._id,
+  const categories = agg.map((a: { _id: { c: string; s: string | null }; sub?: string; count: number; totalMinor: number }) => ({
+    category: categoryLabel(nameMap.get(a._id.c) ?? a._id.c, a._id.s ? a.sub || a._id.s : ""),
     count: a.count,
     totalMinor: a.totalMinor,
   }));

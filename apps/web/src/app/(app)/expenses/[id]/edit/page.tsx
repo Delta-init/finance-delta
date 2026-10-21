@@ -39,6 +39,7 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
 
   const initialValues: Partial<ExpenseFormValues> & { salespersonName?: string } = {
     category: expense.category,
+    subcategory: expense.subcategory ?? "",
     // The typed name lives in categoryName. Left blank when it is just the
     // category's own label, so an untouched claim does not reopen looking as
     // though somebody had typed "Other" into the box.

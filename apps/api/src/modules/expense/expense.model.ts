@@ -78,6 +78,11 @@ const expenseSchema = new Schema(
     category: { type: String, required: true },
     // Denormalized display name, kept in sync on category rename.
     categoryName: { type: String, default: "" },
+    // One of the category's subcategories (2026-10-21), by slug, with its name kept in sync on rename.
+    subcategory: { type: String, default: null },
+    subcategoryName: { type: String, default: "" },
+    // The category it had before the taxonomy (expense-taxonomy-migrate.ts), kept to file pending ones by.
+    legacyCategory: { type: new Schema({ slug: String, name: String }, { _id: false }), default: undefined },
     description: { type: String, required: true },
     expenseDate: { type: Date, required: true },
     amountMinor: { type: Number, required: true, default: 0 },
@@ -147,7 +152,7 @@ const expenseSchema = new Schema(
 expenseSchema.index({ organizationId: 1, expenseNumber: 1 }, { unique: true });
 expenseSchema.index({ organizationId: 1, expenseDate: 1, status: 1 });
 expenseSchema.index({ organizationId: 1, submittedById: 1 });
-expenseSchema.index({ organizationId: 1, category: 1 });
+expenseSchema.index({ organizationId: 1, category: 1, subcategory: 1 });
 expenseSchema.index({ organizationId: 1, salespersonId: 1, expenseDate: 1 });
 // Listing the unpaid and the overdue, which is what the payment filter asks for.
 expenseSchema.index({ organizationId: 1, paidOn: 1, dueDate: 1 });

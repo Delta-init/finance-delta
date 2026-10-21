@@ -121,7 +121,6 @@ export const vendorCreditQuerySchema = listQuerySchema.extend({
 export type VendorCreditQuery = z.infer<typeof vendorCreditQuerySchema>;
 
 import {
-  expenseCategorySchema,
   expenseStatusSchema,
   expensePaymentStatusSchema,
 } from "./expense.schema";
@@ -129,7 +128,9 @@ import {
 export const expenseQuerySchema = listQuerySchema.extend({
   status: expenseStatusSchema.optional(),
   paymentStatus: expensePaymentStatusSchema.optional(),
-  category: expenseCategorySchema.optional(),
+  /** Any category slug (a managed one, not only the old seven), and one of its subcategories (2026-10-21). */
+  category: z.string().max(60).optional(),
+  subcategory: z.string().max(60).optional(),
   submittedById: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),

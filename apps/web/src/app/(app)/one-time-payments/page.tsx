@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Banknote, Check, X, Loader2, Send, AlertTriangle } from "lucide-react";
+import { EXPENSE_DEFAULTS } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/lib/toast";
 import { useOneTimePayments, useMarkOneTimePaid, useRejectOneTimePayment, type OneTimePaymentRequest } from "@/features/one-time-payments/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
+import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories/CategoryPicker";
 import { useAllDepartments } from "@/features/departments/api";
 import { PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 
@@ -66,13 +68,12 @@ function PaymentCard({ payment: r }: { payment: OneTimePaymentRequest }) {
   const markPaid = useMarkOneTimePaid();
   const reject = useRejectOneTimePayment();
 
-  const [category, setCategory] = useState<string | null>(null);
   const [department, setDepartment] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [payout, setPayout] = useState<Payout>(emptyPayout);
 
   const categoryList = categories.data ?? [];
-  const chosenCategory = category ?? (categoryList.some((c) => c.slug === "salaries_wages") ? "salaries_wages" : categoryList[0]?.slug ?? "");
+  const cat = useCategoryChoice(categoryList, EXPENSE_DEFAULTS.oneTimePayment);
   const departmentList = departments.data ?? [];
   const suggested = r.suggestedDepartmentId && departmentList.some((d) => d.id === r.suggestedDepartmentId) ? r.suggestedDepartmentId : NO_DEPARTMENT;
   const chosenDepartment = department ?? suggested;
@@ -89,7 +90,7 @@ function PaymentCard({ payment: r }: { payment: OneTimePaymentRequest }) {
       hrmsOrgId: r.hrmsOrgId,
       note: note.trim(),
       ...payout,
-      ...(made ? {} : { category: chosenCategory, departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment }),
+      ...(made ? {} : { category: cat.value.category, subcategory: cat.value.subcategory || undefined, departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment }),
     });
     toast.success(`Paid — ${res.expense.expenseNumber} recorded, and the employee has been told`);
   };
@@ -134,17 +135,9 @@ function PaymentCard({ payment: r }: { payment: OneTimePaymentRequest }) {
 
       <div className="space-y-4 border-t border-border bg-surface-muted/50 p-5">
         {!made && !voided && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <PayoutFields value={payout} onChange={setPayout} idPrefix={id("payout")} />
-            <div className="space-y-1.5">
-              <Label htmlFor={id("category")}>Category</Label>
-              <Select value={chosenCategory} onValueChange={setCategory} disabled={categories.isLoading}>
-                <SelectTrigger id={id("category")}><SelectValue placeholder={categories.isLoading ? "Loading…" : "Choose a category"} /></SelectTrigger>
-                <SelectContent>
-                  {categoryList.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            <CategoryPicker categories={categoryList} value={cat.value} onChange={cat.set} idPrefix={id("expense")} loading={categories.isLoading} />
             <div className="space-y-1.5">
               <Label htmlFor={id("department")}>Department (optional)</Label>
               <Select value={chosenDepartment} onValueChange={setDepartment} disabled={departments.isLoading}>
@@ -166,7 +159,7 @@ function PaymentCard({ payment: r }: { payment: OneTimePaymentRequest }) {
           </div>
           <div className="flex shrink-0 gap-2">
             {!voided && (
-              <Button onClick={() => void onPaid().catch(() => undefined)} disabled={busy || (!made && (!chosenCategory || !payoutValid(payout)))}>
+              <Button onClick={() => void onPaid().catch(() => undefined)} disabled={busy || (!made && (!cat.complete || !payoutValid(payout)))}>
                 {markPaid.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                 {made ? "Send to HRMS" : "Mark paid"}
               </Button>

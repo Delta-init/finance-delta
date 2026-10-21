@@ -83,7 +83,7 @@ export async function financeReportForPortal(q: { org?: string; from?: string; t
   const [departments, expenses, invoices, paidInvoices] = await Promise.all([
     Department.find({ organizationId: orgId }).select("name").lean(),
     Expense.find({ organizationId: orgId, status: "approved", ...(range ? { expenseDate: range } : {}) })
-      .select("expenseNumber category categoryName description expenseDate totalMinor currency submittedByName departmentId paymentMethod paidOn approvedByName approvedAt source.kind").lean(),
+      .select("expenseNumber category categoryName subcategoryName description expenseDate totalMinor currency submittedByName departmentId paymentMethod paidOn approvedByName approvedAt source.kind").lean(),
     Invoice.find({ organizationId: orgId, ...(range ? { issueDate: range } : {}) })
       .select("invoiceNumber customerName salespersonName issueDate dueDate status totalMinor amountPaidMinor balanceMinor currency enrolment.crm enrolment.course external.source").lean(),
     Invoice.find({ organizationId: orgId, ...(range ? { "payments.paidOn": range } : { "payments.0": { $exists: true } }) })
@@ -100,7 +100,7 @@ export async function financeReportForPortal(q: { org?: string; from?: string; t
     const amount = major(e.totalMinor), paid = !!e.paidOn;
     const dept = deptName.get(String(e.departmentId ?? "")) || "No department";
     eg.add(String(e.submittedByName ?? ""), dept, e.expenseDate, { expenses: 1, amount, paid: paid ? 1 : 0, paid_amount: paid ? amount : 0, unpaid: paid ? 0 : 1, unpaid_amount: paid ? 0 : amount });
-    const cat = String(e.categoryName || e.category || "Uncategorised");
+    const cat = String(e.categoryName || e.category || "Uncategorised") + (e.subcategoryName ? ` › ${e.subcategoryName}` : "");
     tally(byCategory, cat, amount);
     const meth = String(e.paymentMethod || "Not paid yet");
     tally(byMethod, meth, amount);

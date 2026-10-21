@@ -1,12 +1,12 @@
 import { Types } from "mongoose";
 import type { ApproveAdvanceInput, RejectAdvanceInput } from "@delta/shared";
-import { computeExpenseTax, resolveCategoryName } from "@delta/shared";
+import { EXPENSE_DEFAULTS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
 import { hrmsClient, type HrmsAdvanceHistoryStatus, type HrmsSalaryAdvance, type HrmsSalaryAdvanceRecord } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
 import { placeExpenseInBank } from "../expense/expense.service";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
@@ -143,8 +143,7 @@ async function makeExpense(orgId: string, userId: string, hrmsOrgId: string, row
   if (!category) throw new AppError("VALIDATION_ERROR", "Choose an expense category.");
   const user = await User.findById(userId).select("name").lean();
   if (!user) throw new AppError("NOT_FOUND", "User not found");
-  const categoryName = (await categoryNameMap(orgId)).get(category);
-  if (!categoryName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${category}"`);
+  const cat = await resolveExpenseCategory(orgId, category, input.subcategory, { fallbackSub: EXPENSE_DEFAULTS.salaryAdvance.subcategory });
   if (input.departmentId && !(await Department.exists({ _id: input.departmentId, organizationId: orgId }))) {
     throw new AppError("VALIDATION_ERROR", "That department is not in this organization.");
   }
@@ -161,8 +160,10 @@ async function makeExpense(orgId: string, userId: string, hrmsOrgId: string, row
     return await Expense.create({
       organizationId: new Types.ObjectId(orgId),
       expenseNumber,
-      category,
-      categoryName: resolveCategoryName(category, categoryName, ""),
+      category: cat.category,
+      categoryName: resolveCategoryName(cat.category, cat.categoryName, ""),
+      subcategory: cat.subcategory,
+      subcategoryName: cat.subcategoryName,
       description: `Salary advance — ${row.employee?.name ?? "employee"}`,
       expenseDate: new Date(now.toISOString().slice(0, 10)),
       amountMinor: netMinor,

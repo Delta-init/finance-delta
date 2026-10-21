@@ -98,6 +98,8 @@ export const createExpenseSchema = z.object({
   // Category is a managed-category slug (see expense-category.schema). Kept as a
   // string so custom, org-defined categories validate alongside the defaults.
   category: z.string().min(1, "Category is required"),
+  /** One of the category's subcategories (2026-10-21) — required when the category has any. */
+  subcategory: z.string().max(60).optional(),
   description: z.string().min(1, "Description is required"),
   expenseDate: z.string().min(1, "Expense date is required"),
   amountMinor: z.number().min(0, "Amount must be non-negative"),
@@ -188,6 +190,10 @@ export const expenseSchema = z.object({
   id: z.string(),
   expenseNumber: z.string(),
   category: z.string(),
+  subcategory: z.string().optional(),
+  subcategoryName: z.string().optional(),
+  /** The category it was filed under before the categories were replaced (2026-10-21). */
+  legacyCategoryName: z.string().optional(),
   /** Human-readable category name resolved from the managed category list. */
   categoryName: z.string(),
   description: z.string(),

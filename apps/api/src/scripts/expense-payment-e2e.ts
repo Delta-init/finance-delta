@@ -110,7 +110,7 @@ async function main() {
     const r = await post(
       "/expenses",
       {
-        category: "travel",
+        category: "travel_transport", subcategory: "business_travel",
         description: "Taxi to the airport",
         expenseDate: day(-3),
         amountMinor: 20_000,
@@ -191,7 +191,7 @@ async function main() {
     const r = await post(
       "/expenses",
       {
-        category: "travel",
+        category: "travel_transport", subcategory: "business_travel",
         description: "Hotel",
         expenseDate: day(-2),
         amountMinor: 50_000,
@@ -224,7 +224,7 @@ async function main() {
     const created = await post(
       "/expenses",
       {
-        category: "travel",
+        category: "travel_transport", subcategory: "business_travel",
         description: "Minibar",
         expenseDate: day(-2),
         amountMinor: 9_000,

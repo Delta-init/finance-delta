@@ -99,7 +99,7 @@ const M = "2026-10";
 const approve = (by: string, who: string, crm = "delta", note = "") => svc.approveCrmCommission(ORG, by, false, approveCrmCommissionSchema.parse({ crm, month: M, userId: who, note }));
 const receiptKey = (o = ORG) => `expenses/${o}/uploads/1-abc-receipt.pdf`;
 const pay = (who: string, o = ORG, extra: Record<string, unknown> = {}) => svc.payCrmCommission(o, ASHA, payCrmCommissionSchema.parse({
-  crm: "delta", month: M, userId: who, paidOn: "2026-11-02", paymentMethod: "bank_transfer", reference: "TRX-1", category: "salaries_wages",
+  crm: "delta", month: M, userId: who, paidOn: "2026-11-02", paymentMethod: "bank_transfer", reference: "TRX-1", category: "sales_commission",
   receipt: { name: "receipt.pdf", key: receiptKey(o), size: 1234, mimeType: "application/pdf" }, ...extra,
 }));
 
@@ -137,7 +137,7 @@ check("taken back before it is paid: earned again", (await svc.crmCommissionMont
 step("3. Accounts pay it, with the receipt");
 check("a receipt not uploaded here: refused", /Upload the receipt here first/.test(await refusal(pay(RIA, ORG, { receipt: { name: "r.pdf", key: "https://evil.example/r.pdf" } }))));
 check("…nor another organization's upload", /Upload the receipt here first/.test(await refusal(pay(RIA, ORG, { receipt: { name: "r.pdf", key: receiptKey(OTHER) } }))));
-check("no receipt at all: refused by the form", !payCrmCommissionSchema.safeParse({ crm: "delta", month: M, userId: RIA, paidOn: "2026-11-02", paymentMethod: "cash", category: "salaries_wages" }).success);
+check("no receipt at all: refused by the form", !payCrmCommissionSchema.safeParse({ crm: "delta", month: M, userId: RIA, paidOn: "2026-11-02", paymentMethod: "cash", category: "sales_commission" }).success);
 const paid = await pay(RIA);
 const exp = await Expense.findById(paid.expense.id).lean<any>();
 check("one paid expense for the approved 600, the receipt on it", exp?.status === "approved" && !!exp.paidOn && exp.totalMinor === 60000 && exp.attachments?.[0]?.key === receiptKey() && /Sales commission — Ria \(Sales CRM, 2026-10\)/.test(exp.description), j(exp));

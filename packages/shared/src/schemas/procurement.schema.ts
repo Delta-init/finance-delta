@@ -28,6 +28,8 @@ export const approveProcurementSchema = z.object({
   amountMinor: z.number().int("Amount must be in minor units").positive("Enter the amount being approved").max(9_000_000_000_000).optional(),
   /** A managed expense-category slug. */
   category: z.string().trim().min(1, "Choose an expense category").optional(),
+  /** One of the category's subcategories (2026-10-21) — needed when it has any; the page's default fills it. */
+  subcategory: z.string().trim().max(60).optional(),
   /** What "Other" actually was — the page fills in HR's own category. */
   categoryOther: optionalText(60),
   /** A finance department, or blank for none. */

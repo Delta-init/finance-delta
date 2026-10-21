@@ -1,14 +1,12 @@
 import { Types } from "mongoose";
 import { logger } from "../../lib/logger";
 import { Expense } from "../expense/expense.model";
-import { ExpenseCategory } from "../expense-category/expense-category.model";
+import { EXPENSE_DEFAULTS } from "@delta/shared";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { nextNumber } from "../sequence/sequence.service";
 import type { PayrollRunDoc } from "./payroll-run.model";
 
 const oid = (id: string) => new Types.ObjectId(id);
-
-const SLUG = "salaries-wages";
-const NAME = "Salaries & Wages";
 
 /**
  * Getting payroll into the profit and loss.
@@ -27,15 +25,6 @@ const NAME = "Salaries & Wages";
  * match, so the service always throws "User not found". Depending on it here
  * would make payroll fail for a reason that has nothing to do with payroll.
  */
-
-async function categoryId(orgId: string): Promise<string> {
-  const existing = await ExpenseCategory.findOneAndUpdate(
-    { organizationId: oid(orgId), slug: SLUG },
-    { $setOnInsert: { organizationId: oid(orgId), slug: SLUG, name: NAME } },
-    { upsert: true, new: true },
-  );
-  return String(existing._id);
-}
 
 /**
  * Post one payment as an expense.
@@ -56,14 +45,17 @@ export async function postPayrollExpense(
   if (payment.expenseId) return String(payment.expenseId);
 
   try {
-    await categoryId(orgId);
+    // Payroll & Employee Benefits › Basic Salary (2026-10-21; was "Salaries & Wages"), added to the org if missing.
+    const cat = await resolveExpenseCategory(orgId, EXPENSE_DEFAULTS.payroll.category, EXPENSE_DEFAULTS.payroll.subcategory);
     const expenseNumber = await nextNumber(orgId, "expense", "EXP-");
 
     const doc = await Expense.create({
       organizationId: oid(orgId),
       expenseNumber,
-      category: SLUG,
-      categoryName: NAME,
+      category: cat.category,
+      categoryName: cat.categoryName,
+      subcategory: cat.subcategory,
+      subcategoryName: cat.subcategoryName,
       description: `Payroll ${run.runNumber} · ${run.period} · ${payment.allocations.length} people`,
       expenseDate: payment.paidOn,
       amountMinor: payment.amountMinor,

@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import {
-  computeExpenseTax, hasPermission, resolveCategoryName,
+  EXPENSE_DEFAULTS, computeExpenseTax, hasPermission, resolveCategoryName,
   type ApproveCrmCommissionInput, type CrmCommissionCrm, type CrmCommissionLine, type CrmCommissionMonth,
   type CrmCommissionPayoutView, type PayCrmCommissionInput, type RevokeCrmCommissionInput,
 } from "@delta/shared";
@@ -11,7 +11,7 @@ import { Organization } from "../organization/organization.model";
 import { Department } from "../department/department.model";
 import { Expense } from "../expense/expense.model";
 import { placeExpenseInBank, uploadFormFile } from "../expense/expense.service";
-import { categoryNameMap } from "../expense-category/expense-category.service";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { nextNumber } from "../sequence/sequence.service";
 import { isManager } from "../late-entry/late-entry.service";
 import type { ParsedFile } from "../../middleware/upload";
@@ -190,8 +190,7 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
   if (!input.receipt.key.startsWith(`expenses/${orgId}/uploads/`) || input.receipt.key.includes("..")) {
     throw new AppError("VALIDATION_ERROR", "Upload the receipt here first");
   }
-  const categoryName = (await categoryNameMap(orgId)).get(input.category);
-  if (!categoryName) throw new AppError("VALIDATION_ERROR", `Unknown expense category "${input.category}"`);
+  const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory, { fallbackSub: EXPENSE_DEFAULTS.crmCommission.subcategory });
   if (input.departmentId && !(await Department.exists({ _id: input.departmentId, organizationId: orgId }))) {
     throw new AppError("VALIDATION_ERROR", "That department is not in this organization.");
   }
@@ -215,8 +214,10 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
     const expense = await Expense.create({
       organizationId: new Types.ObjectId(orgId),
       expenseNumber: await nextNumber(orgId, "expense", "EXP-"),
-      category: input.category,
-      categoryName: resolveCategoryName(input.category, categoryName, ""),
+      category: cat.category,
+      categoryName: resolveCategoryName(cat.category, cat.categoryName, ""),
+      subcategory: cat.subcategory,
+      subcategoryName: cat.subcategoryName,
       description: `Sales commission — ${claimed.personName} (${claimed.crmName}, ${claimed.month})`,
       expenseDate: new Date(`${input.paidOn}T00:00:00.000Z`),
       amountMinor: netMinor, taxPct: 0, taxInclusive: false, taxMinor, totalMinor,

@@ -18,6 +18,8 @@ export const approveAdvanceSchema = z.object({
   hrmsOrgId: z.string().trim().min(1, "hrmsOrgId is required"),
   /** A managed expense-category slug. Unused when an expense was already recorded. */
   category: z.string().trim().min(1, "Choose an expense category").optional(),
+  /** One of the category's subcategories (2026-10-21) — needed when it has any; the page's default fills it. */
+  subcategory: z.string().trim().max(60).optional(),
   /** A finance department, or blank for none. */
   departmentId: z.union([z.literal(""), z.string().regex(/^[a-f\d]{24}$/i, "Invalid department")]).optional().default(""),
   /** Sent back to the employee and HR with the decision. HRMS keeps 500 characters. */

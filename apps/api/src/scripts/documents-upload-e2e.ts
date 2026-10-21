@@ -52,7 +52,7 @@ const asha = await User.create({ name: "Asha", email: "asha@e2e-docs.test", pass
 const ASHA = String(asha._id);
 
 const expense = (attachments: unknown[]) => ex.createExpense(ORG, ASHA, createExpenseSchema.parse({
-  category: "other", description: "Taxi", expenseDate: new Date().toISOString().slice(0, 10), amountMinor: 10_000, currency: "AED",
+  category: "travel_transport", subcategory: "business_taxi", description: "Taxi", expenseDate: new Date().toISOString().slice(0, 10), amountMinor: 10_000, currency: "AED",
   paymentMethod: "bank_transfer", attachments,
 }) as never);
 const mine = (name: string) => `expenses/${ORG}/uploads/${Date.now()}-abc-${name}`;

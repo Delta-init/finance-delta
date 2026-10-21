@@ -76,7 +76,7 @@ const START = 1_000_000;
 await updateOrganization(ORG, { paymentAccounts: { cash: petty.id, bank_transfer: bank.id, cheque: bank.id, card: bank.id, inr_bank_account: yaroon.id } });
 
 const expense = (over: Record<string, unknown> = {}) => ex.createExpense(ORG, ASHA, {
-  category: "other", description: "Printer ink", expenseDate: "2026-10-10", amountMinor: 20_000, currency: "AED",
+  category: "office_supplies", subcategory: "stationery", description: "Printer ink", expenseDate: "2026-10-10", amountMinor: 20_000, currency: "AED",
   categoryOther: "", taxPct: 0, taxInclusive: false, paymentAccount: "", reference: "", requiresApproval: false, isRecurring: false,
   paymentMethod: "cash", ...over,
 } as never);

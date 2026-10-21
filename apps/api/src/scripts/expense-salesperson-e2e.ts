@@ -57,7 +57,7 @@ const farhan = await person("Farhan"), suhail = await person("Suhail"), abshar =
 const FARHAN = String(farhan._id), SUHAIL = String(suhail._id), ABSHAR = String(abshar._id);
 const today = new Date().toISOString().slice(0, 10);
 const expense = (by: string, over: Record<string, unknown> = {}) => ex.createExpense(ORG, by, createExpenseSchema.parse({
-  category: "other", description: "Fuel", expenseDate: today, amountMinor: 10_000, currency: "AED", paymentMethod: "cash", ...over,
+  category: "travel_transport", subcategory: "fuel", description: "Fuel", expenseDate: today, amountMinor: 10_000, currency: "AED", paymentMethod: "cash", ...over,
 }) as never);
 
 /* ── 1 ── */

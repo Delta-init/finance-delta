@@ -19,7 +19,8 @@ import { ApiError, api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateExpense, useUpdateExpense } from "@/features/expenses/api";
 import { useExpenseCategories } from "@/features/expense-categories/api";
-import { QuickCreateCategoryModal } from "@/features/expense-categories/QuickCreateCategoryModal";
+import { CategoryEditor } from "@/features/expense-categories/CategoryEditor";
+import { SubcategorySelect, subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import { computeExpenseTax, formatMoney, toMinor, type CreateExpenseInput, type UploadedExpenseFile } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 import { useOrganization } from "@/features/organization/api";
@@ -46,6 +47,8 @@ const FREQUENCIES = [
 
 const formSchema = z.object({
   category: z.string().min(1, "Category is required"),
+  /** One of the category's subcategories (2026-10-21) — checked on submit, where the list is known. */
+  subcategory: z.string().default(""),
   description: z.string().min(1, "Description is required"),
   expenseDate: z.string().min(1, "Expense date is required"),
   dueDate: z.string().optional(),
@@ -130,11 +133,12 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const today = new Date().toISOString().slice(0, 10);
   const isEdit = mode === "edit";
 
-  const { register, handleSubmit, watch, setValue, control, formState: { errors, isSubmitting } } =
+  const { register, handleSubmit, watch, setValue, setError, control, formState: { errors, isSubmitting } } =
     useForm<ExpenseFormValues>({
       resolver: zodResolver(formSchema),
       defaultValues: {
-        category: "other",
+        category: "",
+        subcategory: "",
         expenseDate: today,
         dueDate: "",
         currency: orgCurrency,
@@ -229,8 +233,13 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       toast.error("Give the reason it is entered late — a manager will need to approve it");
       return;
     }
+    if (subcategoriesOf(categoryList, values.category).length && !subcategoriesOf(categoryList, values.category).some((s) => s.slug === values.subcategory)) {
+      setError("subcategory", { message: "Choose a subcategory" });
+      return;
+    }
     const input: CreateExpenseInput = {
       category: values.category,
+      subcategory: values.subcategory || undefined,
       description: values.description,
       expenseDate: values.expenseDate,
       dueDate: values.dueDate || undefined,
@@ -291,15 +300,16 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
-      <QuickCreateCategoryModal
-        open={categoryModalOpen}
-        onClose={() => setCategoryModalOpen(false)}
-        existing={categoryList}
-        onCreated={(slug) => {
-          setValue("category", slug, { shouldValidate: true });
-          setCategoryModalOpen(false);
-        }}
-      />
+      {categoryModalOpen && (
+        <CategoryEditor
+          existing={categoryList}
+          onClose={() => setCategoryModalOpen(false)}
+          onSaved={(made) => {
+            setValue("category", made.slug, { shouldValidate: true });
+            setValue("subcategory", made.subcategories[0]?.slug ?? "", { shouldValidate: true });
+          }}
+        />
+      )}
       <div className="flex items-center gap-3">
         <Link href={isEdit && expenseId ? `/expenses/${expenseId}` : "/expenses"} className="rounded-md p-1.5 text-foreground-muted hover:bg-surface-muted">
           <ArrowLeft className="h-4 w-4" />
@@ -329,7 +339,12 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               <Select
                 key={watch("category")}
                 value={watch("category")}
-                onValueChange={(v) => setValue("category", v)}
+                onValueChange={(v) => {
+                  setValue("category", v, { shouldValidate: true });
+                  // A subcategory belongs to one category; the only one is picked for you.
+                  const subs = subcategoriesOf(categoryList, v);
+                  setValue("subcategory", subs.length === 1 ? subs[0]!.slug : "", { shouldValidate: true });
+                }}
               >
                 <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>
@@ -339,6 +354,19 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
                 </SelectContent>
               </Select>
               {errors.category && <p className="text-xs text-danger">{errors.category.message}</p>}
+              {subcategoriesOf(categoryList, catWatch).length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="expense-subcategory">Subcategory *</Label>
+                  <SubcategorySelect
+                    id="expense-subcategory"
+                    categories={categoryList}
+                    category={catWatch}
+                    value={watch("subcategory")}
+                    onChange={(v) => setValue("subcategory", v, { shouldValidate: true })}
+                  />
+                  {errors.subcategory && <p className="text-xs text-danger">{errors.subcategory.message}</p>}
+                </div>
+              )}
               {/* "Other" is the escape hatch for a spend nothing else describes,
                   and one nobody can name just produces a column of claims all
                   saying "Other". Reports still group on the category, so naming
@@ -441,7 +469,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
         </div>
 
         {/* Mileage (travel only) */}
-        {catWatch === "travel" && (
+        {(catWatch === "travel" || catWatch === "travel_transport") && (
           <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

@@ -97,7 +97,7 @@ await updateOrganization(ORG, { lateEntryDays: 7 });
 check("Mona is a manager, Omar is not", (await late.isManager(ORG, MONA)) && !(await late.isManager(ORG, OMAR)));
 
 const expense = (date: string, reason?: string, over: Record<string, unknown> = {}) => ex.createExpense(ORG, ASHA, {
-  category: "other", description: "Taxi", expenseDate: date, amountMinor: 10_000, currency: "AED", categoryOther: "", taxPct: 0,
+  category: "travel_transport", subcategory: "business_taxi", description: "Taxi", expenseDate: date, amountMinor: 10_000, currency: "AED", categoryOther: "", taxPct: 0,
   taxInclusive: false, paymentAccount: "", reference: "", requiresApproval: false, isRecurring: false, paymentMethod: "bank_transfer", ...over,
 } as never, typing(reason));
 const entryFor = (refId: string) => LateEntryModel.findOne({ refId: new Types.ObjectId(refId) }).sort({ createdAt: -1 }).lean<any>();
@@ -335,7 +335,7 @@ await User.updateOne({ _id: omar._id }, { $push: { memberships: { $each: [
   { organizationId: org3._id, roleId: nobody3._id, status: "active" },
 ] } } });
 const inOrg = (o: any, date: string) => ex.createExpense(String(o._id), OMAR, {
-  category: "other", description: "Auto", expenseDate: date, amountMinor: 5_000, currency: "AED", categoryOther: "", taxPct: 0,
+  category: "travel_transport", subcategory: "business_taxi", description: "Auto", expenseDate: date, amountMinor: 5_000, currency: "AED", categoryOther: "", taxPct: 0,
   taxInclusive: false, paymentAccount: "", reference: "", requiresApproval: false, isRecurring: false, paymentMethod: "bank_transfer",
 } as never);
 const x2 = await inOrg(org2, back(3));

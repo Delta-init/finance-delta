@@ -59,6 +59,8 @@ export async function processRecurringExpenses() {
         expenseNumber,
         category: template.category,
         categoryName: (d.categoryName as string) ?? "",
+        subcategory: (d.subcategory as string | null) ?? null,
+        subcategoryName: (d.subcategoryName as string) ?? "",
         description: template.description,
         expenseDate: now,
         amountMinor: template.amountMinor,

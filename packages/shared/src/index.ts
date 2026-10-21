@@ -25,6 +25,7 @@ export * from "./schemas/bill.schema";
 export * from "./schemas/vendor-credit.schema";
 export * from "./schemas/expense.schema";
 export * from "./schemas/expense-category.schema";
+export * from "./schemas/expense-taxonomy";
 export * from "./schemas/budget.schema";
 export * from "./schemas/approvals.schema";
 export * from "./schemas/tetra-deposit.schema";

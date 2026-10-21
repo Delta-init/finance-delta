@@ -2,6 +2,8 @@
 
 import {
   Children,
+  Fragment,
+  cloneElement,
   forwardRef,
   isValidElement,
   useMemo,
@@ -9,6 +11,7 @@ import {
   useState,
   type ComponentPropsWithoutRef,
   type ElementRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
@@ -70,28 +73,48 @@ function countItems(children: ReactNode): number {
   return n;
 }
 
+/** Options in the tree whose words include the needle. */
+function countMatches(children: ReactNode, needle: string): number {
+  let n = 0;
+  Children.forEach(children, (child) => {
+    if (!isValidElement(child)) return;
+    const props = child.props as { children?: ReactNode };
+    if (child.type === SelectItem) n += textOf(props.children).toLowerCase().includes(needle) ? 1 : 0;
+    else n += countMatches(props.children, needle);
+  });
+  return n;
+}
+
 /**
- * The same tree with options that do not match dropped.
+ * The same tree with options that do not match hidden — never removed.
  *
- * Walks rather than filters a flat list, so grouped options and options built
- * by a `.map()` both narrow the same way. Anything that is not an option —
- * a group label, a separator — is kept, and a group whose options have all
- * gone is dropped with them rather than left as a heading over nothing.
+ * Removing them (as this did until 2026-10-21) unmounted and remounted the
+ * options on the first keystroke; Radix then moved focus to the selected
+ * option, and the search box lost focus after one letter. Hiding keeps every
+ * option mounted, and the tree is walked the same way whatever is typed, so
+ * nothing remounts. Grouped options and options built by a `.map()` narrow
+ * the same way; a group whose options are all hidden is hidden with them
+ * rather than left as a heading over nothing.
  */
-function filterItems(children: ReactNode, needle: string): ReactNode {
+function markItems(children: ReactNode, needle: string): ReactNode {
   return Children.map(children, (child) => {
     if (!isValidElement(child)) return child;
-    const props = child.props as { children?: ReactNode };
+    const props = child.props as { children?: ReactNode; className?: string };
 
     if (child.type === SelectItem) {
-      return textOf(props.children).toLowerCase().includes(needle) ? child : null;
+      const hide = !!needle && !textOf(props.children).toLowerCase().includes(needle);
+      return cloneElement(child as ReactElement<{ className?: string; "aria-hidden"?: boolean }>, {
+        className: cn(props.className, hide && "hidden"),
+        "aria-hidden": hide || undefined,
+      });
     }
     if (props.children === undefined) return child;
 
-    const inner = filterItems(props.children, needle);
-    if (countItems(props.children) > 0 && countItems(inner) === 0) return null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return { ...child, props: { ...(child.props as any), children: inner } };
+    const inner = markItems(props.children, needle);
+    const empty = !!needle && countItems(props.children) > 0 && countMatches(props.children, needle) === 0;
+    // A fragment takes no class; its options are hidden one by one already.
+    const extra = child.type === Fragment ? {} : { className: cn(props.className, empty && "hidden") };
+    return cloneElement(child as ReactElement<{ className?: string; children?: ReactNode }>, { ...extra, children: inner });
   });
 }
 
@@ -109,11 +132,9 @@ export const SelectContent = forwardRef<
   const total = useMemo(() => countItems(children), [children]);
   const showSearch = searchable ?? total >= SEARCH_FROM;
   const needle = query.trim().toLowerCase();
-  const shown = useMemo(
-    () => (showSearch && needle ? filterItems(children, needle) : children),
-    [children, needle, showSearch],
-  );
-  const empty = showSearch && needle && countItems(shown) === 0;
+  // Always walked when searchable, typed or not, so the options keep their identity and never remount.
+  const shown = useMemo(() => (showSearch ? markItems(children, needle) : children), [children, needle, showSearch]);
+  const empty = showSearch && needle && countMatches(children, needle) === 0;
 
   return (
     <SelectPrimitive.Portal>
@@ -126,9 +147,20 @@ export const SelectContent = forwardRef<
           position === "popper" && "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
           className,
         )}
+        {...props}
         // Reopening should not still be showing the last search.
         onCloseAutoFocus={(e) => { setQuery(""); props.onCloseAutoFocus?.(e); }}
-        {...props}
+        // Focus can still reach the list (the mouse moving over an option takes it there). A letter typed
+        // then goes to the search, not to Radix's jump-to-option, and the search box gets focus back.
+        onKeyDown={(e) => {
+          props.onKeyDown?.(e);
+          if (!showSearch || e.defaultPrevented || e.target === inputRef.current || e.ctrlKey || e.metaKey || e.altKey) return;
+          if (e.key.length === 1 || e.key === "Backspace") {
+            e.preventDefault();
+            setQuery((q) => (e.key === "Backspace" ? q.slice(0, -1) : q + e.key));
+            inputRef.current?.focus();
+          }
+        }}
       >
         {showSearch && (
           <div

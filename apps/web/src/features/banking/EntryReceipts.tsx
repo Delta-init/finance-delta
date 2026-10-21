@@ -14,6 +14,7 @@ import {
   useAddTransactionAttachment,
   useRemoveTransactionAttachment,
 } from "@/features/banking/api";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 const MAX_FILES = 10;
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -47,6 +48,14 @@ export function EntryReceipts({
 
   const files = tx.attachments ?? [];
 
+  // Receipts dropped on the dialog or pasted, as well as picked (2026-10-21).
+  const drop = useFileDrop({
+    onFiles: (f) => void upload(f),
+    accept: "image/*,application/pdf",
+    multiple: true,
+    disabled: !open || !canWrite || busy || files.length >= MAX_FILES,
+  });
+
   async function upload(picked: File[]) {
     const tooBig = picked.filter((f) => f.size > MAX_BYTES);
     if (tooBig.length > 0) {
@@ -72,7 +81,8 @@ export function EntryReceipts({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" {...drop.zoneProps}>
+        {drop.overlay}
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Paperclip className="h-4 w-4 text-foreground-muted" /> Receipts
@@ -138,6 +148,7 @@ export function EntryReceipts({
                 className="hidden"
                 onChange={(e) => { void upload(Array.from(e.target.files ?? [])); e.target.value = ""; }}
               />
+              <div className="basis-full space-y-1">{drop.hint}</div>
             </>
           )}
         </div>

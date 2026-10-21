@@ -16,6 +16,7 @@ import { toast } from "@/lib/toast";
 import { useCreateItem } from "@/features/inventory/api";
 import { useAllDepartments } from "@/features/departments/api";
 import { ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 const UNITS = Object.keys(ITEM_UNIT_LABELS) as ItemUnit[];
 
@@ -69,6 +70,12 @@ export default function NewItemPage() {
       setPhotoBusy(false);
     }
   }
+  // The photo dropped or pasted, as well as picked (2026-10-21).
+  const photoDrop = useFileDrop({
+    onFiles: ([f]) => { if (f) void uploadPhoto(f); },
+    accept: "image/jpeg,image/png,image/webp,image/gif",
+    disabled: photoBusy,
+  });
 
   async function onSubmit(values: FormValues) {
     try {
@@ -233,7 +240,8 @@ export default function NewItemPage() {
         )}
 
         {/* Photo */}
-        <div className="rounded-lg border border-border bg-surface p-6 space-y-4">
+        <div className="relative rounded-lg border border-border bg-surface p-6 space-y-4" {...photoDrop.zoneProps}>
+          {photoDrop.overlay}
           <h2 className="text-sm font-semibold text-foreground-muted uppercase tracking-wide">Product Photo</h2>
           <input
             ref={photoInput}
@@ -259,6 +267,7 @@ export default function NewItemPage() {
             </div>
           </div>
           <p className="text-xs text-foreground-subtle">JPG, PNG, WebP or GIF, up to 10&nbsp;MB.</p>
+          {photoDrop.hint}
         </div>
 
         <div className="flex items-center justify-end gap-3">

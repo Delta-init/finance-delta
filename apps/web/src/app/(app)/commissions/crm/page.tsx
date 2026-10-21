@@ -18,6 +18,7 @@ import { useExpenseCategories } from "@/features/expense-categories/api";
 import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories/CategoryPicker";
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
+import { useFileDrop } from "@/components/ui/file-drop";
 import {
   uploadCommissionReceipt, useApproveCrmCommission, useCrmCommission, usePayCrmCommission, useRevokeCrmCommission,
 } from "@/features/crm-commission/api";
@@ -329,6 +330,12 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
       setUploading(false);
     }
   };
+  // The receipt dropped on the dialog or pasted, as well as picked (2026-10-21).
+  const receiptDrop = useFileDrop({
+    onFiles: ([f]) => { if (f) void pickFile(f); },
+    accept: "image/jpeg,image/png,image/webp,image/gif,application/pdf",
+    disabled: !pick || uploading || !!receipt,
+  });
 
   const submit = async () => {
     if (!pick || !receipt) return;
@@ -371,7 +378,8 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
             </Select>
           </div>
         </div>
-        <div className="space-y-1.5">
+        <div className="relative space-y-1.5" {...receiptDrop.zoneProps}>
+          {receiptDrop.overlay}
           <Label>Receipt *</Label>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void pickFile(f); }} />
@@ -387,6 +395,7 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
             </Button>
           )}
           <p className="text-xs text-foreground-muted">JPG, PNG, WebP, GIF or PDF, up to 10 MB.</p>
+          {receiptDrop.hint}
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={close}>Cancel</Button>

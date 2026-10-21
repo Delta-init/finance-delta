@@ -33,6 +33,7 @@ import { useCan } from "@/lib/use-can";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
 import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 /** "Not in a bank account" in the account picker. */
 const NO_ACCOUNT = "__none__";
@@ -195,10 +196,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     }
   }
 
-  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+  function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (file) void uploadAttachment(file);
+  }
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  async function uploadAttachment(file: File) {
     if (file.type && !ACCEPTED_TYPE_SET.has(file.type)) {
       toast.error("Unsupported file type. Upload JPG, PNG, WebP, GIF, or PDF.");
       return;
@@ -214,6 +219,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       toast.error(err instanceof ApiError ? err.message : "Upload failed");
     }
   }
+  const attachDrop = useFileDrop({
+    onFiles: ([f]) => { if (f) void uploadAttachment(f); },
+    accept: "image/jpeg,image/png,image/webp,image/gif,application/pdf",
+    disabled: addAttachment.isPending,
+  });
 
   async function handleRemoveAttachment(attId: string) {
     try {
@@ -469,7 +479,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           )}
 
           {/* Attachments */}
-          <div className="rounded-lg border border-border bg-surface overflow-hidden">
+          <div className="relative rounded-lg border border-border bg-surface overflow-hidden" {...attachDrop.zoneProps}>
+            {attachDrop.overlay}
             <div className="px-5 py-3 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Paperclip className="h-4 w-4 text-foreground-muted" />
@@ -512,6 +523,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 ))}
               </ul>
             )}
+            <div className="space-y-1 px-5 pb-3">{attachDrop.hint}</div>
           </div>
 
           {/* Notes (editable) */}

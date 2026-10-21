@@ -26,6 +26,7 @@ import { useCurrency } from "@/lib/currency-context";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 /** "Not in a bank account" in the account picker. */
 const NO_ACCOUNT = "__none__";
@@ -161,9 +162,14 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   // Each picked file is stored at once (POST /expenses/uploads) and saved with the expense by its key.
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState<Array<{ id: string; name: string; size: number }>>([]);
-  async function onFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
+  function onFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
     if (fileRef.current) fileRef.current.value = ""; // the same file can be picked again after a failure
+    void uploadFiles(picked);
+  }
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  async function uploadFiles(picked: File[]) {
     const room = MAX_DOCUMENTS - attachmentFields.length - uploading.length;
     if (picked.length > room) toast.error(`At most ${MAX_DOCUMENTS} documents — ${room > 0 ? `only ${room} more` : "remove one first"}`);
     for (const file of picked.slice(0, Math.max(0, room))) {
@@ -185,6 +191,12 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       }
     }
   }
+  const docsDrop = useFileDrop({
+    onFiles: (files) => void uploadFiles(files),
+    accept: UPLOAD_ACCEPT,
+    multiple: true,
+    disabled: attachmentFields.length + uploading.length >= MAX_DOCUMENTS,
+  });
 
   useEffect(() => {
     // In create mode, follow the org's display currency. In edit mode, keep the saved currency.
@@ -672,8 +684,9 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
           )}
         </div>
 
-        {/* Supporting documents — uploaded, never pasted (2026-10-20) */}
-        <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
+        {/* Supporting documents — uploaded (2026-10-20), dropped or pasted as files too (2026-10-21) */}
+        <div className="relative rounded-lg border border-border bg-surface p-5 space-y-4" {...docsDrop.zoneProps}>
+          {docsDrop.overlay}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Paperclip className="h-4 w-4 text-foreground-muted" />
@@ -724,6 +737,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               ))}
             </div>
           )}
+          {docsDrop.hint}
           {errors.attachments && <p className="text-xs text-danger">Name every document.</p>}
         </div>
 

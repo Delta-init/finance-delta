@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useAddInvoiceAttachment, useRemoveInvoiceAttachment } from "@/features/invoices/api";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -43,6 +44,9 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
   const locked = !can("invoice:write") && approvalBlocksEditing(state);
   const canAdd = canEdit && !locked && files.length < MAX_FILES;
 
+  // Documents dropped or pasted, as well as picked (2026-10-21). Before the early return: a hook runs every render.
+  const drop = useFileDrop({ onFiles: (f) => void upload(f), accept: "image/*,application/pdf,.doc,.docx", multiple: true, disabled: !canAdd || busy });
+
   if (files.length === 0 && !canAdd) return null;
 
   async function upload(picked: File[]) {
@@ -70,7 +74,8 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-surface p-5">
+    <div className="relative space-y-3 rounded-lg border border-border bg-surface p-5" {...drop.zoneProps}>
+      {drop.overlay}
       <div className="flex flex-wrap items-center gap-2">
         <Paperclip className="h-4 w-4 text-foreground-muted" />
         <h2 className="text-sm font-semibold">Documents</h2>
@@ -173,6 +178,7 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
           })}
         </ul>
       )}
+      {canAdd && drop.hint}
     </div>
   );
 }

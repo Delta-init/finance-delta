@@ -20,6 +20,7 @@ import { useVendors } from "@/features/vendors/api";
 import { useCreateBill, useUpdateBill } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
@@ -120,6 +121,11 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   function onFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? []);
     e.target.value = "";
+    stageFiles(picked);
+  }
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  function stageFiles(picked: File[]) {
     const valid = picked.filter((f) => {
       if (f.type && !ACCEPTED_TYPE_SET.has(f.type)) {
         toast.error(`"${f.name}" is not a supported type (JPG, PNG, WebP, GIF or PDF)`);
@@ -133,6 +139,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
     });
     if (valid.length) setStagedFiles((prev) => [...prev, ...valid]);
   }
+  const attachDrop = useFileDrop({ onFiles: stageFiles, accept: ACCEPTED_UPLOAD, multiple: true, disabled: mode !== "create" });
 
   useEffect(() => {
     // In create mode, follow the org's display currency. In edit mode, keep the saved currency.
@@ -378,7 +385,8 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
         </div>
 
         {mode === "create" && (
-          <div className="rounded-lg border border-border bg-surface p-5 space-y-3">
+          <div className="relative rounded-lg border border-border bg-surface p-5 space-y-3" {...attachDrop.zoneProps}>
+            {attachDrop.overlay}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Paperclip className="h-4 w-4 text-foreground-muted" />
@@ -410,6 +418,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
                 ))}
               </ul>
             )}
+            {attachDrop.hint}
           </div>
         )}
 

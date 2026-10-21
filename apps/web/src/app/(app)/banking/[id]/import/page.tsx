@@ -30,6 +30,7 @@ import {
   type StatementMeta,
 } from "@delta/shared";
 import type { ImportedTransactionInput } from "@delta/shared";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 /** Radix treats an empty string as "no value", so "not chosen" needs a sentinel. */
 const NONE = "__none__";
@@ -305,9 +306,13 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
     setStep("map");
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (file) void readStatement(file);
+  }
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  async function readStatement(file: File) {
     setReading(true);
     try {
       const isSpreadsheet = /\.(xls|xlsx|xlsm|xlsb|ods)$/i.test(file.name);
@@ -337,6 +342,11 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
       if (fileRef.current) fileRef.current.value = "";
     }
   }
+  const statementDrop = useFileDrop({
+    onFiles: ([f]) => { if (f) void readStatement(f); },
+    accept: ".csv,.txt,.tsv,.xls,.xlsx,.xlsm,.xlsb,.ods",
+    disabled: step !== "upload" || reading,
+  });
 
   async function goToPreview() {
     if (good.length === 0) {
@@ -424,7 +434,8 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
       </div>
 
       {step === "upload" && (
-        <div className="flex flex-col items-center gap-4 rounded-lg border border-border bg-surface p-8 text-center">
+        <div className="relative flex flex-col items-center gap-4 rounded-lg border border-border bg-surface p-8 text-center" {...statementDrop.zoneProps}>
+          {statementDrop.overlay}
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-surface-muted">
             <Upload className="h-8 w-8 text-foreground-subtle" />
           </div>
@@ -446,6 +457,7 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
             className="hidden"
             onChange={handleFileChange}
           />
+          <div className="space-y-1">{statementDrop.hint}</div>
         </div>
       )}
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { useFileDrop } from "@/components/ui/file-drop";
 import { useAddExpenseAttachment, useRemoveExpenseAttachment } from "./api";
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -40,11 +41,15 @@ export function ExpenseReceipts({
   const attachments = expense.attachments ?? [];
   const full = attachments.length >= MAX_FILES;
 
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     // Let the same file be chosen again after a failure.
     if (fileRef.current) fileRef.current.value = "";
-    if (!file) return;
+    if (file) void addReceipt(file);
+  }
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  async function addReceipt(file: File) {
 
     // Checked here as well as on the server, so somebody who picked a 40 MB
     // photo is told before waiting for the whole thing to upload.
@@ -63,6 +68,8 @@ export function ExpenseReceipts({
     }
   }
 
+  const drop = useFileDrop({ onFiles: ([f]) => { if (f) void addReceipt(f); }, accept: ACCEPT, disabled: !editable || busy || full });
+
   async function onRemove(key: string | undefined, name: string) {
     if (!key) {
       // Rows that predate storage keys cannot be removed, because there is
@@ -79,7 +86,8 @@ export function ExpenseReceipts({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-surface p-5">
+    <div className="relative space-y-3 rounded-lg border border-border bg-surface p-5" {...drop.zoneProps}>
+      {drop.overlay}
       <div className="flex items-center gap-2">
         <Paperclip className="h-4 w-4 text-foreground-muted" />
         <h2 className="text-sm font-semibold">Receipts</h2>
@@ -154,6 +162,7 @@ export function ExpenseReceipts({
           })}
         </ul>
       )}
+      {editable && drop.hint}
     </div>
   );
 }

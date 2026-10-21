@@ -30,6 +30,7 @@ import { useCustomers, useFindOrCreateCustomer } from "@/features/customers/api"
 import { useCreateInvoice } from "@/features/invoices/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useColleagues } from "@/features/users/api";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 /**
  * Taking an enrolment: the client, what they enrolled on, and what they paid.
@@ -311,6 +312,25 @@ export function EnrolmentForm() {
     }
   }
 
+
+  /** Picked, dropped or pasted (2026-10-21). */
+  function addFiles(picked: File[]) {
+    // Said now rather than after the enrolment is saved, when it is
+    // too late to pick a smaller one.
+    const tooBig = picked.filter((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig.length > 0) {
+      toast.error(
+        `${tooBig.map((f) => f.name).join(", ")} — over ${prettySize(MAX_FILE_BYTES)}, so not added.`,
+      );
+    }
+    const room = MAX_FILES - files.length;
+    const ok = picked.filter((f) => f.size <= MAX_FILE_BYTES).slice(0, room);
+    if (picked.length - tooBig.length > room) {
+      toast.error(`Only ${MAX_FILES} documents in total, so the rest were not added.`);
+    }
+    setFiles((prev) => [...prev, ...ok]);
+  }
+  const docsDrop = useFileDrop({ onFiles: addFiles, accept: "image/*,application/pdf,.doc,.docx", multiple: true, disabled: busy || files.length >= MAX_FILES });
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 p-6">
       <PageHeader
@@ -496,7 +516,8 @@ export function EnrolmentForm() {
         )}
       </Card>
 
-      <Card className="space-y-4 p-5">
+      <Card className="relative space-y-4 p-5" {...docsDrop.zoneProps}>
+        {docsDrop.overlay}
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Paperclip className="h-4 w-4 text-foreground-muted" /> Documents
           <span className="font-normal text-foreground-muted">— optional</span>
@@ -520,21 +541,7 @@ export function EnrolmentForm() {
               accept="image/*,application/pdf,.doc,.docx"
               className="hidden"
               onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                // Said now rather than after the enrolment is saved, when it is
-                // too late to pick a smaller one.
-                const tooBig = picked.filter((f) => f.size > MAX_FILE_BYTES);
-                if (tooBig.length > 0) {
-                  toast.error(
-                    `${tooBig.map((f) => f.name).join(", ")} — over ${prettySize(MAX_FILE_BYTES)}, so not added.`,
-                  );
-                }
-                const room = MAX_FILES - files.length;
-                const ok = picked.filter((f) => f.size <= MAX_FILE_BYTES).slice(0, room);
-                if (picked.length - tooBig.length > room) {
-                  toast.error(`Only ${MAX_FILES} documents in total, so the rest were not added.`);
-                }
-                setFiles((prev) => [...prev, ...ok]);
+                addFiles(Array.from(e.target.files ?? []));
                 // Cleared so choosing the same file again still registers.
                 e.target.value = "";
               }}
@@ -547,6 +554,8 @@ export function EnrolmentForm() {
             </span>
           )}
         </div>
+
+        <div className="space-y-1">{docsDrop.hint}</div>
 
         {files.length > 0 && (
           <ul className="space-y-1.5">

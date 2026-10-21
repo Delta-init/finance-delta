@@ -54,6 +54,7 @@ import { useCustomer } from "@/features/customers/api";
 import { useBankAccount, useBankAccounts } from "@/features/banking/api";
 import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 export function InvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -605,6 +606,12 @@ export function PaymentDialog({
   const [lateReason, setLateReason] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The proof dropped on the dialog or pasted (a screenshot), as well as picked (2026-10-21).
+  const proofDrop = useFileDrop({
+    onFiles: ([f]) => setProofFile(f ?? null),
+    accept: "image/jpeg,image/png,image/webp,application/pdf",
+    disabled: !open || isEdit,
+  });
 
   const {
     register,
@@ -869,7 +876,8 @@ export function PaymentDialog({
               </label>
               <Input {...register("notes")} placeholder="Any additional notes…" />
             </div>
-            <div className={`col-span-2 ${isEdit ? "hidden" : ""}`}>
+            <div className={`relative col-span-2 ${isEdit ? "hidden" : ""}`} {...proofDrop.zoneProps}>
+              {proofDrop.overlay}
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Proof of Payment <span className="text-foreground-subtle">(optional)</span>
               </label>
@@ -905,6 +913,7 @@ export function PaymentDialog({
                   Attach receipt, screenshot, or PDF…
                 </button>
               )}
+              <div className="mt-1 space-y-1">{proofDrop.hint}</div>
             </div>
           </div>
           <p className="text-xs text-foreground-muted">

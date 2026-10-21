@@ -21,6 +21,7 @@ import { ApiError, api } from "@/lib/api";
 import { useOrganization, useUpdateOrganization, useTaxConfig } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
 import { Plus, X, Receipt, ChevronRight, Upload } from "lucide-react";
+import { useFileDrop } from "@/components/ui/file-drop";
 
 const FIELD = "h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30";
 
@@ -87,6 +88,8 @@ export default function SettingsPage() {
       setLogoBusy(null);
     }
   }
+  // The logo dropped or pasted, as well as picked (2026-10-21).
+  const logoDrop = useFileDrop({ onFiles: ([f]) => { if (f) void uploadLogo(f); }, accept: "image/png,image/jpeg", disabled: !!logoBusy });
 
   async function removeLogo() {
     setLogoBusy("remove");
@@ -444,7 +447,8 @@ export default function SettingsPage() {
             These appear on printed invoices and quotations.
           </p>
 
-          <div className="space-y-2">
+          <div className="relative space-y-2" {...logoDrop.zoneProps}>
+            {logoDrop.overlay}
             <label className="text-sm font-medium text-foreground">Logo</label>
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex h-16 w-44 items-center justify-center rounded-md border border-border bg-background p-2">
@@ -476,6 +480,7 @@ export default function SettingsPage() {
             <p className="text-xs text-foreground-muted">
               PNG or JPG, up to 2 MB, for invoices, receipts, quotations and credit notes. {logoUrl ? "" : "Until you add one, they carry Delta's logo."}
             </p>
+            {logoDrop.hint}
           </div>
 
           <div className="space-y-1">

@@ -4,13 +4,14 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { ChevronsUpDown, Check, Plus, Loader2, Building2, Settings, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import type { AuthSuccess, CreateOrganizationInput } from "@delta/shared";
+import type { CreateOrganizationInput } from "@delta/shared";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useMyOrgs, useCreateOrganization, type OrgMembershipItem } from "@/features/organization/api";
 import { usePlatformOrgs } from "@/features/platform/api";
 import { toast } from "@/lib/toast";
+import { useSwitchOrganization } from "@/features/organization/switch";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -112,7 +113,8 @@ function CreateOrgDialog({
 }
 
 export function OrgSwitcher() {
-  const { data: session, update } = useSession();
+  const { data: session } = useSession();
+  const switchOrganization = useSwitchOrganization();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -152,30 +154,7 @@ export function OrgSwitcher() {
     setSwitching(orgId);
     setOpen(false);
     try {
-      const res = await fetch("/api/proxy/auth/switch-org", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId: orgId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error?.message ?? "Switch failed");
-      }
-      const json = (await res.json()) as { data: AuthSuccess };
-      const data = json.data;
-      await update({
-        id: data.user.id,
-        organizationId: data.user.organizationId,
-        orgName: data.user.orgName ?? "",
-        roleKey: data.user.roleKey,
-        roleName: data.user.roleName,
-        permissions: data.user.permissions,
-        isSuperAdmin: data.user.isSuperAdmin ?? false,
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
-        needsOrgChoice: false,
-        baseCurrency: data.user.baseCurrency ?? "AED",
-      });
+      await switchOrganization(orgId);
       window.location.href = "/dashboard";
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to switch organization");

@@ -12,6 +12,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { canViewLate, useDecideLateEntry, useLateEntries, useLateEntriesMe, useOldDateEntries, type OldDateRow } from "@/features/late-entries/api";
+import { useSwitchOrganization } from "@/features/organization/switch";
 
 /**
  * Late entries (the user, 2026-10-17): expenses, bills and payments typed in with a date more than the organization's
@@ -184,13 +185,16 @@ const LATE_WORD = { pending: "waiting", approved: "approved", rejected: "rejecte
 const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { timeZone: "Asia/Dubai", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /**
- * The same list as Root's Pending → Finance "Entered with an old date": the last 30 days' entries dated a day or more
- * before they were typed in — typed in finance, recorded when an approval went through, or brought from HRMS — with
+ * The same list as Root's Pending → Finance "Entered with an old date", across every organization the reader reads
+ * (2026-10-21), filterable by organization: the last 30 days' entries dated a day or more before they were typed in — typed in finance, recorded when an approval went through, or brought from HRMS — with
  * the days back and each one's late entry. Typed ones at the organization's days or more need a manager (Waiting).
  */
 function OldDatesList({ days }: { days: number }) {
   const { data, isLoading, error } = useOldDateEntries();
   const [origin, setOrigin] = useState<"typed" | "approval" | "hrms" | "all">("typed");
+  const [orgFilter, setOrgFilter] = useState<string>("all");
+  const switchOrganization = useSwitchOrganization();
+  const [opening, setOpening] = useState<string | null>(null);
   if (isLoading) return <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;
   if (error || !data) {
     return (
@@ -199,7 +203,21 @@ function OldDatesList({ days }: { days: number }) {
       </Card>
     );
   }
-  const rows = origin === "all" ? data.rows : data.rows.filter((r) => r.origin === origin);
+  const orgs = data.organizations ?? [];
+  const inOrg = orgFilter === "all" ? data.rows : data.rows.filter((r) => r.orgId === orgFilter);
+  const rows = origin === "all" ? inOrg : inOrg.filter((r) => r.origin === origin);
+  const countOf = (o: "typed" | "approval" | "hrms" | "all") => (o === "all" ? inOrg.length : inOrg.filter((r) => r.origin === o).length);
+  // Another organization's entry opens there: the session moves to it first.
+  const open = async (r: OldDateRow) => {
+    setOpening(`${r.kind}:${r.id}`);
+    try {
+      await switchOrganization(r.orgId);
+      window.location.href = r.href;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not switch organization");
+      setOpening(null);
+    }
+  };
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-1 border-b border-border p-2 text-sm">
@@ -209,9 +227,20 @@ function OldDatesList({ days }: { days: number }) {
             onClick={() => setOrigin(o)}
             className={`rounded-md px-3 py-1.5 font-medium ${origin === o ? "bg-surface-muted text-foreground" : "text-foreground-muted hover:bg-surface-muted/60"}`}
           >
-            {o === "all" ? "All" : ORIGIN_LABEL[o]} <span className="tabular-nums text-foreground-muted">{data.counts[o]}</span>
+            {o === "all" ? "All" : ORIGIN_LABEL[o]} <span className="tabular-nums text-foreground-muted">{countOf(o)}</span>
           </button>
         ))}
+        {orgs.length > 1 && (
+          <select
+            value={orgFilter}
+            onChange={(e) => setOrgFilter(e.target.value)}
+            className="ml-auto h-8 rounded-md border border-border bg-surface px-2 text-sm"
+            aria-label="Organization"
+          >
+            <option value="all">All organizations ({data.rows.length})</option>
+            {orgs.map((o) => <option key={o.id} value={o.id}>{o.name} ({o.count})</option>)}
+          </select>
+        )}
       </div>
       {!rows.length ? (
         <p className="px-5 py-12 text-center text-sm text-foreground-muted">Nothing entered with an old date here in the last {data.rules.withinDays} days.</p>
@@ -232,8 +261,21 @@ function OldDatesList({ days }: { days: number }) {
               {rows.map((r) => (
                 <tr key={`${r.kind}:${r.id}`} className="border-t border-border align-top">
                   <td className="px-4 py-2.5">
-                    <Link href={r.href} className="font-medium hover:underline">{[r.number, r.title].filter(Boolean).join(" · ")}</Link>
-                    <p className="text-xs text-foreground-muted">{KIND_LABEL[r.kind]}</p>
+                    {!data.currentOrgId || r.orgId === data.currentOrgId ? (
+                      <Link href={r.href} className="font-medium hover:underline">{[r.number, r.title].filter(Boolean).join(" · ")}</Link>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void open(r)}
+                        disabled={!!opening}
+                        className="text-left font-medium hover:underline disabled:opacity-60"
+                        title={`Opens in ${r.orgName} — switches organization`}
+                      >
+                        {opening === `${r.kind}:${r.id}` && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
+                        {[r.number, r.title].filter(Boolean).join(" · ")}
+                      </button>
+                    )}
+                    <p className="text-xs text-foreground-muted">{KIND_LABEL[r.kind]}{orgs.length > 1 && r.orgName ? ` · ${r.orgName}` : ""}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5">{r.date}</td>
                   <td className="whitespace-nowrap px-4 py-2.5 text-foreground-muted">{when(r.enteredAt)}</td>

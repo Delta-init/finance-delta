@@ -38,9 +38,14 @@ export interface OldDateRow {
   origin: "typed" | "approval" | "hrms";
   late?: { state: string; reason: string; decidedBy?: string; note?: string };
   href: string;
+  /** Which organization it is in (2026-10-21: every organization the reader reads). */
+  orgId: string; orgName: string;
 }
 export interface OldDates {
   rules: { minDays: number; withinDays: number; lateEntryDays: number };
+  /** Absent from an API before 2026-10-21's "all organizations": then it is the current one only. */
+  currentOrgId?: string;
+  organizations?: Array<{ id: string; name: string; count: number }>;
   counts: { typed: number; approval: number; hrms: number; all: number };
   rows: OldDateRow[];
 }

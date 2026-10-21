@@ -324,6 +324,30 @@ check("a bank line: listed with its late entry and its account's link", oldLine?
 check("counts by how it got in, and the rules", old.counts.all === old.rows.length && old.counts.typed >= 2 && old.rules.minDays === 1 && old.rules.lateEntryDays === 1, j({ counts: old.counts, rules: old.rules }));
 check("only their own expenses: not for them", /see expenses or bills/.test(await refusal(late.oldDateEntries(ORG, OMAR, ["expense:read:own"]))));
 
+/* ── 13 ── */
+step("13. Old dates across organizations (2026-10-21): every one the reader reads");
+const org2 = await Organization.create({ name: "Delta Bangalore E2E", baseCurrency: "INR" });
+const org3 = await Organization.create({ name: "Hidden E2E", baseCurrency: "AED" });
+const reader2 = await Role.create({ organizationId: org2._id, key: "reader", name: "Reader", permissions: ["expense:read"] });
+const nobody3 = await Role.create({ organizationId: org3._id, key: "none", name: "None", permissions: ["customer:read"] });
+await User.updateOne({ _id: omar._id }, { $push: { memberships: { $each: [
+  { organizationId: org2._id, roleId: reader2._id, status: "active" },
+  { organizationId: org3._id, roleId: nobody3._id, status: "active" },
+] } } });
+const inOrg = (o: any, date: string) => ex.createExpense(String(o._id), OMAR, {
+  category: "other", description: "Auto", expenseDate: date, amountMinor: 5_000, currency: "AED", categoryOther: "", taxPct: 0,
+  taxInclusive: false, paymentAccount: "", reference: "", requiresApproval: false, isRecurring: false, paymentMethod: "bank_transfer",
+} as never);
+const x2 = await inOrg(org2, back(3));
+const x3 = await inOrg(org3, back(4));
+const across = await late.oldDateEntries(ORG, OMAR, ["expense:read"]);
+const r2 = across.rows.find((r: any) => r.id === x2.id);
+check("Omar reads this organization and Bangalore (expense:read there): both listed, each with its organization", !!r2 && r2.orgName === "Delta Bangalore E2E" && across.rows.some((r: any) => r.orgId === ORG), j(across.organizations));
+check("…not the one where his role sees no expenses", !across.rows.some((r: any) => r.id === x3.id) && !across.organizations.some((o: any) => o.name === "Hidden E2E"), j(across.organizations));
+check("organizations with their counts, and the current one named", across.currentOrgId === ORG && across.organizations.find((o: any) => o.name === "Delta Bangalore E2E")?.count === 1 && across.counts.all === across.rows.length, j({ orgs: across.organizations, cur: across.currentOrgId }));
+const bySa = await late.oldDateEntries(ORG, String(root._id), []);
+check("a super admin: every organization, the hidden one too", bySa.rows.some((r: any) => r.id === x3.id) && bySa.organizations.length === 3, j(bySa.organizations));
+
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();
 process.exit(failures ? 1 : 0);

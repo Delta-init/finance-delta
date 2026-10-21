@@ -405,22 +405,49 @@ async function notifyEnterer(orgId: string, e: any): Promise<void> {
 // ── Old dates: everything entered with a date of its own before the day it was typed (2026-10-21) ──────────────────
 
 /**
+ * The organizations whose old-date entries this person reads (2026-10-21, "show all organizations"): a super admin,
+ * every one; anybody else, each organization they are an active member of where they would read every late entry —
+ * tagged Manager there, or their role there sees expenses or bills. The current organization goes by the session's
+ * permissions; the others by the role they hold in each.
+ */
+async function oldDateOrgs(orgId: string, userId: string, permissions: string[]): Promise<{ _id: Types.ObjectId; name: string }[]> {
+  if (!Types.ObjectId.isValid(userId)) return [];
+  const u = await User.findOne({ _id: oid(userId), status: "active" }).select("isSuperAdmin memberships").lean<any>();
+  if (!u) return [];
+  if (u.isSuperAdmin) return Organization.find().select("name").sort({ name: 1 }).lean<any[]>();
+  const active = ((u.memberships ?? []) as any[]).filter((m) => m.status === "active");
+  const { Role } = await import("../role/role.model");
+  const roles = await Role.find({ _id: { $in: active.map((m) => m.roleId) } }).select("permissions").lean<any[]>();
+  const permsOf = new Map(roles.map((r) => [String(r._id), (r.permissions ?? []) as string[]]));
+  const ids = active
+    .filter((m) => {
+      const perms = String(m.organizationId) === String(orgId) ? permissions : permsOf.get(String(m.roleId)) ?? [];
+      return scopeOf(!!m.isManager, perms) === "all";
+    })
+    .map((m) => m.organizationId);
+  return Organization.find({ _id: { $in: ids } }).select("name").sort({ name: 1 }).lean<any[]>();
+}
+
+/**
  * The finance side of Root's Pending → Finance "Entered with an old date" (the user, 2026-10-21: "finance is not
- * showing them — show that"): this organization's entries of the last 30 days dated a day or more before they were
- * typed in — typed in finance, recorded by an approval, or brought from HRMS — each with its late entry, if any.
- * Whoever reads every late entry reads this; the "own" readers do not (it is everybody's).
+ * showing them — show that", then "show all organizations"): every organization this person reads (oldDateOrgs) —
+ * the last 30 days' entries dated a day or more before they were typed in — typed in finance, recorded by an
+ * approval, or brought from HRMS — each with its organization and its late entry, if any. Whoever reads every late
+ * entry where they are reads this; the "own" readers do not (it is everybody's).
  */
 export async function oldDateEntries(orgId: string, userId: string, permissions: string[] = []) {
   const manager = await isManager(orgId, userId);
   if (scopeOf(manager, permissions) !== "all") throw new AppError("FORBIDDEN", "Entries with an old date are for people who see expenses or bills");
   const { backdatedIn, BACKDATE_MIN_DAYS, ENTERED_WITHIN_DAYS } = await import("../integrations/portal-watch.service");
-  const org = await Organization.findById(orgId).select("name").lean<any>();
-  if (!org) throw new AppError("NOT_FOUND", "Organization not found");
-  const rows = (await backdatedIn({ _id: org._id, name: org.name }, new Date(Date.now() - ENTERED_WITHIN_DAYS * 86_400_000)))
+  const orgs = await oldDateOrgs(orgId, userId, permissions);
+  const since = new Date(Date.now() - ENTERED_WITHIN_DAYS * 86_400_000);
+  const rows = (await Promise.all(orgs.map((o) => backdatedIn({ _id: o._id, name: o.name }, since)))).flat()
     .sort((a, b) => b.enteredAt.localeCompare(a.enteredAt));
   const count = (o: string) => rows.filter((r) => r.origin === o).length;
   return {
     rules: { minDays: BACKDATE_MIN_DAYS, withinDays: ENTERED_WITHIN_DAYS, lateEntryDays: await lateEntryDaysOf(orgId) },
+    currentOrgId: orgId,
+    organizations: orgs.map((o) => ({ id: String(o._id), name: o.name, count: rows.filter((r) => r.orgId === String(o._id)).length })),
     counts: { typed: count("typed"), approval: count("approval"), hrms: count("hrms"), all: rows.length },
     rows,
   };

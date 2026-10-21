@@ -56,6 +56,7 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Category", value: (e) => e.categoryName || e.category },
   { header: "Date", value: (e) => e.expenseDate },
   { header: "Submitted By", value: (e) => e.submittedByName },
+  { header: "Salesperson", value: (e) => e.salesperson?.name ?? "" },
   { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
   { header: "Currency", value: (e) => e.currency },
   { header: "Total", value: (e) => e.totalMinor / 100 },
@@ -176,6 +177,24 @@ export default function ExpensesPage() {
       header: "Category",
       sortable: true,
       cell: (e) => <span className="text-foreground-muted">{e.categoryName || e.category}</span>,
+    },
+    {
+      // Who the expense is for, when it is for a salesperson (2026-10-21) — a click lists just theirs.
+      key: "salesperson",
+      header: "Salesperson",
+      cell: (e) =>
+        e.salesperson ? (
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); setSalesperson(e.salesperson!.id); }}
+            className="text-left hover:underline"
+            title={`Only ${e.salesperson.name}'s expenses`}
+          >
+            {e.salesperson.name}
+          </button>
+        ) : (
+          <span className="text-foreground-subtle">—</span>
+        ),
     },
     {
       key: "date",

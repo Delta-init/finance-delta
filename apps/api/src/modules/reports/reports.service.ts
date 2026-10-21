@@ -24,7 +24,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, type PaymentMethod } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
@@ -367,7 +367,9 @@ const DAILY_GROUPS: Record<DailyBreakdownKind, Array<{ key: string; label: strin
 /** Which CRM an invoice came from — or typed in finance. */
 function crmOf(inv: any): string {
   const crm = enrolmentCrm(inv.enrolment?.crm, inv.external?.source);
-  return crm ? ENROLMENT_CRM_LABELS[crm] : inv.external?.source ? String(inv.external.source) : "Typed in finance";
+  if (crm) return ENROLMENT_CRM_LABELS[crm];
+  if (inv.external?.source === OLD_BOOKS_SOURCE) return "Old books";
+  return inv.external?.source ? String(inv.external.source) : "Typed in finance";
 }
 
 /**

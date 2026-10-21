@@ -66,7 +66,8 @@ export async function backfillBankAccounts(opts: {
   const accountFor = (method?: string) => (method && wanted[method] ? accounts.find((a) => String(a._id) === wanted[method]) : null);
 
   // 2. Invoice payments in no account.
-  const invoices = await Invoice.find({ organizationId: org._id, "payments.0": { $exists: true } })
+  // Never the old books' imported invoices (2026-10-21): their payments stay out of the cash books.
+  const invoices = await Invoice.find({ organizationId: org._id, "payments.0": { $exists: true }, "external.source": { $ne: "old_books" } })
     .select("invoiceNumber currency payments status").lean<any[]>();
   for (const inv of invoices) {
     for (const p of inv.payments ?? []) {

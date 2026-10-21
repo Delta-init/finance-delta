@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import type { ApprovalRow, ApprovalType } from "@delta/shared";
+import { OLD_BOOKS_SOURCE, type ApprovalRow, type ApprovalType } from "@delta/shared";
 import { approvalList } from "../approvals/approvals.service";
 import { Organization } from "../organization/organization.model";
 import { Invoice } from "../invoice/invoice.model";
@@ -144,7 +144,8 @@ export async function backdatedIn(org: { _id: Types.ObjectId; name: string }, si
   };
 
   const [invoices, bills, expenses, lines, balanceDecisions] = await Promise.all([
-    Invoice.find({ organizationId: orgId, $or: [{ createdAt: { $gte: since } }, { "payments.createdAt": { $gte: since } }] })
+    // Not the old books' imported invoices: brought in at once, they were never entered late.
+    Invoice.find({ organizationId: orgId, "external.source": { $ne: OLD_BOOKS_SOURCE }, $or: [{ createdAt: { $gte: since } }, { "payments.createdAt": { $gte: since } }] })
       .select("invoiceNumber customerName totalMinor currency issueDate createdAt external.source approval.at payments").lean(),
     Bill.find({ organizationId: orgId, $or: [{ createdAt: { $gte: since } }, { "payments.createdAt": { $gte: since } }] })
       .select("billNumber vendorName totalMinor currency billDate createdAt payments lateEntry").lean(),

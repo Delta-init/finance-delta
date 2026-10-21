@@ -38,7 +38,7 @@ const UAE_MS = 4 * 3_600_000;
 const major = (minor: unknown) => Math.round(Number(minor) || 0) / 100;
 const cents = (n: number) => Math.round(n * 100) / 100;
 const monthOf = (d: Date | string) => new Date(new Date(d).getTime() + UAE_MS).toISOString().slice(0, 7);
-const CRM_OF_SOURCE: Record<string, string> = { crm: "Sales CRM", "draw-crm": "Draw", "banglore-crm": "Banglore", "remote-crm": "Remote" };
+const CRM_OF_SOURCE: Record<string, string> = { crm: "Sales CRM", "draw-crm": "Draw", "banglore-crm": "Banglore", "remote-crm": "Remote", old_books: "Old books" };
 const CRM_NAME: Record<string, string> = { delta: "Sales CRM", draw: "Draw", remote: "Remote", banglore: "Banglore" };
 
 type Num = Record<string, number>;

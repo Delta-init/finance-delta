@@ -28,6 +28,12 @@ export const PAYMENT_METHODS = [
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 /**
+ * `external.source` of an invoice brought in from the old books (Zoho, 2024-01 → 2026-10; scripts/invoice-import.ts,
+ * 2026-10-21). Such an invoice is history: it never reminds a client, never lands in a bank book, never reaches the LMS.
+ */
+export const OLD_BOOKS_SOURCE = "old_books";
+
+/**
  * What each payment method is called on screen.
  *
  * Here rather than in each screen that shows one: four copies had drifted, and

@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { formatMoney } from "@delta/shared";
+import { OLD_BOOKS_SOURCE, formatMoney } from "@delta/shared";
 import { logger } from "../lib/logger";
 import { logEmail, sendInstalmentReminderEmail } from "../lib/email";
 import { Invoice } from "../modules/invoice/invoice.model";
@@ -37,6 +37,8 @@ const OWING = {
   balanceMinor: { $gt: 0 },
   amountPaidMinor: { $gt: 0 },
   "approval.state": { $in: APPROVED_STATES },
+  // Never one brought in from the old books: its client is not to be chased from here (2026-10-21).
+  "external.source": { $ne: OLD_BOOKS_SOURCE },
 };
 
 export interface InstalmentReminderRun {

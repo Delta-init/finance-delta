@@ -17,7 +17,7 @@ export function useLateDate(date: string | undefined, initialDate?: string) {
 }
 
 /**
- * Shown under a date field when the date is more than the organization's days back: a manager has to approve it, and
+ * Shown under a date field when the date is the organization's days back or more (1: before today): a manager has to approve it, and
  * the reason it is entered late is asked for.
  */
 export function LateReasonField({
@@ -28,7 +28,7 @@ export function LateReasonField({
     <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/5 p-3">
       <p className="flex items-center gap-1.5 text-xs font-medium text-warning">
         <Clock className="h-3.5 w-3.5" />
-        Dated more than {days} day{days === 1 ? "" : "s"} back — a manager must approve this {what}.
+        {days === 1 ? "Dated before today" : `Dated ${days} or more days back`} — a manager must approve this {what}.
       </p>
       <label className="block text-xs font-medium text-foreground-muted" htmlFor="late-reason">
         Reason it is entered late *

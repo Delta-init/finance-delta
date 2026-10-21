@@ -190,7 +190,7 @@ async function main() {
 
   step("Setting up");
   const mkOrg = async (name: string, currency: string) => {
-    const org = await Organization.create({ name, baseCurrency: currency, email: "accounts@e2e-test.com", phone: "+971 4 000 0000", taxRates: [{ label: "VAT 5%", code: "VAT", rate: 5, isDefault: true, appliesTo: "sales" }] });
+    const org = await Organization.create({ name, baseCurrency: currency, lateEntryDays: 0, email: "accounts@e2e-test.com", phone: "+971 4 000 0000", taxRates: [{ label: "VAT 5%", code: "VAT", rate: 5, isDefault: true, appliesTo: "sales" }] });
     for (const def of SYSTEM_ROLES) {
       await Role.create({ organizationId: org._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });
     }

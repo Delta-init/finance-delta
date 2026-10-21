@@ -1,4 +1,5 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
+import { recordLateSchema } from "../late-entry/late-entry.model";
 
 const transactionMatchSchema = new Schema(
   {
@@ -69,6 +70,8 @@ const bankTransactionSchema = new Schema(
       default: [],
     },
     notes: { type: String, default: "" },
+    /** Typed in with an old date: waiting for a manager, or what one decided (late-entry.service.ts, 2026-10-21). */
+    lateEntry: { type: recordLateSchema, default: null },
   },
   { timestamps: true },
 );

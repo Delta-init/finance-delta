@@ -18,6 +18,8 @@ import type {
   CashCountInput,
 } from "@delta/shared";
 import { fingerprint, compareCashCount } from "@delta/shared";
+import { lateView } from "../late-entry/late-entry.model";
+import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 import { AppError } from "../../lib/http";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { BankAccount, type BankAccountDoc } from "./bank-account.model";
@@ -103,6 +105,7 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     }),
     notes: (doc.notes as string) ?? "",
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
+    lateEntry: lateView((doc as unknown as { lateEntry?: unknown }).lateEntry),
   };
 }
 
@@ -357,9 +360,15 @@ export async function updateTransaction(
   accountId: string,
   txId: string,
   input: UpdateBankTransactionInput,
+  /** Who is typing — only the Banking screen passes it: a line moved to an old date waits for a manager. */
+  late?: LateActor,
 ): Promise<BankTransactionDTO> {
   const tx = await assertEditable(orgId, accountId, txId);
 
+  const lateNow = input.date !== undefined && tx.source === "manual"
+    ? await lateForDate(orgId, late ? { ...late, reason: input.lateReason ?? late.reason } : undefined, input.date, tx.date as Date, (tx as any).lateEntry)
+    : null;
+  if (lateNow && lateNow.next !== undefined) (tx as any).lateEntry = lateNow.next;
   if (input.date !== undefined) tx.date = new Date(input.date);
   if (input.description !== undefined) tx.description = input.description;
   if (input.reference !== undefined) tx.reference = input.reference;
@@ -370,11 +379,21 @@ export async function updateTransaction(
     tx.type = input.amountMinor >= 0 ? "credit" : "debit";
   }
   await tx.save();
+  if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, bankLateInfo(tx));
+  else if (lateNow?.withdraw) await withdrawLateFor(orgId, "bank_line", tx._id);
 
   await recalculateRunningBalances(orgId, tx.accountId as Types.ObjectId);
 
   const fresh = await BankTransaction.findById(tx._id);
   return txToDTO(fresh!);
+}
+
+/** A bank / cash line as its late entry describes it. */
+function bankLateInfo(tx: any) {
+  return {
+    kind: "bank_line" as const, refId: tx._id, accountId: tx.accountId, number: String(tx.reference || "Bank line"),
+    title: `${tx.accountName} · ${tx.description}`, amountMinor: (tx.type === "debit" ? -1 : 1) * Math.abs(tx.amountMinor ?? 0), currency: String(tx.currency ?? "AED"),
+  };
 }
 
 /** Remove an entry that should never have been there. */
@@ -464,6 +483,7 @@ export async function deleteTransaction(
   const tx = await assertEditable(orgId, accountId, txId);
   const account = tx.accountId as Types.ObjectId;
   await BankTransaction.deleteOne({ _id: tx._id });
+  await withdrawLateFor(orgId, "bank_line", tx._id);
   await recalculateRunningBalances(orgId, account);
 }
 
@@ -473,6 +493,8 @@ export async function addTransaction(
   input: CreateBankTransactionInput,
   source: "manual" | "import" = "manual",
   importBatchId?: string,
+  /** Who is typing — only the Banking screen passes it: a line dated back waits for a manager (2026-10-21). */
+  late?: LateActor,
 ): Promise<BankTransactionDTO> {
   const account = await BankAccount.findOne({
     _id: new Types.ObjectId(accountId),
@@ -481,6 +503,9 @@ export async function addTransaction(
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
   const txType = input.amountMinor >= 0 ? "credit" : "debit";
+  const lateNow = source === "manual"
+    ? await lateForDate(orgId, late ? { ...late, reason: input.lateReason ?? late.reason } : undefined, input.date, null, null)
+    : null;
 
   const doc = await BankTransaction.create({
     organizationId: new Types.ObjectId(orgId),
@@ -500,7 +525,9 @@ export async function addTransaction(
     source,
     importBatchId: importBatchId ?? undefined,
     notes: input.notes ?? "",
+    lateEntry: lateNow?.next ?? null,
   });
+  if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, bankLateInfo(doc));
 
   await recalculateRunningBalances(orgId, account._id);
 

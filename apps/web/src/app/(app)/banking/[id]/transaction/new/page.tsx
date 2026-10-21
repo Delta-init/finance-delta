@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useBankAccount, useCreateBankTransaction } from "@/features/banking/api";
+import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 const formSchema = z.object({
   date: z.string().min(1, "Date is required"),
@@ -47,7 +48,15 @@ export default function NewTransactionPage({ params }: { params: Promise<{ id: s
     defaultValues: { date: today, type: "credit" },
   });
 
+  // Dated back: why — a manager approves it (late entries, 2026-10-21).
+  const [lateReason, setLateReason] = useState("");
+  const lateDate = useLateDate(watch("date"));
+
   async function onSubmit(values: FormValues) {
+    if (lateDate.late && !lateReason.trim()) {
+      toast.error("Give the reason it is entered late");
+      return;
+    }
     try {
       const amt = toMinor(values.amountDisplay);
       await createTx.mutateAsync({
@@ -56,6 +65,7 @@ export default function NewTransactionPage({ params }: { params: Promise<{ id: s
         reference: values.reference ?? "",
         amountMinor: values.type === "credit" ? amt : -amt,
         notes: values.notes ?? "",
+        ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
       });
       toast.success("Transaction added");
       router.push(`/banking/${id}`);
@@ -114,6 +124,8 @@ export default function NewTransactionPage({ params }: { params: Promise<{ id: s
               </div>
             </div>
           </div>
+
+          <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="transaction" />
 
           <div className="space-y-1">
             <Label htmlFor="description">Description *</Label>

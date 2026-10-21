@@ -132,7 +132,7 @@ async function waitingIn(org: { _id: Types.ObjectId; name: string }, now: number
   };
 }
 
-async function backdatedIn(org: { _id: Types.ObjectId; name: string }, since: Date): Promise<WatchBackdated[]> {
+export async function backdatedIn(org: { _id: Types.ObjectId; name: string }, since: Date): Promise<WatchBackdated[]> {
   const out: WatchBackdated[] = [];
   const orgId = org._id;
   const push = (x: Omit<WatchBackdated, "daysBack" | "orgId" | "orgName">) => {
@@ -151,7 +151,7 @@ async function backdatedIn(org: { _id: Types.ObjectId; name: string }, since: Da
     Expense.find({ organizationId: orgId, createdAt: { $gte: since } })
       .select("expenseNumber description categoryName totalMinor currency expenseDate createdAt submittedByName source.kind lateEntry").lean(),
     BankTransaction.find({ organizationId: orgId, source: "manual", createdAt: { $gte: since }, "matches.0": { $exists: false } })
-      .select("accountName description reference amountMinor currency type date createdAt").lean(),
+      .select("accountId accountName description reference amountMinor currency type date createdAt lateEntry").lean(),
     // Balance payments decided lately: the payments those approvals recorded on their invoices.
     BalancePaymentModel.find({ organizationId: orgId, "decision.decidedAt": { $gte: new Date(since.getTime() - BY_APPROVAL_MS) } })
       .select("invoiceId decision.decidedAt").lean(),
@@ -213,7 +213,7 @@ async function backdatedIn(org: { _id: Types.ObjectId; name: string }, since: Da
     push({
       kind: "bank_line", id: String(l._id), number: l.reference || "", title: `${l.accountName} · ${l.description}`, date: l.date,
       enteredAt: new Date(l.createdAt).toISOString(), amountMinor: (l.type === "debit" ? -1 : 1) * (l.amountMinor ?? 0), currency: l.currency ?? "",
-      enteredBy: "", origin: "typed", href: "/banking",
+      enteredBy: l.lateEntry?.enteredByName ?? "", origin: "typed", late: lateOf(l.lateEntry), href: `/banking/${l.accountId}`,
     });
   }
   return out;

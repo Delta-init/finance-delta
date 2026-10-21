@@ -55,7 +55,7 @@ const step = (s: string) => console.log(`\n\x1b[1m${s}\x1b[0m`);
 const j = (v: unknown) => JSON.stringify(v).slice(0, 400);
 const refusal = async (p: Promise<unknown>) => p.then(() => "", (e: Error) => e.message);
 const ALL = { all: true } as const;
-const back = (days: number) => lateEntryCutoff(days);   // that many days back, Dubai
+const back = (days: number) => lateEntryCutoff(days + 1);   // exactly that many days back, Dubai (the cutoff is the first day not late)
 const OLD = back(10), RECENT = back(2), OLDER = back(20);
 
 await mongoose.connect(uri);
@@ -64,7 +64,8 @@ await mongoose.connection.db!.dropDatabase();
 
 /* ── 0 ── */
 step("0. The rule itself (shared)");
-check("7 days: 7 back is not late, 8 back is", !isLateDate(back(7), 7) && isLateDate(back(8), 7));
+check("7 days: 6 back is not late, 7 back is (N or more, 2026-10-21)", !isLateDate(back(6), 7) && isLateDate(back(7), 7));
+check("1 day: yesterday is late, today is not", isLateDate(back(1), 1) && !isLateDate(back(0), 1));
 check("today and the future are never late", !isLateDate(back(0), 7) && !isLateDate("2999-01-01", 7));
 check("0 days turns it off", !isLateDate(OLDER, 0));
 
@@ -90,7 +91,9 @@ const tagged = await users.updateUser(ORG, MONA, { isManager: true }, { userId: 
 check("Mona tagged Manager — the user says so", tagged.isManager === true, j(tagged));
 const listed = await users.listUsers(ORG, { page: 1, pageSize: 50 } as never);
 check("…and in the list; the others are not", listed.data.find((u) => u.id === MONA)?.isManager === true && listed.data.find((u) => u.id === OMAR)?.isManager === false);
-check("the organization's days: 7 unless set", (await getOrganization(ORG)).lateEntryDays === 7);
+check("the organization's days: 1 unless set (2026-10-21)", (await getOrganization(ORG)).lateEntryDays === 1);
+// The steps below were written for 7 days; the 1-day rule has its own step (10).
+await updateOrganization(ORG, { lateEntryDays: 7 });
 check("Mona is a manager, Omar is not", (await late.isManager(ORG, MONA)) && !(await late.isManager(ORG, OMAR)));
 
 const expense = (date: string, reason?: string, over: Record<string, unknown> = {}) => ex.createExpense(ORG, ASHA, {
@@ -103,7 +106,7 @@ const entryFor = (refId: string) => LateEntryModel.findOne({ refId: new Types.Ob
 step("2. An expense typed in late");
 const fresh = await expense(RECENT);
 check("2 days back: nothing asked", !fresh.lateEntry && (await LateEntryModel.countDocuments({})) === 0);
-check("10 days back with no reason: refused, saying why", /more than 7 days back — give the reason/.test(await refusal(expense(OLD))));
+check("10 days back with no reason: refused, saying why", /7 or more days back — give the reason/.test(await refusal(expense(OLD))));
 let e1 = await expense(OLD, "Receipt found in the car");
 check("with a reason: waiting for a manager, the reason on it", e1.lateEntry?.state === "pending" && e1.lateEntry.reason === "Receipt found in the car" && e1.lateEntry.enteredByName === "Asha Accountant", j(e1.lateEntry));
 let le1 = await entryFor(e1.id);
@@ -269,6 +272,57 @@ const ownMe = await late.lateEntryMe(ORG, OMAR, ["expense:write:own"]);
 check("…/me says own, counting only his own waiting (none)", ownMe.scope === "own" && ownMe.canView === true && ownMe.pending === 0, j(ownMe));
 const waitingNow = await late.listLateEntries(ORG, String(root._id), { state: "pending" });
 check("a manager still decides them, and sees the buttons", waitingNow.some((x) => x.refId === e9.id && x.canDecide), j(waitingNow.map((x) => [x.number, x.canDecide])));
+
+/* ── 10 ── */
+step("10. One day (2026-10-21): anything before today, yesterday included");
+await updateOrganization(ORG, { lateEntryDays: 1 });
+const YESTERDAY = back(1), TODAY = back(0);
+check("yesterday with no reason: refused, saying \"before today\"", /before today — give the reason/.test(await refusal(expense(YESTERDAY))));
+const e10 = await expense(YESTERDAY, "Forgot it yesterday");
+check("…with a reason: waiting for a manager", e10.lateEntry?.state === "pending", j(e10.lateEntry));
+check("today: nothing asked", !(await expense(TODAY)).lateEntry);
+check("/me says 1 day", (await late.lateEntryMe(ORG, String(root._id))).days === 1);
+
+/* ── 11 ── */
+step("11. Bank and cash lines typed in Banking");
+const banking = await import("../modules/banking/banking.service");
+const { BankTransaction: Tx } = await import("../modules/banking/bank-transaction.model");
+const cash = await createBankAccount(ORG, { accountName: "Delta Petty", currency: "AED", accountType: "petty_cash", openingBalanceMinor: 0, openingDate: "2026-01-01" } as never);
+const lineIn = (date: string, reason?: string, amountMinor = 10_000) =>
+  banking.addTransaction(ORG, cash.id, { date, description: "Cash received", reference: "IN-1", amountMinor, notes: "" } as never, "manual", undefined, typing(reason));
+check("yesterday with no reason: refused", /before today — give the reason/.test(await refusal(lineIn(YESTERDAY))));
+const l1 = await lineIn(YESTERDAY, "Cash slip found late");
+const le11 = await entryFor(l1.id);
+check("with a reason: the line waits for a manager, a request on the page", l1.lateEntry?.state === "pending" && le11?.kind === "bank_line" && le11.reason === "Cash slip found late", j({ l: l1.lateEntry, le11 }));
+const page11 = (await late.listLateEntries(ORG, String(root._id), { state: "pending" })).find((x) => x.refId === l1.id);
+check("…linked to its account, labelled a bank / cash line", page11?.href === `/banking/${cash.id}` && page11?.kind === "bank_line", j(page11));
+check("today: nothing asked", !(await lineIn(TODAY)).lateEntry);
+check("an import is never asked", !(await banking.addTransaction(ORG, cash.id, { date: OLDER, description: "Statement line", reference: "", amountMinor: 500, notes: "" } as never, "import")).lateEntry);
+await late.decideLateEntry(ORG, String(root._id), String(le11._id), "rejected", "No slip");
+check("rejected: the new line is removed, and the tin's balance follows", !(await Tx.exists({ _id: l1.id })) && (await banking.getBankAccount(ORG, cash.id)).currentBalanceMinor === 10_500, String((await banking.getBankAccount(ORG, cash.id)).currentBalanceMinor));
+const l2 = await lineIn(YESTERDAY, "Late slip", 2_000);
+await late.decideLateEntry(ORG, String(root._id), String((await entryFor(l2.id))._id), "approved", "");
+check("approved: the line stands, saying so", (await banking.getTransaction(ORG, l2.id)).lateEntry?.state === "approved");
+const l3 = await lineIn(TODAY, undefined, 3_000);
+check("moving a line to an old date without a reason: refused", /before today — give the reason/.test(await refusal(banking.updateTransaction(ORG, cash.id, l3.id, { date: back(3) } as never, typing()))));
+const moved = await banking.updateTransaction(ORG, cash.id, l3.id, { date: back(3), lateReason: "Belongs to Saturday" } as never, typing());
+const le13 = await entryFor(l3.id);
+check("…with one: waiting, remembering the date it had", moved.lateEntry?.state === "pending" && le13?.previousDate && new Date(le13.previousDate).toISOString().slice(0, 10) === TODAY, j(le13));
+await late.decideLateEntry(ORG, String(root._id), String(le13._id), "rejected", "Not Saturday's");
+check("rejected: the date goes back", (await banking.getTransaction(ORG, l3.id)).date === TODAY);
+const l4 = await lineIn(YESTERDAY, "Another", 1_000);
+await banking.deleteTransaction(ORG, cash.id, l4.id);
+check("a waiting line deleted: no longer asked", (await entryFor(l4.id))?.state === "withdrawn");
+
+/* ── 12 ── */
+step("12. Old dates: everything entered with a date before the day it was typed");
+const old = await late.oldDateEntries(ORG, OMAR, ["expense:read"]);
+const oldExp = old.rows.find((r: any) => r.id === e10.id);
+check("an expense typed yesterday-dated: listed, typed in finance, 1 day back, with its late entry", oldExp?.origin === "typed" && oldExp.daysBack === 1 && oldExp.late?.state === "pending", j(oldExp));
+const oldLine = old.rows.find((r: any) => r.id === l2.id);
+check("a bank line: listed with its late entry and its account's link", oldLine?.kind === "bank_line" && oldLine.late?.state === "approved" && oldLine.href === `/banking/${cash.id}`, j(oldLine));
+check("counts by how it got in, and the rules", old.counts.all === old.rows.length && old.counts.typed >= 2 && old.rules.minDays === 1 && old.rules.lateEntryDays === 1, j({ counts: old.counts, rules: old.rules }));
+check("only their own expenses: not for them", /see expenses or bills/.test(await refusal(late.oldDateEntries(ORG, OMAR, ["expense:read:own"]))));
 
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();

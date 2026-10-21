@@ -60,8 +60,8 @@ const organizationSchema = new Schema(
     reminderIntervals: { type: [Number], default: [-3, 1, 7] },
     /** Each payment method's Banking account (an id), by method — Settings → Where payments go (2026-10-16). */
     paymentAccounts: { type: Schema.Types.Mixed, default: {} },
-    /** Entries dated more than this many days back wait for a manager (late-entry.service.ts); 0 turns it off. */
-    lateEntryDays: { type: Number, default: 7 },
+    /** Entries dated this many days back or more wait for a manager (late-entry.service.ts; 1 = before today); 0 turns it off. */
+    lateEntryDays: { type: Number, default: 1 },
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },
     taxLabel:  { type: String, default: "VAT" },
     taxRates:  { type: [taxRateSchema], default: [] },

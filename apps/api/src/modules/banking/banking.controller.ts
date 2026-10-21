@@ -43,7 +43,7 @@ export const listTransactions = asyncHandler(async (req, res) => {
 });
 
 export const createTransaction = asyncHandler(async (req, res) => {
-  created(res, await svc.addTransaction(org(req), req.params.id!, req.body, "manual"));
+  created(res, await svc.addTransaction(org(req), req.params.id!, req.body, "manual", undefined, { userId: req.auth!.userId, reason: req.body?.lateReason }));
 });
 
 export const bulkImport = asyncHandler(async (req, res) => {
@@ -68,7 +68,7 @@ export const unmatchTransaction = asyncHandler(async (req, res) => {
 });
 
 export const updateTransaction = asyncHandler(async (req, res) => {
-  ok(res, await svc.updateTransaction(org(req), req.params.id!, req.params.txId!, req.body));
+  ok(res, await svc.updateTransaction(org(req), req.params.id!, req.params.txId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }));
 });
 
 export const deleteTransaction = asyncHandler(async (req, res) => {

@@ -110,7 +110,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const { fields, append, remove } = useFieldArray({ control, name: "lineItems" });
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
-  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
   const lateDate = useLateDate(watch("billDate"), isEdit ? initialValues?.billDate : undefined);
   const [lateReason, setLateReason] = useState("");
 

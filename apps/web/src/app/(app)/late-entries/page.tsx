@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { canViewLate, useDecideLateEntry, useLateEntries, useLateEntriesMe } from "@/features/late-entries/api";
+import { canViewLate, useDecideLateEntry, useLateEntries, useLateEntriesMe, useOldDateEntries, type OldDateRow } from "@/features/late-entries/api";
 
 /**
  * Late entries (the user, 2026-10-17): expenses, bills and payments typed in with a date more than the organization's
@@ -21,9 +21,11 @@ import { canViewLate, useDecideLateEntry, useLateEntries, useLateEntriesMe } fro
  */
 export default function LateEntriesPage() {
   const { data: me, isLoading: meLoading } = useLateEntriesMe();
-  const [tab, setTab] = useState<"pending" | "decided" | "all">("pending");
+  const [tab, setTab] = useState<"pending" | "decided" | "all" | "old">("pending");
   const canView = canViewLate(me);
-  const { data, isLoading } = useLateEntries(tab, canView);
+  // Whoever reads every late entry also sees everything entered with an old date (2026-10-21) — not the "own" readers.
+  const readsAll = !!me && (me.isManager || me.scope === "all");
+  const { data, isLoading } = useLateEntries(tab === "old" ? "pending" : tab, canView && tab !== "old");
   const rows = data ?? [];
 
   if (meLoading) return <Card className="m-4 flex justify-center py-16 md:m-6"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;
@@ -44,7 +46,7 @@ export default function LateEntriesPage() {
       <PageHeader
         icon={Clock}
         title="Late entries"
-        description={`Expenses, bills and payments dated more than ${me.days} day${me.days === 1 ? "" : "s"} back. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back.`}
+        description={`Expenses, bills, payments and bank / cash lines dated ${me.days === 1 ? "before the day they were typed in" : `${me.days} or more days back`}. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back.`}
         action={me.pending > 0 ? <Badge tone="warning">{me.pending} waiting</Badge> : undefined}
       />
       {!me.isManager && (
@@ -57,17 +59,19 @@ export default function LateEntriesPage() {
         </Card>
       )}
       <div className="flex gap-1 rounded-lg border border-border bg-surface p-1 text-sm w-fit">
-        {(["pending", "decided", "all"] as const).map((t) => (
+        {([...(["pending", "decided", "all"] as const), ...(readsAll ? (["old"] as const) : [])]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-md px-3 py-1.5 font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
           >
-            {t === "pending" ? "Waiting" : t === "decided" ? "Decided" : "All"}
+            {t === "pending" ? "Waiting" : t === "decided" ? "Decided" : t === "all" ? "All" : "Old dates"}
           </button>
         ))}
       </div>
-      {isLoading ? (
+      {tab === "old" ? (
+        <OldDatesList days={me.days} />
+      ) : isLoading ? (
         <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>
       ) : !rows.length ? (
         <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
@@ -168,3 +172,95 @@ function EntryCard({ entry: e, isManager }: { entry: LateEntry; isManager: boole
     </Card>
   );
 }
+
+// ── Old dates: everything entered with a date before the day it was typed (2026-10-21) ─────────────────────────────
+
+const ORIGIN_LABEL = { typed: "Typed in finance", approval: "Recorded by an approval", hrms: "From HRMS" } as const;
+const KIND_LABEL: Record<OldDateRow["kind"], string> = {
+  payment: "invoice payment", bill_payment: "bill payment", expense: "expense", bill: "bill", invoice: "invoice", bank_line: "bank / cash line",
+};
+const LATE_TONE = { pending: "warning", approved: "success", rejected: "danger", withdrawn: "neutral" } as const;
+const LATE_WORD = { pending: "waiting", approved: "approved", rejected: "rejected", withdrawn: "no longer asked" } as const;
+const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { timeZone: "Asia/Dubai", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+/**
+ * The same list as Root's Pending → Finance "Entered with an old date": the last 30 days' entries dated a day or more
+ * before they were typed in — typed in finance, recorded when an approval went through, or brought from HRMS — with
+ * the days back and each one's late entry. Typed ones at the organization's days or more need a manager (Waiting).
+ */
+function OldDatesList({ days }: { days: number }) {
+  const { data, isLoading, error } = useOldDateEntries();
+  const [origin, setOrigin] = useState<"typed" | "approval" | "hrms" | "all">("typed");
+  if (isLoading) return <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;
+  if (error || !data) {
+    return (
+      <Card className="px-5 py-12 text-center text-sm text-foreground-muted">
+        {error instanceof ApiError && error.status === 404 ? "This needs the latest finance API — ask for it to be updated." : error instanceof ApiError ? error.message : "Could not load them."}
+      </Card>
+    );
+  }
+  const rows = origin === "all" ? data.rows : data.rows.filter((r) => r.origin === origin);
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border p-2 text-sm">
+        {(["typed", "approval", "hrms", "all"] as const).map((o) => (
+          <button
+            key={o}
+            onClick={() => setOrigin(o)}
+            className={`rounded-md px-3 py-1.5 font-medium ${origin === o ? "bg-surface-muted text-foreground" : "text-foreground-muted hover:bg-surface-muted/60"}`}
+          >
+            {o === "all" ? "All" : ORIGIN_LABEL[o]} <span className="tabular-nums text-foreground-muted">{data.counts[o]}</span>
+          </button>
+        ))}
+      </div>
+      {!rows.length ? (
+        <p className="px-5 py-12 text-center text-sm text-foreground-muted">Nothing entered with an old date here in the last {data.rules.withinDays} days.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-surface-muted/60 text-left text-xs text-foreground-muted">
+              <tr>
+                <th className="px-4 py-2 font-medium">Entry</th>
+                <th className="px-4 py-2 font-medium">Its date</th>
+                <th className="px-4 py-2 font-medium">Entered</th>
+                <th className="px-4 py-2 text-right font-medium">Days back</th>
+                <th className="px-4 py-2 text-right font-medium">Amount</th>
+                <th className="px-4 py-2 font-medium">How · who · late entry</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={`${r.kind}:${r.id}`} className="border-t border-border align-top">
+                  <td className="px-4 py-2.5">
+                    <Link href={r.href} className="font-medium hover:underline">{[r.number, r.title].filter(Boolean).join(" · ")}</Link>
+                    <p className="text-xs text-foreground-muted">{KIND_LABEL[r.kind]}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2.5">{r.date}</td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-foreground-muted">{when(r.enteredAt)}</td>
+                  <td className={`px-4 py-2.5 text-right font-semibold tabular-nums ${r.daysBack >= 7 ? "text-danger" : r.daysBack >= Math.max(1, days) && days > 0 ? "text-warning" : ""}`}>{r.daysBack}</td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-right"><MoneyDisplay minor={r.amountMinor} currency={r.currency} /></td>
+                  <td className="px-4 py-2.5">
+                    <span className={r.origin === "typed" ? "text-warning" : "text-foreground-muted"}>{ORIGIN_LABEL[r.origin]}</span>
+                    {r.enteredBy && <span className="text-foreground-muted"> · {r.enteredBy}</span>}
+                    {r.late && (
+                      <div className="mt-1" title={r.late.reason}>
+                        <Badge tone={LATE_TONE[r.late.state as keyof typeof LATE_TONE] ?? "neutral"}>
+                          Late entry {LATE_WORD[r.late.state as keyof typeof LATE_WORD] ?? r.late.state}{r.late.decidedBy ? ` — ${r.late.decidedBy}` : ""}
+                        </Badge>
+                        {r.late.reason && <p className="mt-0.5 text-xs text-foreground-muted">Why: {r.late.reason}</p>}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="border-t border-border px-4 py-2.5 text-xs text-foreground-muted">
+        Days back is from the entry&apos;s own date to the day it was typed in (Gulf days). Typed in finance with a date {days === 1 ? "before that day" : `${days} or more days back`} needs a reason and a manager; entries made before that rule (or by approvals and HRMS) are listed, not asked.
+      </p>
+    </Card>
+  );
+}
+

@@ -51,7 +51,7 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
     },
     reminderIntervals: (doc.reminderIntervals as number[] | undefined) ?? [-3, 1, 7],
     paymentAccounts: Object.fromEntries(Object.entries((d.paymentAccounts as Record<string, unknown>) ?? {}).filter(([, v]) => typeof v === "string" && v)) as Record<string, string>,
-    lateEntryDays: typeof d.lateEntryDays === "number" ? d.lateEntryDays : 7,
+    lateEntryDays: typeof d.lateEntryDays === "number" ? d.lateEntryDays : 1,
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
     taxLabel: (d.taxLabel as string) ?? "VAT",
     taxRates: ((d.taxRates as unknown[]) ?? []) as OrganizationSettings["taxRates"],

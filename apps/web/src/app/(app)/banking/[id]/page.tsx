@@ -1,5 +1,6 @@
 "use client";
 
+import { LateBadge } from "@/features/late-entries/LateReason";
 import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -115,6 +116,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           {tx.reference && (
             <p className="text-xs text-foreground-muted">{tx.reference}</p>
           )}
+          {tx.lateEntry && <div className="mt-0.5"><LateBadge late={tx.lateEntry} /></div>}
         </div>
       ),
     },

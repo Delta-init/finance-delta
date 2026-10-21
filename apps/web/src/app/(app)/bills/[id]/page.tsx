@@ -109,7 +109,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     return accounts.some((a) => a.id === aid) ? aid : NO_ACCOUNT;
   };
   const [accountTouched, setAccountTouched] = useState(false);
-  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
   const lateDate = useLateDate(watch("paidOn"), editingPayment?.paidOn);
   const [lateReason, setLateReason] = useState("");
   const bankAccountId = watch("bankAccountId") ?? NO_ACCOUNT;

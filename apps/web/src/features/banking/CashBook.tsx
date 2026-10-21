@@ -1,5 +1,6 @@
 "use client";
 
+import { LateBadge } from "@/features/late-entries/LateReason";
 import { useState } from "react";
 import { Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
@@ -223,6 +224,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                   </td>
                   <td className="px-4 py-2">
                     {tx.description}
+                    {tx.lateEntry && <span className="ml-2"><LateBadge late={tx.lateEntry} /></span>}
                     {tx.matches.length > 0 && (
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">
                         <Link2 className="h-3 w-3" />

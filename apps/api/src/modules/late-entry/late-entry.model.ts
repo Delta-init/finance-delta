@@ -13,6 +13,8 @@ const lateEntrySchema = new Schema(
     /** The expense, the bill, or the invoice — and the payment on it, for a payment. */
     refId: { type: Schema.Types.ObjectId, required: true },
     paymentId: { type: Schema.Types.ObjectId, default: null },
+    /** A bank / cash line's account, for its link (2026-10-21). */
+    accountId: { type: Schema.Types.ObjectId, default: null },
     number: { type: String, default: "" },
     title: { type: String, default: "" },
     amountMinor: { type: Number, default: 0 },

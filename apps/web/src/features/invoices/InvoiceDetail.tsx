@@ -674,7 +674,7 @@ export function PaymentDialog({
 
   const method = watch("method");
   const bankAccountId = watch("bankAccountId");
-  // Dated more than the organization's days back: a reason, and a manager to approve it (2026-10-17).
+  // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
   const lateDate = useLateDate(watch("paidOn"), editing?.paidOn);
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
   const foreignAccount = pickedAccount && pickedAccount.currency !== currency ? pickedAccount : null;

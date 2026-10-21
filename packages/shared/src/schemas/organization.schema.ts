@@ -104,7 +104,7 @@ export const organizationSchema = z.object({
   invoiceDefaults: invoiceDefaultsSchema,
   reminderIntervals: z.array(z.number()),
   paymentAccounts: z.record(z.string(), z.string()).default({}),
-  lateEntryDays: z.number().default(7),
+  lateEntryDays: z.number().default(1),
   taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
   taxLabel: z.string().default("VAT"),
   taxRates: z.array(taxConfigItemSchema).default([]),

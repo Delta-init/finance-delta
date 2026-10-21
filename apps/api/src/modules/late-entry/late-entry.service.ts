@@ -15,8 +15,9 @@ import { LateEntryModel, type RecordLate } from "./late-entry.model";
  * Late entries (the user, 2026-10-17: "when any old expense is entered a request goes to the managers … only
  * Manager-tagged users see the page, only they approve or reject … and a reason has to be entered").
  *
- * An expense, a bill, a payment on a bill or a payment on an invoice typed in (or edited) with a date more than the
- * organization's `lateEntryDays` back needs a reason, and waits for a manager:
+ * An expense, a bill, a payment on a bill, a payment on an invoice or a bank / cash line (2026-10-21) typed in (or
+ * edited) with a date `lateEntryDays` or more days back (1 unless set: anything before today) needs a reason, and
+ * waits for a manager:
  *   - while it waits: an expense can't be approved or marked paid, a bill can't be approved or paid, and a payment
  *     stays out of its bank account;
  *   - approved: it carries on as any other;
@@ -77,7 +78,8 @@ export async function lateForDate(
   }
   const reason = String(actor.reason ?? "").trim();
   if (!reason) {
-    throw new AppError("VALIDATION_ERROR", `This is dated ${day(date)}, more than ${days} day${days === 1 ? "" : "s"} back — give the reason it is entered late; a manager will need to approve it`);
+    const rule = days === 1 ? "before today" : `${days} or more days back`;
+    throw new AppError("VALIDATION_ERROR", `This is dated ${day(date)}, ${rule} — give the reason it is entered late; a manager will need to approve it`);
   }
   const entryId = new Types.ObjectId();
   const enteredByName = await nameOf(actor.userId);
@@ -95,12 +97,13 @@ export async function lateForDate(
 /** After saving: the request itself — any earlier one for the same record no longer asked — and the managers told. */
 export async function openLateEntry(
   orgId: string, pending: LatePending,
-  info: { kind: LateEntryKind; refId: unknown; paymentId?: unknown; number: string; title: string; amountMinor: number; currency: string },
+  info: { kind: LateEntryKind; refId: unknown; paymentId?: unknown; accountId?: unknown; number: string; title: string; amountMinor: number; currency: string },
 ): Promise<void> {
   await withdrawLateFor(orgId, info.kind, info.refId, info.paymentId);
   const entry = await LateEntryModel.create({
     _id: pending.entryId, organizationId: oid(orgId), kind: info.kind, refId: oid(info.refId),
-    paymentId: info.paymentId ? oid(info.paymentId) : null, number: info.number, title: info.title.slice(0, 200),
+    paymentId: info.paymentId ? oid(info.paymentId) : null, accountId: info.accountId ? oid(info.accountId) : null,
+    number: info.number, title: info.title.slice(0, 200),
     amountMinor: info.amountMinor, currency: info.currency, date: pending.date, previousDate: pending.previousDate,
     reason: pending.reason, enteredById: oid(pending.enteredById), enteredByName: pending.enteredByName,
   });
@@ -130,7 +133,8 @@ async function requireManager(orgId: string, userId: string): Promise<void> {
 }
 
 const hrefOf = (e: any): string =>
-  e.kind === "expense" ? `/expenses/${e.refId}` : e.kind === "invoice_payment" ? `/invoices/${e.refId}` : `/bills/${e.refId}`;
+  e.kind === "expense" ? `/expenses/${e.refId}` : e.kind === "invoice_payment" ? `/invoices/${e.refId}`
+    : e.kind === "bank_line" ? (e.accountId ? `/banking/${e.accountId}` : "/banking") : `/bills/${e.refId}`;
 
 function toDTO(e: any, userId: string, manager: boolean): LateEntry {
   return {
@@ -156,6 +160,10 @@ async function recordLateOf(e: any): Promise<RecordLate | null> {
   ]);
   if (e.kind === "expense") return (await Expense.findOne({ _id: e.refId, organizationId: e.organizationId }).select("lateEntry").lean<any>())?.lateEntry ?? null;
   if (e.kind === "bill") return (await Bill.findOne({ _id: e.refId, organizationId: e.organizationId }).select("lateEntry").lean<any>())?.lateEntry ?? null;
+  if (e.kind === "bank_line") {
+    const { BankTransaction } = await import("../banking/bank-transaction.model");
+    return (await BankTransaction.findOne({ _id: e.refId, organizationId: e.organizationId }).select("lateEntry").lean<any>())?.lateEntry ?? null;
+  }
   const Model: any = e.kind === "bill_payment" ? Bill : Invoice;
   const doc = await Model.findOne({ _id: e.refId, organizationId: e.organizationId }).select("payments._id payments.lateEntry").lean();
   return (doc?.payments ?? []).find((p: any) => String(p._id) === String(e.paymentId))?.lateEntry ?? null;
@@ -195,6 +203,17 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
       else set.status = "voided";
     }
     await Bill.updateOne({ _id: e.refId, organizationId: orgOid }, { $set: set });
+    return;
+  }
+  if (e.kind === "bank_line") {
+    // Approved: the line stands. Rejected: a new one goes; one moved back gets its date back. Its account's balances follow.
+    const { BankTransaction } = await import("../banking/bank-transaction.model");
+    const { recalculateRunningBalances } = await import("../banking/banking.service");
+    const line = await BankTransaction.findOne({ _id: e.refId, organizationId: orgOid }).select("accountId").lean<any>();
+    if (!line) return;
+    if (decision === "rejected" && !e.previousDate) await BankTransaction.deleteOne({ _id: e.refId, organizationId: orgOid });
+    else await BankTransaction.updateOne({ _id: e.refId, organizationId: orgOid }, { $set: { lateEntry: sub, ...(decision === "rejected" ? { date: e.previousDate } : {}) } });
+    await recalculateRunningBalances(orgId, line.accountId);
     return;
   }
   if (e.kind === "bill_payment") {
@@ -373,7 +392,7 @@ async function notifyEnterer(orgId: string, e: any): Promise<void> {
         `${e.number}${e.title ? ` · ${e.title}` : ""} — ${formatMoney(e.amountMinor ?? 0, e.currency ?? "AED")}, dated ${day(e.date)}`,
         e.decisionNote ? `${approved ? "Note" : "Why"}: ${e.decisionNote}` : "",
         approved ? "" : e.previousDate ? `Its date is back to ${day(e.previousDate)}.`
-          : e.kind === "expense" ? "The expense is rejected." : e.kind === "bill" ? "The bill is voided." : "The payment has been removed.",
+          : e.kind === "expense" ? "The expense is rejected." : e.kind === "bill" ? "The bill is voided." : e.kind === "bank_line" ? "The line has been removed." : "The payment has been removed.",
       ].filter(Boolean),
       actionLabel: "Open it",
       actionUrl: `${env.WEB_ORIGIN}${hrefOf(e)}`,
@@ -382,3 +401,28 @@ async function notifyEnterer(orgId: string, e: any): Promise<void> {
     logger.error({ err, lateEntryId: String(e._id) }, "Could not tell who entered it about the decision");
   }
 }
+
+// ── Old dates: everything entered with a date of its own before the day it was typed (2026-10-21) ──────────────────
+
+/**
+ * The finance side of Root's Pending → Finance "Entered with an old date" (the user, 2026-10-21: "finance is not
+ * showing them — show that"): this organization's entries of the last 30 days dated a day or more before they were
+ * typed in — typed in finance, recorded by an approval, or brought from HRMS — each with its late entry, if any.
+ * Whoever reads every late entry reads this; the "own" readers do not (it is everybody's).
+ */
+export async function oldDateEntries(orgId: string, userId: string, permissions: string[] = []) {
+  const manager = await isManager(orgId, userId);
+  if (scopeOf(manager, permissions) !== "all") throw new AppError("FORBIDDEN", "Entries with an old date are for people who see expenses or bills");
+  const { backdatedIn, BACKDATE_MIN_DAYS, ENTERED_WITHIN_DAYS } = await import("../integrations/portal-watch.service");
+  const org = await Organization.findById(orgId).select("name").lean<any>();
+  if (!org) throw new AppError("NOT_FOUND", "Organization not found");
+  const rows = (await backdatedIn({ _id: org._id, name: org.name }, new Date(Date.now() - ENTERED_WITHIN_DAYS * 86_400_000)))
+    .sort((a, b) => b.enteredAt.localeCompare(a.enteredAt));
+  const count = (o: string) => rows.filter((r) => r.origin === o).length;
+  return {
+    rules: { minDays: BACKDATE_MIN_DAYS, withinDays: ENTERED_WITHIN_DAYS, lateEntryDays: await lateEntryDaysOf(orgId) },
+    counts: { typed: count("typed"), approval: count("approval"), hrms: count("hrms"), all: rows.length },
+    rows,
+  };
+}
+

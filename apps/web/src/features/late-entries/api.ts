@@ -27,6 +27,33 @@ export function useLateEntries(state: "pending" | "decided" | "all", enabled = t
   });
 }
 
+/** One entry with a date of its own before the day it was typed — Root's Pending → Finance list (2026-10-21). */
+export interface OldDateRow {
+  kind: "payment" | "bill_payment" | "expense" | "bill" | "invoice" | "bank_line";
+  id: string; number: string; title: string;
+  /** Its own date, and when it was typed in. */
+  date: string; enteredAt: string; daysBack: number;
+  amountMinor: number; currency: string; enteredBy: string;
+  /** Typed in finance, recorded when an approval went through, or brought from HRMS. */
+  origin: "typed" | "approval" | "hrms";
+  late?: { state: string; reason: string; decidedBy?: string; note?: string };
+  href: string;
+}
+export interface OldDates {
+  rules: { minDays: number; withinDays: number; lateEntryDays: number };
+  counts: { typed: number; approval: number; hrms: number; all: number };
+  rows: OldDateRow[];
+}
+
+export function useOldDateEntries(enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, "old-dates"],
+    queryFn: () => api.get<OldDates>("late-entries/old-dates"),
+    enabled,
+    retry: false,
+  });
+}
+
 /** Reads the late entries page: a manager, or (since 2026-10-20) whoever sees expenses or bills, or their own. */
 export const canViewLate = (me: { isManager: boolean; canView?: boolean } | undefined) => Boolean(me?.canView ?? me?.isManager);
 

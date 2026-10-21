@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { BankTransaction, UpdateBankTransactionInput } from "@delta/shared";
+import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 /**
  * Correcting an entry after it has been made.
@@ -37,6 +38,10 @@ export function EditTransactionDialog({
   const [notes, setNotes] = useState("");
   const [direction, setDirection] = useState<"credit" | "debit">("debit");
   const [amount, setAmount] = useState("");
+  // Moved to an old date: why — a manager approves it (late entries, 2026-10-21). Only a typed-in line is asked.
+  const [lateReason, setLateReason] = useState("");
+  const lateDate = useLateDate(date, tx?.date);
+  const askLate = lateDate.late && tx?.source === "manual";
 
   useEffect(() => {
     if (!tx) return;
@@ -46,11 +51,12 @@ export function EditTransactionDialog({
     setNotes(tx.notes ?? "");
     setDirection(tx.amountMinor >= 0 ? "credit" : "debit");
     setAmount((Math.abs(tx.amountMinor) / 100).toFixed(2));
+    setLateReason("");
   }, [tx]);
 
   const frozen = tx?.isReconciled ? "reconciled" : tx?.matches?.length ? "matched" : null;
   const parsed = Number(amount);
-  const valid = description.trim() && date && Number.isFinite(parsed) && parsed > 0;
+  const valid = description.trim() && date && Number.isFinite(parsed) && parsed > 0 && (!askLate || lateReason.trim());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -95,6 +101,8 @@ export function EditTransactionDialog({
                 />
               </div>
             </div>
+
+            <LateReasonField late={askLate} days={lateDate.days} value={lateReason} onChange={setLateReason} what="line" />
 
             <div className="space-y-1.5">
               <Label>Direction</Label>
@@ -157,6 +165,7 @@ export function EditTransactionDialog({
                   // Signed on the way out: the form asks for a direction and a
                   // positive figure, the ledger stores one signed number.
                   amountMinor: Math.round(parsed * 100) * (direction === "debit" ? -1 : 1),
+                  ...(askLate ? { lateReason: lateReason.trim() } : {}),
                 })
               }
             >

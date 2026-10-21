@@ -77,7 +77,7 @@ async function main() {
   await mongoose.connection.dropDatabase();
 
   step("Setting up an organization");
-  const org = await Organization.create({ name: "Delta HQ", baseCurrency: "AED" });
+  const org = await Organization.create({ name: "Delta HQ", baseCurrency: "AED", lateEntryDays: 0 }); // late entries off: this is not what is checked here (late-entry-e2e is; the rule is 1 day since 2026-10-21)
   for (const def of SYSTEM_ROLES) {
     await Role.create({
       organizationId: org._id,

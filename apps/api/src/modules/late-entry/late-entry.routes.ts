@@ -3,7 +3,7 @@ import { decideLateEntrySchema, lateEntryQuerySchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { parseQuery, validateBody } from "../../middleware/validate";
 import { asyncHandler, ok } from "../../lib/http";
-import { decideLateEntry, lateEntryMe, listLateEntries } from "./late-entry.service";
+import { decideLateEntry, lateEntryMe, listLateEntries, oldDateEntries } from "./late-entry.service";
 
 /*
  * Late entries (2026-10-17). No permission of their own: the Manager tag decides, and the service checks it on every
@@ -15,6 +15,11 @@ router.use(authenticate);
 
 router.get("/me", asyncHandler(async (req, res) => {
   ok(res, await lateEntryMe(req.auth!.organizationId, req.auth!.userId, req.auth!.permissions));
+}));
+
+// Everything entered with an old date — Root's Pending → Finance list, for this organization (2026-10-21).
+router.get("/old-dates", asyncHandler(async (req, res) => {
+  ok(res, await oldDateEntries(req.auth!.organizationId, req.auth!.userId, req.auth!.permissions));
 }));
 
 router.get("/", asyncHandler(async (req, res) => {

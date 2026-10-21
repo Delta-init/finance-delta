@@ -124,7 +124,7 @@ export default function SettingsPage() {
         invoiceDefaults: { ...org.invoiceDefaults },
         reminderIntervals: org.reminderIntervals ?? [-3, 1, 7],
         paymentAccounts: Object.fromEntries(PAYMENT_METHODS.map((m) => [m, org.paymentAccounts?.[m] ?? ""])),
-        lateEntryDays: org.lateEntryDays ?? 7,
+        lateEntryDays: org.lateEntryDays ?? 1,
       });
     }
   }, [org, reset]);
@@ -427,8 +427,9 @@ export default function SettingsPage() {
           <div>
             <h2 className="text-sm font-semibold text-foreground">Late entries</h2>
             <p className="mt-1 text-xs text-foreground-muted">
-              An expense, bill or payment typed in with a date more than this many days back needs a reason, and waits
-              for somebody tagged Manager (Users → Edit user) to approve it. 0 turns this off.
+              An expense, bill, payment or bank / cash line typed in with a date this many days back or more needs a
+              reason, and waits for somebody tagged Manager (Users → Edit user) to approve it. 1 = anything dated before
+              today (yesterday included). 0 turns this off.
             </p>
           </div>
           <div className="max-w-[200px] space-y-1">

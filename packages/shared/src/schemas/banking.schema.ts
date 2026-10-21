@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
 // ── Bank Account ──────────────────────────────────────────────────────────────
 
@@ -74,6 +75,8 @@ export const createBankTransactionSchema = z.object({
   reference: z.string().optional().default(""),
   amountMinor: z.number(),
   notes: z.string().optional().default(""),
+  /** Typed in with an old date: why (late entries, 2026-10-21). */
+  lateReason: lateReasonSchema,
 });
 export type CreateBankTransactionInput = z.infer<typeof createBankTransactionSchema>;
 
@@ -92,6 +95,7 @@ export const updateBankTransactionSchema = z
     reference: z.string(),
     amountMinor: z.number(),
     notes: z.string(),
+    lateReason: z.string().trim().max(500),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, "Nothing to change");
@@ -200,6 +204,8 @@ export const bankTransactionSchema = z.object({
   attachments: z.array(bankTransactionAttachmentSchema).default([]),
   notes: z.string(),
   createdAt: z.string(),
+  /** Typed in with an old date: waiting for a manager, or what one decided. */
+  lateEntry: recordLateEntrySchema.optional(),
 });
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 

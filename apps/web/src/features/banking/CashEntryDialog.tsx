@@ -12,6 +12,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateBankTransaction, useUpdateBankTransaction } from "@/features/banking/api";
+import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -48,6 +49,10 @@ export function CashEntryDialog({
   const [outAmount, setOutAmount] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+  // Dated back: why — a manager approves it (late entries, 2026-10-21). A cash count's adjustment is never asked.
+  const [lateReason, setLateReason] = useState("");
+  const lateDate = useLateDate(date, entry?.date);
+  const askLate = lateDate.late && (!entry || entry.source === "manual");
 
   // Reloaded whenever a different row is opened, so the form never shows the
   // last one's figures against this one's name.
@@ -61,6 +66,7 @@ export function CashEntryDialog({
       setOutAmount(isIn ? "" : (Math.abs(entry.amountMinor) / 100).toFixed(2));
       setReference(entry.reference ?? "");
       setNotes(entry.notes ?? "");
+      setLateReason("");
     } else {
       setDate(today());
       setDescription("");
@@ -68,6 +74,7 @@ export function CashEntryDialog({
       setOutAmount("");
       setReference("");
       setNotes("");
+      setLateReason("");
     }
   }, [open, entry]);
 
@@ -75,7 +82,7 @@ export function CashEntryDialog({
   const outMinor = toMinor(outAmount || "0");
   const bothSides = inMinor > 0 && outMinor > 0;
   const amountMinor = inMinor > 0 ? inMinor : -outMinor;
-  const canSubmit = description.trim().length > 0 && (inMinor > 0 || outMinor > 0) && !bothSides;
+  const canSubmit = description.trim().length > 0 && (inMinor > 0 || outMinor > 0) && !bothSides && (!askLate || lateReason.trim().length > 0);
 
   async function submit() {
     if (!canSubmit) return;
@@ -85,6 +92,7 @@ export function CashEntryDialog({
       amountMinor,
       reference: reference.trim(),
       notes: notes.trim(),
+      ...(askLate ? { lateReason: lateReason.trim() } : {}),
     };
     try {
       if (editing) {
@@ -161,6 +169,8 @@ export function CashEntryDialog({
               />
             </div>
           </div>
+
+          <LateReasonField late={askLate} days={lateDate.days} value={lateReason} onChange={setLateReason} what="entry" />
 
           {bothSides && (
             <p className="rounded-md border border-danger/30 bg-danger/5 p-2.5 text-xs text-danger">

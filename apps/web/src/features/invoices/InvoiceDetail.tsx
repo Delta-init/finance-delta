@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Pencil, Send, Ban, ReceiptText, RefreshCw,
-  CreditCard, Download, Plus, RotateCcw, FileX, ExternalLink, Paperclip, X, Trash2, AlertTriangle, Undo2,
+  CreditCard, Download, Plus, RotateCcw, ExternalLink, Paperclip, X, Trash2, AlertTriangle, Undo2,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -119,8 +119,6 @@ export function InvoiceDetail({ id }: { id: string }) {
   const canPay =
     canManage && !awaitingApproval &&
     invoice.status !== "paid" && invoice.status !== "void" && invoice.balanceMinor > 0;
-  const canCreditNote =
-    canManage && ["sent", "paid", "partial"].includes(invoice.status);
 
   return (
     <div className="space-y-6 p-6">
@@ -211,15 +209,7 @@ export function InvoiceDetail({ id }: { id: string }) {
               <RotateCcw className="h-3.5 w-3.5" /> Resend
             </Button>
           )}
-          {canCreditNote && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.push(`/credit-notes/new?invoiceId=${id}`)}
-            >
-              <FileX className="h-3.5 w-3.5" /> Credit Note
-            </Button>
-          )}
+          {/* No "Credit Note" here since 2026-10-21 ("remove the credit note"). */}
           {canPay && (
             <Button size="sm" onClick={() => setPayOpen(true)}>
               <CreditCard className="h-3.5 w-3.5" /> Record Payment

@@ -74,6 +74,16 @@ export const dailyReport = asyncHandler(async (req, res) => {
   ok(res, await svc.getDailyReport(org(req), from, to, departmentId));
 });
 
+/** The records behind a Daily Report figure (2026-10-21): ?kind=income|expense|revenue&from&to&departmentId. */
+export const dailyBreakdown = asyncHandler(async (req, res) => {
+  const kind = String(req.query.kind ?? "");
+  if (!["income", "expense", "revenue"].includes(kind)) throw new AppError("VALIDATION_ERROR", "kind must be income, expense or revenue");
+  const from = dateParam(req, "from", monthStartStr());
+  const to = dateParam(req, "to", todayStr());
+  const departmentId = objectIdParam(req, "departmentId");
+  ok(res, await svc.getDailyBreakdown(org(req), kind as "income" | "expense" | "revenue", from, to, departmentId));
+});
+
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
 
 export const madePayments = asyncHandler(async (req, res) => {

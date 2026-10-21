@@ -126,7 +126,8 @@ const NAV: NavGroup[] = [
       // Taking an enrolment is the counsellor's whole job, so it is its own
       // entry rather than something reached through the invoice list.
       { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
-      { href: "/credit-notes", label: "Credit Notes", icon: FileX2, enabled: true, permission: "invoice:read" },
+      // Credit Notes taken out of the menu (the user, 2026-10-21: "remove the credit note") — not used here; any
+      // already made, and their pages, stay as they were.
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
       { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
     ],

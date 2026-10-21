@@ -7,6 +7,10 @@ import type {
   InvoiceSummaryReport,
   DailyReport,
   DailyReportRow,
+  DailyBreakdown,
+  DailyBreakdownGroup,
+  DailyBreakdownKind,
+  DailyBreakdownRecord,
   MadePaymentsReport,
   AgedPayablesReport,
   PLReport,
@@ -20,6 +24,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, PAYMENT_METHOD_LABELS, enrolmentCrm, type PaymentMethod } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
@@ -268,15 +273,7 @@ export async function getDailyReport(
   const toDate = endOf(to);
 
   // Optional department scope: invoices whose salesperson belongs to it.
-  let salespersonFilter: Set<string> | null = null;
-  if (departmentId) {
-    const users = await User.find({
-      memberships: { $elemMatch: { organizationId: oid(orgId), departmentId: oid(departmentId) } },
-    })
-      .select("_id")
-      .lean();
-    salespersonFilter = new Set(users.map((u) => u._id.toString()));
-  }
+  const salespersonFilter = await departmentSalespeople(orgId, departmentId);
 
   const rowMap = new Map<string, DailyReportRow>();
   const row = (date: string): DailyReportRow => {
@@ -347,6 +344,116 @@ export async function getDailyReport(
   );
 
   return { from, to, currency, departmentId: departmentId ?? null, rows, totals };
+}
+
+/** The salespeople of a department — the Daily Report's department scope for income and revenue; null for all. */
+async function departmentSalespeople(orgId: string, departmentId?: string): Promise<Set<string> | null> {
+  if (!departmentId) return null;
+  const users = await User.find({
+    memberships: { $elemMatch: { organizationId: oid(orgId), departmentId: oid(departmentId) } },
+  })
+    .select("_id")
+    .lean();
+  return new Set(users.map((u) => u._id.toString()));
+}
+
+const DAILY_GROUPS: Record<DailyBreakdownKind, Array<{ key: string; label: string }>> = {
+  income: [{ key: "method", label: "Payment method" }, { key: "salesperson", label: "Salesperson" }, { key: "crm", label: "CRM" }],
+  revenue: [{ key: "salesperson", label: "Salesperson" }, { key: "crm", label: "CRM" }],
+  expense: [{ key: "category", label: "Category" }, { key: "department", label: "Department" }, { key: "submittedBy", label: "Submitted by" }, { key: "status", label: "Status" }],
+};
+
+/** Which CRM an invoice came from — or typed in finance. */
+function crmOf(inv: any): string {
+  const crm = enrolmentCrm(inv.enrolment?.crm, inv.external?.source);
+  return crm ? ENROLMENT_CRM_LABELS[crm] : inv.external?.source ? String(inv.external.source) : "Typed in finance";
+}
+
+/**
+ * The records behind a Daily Report figure — income, expenses or revenue over from..to (one day, or the report's
+ * range), with the department scope — by exactly getDailyReport's rules, so they add up to it; grouped.
+ */
+export async function getDailyBreakdown(
+  orgId: string,
+  kind: DailyBreakdownKind,
+  from: string,
+  to: string,
+  departmentId?: string,
+): Promise<DailyBreakdown> {
+  const fromDate = startOf(from);
+  const toDate = endOf(to);
+  const records: DailyBreakdownRecord[] = [];
+
+  if (kind === "income" || kind === "revenue") {
+    const salespersonFilter = await departmentSalespeople(orgId, departmentId);
+    const invoices = await Invoice.find({ organizationId: oid(orgId), status: { $nin: ["draft", "void"] } })
+      .select("invoiceNumber customerName salespersonId salespersonName issueDate totalMinor currency payments enrolment.crm external.source")
+      .lean();
+    for (const inv of invoices as any[]) {
+      if (salespersonFilter && !salespersonFilter.has(String(inv.salespersonId))) continue;
+      const crm = crmOf(inv);
+      const salesperson = inv.salespersonName || "—";
+      if (kind === "revenue") {
+        if (!inv.issueDate) continue;
+        const issued = new Date(inv.issueDate);
+        if (issued < fromDate || issued > toDate) continue;
+        records.push({
+          id: String(inv._id), date: dateOnly(issued), number: inv.invoiceNumber, title: inv.customerName ?? "", detail: salesperson,
+          amountMinor: inv.totalMinor ?? 0, currency: inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { salesperson, crm },
+        });
+        continue;
+      }
+      for (const p of inv.payments ?? []) {
+        const paidOn = new Date(p.paidOn);
+        if (paidOn < fromDate || paidOn > toDate) continue;
+        const method = PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? "—");
+        records.push({
+          id: `${inv._id}:${p._id ?? paidOn.getTime()}`, date: dateOnly(paidOn), number: p.receiptNumber || inv.invoiceNumber,
+          title: inv.customerName ?? "", detail: [inv.invoiceNumber, method].filter(Boolean).join(" · "),
+          amountMinor: p.amountMinor ?? 0, currency: inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { method, salesperson, crm },
+        });
+      }
+    }
+  } else {
+    // As the report: approved and submitted expenses dated in the range, organization-wide.
+    const expenses = await Expense.find({
+      organizationId: oid(orgId),
+      expenseDate: { $gte: fromDate, $lte: toDate },
+      status: { $in: ["approved", "submitted"] },
+    })
+      .select("expenseNumber categoryName description expenseDate totalMinor currency submittedByName status departmentId")
+      .populate("departmentId", "name")
+      .lean();
+    for (const e of expenses as any[]) {
+      records.push({
+        id: String(e._id), date: dateOnly(new Date(e.expenseDate)), number: e.expenseNumber, title: e.categoryName || "Expense",
+        detail: e.description ?? "", amountMinor: e.totalMinor ?? 0, currency: e.currency ?? "AED", href: `/expenses/${e._id}`,
+        groups: {
+          category: e.categoryName || "—",
+          department: (e.departmentId as { name?: string } | null)?.name || "No department",
+          submittedBy: e.submittedByName || "—",
+          status: e.status === "approved" ? "Approved" : "Waiting for approval",
+        },
+      });
+    }
+  }
+
+  records.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
+  const groups: DailyBreakdownGroup[] = DAILY_GROUPS[kind].map(({ key, label }) => {
+    const by = new Map<string, { name: string; count: number; amountMinor: number }>();
+    for (const r of records) {
+      const name = r.groups[key] ?? "—";
+      const g = by.get(name) ?? { name, count: 0, amountMinor: 0 };
+      g.count++;
+      g.amountMinor += r.amountMinor;
+      by.set(name, g);
+    }
+    return { key, label, items: [...by.values()].sort((a, b) => b.amountMinor - a.amountMinor) };
+  });
+  return {
+    kind, from, to, departmentId: departmentId ?? null,
+    totalMinor: records.reduce((t, r) => t + r.amountMinor, 0), count: records.length, groups, records,
+  };
 }
 
 // ── 8.2a Made Payments ────────────────────────────────────────────────────────

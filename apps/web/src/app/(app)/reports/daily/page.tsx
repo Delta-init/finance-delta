@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { useCurrency } from "@/lib/currency-context";
 import { useDailyReport } from "@/features/reports/api";
+import { DailyBreakdownDialog, type DailyPick } from "@/features/reports/DailyBreakdownDialog";
 import { useAllDepartments } from "@/features/departments/api";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -46,13 +47,20 @@ export default function DailyReportPage() {
   );
 
   const rows = data?.rows ?? [];
+  // A figure clicked: where it came from (2026-10-21).
+  const [pick, setPick] = useState<DailyPick | null>(null);
+  const scope = departmentId === ALL ? undefined : departmentId;
+  const deptName = departments?.find((d) => d.id === departmentId)?.name;
+  const pickRange = (kind: DailyPick["kind"]) => setPick({ kind, from, to, departmentId: scope, label: `${from} — ${to}${deptName ? ` · ${deptName}` : ""}` });
+  const pickDay = (kind: DailyPick["kind"], date: string) => setPick({ kind, from: date, to: date, departmentId: scope, label: `${date}${deptName ? ` · ${deptName}` : ""}` });
   const totals = data?.totals ?? { incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 };
 
   const kpis = [
-    { label: "Income", value: totals.incomeMinor, Icon: DollarSign, className: "text-success" },
-    { label: "Expenses", value: totals.expenseMinor, Icon: Wallet, className: "text-danger" },
-    { label: "Revenue (Invoiced)", value: totals.revenueMinor, Icon: TrendingUp, className: "text-foreground" },
+    { kind: "income" as const, label: "Income", value: totals.incomeMinor, Icon: DollarSign, className: "text-success" },
+    { kind: "expense" as const, label: "Expenses", value: totals.expenseMinor, Icon: Wallet, className: "text-danger" },
+    { kind: "revenue" as const, label: "Revenue (Invoiced)", value: totals.revenueMinor, Icon: TrendingUp, className: "text-foreground" },
     {
+      kind: "net" as const,
       label: "Net (Income − Expenses)",
       value: totals.netMinor,
       Icon: totals.netMinor >= 0 ? TrendingUp : TrendingDown,
@@ -64,7 +72,7 @@ export default function DailyReportPage() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Daily Report"
-        description="Income received, expenses, and invoiced revenue per day"
+        description="Income received, expenses, and invoiced revenue per day — click any figure to see where it came from"
         icon={CalendarDays}
       />
 
@@ -120,15 +128,18 @@ export default function DailyReportPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {kpis.map(({ label, value, Icon, className }) => (
-            <Card key={label} className="p-5">
-              <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-                <Icon className="h-3.5 w-3.5" /> {label}
-              </p>
-              <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
-                {fmt(currency, convert(value))}
-              </p>
-            </Card>
+          {kpis.map(({ kind, label, value, Icon, className }) => (
+            <button key={label} type="button" onClick={() => pickRange(kind)} className="text-left" title="See where it came from">
+              <Card className="p-5 transition-colors hover:border-primary/50 hover:bg-surface-muted/40">
+                <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
+                  <Icon className="h-3.5 w-3.5" /> {label}
+                </p>
+                <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
+                  {fmt(currency, convert(value))}
+                </p>
+                <p className="mt-1 text-xs text-foreground-subtle">Click for the breakdown</p>
+              </Card>
+            </button>
           ))}
         </div>
       )}
@@ -170,16 +181,16 @@ export default function DailyReportPage() {
                     >
                       <td className="px-4 py-3 font-medium">{r.date}</td>
                       <td className="px-4 py-3 text-right font-numeric text-success">
-                        {r.incomeMinor ? fmt(currency, convert(r.incomeMinor)) : "—"}
+                        {r.incomeMinor ? <CellButton onClick={() => pickDay("income", r.date)}>{fmt(currency, convert(r.incomeMinor))}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric text-danger">
-                        {r.expenseMinor ? fmt(currency, convert(r.expenseMinor)) : "—"}
+                        {r.expenseMinor ? <CellButton onClick={() => pickDay("expense", r.date)}>{fmt(currency, convert(r.expenseMinor))}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric">
-                        {r.revenueMinor ? fmt(currency, convert(r.revenueMinor)) : "—"}
+                        {r.revenueMinor ? <CellButton onClick={() => pickDay("revenue", r.date)}>{fmt(currency, convert(r.revenueMinor))}</CellButton> : "—"}
                       </td>
                       <td className={`px-4 py-3 text-right font-numeric font-semibold ${r.netMinor >= 0 ? "text-success" : "text-danger"}`}>
-                        {fmt(currency, convert(r.netMinor))}
+                        <CellButton onClick={() => pickDay("net", r.date)}>{fmt(currency, convert(r.netMinor))}</CellButton>
                       </td>
                     </tr>
                   ))}
@@ -200,6 +211,18 @@ export default function DailyReportPage() {
           )}
         </CardContent>
       </Card>
+
+      <DailyBreakdownDialog pick={pick} onClose={() => setPick(null)} money={(m) => fmt(currency, convert(m))} />
     </div>
   );
 }
+
+/** A figure in the day-by-day table: click it for where it came from. */
+function CellButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="rounded px-1 underline-offset-2 hover:underline" title="See where it came from">
+      {children}
+    </button>
+  );
+}
+

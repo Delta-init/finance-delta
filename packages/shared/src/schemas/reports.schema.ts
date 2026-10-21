@@ -83,6 +83,45 @@ export type DailyReport = {
   };
 };
 
+/**
+ * Where a Daily Report figure came from (the user, 2026-10-21: "when we click on stats we can see where it came
+ * from"): the records behind income (payments received), expenses or revenue (invoices issued) over a range — a day
+ * or the whole report — by the report's own rules, so they add up to the figure clicked; and their totals grouped
+ * (income: by method, salesperson, CRM; revenue: by salesperson, CRM; expenses: by category, department, who
+ * submitted it, status).
+ */
+export type DailyBreakdownKind = "income" | "expense" | "revenue";
+
+export type DailyBreakdownRecord = {
+  id: string;
+  date: string; // YYYY-MM-DD
+  number: string;
+  title: string;
+  detail: string;
+  amountMinor: number;
+  currency: string;
+  href: string;
+  /** The record's value for each grouping (group key → name). */
+  groups: Record<string, string>;
+};
+
+export type DailyBreakdownGroup = {
+  key: string;
+  label: string;
+  items: { name: string; count: number; amountMinor: number }[];
+};
+
+export type DailyBreakdown = {
+  kind: DailyBreakdownKind;
+  from: string;
+  to: string;
+  departmentId: string | null;
+  totalMinor: number;
+  count: number;
+  groups: DailyBreakdownGroup[];
+  records: DailyBreakdownRecord[];
+};
+
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
 
 export type MadePaymentsReport = {

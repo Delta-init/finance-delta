@@ -30,7 +30,22 @@ export function DailyBreakdownDialog({ pick, onClose, money }: {
       <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{pick ? (pick.kind === "net" ? "Net — income less expenses" : KIND_TITLE[pick.kind]) : ""}</DialogTitle>
-          <DialogDescription>{pick?.label}</DialogDescription>
+          <DialogDescription>
+            {pick?.label}
+            {/* One day: everything on it, in one table (2026-10-22). */}
+            {pick && pick.from === pick.to && (
+              <>
+                {" · "}
+                <Link
+                  href={`/reports/daily/${pick.from}${pick.departmentId ? `?department=${pick.departmentId}` : ""}`}
+                  className="text-primary hover:underline"
+                  onClick={onClose}
+                >
+                  Open the full day →
+                </Link>
+              </>
+            )}
+          </DialogDescription>
         </DialogHeader>
         <div className={kinds.length > 1 ? "grid gap-6 lg:grid-cols-2" : ""}>
           {pick && kinds.map((k) => (

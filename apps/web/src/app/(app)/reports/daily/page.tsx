@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useUrlParam } from "@/lib/url-state";
 import { CalendarDays, TrendingUp, TrendingDown, DollarSign, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -74,7 +75,7 @@ export default function DailyReportPage() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Daily Report"
-        description="Income received, expenses, and invoiced revenue per day — click any figure to see where it came from"
+        description="Income received, expenses, and invoiced revenue per day — click any figure to see where it came from, or a date for the whole day"
         icon={CalendarDays}
       />
 
@@ -181,7 +182,16 @@ export default function DailyReportPage() {
                       key={r.date}
                       className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors"
                     >
-                      <td className="px-4 py-3 font-medium">{r.date}</td>
+                      <td className="px-4 py-3 font-medium">
+                        {/* The whole day in one table (2026-10-22). */}
+                        <Link
+                          href={`/reports/daily/${r.date}${scope ? `?department=${scope}` : ""}`}
+                          className="text-primary underline-offset-2 hover:underline"
+                          title="Everything on this day, in one table"
+                        >
+                          {r.date}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 text-right font-numeric text-success">
                         {r.incomeMinor ? <CellButton onClick={() => pickDay("income", r.date)}>{fmt(currency, convert(r.incomeMinor))}</CellButton> : "—"}
                       </td>

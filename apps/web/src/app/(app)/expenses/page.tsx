@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
 import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS } from "@delta/shared";
@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from "@/features/expenses/api";
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { useExpenseCategories } from "@/features/expense-categories/api";
@@ -110,25 +112,22 @@ export default function ExpensesPage() {
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
   const [voidTarget, setVoidTarget] = useState<Expense | null>(null);
   const { data: categoryList } = useExpenseCategories();
-  const [status, setStatus] = useState("all");
-  const [payment, setPayment] = useState("all");
-  const [category, setCategory] = useState("all");
+  // Every filter in the address bar (2026-10-22).
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [payment, setPayment] = useUrlParam("payment", "all");
+  const [category, setCategory] = useUrlParam("category", "all");
   // One of the chosen category's subcategories (2026-10-21); a new category starts from all of them.
-  const [subcategory, setSubcategory] = useState("all");
-  useEffect(() => setSubcategory("all"), [category]);
+  const [subcategory, setSubcategory] = useUrlParam("subcategory", "all");
+  const pickCategory = (v: string) => { setCategory(v); setSubcategory("all"); };
   const subOptions = category === "all" ? [] : subcategoriesOf(categoryList, category);
-  const [recurring, setRecurring] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [recurring, setRecurring] = useUrlParam("recurring", "all");
+  const [dateFrom, setDateFrom] = useUrlParam("from", "");
+  const [dateTo, setDateTo] = useUrlParam("to", "");
   // One salesperson's expenses (2026-10-21) — also from a link (?salespersonId=), as the expense page gives.
-  const [salesperson, setSalesperson] = useState("all");
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search).get("salespersonId");
-    if (sp) setSalesperson(sp);
-  }, []);
+  const [salesperson, setSalesperson] = useUrlParam("salespersonId", "all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
-  useEffect(() => t.resetPage(), [status, payment, category, subcategory, recurring, dateFrom, dateTo, salesperson]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -146,8 +145,8 @@ export default function ExpensesPage() {
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
-  const hasFilters =
-    status !== "all" || payment !== "all" || category !== "all" || recurring !== "all" || dateFrom || dateTo || salesperson !== "all" || !!t.q;
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, dateFrom, dateTo, salesperson);
+  const hasFilters = filterCount > 0 || !!t.q;
 
   // True when this person only ever sees their own claims.
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
@@ -303,6 +302,7 @@ export default function ExpensesPage() {
         description="Track and manage business expenses."
         action={
           <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={filterCount} />
             <ExportButton
               resource="expenses"
               params={listParams}
@@ -335,6 +335,9 @@ export default function ExpensesPage() {
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search expenses…" className="pl-8" />
         </div>
 
+        {/* The rest only once Filters is pressed (2026-10-22); the search stays out. */}
+        {filtersOpen && (<>
+
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -355,7 +358,7 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
 
-        <Select value={category} onValueChange={setCategory}>
+        <Select value={category} onValueChange={pickCategory}>
           <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All categories</SelectItem>
@@ -416,7 +419,7 @@ export default function ExpensesPage() {
             onClick={() => {
               setStatus("all");
               setPayment("all");
-              setCategory("all");
+              pickCategory("all");
               // Counted by hasFilters, so it put the Clear button on screen and
               // was then the one thing the button did not clear.
               setRecurring("all");
@@ -429,6 +432,7 @@ export default function ExpensesPage() {
             <X className="h-4 w-4" /> Clear
           </Button>
         )}
+        </>)}
       </div>
 
       {/* An API from before the cards answers 404: the page then simply has none. */}

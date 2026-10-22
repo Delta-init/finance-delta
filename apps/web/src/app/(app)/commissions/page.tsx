@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
 import { TrendingUp, Plus, FileText, Settings2, Users } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -13,8 +13,9 @@ function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
 
 export default function CommissionsPage() {
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
+  // The period in the address bar (2026-10-22), so a refresh or a shared link keeps it.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
 
   const { data: report, isLoading: reportLoading } = useCommissionReport(from, to);
   const { data: structures } = useCommissionStructures();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Coins, Search, X } from "lucide-react";
 import type { TetraDeposit, TetraDepositListStatus } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
@@ -11,6 +11,8 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useCan } from "@/lib/use-can";
 import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
@@ -82,11 +84,12 @@ export default function TetraDepositsPage() {
   const { can, ready } = useCan();
   const allowed = can("tetra_deposit:approve");
   const t = useTableQuery({ initialSort: { key: "requestedAt", dir: "desc" }, initialPageSize: 25 });
-  const [status, setStatus] = useState<TetraDepositListStatus>("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // In the address bar (2026-10-22): the tab, and the dates folded away until Filters is pressed.
+  const [status, setStatus] = useUrlParam<TetraDepositListStatus>("status", "all", { allowed: TABS.map((tab) => tab.status) });
+  const [dateFrom, setDateFrom] = useUrlParam("from", "");
+  const [dateTo, setDateTo] = useUrlParam("to", "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  useEffect(() => t.resetPage(), [status, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filters = {
     status,
@@ -211,15 +214,18 @@ export default function TetraDepositsPage() {
         title="Tetra Commission deposits"
         description="Every deposit and bonus request Tetra Commission sent for approval — pending, approved and rejected. They are decided on the Approvals page."
         action={
-          <ExportButton
-            resource="tetra-deposits/list"
-            params={{ ...t.baseParams, ...filters }}
-            columns={EXPORT_COLUMNS}
-            filename="tetra-commission-deposits"
-            title="Tetra Commission deposits"
-            formats={["csv", "excel", "pdf"]}
-            size="md"
-          />
+          <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(dateFrom, dateTo)} />
+            <ExportButton
+              resource="tetra-deposits/list"
+              params={{ ...t.baseParams, ...filters }}
+              columns={EXPORT_COLUMNS}
+              filename="tetra-commission-deposits"
+              title="Tetra Commission deposits"
+              formats={["csv", "excel", "pdf"]}
+              size="md"
+            />
+          </div>
         }
       />
 
@@ -258,8 +264,10 @@ export default function TetraDepositsPage() {
             className="pl-8"
           />
         </div>
+        {filtersOpen && (<>
         <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" aria-label="Requested from" />
         <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" aria-label="Requested to" />
+        </>)}
         {hasFilters && (
           <Button
             variant="ghost"

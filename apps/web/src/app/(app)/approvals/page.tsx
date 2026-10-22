@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ClipboardCheck, RefreshCw, Search, X } from "lucide-react";
 import { ACADEMIES, ACADEMY_LABELS, ENROLMENT_CRMS, ENROLMENT_CRM_LABELS, describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
@@ -17,6 +17,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useApprovalList, useApprovalRaisers, useApprovalSummary } from "@/features/approvals/api";
 import { LegacyApprovalQueues } from "@/features/approvals/legacy-queues";
 import { useFundingRequests } from "@/features/budgets/api";
@@ -162,50 +164,20 @@ export default function ApprovalsPage() {
   const { data: summary } = useApprovalSummary(approver);
 
   const t = useTableQuery({ initialPageSize: 25 });
-  const [status, setStatus] = useState<ApprovalListStatus>("pending");
-  const [type, setType] = useState<"all" | ApprovalType>("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Kept in the address bar, so a filtered view can be shared or bookmarked — read back on opening; since 2026-10-22
+  // with the page and its size too (lib/url-state), and the search is the table's own.
+  const [status, setStatus] = useUrlParam<ApprovalListStatus>("status", "pending", { allowed: STATUSES.map((st) => st.key) });
+  const [type, setType] = useUrlParam<"all" | ApprovalType>("type", "all");
+  const [dateFrom, setDateFrom] = useUrlParam("from", "");
+  const [dateTo, setDateTo] = useUrlParam("to", "");
   // Search and filters (the user, 2026-10-13): across every approval, not just the page on show.
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState(""); // what was typed, once typing pauses
-  const [crm, setCrm] = useState("all");
-  const [academy, setAcademy] = useState("all");
-  const [raisedBy, setRaisedBy] = useState("all");
-  useEffect(() => {
-    const id = setTimeout(() => setQuery(search.trim()), 300);
-    return () => clearTimeout(id);
-  }, [search]);
-  // Kept in the address bar, so a filtered view can be shared or bookmarked — read back on opening.
-  const [fromUrl, setFromUrl] = useState(false);
-  useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const st = p.get("status");
-    if (st && STATUSES.some((s) => s.key === st)) setStatus(st as ApprovalListStatus);
-    if (p.get("type")) setType(p.get("type") as ApprovalType);
-    if (p.get("from")) setDateFrom(p.get("from")!);
-    if (p.get("to")) setDateTo(p.get("to")!);
-    if (p.get("q")) { setSearch(p.get("q")!); setQuery(p.get("q")!); }
-    if (p.get("crm")) setCrm(p.get("crm")!);
-    if (p.get("academy")) setAcademy(p.get("academy")!);
-    if (p.get("raisedBy")) setRaisedBy(p.get("raisedBy")!);
-    setFromUrl(true);
-  }, []);
-  useEffect(() => {
-    if (!fromUrl) return;
-    const p = new URLSearchParams();
-    if (status !== "pending") p.set("status", status);
-    if (type !== "all") p.set("type", type);
-    if (dateFrom) p.set("from", dateFrom);
-    if (dateTo) p.set("to", dateTo);
-    if (query) p.set("q", query);
-    if (crm !== "all") p.set("crm", crm);
-    if (academy !== "all") p.set("academy", academy);
-    if (raisedBy !== "all") p.set("raisedBy", raisedBy);
-    const next = `${window.location.pathname}${p.size ? `?${p}` : ""}`;
-    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
-  }, [fromUrl, status, type, dateFrom, dateTo, query, crm, academy, raisedBy]);
-  useEffect(() => t.resetPage(), [status, type, dateFrom, dateTo, query, crm, academy, raisedBy]); // eslint-disable-line react-hooks/exhaustive-deps
+  const search = t.q, setSearch = t.setQ;
+  const query = String(t.baseParams.q ?? ""); // what was typed, once typing pauses
+  const [crm, setCrm] = useUrlParam("crm", "all");
+  const [academy, setAcademy] = useUrlParam("academy", "all");
+  const [raisedBy, setRaisedBy] = useUrlParam("raisedBy", "all");
+  // Type, dates, CRM, academy and who raised it — folded away until Filters is pressed (2026-10-22).
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const raisers = useApprovalRaisers(approver);
   const filtered = !!query || crm !== "all" || academy !== "all" || raisedBy !== "all";
 
@@ -222,7 +194,7 @@ export default function ApprovalsPage() {
       page: t.page,
       pageSize: t.pageSize,
     },
-    approver && fromUrl,
+    approver,
   );
   // The web app goes live when it is pushed, the finance API when it is
   // deployed; until then there is no list to show, so the queues stand in.
@@ -404,6 +376,9 @@ export default function ApprovalsPage() {
         icon={ClipboardCheck}
         title="Approvals"
         description="Everything you decide, in one table — waiting, approved and rejected, newest first. An approved enrolment shows whether the student's LMS and commission portal accounts were made."
+        action={apiTooOld ? undefined : (
+          <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(type, dateFrom, dateTo, crm, academy, raisedBy)} />
+        )}
       />
 
       {apiTooOld ? (
@@ -450,6 +425,7 @@ export default function ApprovalsPage() {
               ))}
             </div>
 
+            {filtersOpen && (<>
             <Select value={type} onValueChange={(v) => setType(v as "all" | ApprovalType)}>
               <SelectTrigger className="w-[190px]" aria-label="Type"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -491,6 +467,7 @@ export default function ApprovalsPage() {
                 </SelectContent>
               </Select>
             )}
+            </>)}
 
             {hasFilters && (
               <Button
@@ -498,7 +475,7 @@ export default function ApprovalsPage() {
                 size="sm"
                 onClick={() => {
                   setStatus("pending"); setType("all"); setDateFrom(""); setDateTo("");
-                  setSearch(""); setQuery(""); setCrm("all"); setAcademy("all"); setRaisedBy("all");
+                  setSearch(""); setCrm("all"); setAcademy("all"); setRaisedBy("all");
                 }}
               >
                 <X className="h-4 w-4" /> Clear

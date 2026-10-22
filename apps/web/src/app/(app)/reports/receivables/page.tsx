@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { ArrowDownCircle, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
@@ -40,9 +40,10 @@ const BAND_TONE: Record<string, "neutral" | "warning" | "danger" | "success"> = 
 
 export default function ReceivablesPage() {
   const router = useRouter();
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
-  const [groupBy, setGroupBy] = useState<GroupBy>("customer");
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
+  const [groupBy, setGroupBy] = useUrlParam<GroupBy>("by", "customer");
 
   const { data: paymentsData, isLoading: paymentsLoading } = useReceivedPayments(from, to);
   const { data: agedData, isLoading: agedLoading } = useAgedReceivables();

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { countFilters, useUrlPage, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { FileText, CheckCircle2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -27,10 +29,14 @@ const BASIS_LABELS: Record<string, string> = {
 };
 
 export default function RecordsPage() {
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
-  const [status, setStatus] = useState("earned");
-  const [page, setPage] = useState(1);
+  // In the address bar (2026-10-22): the period stays in view; the status is folded away until Filters is pressed.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
+  const [statusParam, setStatusParam] = useUrlParam("status", "earned");
+  const status = statusParam === "all" ? "" : statusParam;
+  const setStatus = (v: string) => setStatusParam(v || "all");
+  const [page, setPage] = useUrlPage();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading } = useCommissionRecords({ from, to, status: status || undefined, page, pageSize: 20 });
@@ -138,12 +144,15 @@ export default function RecordsPage() {
         title="Commission Records"
         description="All auto-calculated commission records. Select earned records to mark as paid."
         action={
-          selectedIds.size > 0 ? (
-            <Button onClick={handleMarkPaid} disabled={paying}>
-              <CheckCircle2 className="h-4 w-4" />
-              {paying ? "Processing…" : `Mark ${selectedIds.size} as Paid`}
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(statusParam === "earned" ? "" : statusParam)} />
+            {selectedIds.size > 0 && (
+              <Button onClick={handleMarkPaid} disabled={paying}>
+                <CheckCircle2 className="h-4 w-4" />
+                {paying ? "Processing…" : `Mark ${selectedIds.size} as Paid`}
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -153,6 +162,7 @@ export default function RecordsPage() {
         <DatePicker value={from} onChange={setFrom} placeholder="From" />
         <span className="text-foreground-subtle">→</span>
         <DatePicker value={to} onChange={setTo} placeholder="To" />
+        {filtersOpen && (
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[140px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
           <SelectContent>
@@ -162,6 +172,7 @@ export default function RecordsPage() {
             <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
+        )}
       </div>
 
       {/* Selection bar */}

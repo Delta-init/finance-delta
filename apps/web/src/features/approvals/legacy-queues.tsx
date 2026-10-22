@@ -108,7 +108,8 @@ function InvoiceQueue() {
    * sinks it to the bottom instead. The "waiting 6 days" line on each row is
    * what now carries that, so nothing is hidden — it just has to be read rather
    * than met at the top. */
-  const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
+  // Its own keys in the address bar: the approvals page's table keeps the plain ones.
+  const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" }, prefix: "queue" });
   const waiting = useInvoices({ ...t.baseParams, approval: "pending" });
   const returned = useInvoices({ page: 1, pageSize: 50, sort: "createdAt", dir: "desc", approval: "returned" });
 

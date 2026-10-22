@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Plus, Package, Search, X, AlertTriangle, Warehouse, ListChecks, BarChart3 } from "lucide-react";
 import { type Item, ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
@@ -12,6 +12,8 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlFlag, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useItems, useLowStockItems } from "@/features/inventory/api";
 import { ExportButton } from "@/components/ui/export-button";
 import { fetchAllRows, type ExportColumn } from "@/lib/export";
@@ -32,10 +34,11 @@ const INVENTORY_EXPORT_COLUMNS: ExportColumn<Item>[] = [
 export default function InventoryPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const [type, setType] = useState("all");
-  const [lowStock, setLowStock] = useState(false);
-  const [isActive, setIsActive] = useState("all");
-  useEffect(() => t.resetPage(), [type, lowStock, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [type, setType] = useUrlParam("type", "all");
+  const [lowStock, setLowStock] = useUrlFlag("lowStock");
+  const [isActive, setIsActive] = useUrlParam("active", "all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // One set of filters for the table and its export (2026-10-18).
   const listParams = {
@@ -163,6 +166,7 @@ export default function InventoryPage() {
             <Button variant="outline" onClick={() => router.push("/inventory/valuation")}>
               <BarChart3 className="h-4 w-4" /> Valuation
             </Button>
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(type, lowStock, isActive)} />
             <ExportButton
               resource="inventory/items"
               params={listParams}
@@ -205,6 +209,8 @@ export default function InventoryPage() {
           />
         </div>
 
+        {filtersOpen && (<>
+
         <Select value={type} onValueChange={setType}>
           <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -226,7 +232,7 @@ export default function InventoryPage() {
         <Button
           variant={lowStock ? undefined : "outline"}
           size="sm"
-          onClick={() => setLowStock((v) => !v)}
+          onClick={() => setLowStock(!lowStock)}
         >
           <AlertTriangle className="h-3.5 w-3.5" /> Low stock
         </Button>
@@ -236,6 +242,7 @@ export default function InventoryPage() {
             <X className="h-4 w-4" /> Clear
           </Button>
         )}
+        </>)}
       </div>
 
       <DataTable

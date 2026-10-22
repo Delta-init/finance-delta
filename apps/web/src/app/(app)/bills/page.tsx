@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, ShoppingCart, X, AlertTriangle, Pencil, Trash2 } from "lucide-react";
 import { type Bill } from "@delta/shared";
@@ -14,6 +14,8 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlFlag, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useBills, useDeleteBill } from "@/features/bills/api";
 import {
   Dialog,
@@ -46,9 +48,11 @@ const BILLS_EXPORT_COLUMNS: ExportColumn<Bill>[] = [
 export default function BillsPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "dueDate", dir: "asc" } });
-  const [status, setStatus] = useState("all");
-  const [overdue, setOverdue] = useState(false);
-  useEffect(() => t.resetPage(), [status, overdue]); // eslint-disable-line react-hooks/exhaustive-deps
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [overdue, setOverdue] = useUrlFlag("overdue");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterCount = countFilters(status, overdue);
 
   const { data, isLoading } = useBills({
     ...t.baseParams,
@@ -153,6 +157,7 @@ export default function BillsPage() {
       <PageHeader icon={ShoppingCart} title="Bills" description="Vendor bills and payables outstanding."
         action={
           <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={filterCount} />
             <ExportButton
               resource="bills"
               params={{
@@ -174,6 +179,7 @@ export default function BillsPage() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search bills…" className="pl-8" />
         </div>
+        {filtersOpen && (<>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -190,6 +196,7 @@ export default function BillsPage() {
           <AlertTriangle className="h-3.5 w-3.5" /> Overdue only
         </button>
         {hasFilters && <Button variant="ghost" size="sm" onClick={() => { setStatus("all"); setOverdue(false); t.setQ(""); }}><X className="h-4 w-4" /> Clear</Button>}
+        </>)}
       </div>
       {/* Only once something is ticked: a row of controls that is always there
           but usually does nothing is worse than none. */}

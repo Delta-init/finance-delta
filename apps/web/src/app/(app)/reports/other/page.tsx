@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { FileBarChart, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
@@ -26,8 +26,9 @@ const EXPENSE_CATEGORY_LABELS: Record<string, string> = {
 
 export default function OtherReportsPage() {
   const router = useRouter();
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
 
   const { data: salesData, isLoading: salesLoading } = useSalesByItem(from, to);
   const { data: expenseData, isLoading: expenseLoading } = useExpenseByCategory(from, to);

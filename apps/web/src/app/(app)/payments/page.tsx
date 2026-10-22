@@ -2,7 +2,7 @@
 
 import { PAYMENT_METHODS, formatMoney, paymentMethodLabel } from "@delta/shared";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { usePayments, useDeletePaymentFromList, fetchAllPayments, type PaymentDTO } from "@/features/payments/api";
@@ -19,6 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MoneyDisplay } from "@/components/ui/money";
 import { ExportButton } from "@/components/ui/export-button";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import type { ExportColumn } from "@/lib/export";
 import { CreditCard, Search, X, Printer, Trash2 } from "lucide-react";
 
@@ -49,11 +51,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function PaymentsPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "paidOn", dir: "desc" } });
-  const [method, setMethod] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [method, setMethod] = useUrlParam("method", "all");
+  const [dateFrom, setDateFrom] = useUrlParam("from", "");
+  const [dateTo, setDateTo] = useUrlParam("to", "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterCount = countFilters(method, dateFrom, dateTo);
 
-  useEffect(() => t.resetPage(), [method, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queryParams = {
     ...t.baseParams,
@@ -150,15 +154,18 @@ export default function PaymentsPage() {
         title="Payments"
         description="All payments received across invoices"
         action={
-          <ExportButton
-            resource="payments"
-            params={queryParams}
-            fetchRows={() => fetchAllPayments(queryParams)}
-            columns={PAYMENTS_EXPORT_COLUMNS}
-            filename="payments"
-            title="Payments"
-            size="md"
-          />
+          <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={filterCount} />
+            <ExportButton
+              resource="payments"
+              params={queryParams}
+              fetchRows={() => fetchAllPayments(queryParams)}
+              columns={PAYMENTS_EXPORT_COLUMNS}
+              filename="payments"
+              title="Payments"
+              size="md"
+            />
+          </div>
         }
       />
 
@@ -169,6 +176,7 @@ export default function PaymentsPage() {
             <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8 w-52" />
           </div>
         </Field>
+        {filtersOpen && (<>
         <Field label="Method">
           <Select value={method} onValueChange={(v) => setMethod(v)}>
             <SelectTrigger className="w-[150px]">
@@ -195,6 +203,7 @@ export default function PaymentsPage() {
             <X className="h-4 w-4" /> Clear
           </Button>
         )}
+        </>)}
         {data?.meta && (
           <p className="ml-auto self-end text-xs text-foreground-muted">
             {data.meta.total} payment{data.meta.total !== 1 ? "s" : ""}

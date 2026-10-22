@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { Landmark } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +18,9 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> 
 };
 
 export default function LoanReportPage() {
-  const searchParams = useSearchParams();
-  const [typeFilter, setTypeFilter] = useState<string>(searchParams.get("type") ?? "");
-  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") ?? "");
+  // In the address bar both ways (2026-10-22): read on opening, as before, and kept there as they change.
+  const [typeFilter, setTypeFilter] = useUrlParam("type", "");
+  const [statusFilter, setStatusFilter] = useUrlParam("status", "");
 
   const { data: report, isLoading } = useLoanReport();
 

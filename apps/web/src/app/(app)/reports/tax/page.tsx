@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { Receipt, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
@@ -15,8 +15,9 @@ function yearStart() { return `${new Date().getFullYear()}-01-01`; }
 
 export default function TaxPage() {
   const router = useRouter();
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
 
   const { data, isLoading } = useVATReport(from, to);
 

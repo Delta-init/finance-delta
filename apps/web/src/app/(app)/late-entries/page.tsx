@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
 import { Clock, Check, X, Loader2, ShieldAlert, ExternalLink, Copy } from "lucide-react";
 import { LATE_ENTRY_KIND_LABELS, type LateEntry } from "@delta/shared";
@@ -22,7 +23,8 @@ import { useSwitchOrganization } from "@/features/organization/switch";
  */
 export default function LateEntriesPage() {
   const { data: me, isLoading: meLoading } = useLateEntriesMe();
-  const [tab, setTab] = useState<"pending" | "decided" | "all" | "old">("pending");
+  // The tab in the address bar (2026-10-22).
+  const [tab, setTab] = useUrlParam<"pending" | "decided" | "all" | "old">("tab", "pending", { allowed: ["pending", "decided", "all", "old"] });
   const canView = canViewLate(me);
   const { data, isLoading } = useLateEntries(tab === "old" ? "pending" : tab, canView && tab !== "old");
   const rows = data ?? [];
@@ -214,8 +216,8 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { timeZone: 
  */
 function OldDatesList({ days }: { days: number }) {
   const { data, isLoading, error } = useOldDateEntries();
-  const [origin, setOrigin] = useState<"typed" | "approval" | "hrms" | "all">("typed");
-  const [orgFilter, setOrgFilter] = useState<string>("all");
+  const [origin, setOrigin] = useUrlParam<"typed" | "approval" | "hrms" | "all">("origin", "typed", { allowed: ["typed", "approval", "hrms", "all"] });
+  const [orgFilter, setOrgFilter] = useUrlParam("org", "all");
   const switchOrganization = useSwitchOrganization();
   const [opening, setOpening] = useState<string | null>(null);
   if (isLoading) return <Card className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></Card>;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { ArrowUpCircle, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
@@ -33,8 +33,9 @@ const BAND_TONE: Record<string, "neutral" | "warning" | "danger" | "success"> = 
 
 export default function PayablesPage() {
   const router = useRouter();
-  const [from, setFrom] = useState(yearStart());
-  const [to, setTo] = useState(today());
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period.
+  const [from, setFrom] = useUrlParam("from", yearStart());
+  const [to, setTo] = useUrlParam("to", today());
 
   const { data: paymentsData, isLoading: paymentsLoading } = useMadePayments(from, to);
   const { data: agedData, isLoading: agedLoading } = useAgedPayables();

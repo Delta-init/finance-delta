@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,6 +18,8 @@ import { ResponsiveModal, ResponsiveModalContent, ResponsiveModalDescription, Re
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useVendors, useCreateVendor, useUpdateVendor, useDeleteVendor } from "@/features/vendors/api";
@@ -51,8 +53,9 @@ export default function VendorsPage() {
   const router = useRouter();
   const { baseCurrency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
-  const [status, setStatus] = useState("all");
-  useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data, isLoading } = useVendors({ ...t.baseParams, status: status === "all" ? undefined : status });
   const createMutation = useCreateVendor();
@@ -104,6 +107,7 @@ export default function VendorsPage() {
       <PageHeader icon={Truck} title="Vendors" description="Manage your supplier relationships and purchase history."
         action={
           <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status)} />
             <ExportButton resource="vendors" params={{ ...t.baseParams, status: status === "all" ? undefined : status }} columns={VENDOR_EXPORT_COLUMNS} filename="vendors" title="Vendors" size="md" />
             <Button onClick={() => { reset(defaultValues(orgCurrency)); setModal("create"); }}><Plus className="h-4 w-4" /> New vendor</Button>
           </div>
@@ -114,6 +118,7 @@ export default function VendorsPage() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search vendors…" className="pl-8" />
         </div>
+        {filtersOpen && (
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -122,6 +127,7 @@ export default function VendorsPage() {
             <SelectItem value="archived">Archived</SelectItem>
           </SelectContent>
         </Select>
+        )}
       </div>
 
       <ResponsiveModal open={modal !== null} onOpenChange={(o) => !o && setModal(null)}>

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { Plus, Landmark, Search, X } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   type BankAccount,
   type BankAccountType,
@@ -16,6 +16,8 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { useBankAccounts } from "@/features/banking/api";
 
 const TYPE_TONE: Record<BankAccountType, NonNullable<BadgeProps["tone"]>> = {
@@ -28,9 +30,10 @@ const TYPE_TONE: Record<BankAccountType, NonNullable<BadgeProps["tone"]>> = {
 export default function BankingPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const [accountType, setAccountType] = useState("all");
-  const [isActive, setIsActive] = useState("all");
-  useEffect(() => t.resetPage(), [accountType, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [accountType, setAccountType] = useUrlParam("type", "all");
+  const [isActive, setIsActive] = useUrlParam("active", "all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data, isLoading } = useBankAccounts({
     ...t.baseParams,
@@ -107,9 +110,12 @@ export default function BankingPage() {
         title="Banking"
         description="Manage bank accounts and reconcile transactions."
         action={
-          <Button onClick={() => router.push("/banking/new")}>
-            <Plus className="h-4 w-4" /> Add account
-          </Button>
+          <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(accountType, isActive)} />
+            <Button onClick={() => router.push("/banking/new")}>
+              <Plus className="h-4 w-4" /> Add account
+            </Button>
+          </div>
         }
       />
 
@@ -123,6 +129,8 @@ export default function BankingPage() {
             className="pl-8"
           />
         </div>
+
+        {filtersOpen && (<>
 
         <Select value={accountType} onValueChange={setAccountType}>
           <SelectTrigger className="w-[160px]">
@@ -162,6 +170,7 @@ export default function BankingPage() {
             <X className="h-4 w-4" /> Clear
           </Button>
         )}
+        </>)}
       </div>
 
       <DataTable

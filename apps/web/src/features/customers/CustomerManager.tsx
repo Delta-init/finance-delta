@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -40,6 +40,8 @@ import { ApiError } from "@/lib/api";
 import type { ExportColumn } from "@/lib/export";
 import { toast } from "@/lib/toast";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCreateCustomer, useCustomers, useDeleteCustomer, useUpdateCustomer } from "./api";
@@ -119,9 +121,10 @@ export function CustomerManager() {
   const router = useRouter();
   const { baseCurrency: orgCurrency } = useCurrency();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
-  const [status, setStatus] = useState<string>("all");
-  const [tagIds, setTagIds] = useState<string[]>([]);
-  useEffect(() => t.resetPage(), [status, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [tagIds, setTagIds] = useUrlListParam("tags");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data, isLoading } = useCustomers({
     ...t.baseParams,
@@ -256,6 +259,7 @@ export function CustomerManager() {
         description="People and companies you bill and send quotations to."
         action={
           <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status, tagIds)} />
             <ExportButton
               resource="customers"
               params={{
@@ -280,6 +284,7 @@ export function CustomerManager() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search customers…" className="pl-8" />
         </div>
+        {filtersOpen && (<>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Status" />
@@ -293,6 +298,7 @@ export function CustomerManager() {
         <div className="w-[220px]">
           <TagPicker value={tagIds} onChange={setTagIds} placeholder="Filter by tags…" />
         </div>
+        </>)}
       </div>
 
       {/* Create / Edit modal */}

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { EMAIL_KIND_LABEL, EMAIL_STATE_LABEL, useEmailLogs, type EmailLogRow } from "@/features/email-log/api";
 import { EmailStateBadge } from "@/features/email-log/state-badge";
 
@@ -23,15 +25,18 @@ const when = (iso: string | null) =>
 
 export default function EmailLogPage() {
   const t = useTableQuery({ initialPageSize: 25 });
-  const [kind, setKind] = useState("all");
-  const [state, setState] = useState("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // In the address bar (2026-10-22), folded away until Filters is pressed.
+  const [kind, setKind] = useUrlParam("kind", "all");
+  const [state, setState] = useUrlParam("state", "all");
+  const [from, setFrom] = useUrlParam("from", "");
+  const [to, setTo] = useUrlParam("to", "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const params = {
     page: t.page,
     pageSize: t.pageSize,
-    ...(t.q ? { search: t.q } : {}),
+    // What was typed, once typing pauses.
+    ...(t.baseParams.q ? { search: String(t.baseParams.q) } : {}),
     ...(kind !== "all" ? { kind } : {}),
     ...(state !== "all" ? { state } : {}),
     ...(from ? { from } : {}),
@@ -75,25 +80,28 @@ export default function EmailLogPage() {
         icon={MailCheck}
         title="Email Log"
         description="Every email finance has sent — invoices, resends, reminders and notices — and whether it went."
+        action={<FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(kind, state, from, to)} />}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search address, subject or invoice" className="w-full sm:w-72" />
-        <Select value={kind} onValueChange={(v) => { setKind(v); t.setPage(1); }}>
+        {filtersOpen && (<>
+        <Select value={kind} onValueChange={setKind}>
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Every type</SelectItem>
             {Object.entries(EMAIL_KIND_LABEL).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={state} onValueChange={(v) => { setState(v); t.setPage(1); }}>
+        <Select value={state} onValueChange={setState}>
           <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Every result</SelectItem>
             {Object.entries(EMAIL_STATE_LABEL).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); t.setPage(1); }} className="w-40" aria-label="From" />
-        <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); t.setPage(1); }} className="w-40" aria-label="To" />
+        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label="From" />
+        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label="To" />
+        </>)}
       </div>
       <DataTable
         columns={columns}

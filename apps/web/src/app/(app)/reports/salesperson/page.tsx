@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlPage, useUrlParam, useUrlText } from "@/lib/url-state";
 import { useRouter } from "next/navigation";
 import { Users2, TrendingUp, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -31,13 +31,16 @@ const today = () => new Date().toISOString().slice(0, 10);
  */
 export default function SalespeoplePage() {
   const router = useRouter();
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [search, setSearch] = useState("");
-  const [from, setFrom] = useState(monthStart());
-  const [to, setTo] = useState(today());
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period and page.
+  const [page, setPage] = useUrlPage();
+  const [sizeParam, setSizeParam] = useUrlParam("size", "25");
+  const pageSize = Number(sizeParam) || 25;
+  const setPageSize = (n: number) => setSizeParam(String(n));
+  const [search, setSearch, searched] = useUrlText("q");
+  const [from, setFrom] = useUrlParam("from", monthStart());
+  const [to, setTo] = useUrlParam("to", today());
 
-  const { data, isLoading } = usePeopleReport({ from, to, search: search.trim() || undefined });
+  const { data, isLoading } = usePeopleReport({ from, to, search: searched.trim() || undefined });
   const rows = data?.rows ?? [];
   const totals = data?.totals;
   const currency = data?.currency ?? "AED";
@@ -140,7 +143,7 @@ export default function SalespeoplePage() {
             id="pp-search"
             placeholder="Name, code or email"
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-56"
           />
         </div>

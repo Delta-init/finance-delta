@@ -2,6 +2,7 @@
 
 import { LateBadge } from "@/features/late-entries/LateReason";
 import { useState } from "react";
+import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import { Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
@@ -75,10 +76,12 @@ export function CashBook({ account }: { account: BankAccount }) {
    * below, which is searchable. Said in the footer rather than left to be
    * discovered by a balance that does not tie.
    */
-  const [page, setPage] = useState(1);
+  // Its page and dates in the address bar (2026-10-22), under names of their own — on a tin's account page the
+  // transaction list below keeps the plain ones.
+  const [page, setPage] = useUrlPage("book_page");
   // A tin is read a month at a time, and exported the same way.
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useUrlParam("book_from", "", { page: "book_page" });
+  const [dateTo, setDateTo] = useUrlParam("book_to", "", { page: "book_page" });
   const [receipts, setReceipts] = useState<BankTransaction | null>(null);
   const filters = {
     sort: "date",
@@ -135,7 +138,7 @@ export function CashBook({ account }: { account: BankAccount }) {
             type="date"
             value={dateFrom}
             className="h-8 w-[150px]"
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => setDateFrom(e.target.value)}
           />
         </div>
         <div className="space-y-1">
@@ -144,14 +147,14 @@ export function CashBook({ account }: { account: BankAccount }) {
             type="date"
             value={dateTo}
             className="h-8 w-[150px]"
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => setDateTo(e.target.value)}
           />
         </div>
         {filtered && (
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+            onClick={() => { setDateFrom(""); setDateTo(""); }}
           >
             <X className="mr-1 h-3.5 w-3.5" /> Clear
           </Button>
@@ -374,14 +377,14 @@ export function CashBook({ account }: { account: BankAccount }) {
             Entries {(page - 1) * PAGE_SIZE + 1}–{(page - 1) * PAGE_SIZE + rows.length} of {total}
           </span>
           <div className="ml-auto flex gap-2">
-            <Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
+            <Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage(page - 1)}>
               Earlier
             </Button>
             <Button
               size="sm"
               variant="ghost"
               disabled={page * PAGE_SIZE >= total}
-              onClick={() => setPage((p) => p + 1)}
+              onClick={() => setPage(page + 1)}
             >
               Later
             </Button>

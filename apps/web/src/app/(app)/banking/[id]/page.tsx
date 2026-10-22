@@ -1,7 +1,7 @@
 "use client";
 
 import { LateBadge } from "@/features/late-entries/LateReason";
-import { use, useState, useEffect } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -25,6 +25,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MoneyDisplay } from "@/components/ui/money";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
 import {
@@ -67,15 +69,16 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const canWrite = can("banking:write");
   const [openingOpen, setOpeningOpen] = useState(false);
   const t = useTableQuery({ initialSort: { key: "date", dir: "desc" } });
-  const [status, setStatus] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [source, setSource] = useState("all");
+  // The lines' filters in the address bar (2026-10-22), folded away until Filters is pressed.
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [dateFrom, setDateFrom] = useUrlParam("from", "");
+  const [dateTo, setDateTo] = useUrlParam("to", "");
+  const [source, setSource] = useUrlParam("source", "all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [deleting, setDeleting] = useState<BankTransaction | null>(null);
   const updateTx = useUpdateBankTransaction(id);
   const deleteTx = useDeleteBankTransaction(id);
-  useEffect(() => t.resetPage(), [status, dateFrom, dateTo, source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: txData, isLoading: txLoading } = useBankTransactions(id, {
     ...t.baseParams,
@@ -311,6 +314,9 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           />
         </div>
 
+        <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status, source, dateFrom, dateTo)} size="sm" />
+
+        {filtersOpen && (<>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[150px]">
             <SelectValue />
@@ -348,6 +354,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           onChange={(e) => setDateTo(e.target.value)}
           className="w-[140px]"
         />
+        </>)}
 
         <Button
           variant="outline"

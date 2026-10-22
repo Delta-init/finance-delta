@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { Plus, WalletCards } from "lucide-react";
 import type { BudgetAllocation, BudgetSummaryRow, FundingRequest } from "@delta/shared";
 import { toMinor } from "@delta/shared";
@@ -96,8 +97,9 @@ function FundingRequestDialog({ open, onOpenChange, currency, defaultPeriod }: {
 export default function BudgetsPage() {
   const can = useCan();
   const { baseCurrency } = useCurrency();
-  const [year, setYear] = useState(String(now.getFullYear()));
-  const [month, setMonth] = useState(thisMonth);
+  // The year and month on show, in the address bar (2026-10-22).
+  const [year, setYear] = useUrlParam("year", String(now.getFullYear()));
+  const [month, setMonth] = useUrlParam("month", thisMonth);
   const [requestOpen, setRequestOpen] = useState(false);
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [allocationTarget, setAllocationTarget] = useState<BudgetSummaryRow | undefined>();

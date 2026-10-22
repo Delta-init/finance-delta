@@ -1,8 +1,9 @@
 "use client";
 
-import { use, useState } from "react";
+import { use } from "react";
+import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Building2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -20,11 +21,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 export default function DepartmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const search = useSearchParams();
-  const [from, setFrom] = useState(search.get("from") ?? monthStart());
-  const [to, setTo] = useState(search.get("to") ?? today());
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  // In the address bar (2026-10-22), read back as the department list links here — so a refresh or a shared link keeps the same period and page.
+  const [from, setFrom] = useUrlParam("from", monthStart());
+  const [to, setTo] = useUrlParam("to", today());
+  const [page, setPage] = useUrlPage();
+  const [sizeParam, setSizeParam] = useUrlParam("size", "25");
+  const pageSize = Number(sizeParam) || 25;
+  const setPageSize = (n: number) => setSizeParam(String(n));
 
   const { data, isLoading } = usePeopleReport({ from, to, departmentId: id });
   const rows = data?.rows ?? [];

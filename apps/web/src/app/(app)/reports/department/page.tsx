@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -18,10 +18,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 /** What each department earned and what it cost, with a way into its people. */
 export default function DepartmentReportPage() {
   const router = useRouter();
-  const [from, setFrom] = useState(monthStart());
-  const [to, setTo] = useState(today());
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period and page.
+  const [from, setFrom] = useUrlParam("from", monthStart());
+  const [to, setTo] = useUrlParam("to", today());
+  const [page, setPage] = useUrlPage();
+  const [sizeParam, setSizeParam] = useUrlParam("size", "25");
+  const pageSize = Number(sizeParam) || 25;
+  const setPageSize = (n: number) => setSizeParam(String(n));
 
   const { data, isLoading } = useDepartmentReport({ from, to });
   const rows = data?.departments ?? [];

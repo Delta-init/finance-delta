@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import { CalendarDays, TrendingUp, TrendingDown, DollarSign, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,9 +36,10 @@ function fmt(currency: string, minor: number) {
 
 export default function DailyReportPage() {
   const { currency, convert } = useCurrency();
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
-  const [departmentId, setDepartmentId] = useState(ALL);
+  // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period and page.
+  const [from, setFrom] = useUrlParam("from", monthStart());
+  const [to, setTo] = useUrlParam("to", today());
+  const [departmentId, setDepartmentId] = useUrlParam("department", ALL);
 
   const { data: departments } = useAllDepartments();
   const { data, isLoading } = useDailyReport(

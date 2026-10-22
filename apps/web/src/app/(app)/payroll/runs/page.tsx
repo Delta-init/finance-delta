@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Wallet, Download, AlertTriangle, Info, CheckCircle2, PauseCircle, Clock } from "lucide-react";
@@ -30,8 +31,11 @@ const TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "pr
 
 export default function PayrollRunsPage() {
   const router = useRouter();
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  // The page and its size in the address bar (2026-10-22).
+  const [page, setPage] = useUrlPage();
+  const [sizeParam, setSizeParam] = useUrlParam("size", "20");
+  const pageSize = Number(sizeParam) || 20;
+  const setPageSize = (n: number) => setSizeParam(String(n));
   const [candidate, setCandidate] = useState<AvailableBatch | null>(null);
 
   const runs = usePayrollRuns({ page, limit: pageSize });

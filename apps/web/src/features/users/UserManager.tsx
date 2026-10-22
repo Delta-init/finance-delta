@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Pencil, Plus, Search, Trash2, UserCheck, UserX, Users2 } from "lucide-react";
@@ -32,6 +32,8 @@ import {
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -63,11 +65,12 @@ const USERS_EXPORT_COLUMNS: ExportColumn<User>[] = [
 
 export function UserManager() {
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
-  const [status, setStatus] = useState("all");
-  const [tagIds, setTagIds] = useState<string[]>([]);
+  // In the address bar (2026-10-22), folded away until Filters is pressed — the tab too.
+  const [status, setStatus] = useUrlParam("status", "all");
+  const [tagIds, setTagIds] = useUrlListParam("tags");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // The team who can sign in, or the salespeople who can't yet (2026-10-20).
-  const [tab, setTab] = useState<"team" | "salespeople">("team");
-  useEffect(() => t.resetPage(), [status, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [tab, setTab] = useUrlParam<"team" | "salespeople">("tab", "team", { allowed: ["team", "salespeople"] });
 
   const { data, isLoading } = useUsers({
     ...t.baseParams,
@@ -225,6 +228,7 @@ export function UserManager() {
         description={tab === "team" ? "Team members who can sign in, scoped by their role." : "Salespeople from the payroll and the CRMs — make any of them a user."}
         action={
           <div className="flex items-center gap-2">
+            {tab === "team" && <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status, tagIds)} />}
             <ExportButton
               resource="users"
               params={{
@@ -269,6 +273,7 @@ export function UserManager() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search users…" className="pl-8" />
         </div>
+        {filtersOpen && (<>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="Status" />
@@ -282,6 +287,7 @@ export function UserManager() {
         <div className="w-[220px]">
           <TagPicker value={tagIds} onChange={setTagIds} placeholder="Filter by tags…" />
         </div>
+        </>)}
       </div>}
 
       <ResponsiveModal open={open} onOpenChange={setOpen}>

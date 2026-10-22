@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search, X, ReceiptText, Trash2, Ban } from "lucide-react";
@@ -24,6 +23,8 @@ import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useUsers, EVERYONE } from "@/features/users/api";
 import { useTableQuery } from "@/lib/use-table-query";
+import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
+import { FilterToggle } from "@/components/ui/filter-toggle";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import {
@@ -58,25 +59,17 @@ const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
 export function InvoiceManager() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "createdAt", dir: "desc" } });
-  const [status, setStatus] = useState<InvoiceStatus | "all">("all");
-  /*
-   * Seeded from the URL, because the approvals queue links here with
-   * ?approval=pending. Landing on an unfiltered list after clicking "see all
-   * the ones waiting" would answer a different question from the one asked.
-   */
-  const search = useSearchParams();
-  const [approval, setApproval] = useState<InvoiceApproval | "all">(() => {
-    const q = search.get("approval");
-    return (INVOICE_APPROVALS as readonly string[]).includes(q ?? "")
-      ? (q as InvoiceApproval)
-      : "all";
-  });
-  const [salespersonId, setSalespersonId] = useState("");
-  const [issueFrom, setIssueFrom] = useState("");
-  const [issueTo, setIssueTo] = useState("");
-  const [dueFrom, setDueFrom] = useState("");
-  const [dueTo, setDueTo] = useState("");
-  const [tagIds, setTagIds] = useState<string[]>([]);
+  // Every filter in the address bar (2026-10-22) — read back on opening, so the approvals queue's link here with
+  // ?approval=pending still lands on the ones waiting.
+  const [status, setStatus] = useUrlParam<InvoiceStatus | "all">("status", "all", { allowed: INVOICE_STATUSES });
+  const [approval, setApproval] = useUrlParam<InvoiceApproval | "all">("approval", "all", { allowed: INVOICE_APPROVALS });
+  const [salespersonId, setSalespersonId] = useUrlParam("salesperson", "");
+  const [issueFrom, setIssueFrom] = useUrlParam("issueFrom", "");
+  const [issueTo, setIssueTo] = useUrlParam("issueTo", "");
+  const [dueFrom, setDueFrom] = useUrlParam("dueFrom", "");
+  const [dueTo, setDueTo] = useUrlParam("dueTo", "");
+  const [tagIds, setTagIds] = useUrlListParam("tags");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [rowDeleting, setRowDeleting] = useState<Invoice | null>(null);
@@ -85,8 +78,6 @@ export function InvoiceManager() {
   const [selectionResetKey, setSelectionResetKey] = useState(0);
   const deleteInvoice = useDeleteInvoice();
   const voidInvoice = useVoidInvoice();
-
-  useEffect(() => t.resetPage(), [status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -201,8 +192,8 @@ export function InvoiceManager() {
     { enabled: !mineOnly },
   );
 
-  const hasFilters =
-    status !== "all" || approval !== "all" || salespersonId || issueFrom || issueTo || dueFrom || dueTo || tagIds.length > 0;
+  const filterCount = countFilters(status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds);
+  const hasFilters = filterCount > 0;
 
   const clear = () => {
     setStatus("all");
@@ -299,6 +290,7 @@ export function InvoiceManager() {
         description="Create, send and track invoices through to payment."
         action={
           <div className="flex items-center gap-2">
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={filterCount} />
             <ExportButton
               resource="invoices"
               params={listParams}
@@ -320,6 +312,9 @@ export function InvoiceManager() {
           <Search className="pointer-events-none absolute left-2.5 top-[31px] h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8" />
         </div>
+
+        {/* The rest only once Filters is pressed (2026-10-22); the search stays out. */}
+        {filtersOpen && (<>
 
         <Field label="Status">
           <Select value={status} onValueChange={(v) => setStatus(v as InvoiceStatus | "all")}>
@@ -376,6 +371,7 @@ export function InvoiceManager() {
             <X className="h-4 w-4" /> Clear
           </Button>
         )}
+        </>)}
       </div>
 
       {/* Only once something is ticked. A row of controls that is always there

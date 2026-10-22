@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useState } from "react";
+import { use } from "react";
+import { useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { ArrowLeft, User, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -26,9 +26,9 @@ const day = (iso: string) => new Date(iso).toLocaleDateString();
  */
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const search = useSearchParams();
-  const [from, setFrom] = useState(search.get("from") ?? monthStart());
-  const [to, setTo] = useState(search.get("to") ?? today());
+  // In the address bar (2026-10-22), read back as the salespeople list links here — so a refresh or a shared link keeps the same period and page.
+  const [from, setFrom] = useUrlParam("from", monthStart());
+  const [to, setTo] = useUrlParam("to", today());
 
   const { data, isLoading } = usePersonDetail(id, { from, to });
 

@@ -107,7 +107,63 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
     lateEntry: lateView((doc as unknown as { lateEntry?: unknown }).lateEntry),
     ...transferView(doc),
+    ...ownCategory(doc),
   };
+}
+
+/** The line's own category, if somebody gave it one (2026-10-22). */
+function ownCategory(doc: BankTransactionDoc): { category?: BankTransactionDTO["category"] } {
+  const d = doc as unknown as { category?: string | null; categoryName?: string; subcategory?: string | null; subcategoryName?: string };
+  if (!d.category) return {};
+  return {
+    category: {
+      slug: d.category,
+      name: d.categoryName || d.category,
+      ...(d.subcategory ? { subcategory: d.subcategory, subcategoryName: d.subcategoryName || d.subcategory } : {}),
+      fromExpense: false,
+    },
+  };
+}
+
+/**
+ * The category of the expense behind each line an expense paid from the account made (2026-10-22) — so the cash
+ * book shows what every payment out was for, whether typed there or entered as an expense.
+ */
+async function withExpenseCategories(orgId: string, rows: BankTransactionDTO[]): Promise<BankTransactionDTO[]> {
+  const ids = [...new Set(rows.flatMap((r) => (r.category ? [] : r.matches.filter((m) => m.type === "expense").map((m) => m.referenceId))))]
+    .filter((id) => Types.ObjectId.isValid(id));
+  if (!ids.length) return rows;
+  const { Expense } = await import("../expense/expense.model");
+  const found = await Expense.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, organizationId: new Types.ObjectId(orgId) })
+    .select("category categoryName subcategory subcategoryName").lean<any[]>();
+  const byId = new Map(found.map((e) => [String(e._id), e]));
+  return rows.map((r) => {
+    if (r.category) return r;
+    const e = r.matches.filter((m) => m.type === "expense").map((m) => byId.get(m.referenceId)).find(Boolean);
+    if (!e?.category) return r;
+    return {
+      ...r,
+      category: {
+        slug: e.category,
+        name: e.categoryName || e.category,
+        ...(e.subcategory ? { subcategory: e.subcategory, subcategoryName: e.subcategoryName || e.subcategory } : {}),
+        fromExpense: true,
+      },
+    };
+  });
+}
+
+/**
+ * The category to save on a line (2026-10-22): checked against the organization's expense categories, and only on
+ * money going out — money in, or "", has none.
+ */
+async function lineCategory(orgId: string, amountMinor: number, category: string | undefined, subcategory: string | undefined) {
+  const none = { category: null, categoryName: "", subcategory: null, subcategoryName: "" };
+  if (!category?.trim()) return none;
+  if (amountMinor >= 0) throw new AppError("VALIDATION_ERROR", "A category is for money paid out — leave it empty on money coming in");
+  const { resolveExpenseCategory } = await import("../expense-category/expense-category.service");
+  const c = await resolveExpenseCategory(orgId, category.trim(), subcategory);
+  return { category: c.category, categoryName: c.categoryName, subcategory: c.subcategory, subcategoryName: c.subcategoryName };
 }
 
 /** The line's side of a transfer, if it is one (2026-10-22). */
@@ -405,6 +461,13 @@ export async function updateTransaction(
     // Direction follows the sign, exactly as it does on the way in.
     tx.type = input.amountMinor >= 0 ? "credit" : "debit";
   }
+  // Given, it is checked; a line that turns into money coming in loses one it had.
+  const t = tx as unknown as { category?: string | null; subcategory?: string | null };
+  if (input.category !== undefined) {
+    Object.assign(tx, await lineCategory(orgId, tx.amountMinor, input.category, input.subcategory));
+  } else if (t.category && tx.amountMinor >= 0) {
+    Object.assign(tx, await lineCategory(orgId, tx.amountMinor, "", undefined));
+  }
   await tx.save();
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, bankLateInfo(tx));
   else if (lateNow?.withdraw) await withdrawLateFor(orgId, "bank_line", tx._id);
@@ -531,6 +594,7 @@ export async function addTransaction(
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
   const txType = input.amountMinor >= 0 ? "credit" : "debit";
+  const category = await lineCategory(orgId, input.amountMinor, input.category, input.subcategory);
   const lateNow = source === "manual"
     ? await lateForDate(orgId, late ? { ...late, reason: input.lateReason ?? late.reason } : undefined, input.date, null, null)
     : null;
@@ -554,6 +618,7 @@ export async function addTransaction(
     importBatchId: importBatchId ?? undefined,
     notes: input.notes ?? "",
     lateEntry: lateNow?.next ?? null,
+    ...category,
   });
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, bankLateInfo(doc));
 
@@ -814,7 +879,7 @@ export async function listTransactions(
   accountId: string,
   query: BankTransactionQuery,
 ): Promise<Paginated<BankTransactionDTO>> {
-  const { page, pageSize, sort, dir, q, status, dateFrom, dateTo, isReconciled, source } = query;
+  const { page, pageSize, sort, dir, q, status, dateFrom, dateTo, isReconciled, source, category, subcategory } = query;
   const filter: Record<string, unknown> = {
     organizationId: new Types.ObjectId(orgId),
     accountId: new Types.ObjectId(accountId),
@@ -828,8 +893,21 @@ export async function listTransactions(
     if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59.999Z");
     filter.date = dateFilter;
   }
+  const and: Record<string, unknown>[] = [];
   const orClauses = searchOr(q, ["description", "reference"]);
-  if (orClauses) Object.assign(filter, { $or: orClauses });
+  if (orClauses) and.push({ $or: orClauses });
+  // What it was for (2026-10-22): its own category, or that of the expense that made it. "none": money paid out
+  // that says nothing — not an expense's, not a transfer.
+  if (category === "none") {
+    and.push({ amountMinor: { $lt: 0 }, category: null, transfer: null, matches: { $not: { $elemMatch: { type: "expense" } } } });
+  } else if (category) {
+    const own: Record<string, unknown> = { category, ...(subcategory ? { subcategory } : {}) };
+    const { Expense } = await import("../expense/expense.model");
+    const lines = await Expense.find({ organizationId: new Types.ObjectId(orgId), category, ...(subcategory ? { subcategory } : {}), bankAccountId: new Types.ObjectId(accountId), bankTransactionId: { $ne: null } })
+      .distinct("bankTransactionId");
+    and.push({ $or: [own, { _id: { $in: lines } }] });
+  }
+  if (and.length) filter.$and = and;
 
   const [docs, total] = await Promise.all([
     BankTransaction.find(filter)
@@ -850,7 +928,7 @@ export async function listTransactions(
     BankTransaction.countDocuments(filter),
   ]);
   return {
-    data: (docs as unknown as BankTransactionDoc[]).map(txToDTO),
+    data: await withExpenseCategories(orgId, (docs as unknown as BankTransactionDoc[]).map(txToDTO)),
     meta: pageMeta(total, page, pageSize),
   };
 }

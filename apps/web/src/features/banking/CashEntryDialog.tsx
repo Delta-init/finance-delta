@@ -13,6 +13,8 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCreateBankTransaction, useUpdateBankTransaction } from "@/features/banking/api";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { useExpenseCategories } from "@/features/expense-categories/api";
+import { CategoryPicker, choiceComplete, type CategoryChoice } from "@/features/expense-categories/CategoryPicker";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -49,6 +51,9 @@ export function CashEntryDialog({
   const [outAmount, setOutAmount] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+  // What money paid out was for (the user, 2026-10-22): an expense category and subcategory — optional.
+  const { data: categories, isLoading: categoriesLoading } = useExpenseCategories();
+  const [choice, setChoice] = useState<CategoryChoice>({ category: "", subcategory: "" });
   // Dated back: why — a manager approves it (late entries, 2026-10-21). A cash count's adjustment is never asked.
   const [lateReason, setLateReason] = useState("");
   const lateDate = useLateDate(date, entry?.date);
@@ -67,6 +72,10 @@ export function CashEntryDialog({
       setReference(entry.reference ?? "");
       setNotes(entry.notes ?? "");
       setLateReason("");
+      // Its own category only: an expense's line is changed from the expense.
+      setChoice(entry.category && !entry.category.fromExpense
+        ? { category: entry.category.slug, subcategory: entry.category.subcategory ?? "" }
+        : { category: "", subcategory: "" });
     } else {
       setDate(today());
       setDescription("");
@@ -75,6 +84,7 @@ export function CashEntryDialog({
       setReference("");
       setNotes("");
       setLateReason("");
+      setChoice({ category: "", subcategory: "" });
     }
   }, [open, entry]);
 
@@ -82,7 +92,10 @@ export function CashEntryDialog({
   const outMinor = toMinor(outAmount || "0");
   const bothSides = inMinor > 0 && outMinor > 0;
   const amountMinor = inMinor > 0 ? inMinor : -outMinor;
-  const canSubmit = description.trim().length > 0 && (inMinor > 0 || outMinor > 0) && !bothSides && (!askLate || lateReason.trim().length > 0);
+  const paidOut = outMinor > 0 && !bothSides;
+  // Optional, but once a category is picked its subcategory is needed (as on an expense).
+  const categoryOk = !paidOut || !choice.category || choiceComplete(categories, choice);
+  const canSubmit = description.trim().length > 0 && (inMinor > 0 || outMinor > 0) && !bothSides && categoryOk && (!askLate || lateReason.trim().length > 0);
 
   async function submit() {
     if (!canSubmit) return;
@@ -93,6 +106,9 @@ export function CashEntryDialog({
       reference: reference.trim(),
       notes: notes.trim(),
       ...(askLate ? { lateReason: lateReason.trim() } : {}),
+      // "" clears one an entry had, and money coming in has none.
+      category: paidOut ? choice.category : "",
+      subcategory: paidOut ? choice.subcategory : "",
     };
     try {
       if (editing) {
@@ -169,6 +185,21 @@ export function CashEntryDialog({
               />
             </div>
           </div>
+
+          {paidOut && (
+            <div className="space-y-2">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <CategoryPicker categories={categories ?? []} value={choice} onChange={setChoice} idPrefix="cash" loading={categoriesLoading} />
+              </div>
+              {choice.category ? (
+                <button type="button" className="text-xs text-foreground-muted hover:text-foreground" onClick={() => setChoice({ category: "", subcategory: "" })}>
+                  Clear the category
+                </button>
+              ) : (
+                <p className="text-xs text-foreground-muted">Optional — what the money was spent on.</p>
+              )}
+            </div>
+          )}
 
           <LateReasonField late={askLate} days={lateDate.days} value={lateReason} onChange={setLateReason} what="entry" />
 

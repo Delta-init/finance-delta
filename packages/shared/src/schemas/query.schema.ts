@@ -175,6 +175,9 @@ export const bankTransactionQuerySchema = listQuerySchema.extend({
   dateTo: z.string().optional(),
   isReconciled: queryBool,
   source: z.enum(["manual", "import"]).optional(),
+  /** What it was for (2026-10-22): an expense category's slug — its own or its expense's — or "none" for money out with none. */
+  category: z.string().max(60).optional(),
+  subcategory: z.string().max(60).optional(),
 });
 export type BankTransactionQuery = z.infer<typeof bankTransactionQuerySchema>;
 

@@ -17,6 +17,9 @@ import { CashCountDialog } from "@/features/banking/CashCountDialog";
 import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
 import { TransferDialog } from "@/features/banking/TransferDialog";
 import { EntryReceipts } from "@/features/banking/EntryReceipts";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useExpenseCategories } from "@/features/expense-categories/api";
+import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import {
   useBankTransactions,
   useDeleteBankTransaction, useUnlinkTransaction} from "@/features/banking/api";
@@ -53,6 +56,8 @@ const EXPORT_COLUMNS = (account: BankAccount): ExportColumn<BankTransaction>[] =
   { header: `In (${account.currency})`, value: (t) => (t.amountMinor >= 0 ? t.amountMinor / 100 : "") },
   { header: `Out (${account.currency})`, value: (t) => (t.amountMinor < 0 ? -t.amountMinor / 100 : "") },
   { header: `Balance (${account.currency})`, value: (t) => t.runningBalanceMinor / 100 },
+  { header: "Category", value: (t) => t.category?.name ?? "" },
+  { header: "Subcategory", value: (t) => t.category?.subcategoryName ?? "" },
   { header: "Linked to", value: (t) => t.matches.map((m) => m.referenceNumber).join(" ") },
   { header: "Receipts", value: (t) => t.attachments.length },
   { header: "Counted", value: (t) => (t.isReconciled ? "yes" : "") },
@@ -83,12 +88,20 @@ export function CashBook({ account }: { account: BankAccount }) {
   // A tin is read a month at a time, and exported the same way.
   const [dateFrom, setDateFrom] = useUrlParam("book_from", "", { page: "book_page" });
   const [dateTo, setDateTo] = useUrlParam("book_to", "", { page: "book_page" });
+  // What it was for (2026-10-22): a category, then one of its subcategories — or "none", money out with none yet.
+  const { data: categories } = useExpenseCategories();
+  const [category, setCategory] = useUrlParam("book_category", "", { page: "book_page" });
+  const [subcategory, setSubcategory] = useUrlParam("book_sub", "", { page: "book_page" });
+  const pickCategory = (v: string) => { setCategory(v === "all" ? "" : v); setSubcategory(""); };
+  const subOptions = category && category !== "none" ? subcategoriesOf(categories, category) : [];
   const [receipts, setReceipts] = useState<BankTransaction | null>(null);
   const filters = {
     sort: "date",
     dir: "asc" as const,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    category: category || undefined,
+    subcategory: category && category !== "none" && subcategory ? subcategory : undefined,
   };
   const { data, isLoading } = useBankTransactions(account.id, {
     page,
@@ -106,7 +119,7 @@ export function CashBook({ account }: { account: BankAccount }) {
   const [transferOpen, setTransferOpen] = useState(false);
 
   const rows = data?.data ?? [];
-  const filtered = Boolean(dateFrom || dateTo);
+  const filtered = Boolean(dateFrom || dateTo || category);
 
   const total = data?.meta.total ?? 0;
 
@@ -159,11 +172,34 @@ export function CashBook({ account }: { account: BankAccount }) {
             onChange={(e) => setDateTo(e.target.value)}
           />
         </div>
+        <div className="space-y-1">
+          <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">Category</label>
+          <Select value={category || "all"} onValueChange={pickCategory}>
+            <SelectTrigger className="h-8 w-[200px]" aria-label="Category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              <SelectItem value="none">Uncategorised (money out)</SelectItem>
+              {(categories ?? []).map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {subOptions.length > 0 && (
+          <div className="space-y-1">
+            <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">Subcategory</label>
+            <Select value={subcategory || "all"} onValueChange={(v) => setSubcategory(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-8 w-[200px]" aria-label="Subcategory"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All subcategories</SelectItem>
+                {subOptions.map((x) => <SelectItem key={x.slug} value={x.slug}>{x.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         {filtered && (
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => { setDateFrom(""); setDateTo(""); }}
+            onClick={() => { setDateFrom(""); setDateTo(""); pickCategory("all"); }}
           >
             <X className="mr-1 h-3.5 w-3.5" /> Clear
           </Button>
@@ -189,6 +225,7 @@ export function CashBook({ account }: { account: BankAccount }) {
             <tr className="border-b border-border text-xs uppercase tracking-wide text-foreground-subtle">
               <th className="px-4 py-2 text-left font-medium">Date</th>
               <th className="px-4 py-2 text-left font-medium">Description</th>
+              <th className="px-4 py-2 text-left font-medium">Category</th>
               <th className="px-4 py-2 text-right font-medium">In</th>
               <th className="px-4 py-2 text-right font-medium">Out</th>
               <th className="px-4 py-2 text-right font-medium">Balance</th>
@@ -204,6 +241,7 @@ export function CashBook({ account }: { account: BankAccount }) {
               <td className="px-4 py-2 font-medium">Opening balance</td>
               <td className="px-4 py-2" />
               <td className="px-4 py-2" />
+              <td className="px-4 py-2" />
               <td className="px-4 py-2 text-right font-numeric font-medium">
                 {formatMoney(account.openingBalanceMinor, account.currency)}
               </td>
@@ -213,7 +251,7 @@ export function CashBook({ account }: { account: BankAccount }) {
 
             {isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-foreground-muted">
+                <td colSpan={7} className="px-4 py-8 text-center text-foreground-muted">
                   Loading…
                 </td>
               </tr>
@@ -221,7 +259,7 @@ export function CashBook({ account }: { account: BankAccount }) {
 
             {!isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-foreground-muted">
+                <td colSpan={7} className="px-4 py-8 text-center text-foreground-muted">
                   Nothing recorded yet.
                 </td>
               </tr>
@@ -247,6 +285,16 @@ export function CashBook({ account }: { account: BankAccount }) {
                         <Link2 className="h-3 w-3" />
                         {tx.matches.map((m) => m.referenceNumber).join(", ")}
                       </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-xs">
+                    {tx.category ? (
+                      <span title={tx.category.fromExpense ? "From the expense it was paid for" : undefined}>
+                        <span className="text-foreground">{tx.category.name}</span>
+                        {tx.category.subcategoryName && <span className="text-foreground-muted"> › {tx.category.subcategoryName}</span>}
+                      </span>
+                    ) : (
+                      <span className="text-foreground-subtle">—</span>
                     )}
                   </td>
                   <td className="px-4 py-2 text-right font-numeric text-success">

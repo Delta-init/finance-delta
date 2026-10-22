@@ -73,6 +73,14 @@ const bankTransactionSchema = new Schema(
     /** Typed in with an old date: waiting for a manager, or what one decided (late-entry.service.ts, 2026-10-21). */
     lateEntry: { type: recordLateSchema, default: null },
     /**
+     * What money paid out was for (2026-10-22): an expense category and subcategory, by slug, with their names as
+     * they were. A line an expense made carries none — it is that expense's.
+     */
+    category: { type: String, default: null },
+    categoryName: { type: String, default: "" },
+    subcategory: { type: String, default: null },
+    subcategoryName: { type: String, default: "" },
+    /**
      * One side of a transfer between the organization's own accounts (2026-10-22, transfer.service.ts): the pair
      * share `id`; each names the other line and what moved there (another currency's figure, between currencies).
      */

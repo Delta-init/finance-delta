@@ -77,6 +77,12 @@ export const createBankTransactionSchema = z.object({
   notes: z.string().optional().default(""),
   /** Typed in with an old date: why (late entries, 2026-10-21). */
   lateReason: lateReasonSchema,
+  /**
+   * What money paid out was for (the user, 2026-10-22: "in petty add category, and category and subcategory filter"):
+   * an expense category's slug and one of its subcategories. Only on money going out; "" for none.
+   */
+  category: z.string().max(60).optional(),
+  subcategory: z.string().max(60).optional(),
 });
 export type CreateBankTransactionInput = z.infer<typeof createBankTransactionSchema>;
 
@@ -96,6 +102,9 @@ export const updateBankTransactionSchema = z
     amountMinor: z.number(),
     notes: z.string(),
     lateReason: z.string().trim().max(500),
+    /** "" clears it. */
+    category: z.string().max(60),
+    subcategory: z.string().max(60),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, "Nothing to change");
@@ -254,6 +263,17 @@ export const bankTransactionSchema = z.object({
   lateEntry: recordLateEntrySchema.optional(),
   /** One side of a transfer between the organization's own accounts (2026-10-22). */
   transfer: bankTransferLinkSchema.optional(),
+  /**
+   * What it was for (2026-10-22): the line's own category, or — on the line an expense paid from this account
+   * made — that expense's (`fromExpense`).
+   */
+  category: z.object({
+    slug: z.string(),
+    name: z.string(),
+    subcategory: z.string().optional(),
+    subcategoryName: z.string().optional(),
+    fromExpense: z.boolean(),
+  }).optional(),
 });
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 

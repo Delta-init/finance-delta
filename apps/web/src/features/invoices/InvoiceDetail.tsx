@@ -277,9 +277,6 @@ export function InvoiceDetail({ id }: { id: string }) {
           for a long time nothing said when it had not. */}
       <UndeliveredNotice invoice={invoice} onResend={() => setResendOpen(true)} />
 
-      {/* Every email sent about this invoice (the user, 2026-10-07). */}
-      <InvoiceEmailsCard invoiceId={id} onResend={!isDraft && invoice.status !== "void" ? () => setResendOpen(true) : undefined} />
-
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}
       <ApprovalPanel invoice={invoice} />
@@ -564,6 +561,9 @@ export function InvoiceDetail({ id }: { id: string }) {
           </table>
         </div>
       )}
+
+      {/* Every email sent about this invoice (the user, 2026-10-07) — at the foot, folded until opened (2026-10-22). */}
+      <InvoiceEmailsCard invoiceId={id} onResend={!isDraft && invoice.status !== "void" ? () => setResendOpen(true) : undefined} />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAllDepartments } from "@/features/departments/api";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import { QuickCreateDepartmentModal } from "@/features/departments/QuickCreateDepartmentModal";
 import { useCan } from "@/lib/use-can";
 import { ApiError, api } from "@/lib/api";
@@ -124,7 +124,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   // The people an expense can be for — the invoice form's salesperson list (2026-10-21). Reading users needs
   // user:read; without it the field isn't offered.
   const canPickSalesperson = can("user:read");
-  const { data: userList } = useUsers({ pageSize: 100, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
+  const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
   const salespeople = (userList?.data ?? []).filter((u) => u.status !== "suspended");
   const [deptModalOpen, setDeptModalOpen] = useState(false);
   // Shown only where a claim already carries one; there is no way to type a new

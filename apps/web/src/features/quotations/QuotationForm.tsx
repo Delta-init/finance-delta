@@ -48,7 +48,7 @@ import { useRecentSuggestion } from "@/features/suggestions/api";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -145,7 +145,7 @@ export function QuotationForm({
   const { baseCurrency } = useCurrency();
   const isINROrg = baseCurrency === "INR";
   const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
-  const { data: users } = useUsers({ pageSize: 100, sort: "name", dir: "asc" });
+  const { data: users } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useCreateStructure } from "@/features/commissions/api";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import type { CommissionTier } from "@delta/shared";
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -18,7 +18,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 export default function NewStructurePage() {
   const router = useRouter();
   const { mutate, isPending } = useCreateStructure();
-  const { data: usersData } = useUsers({ page: 1, pageSize: 100 });
+  const { data: usersData } = useUsers({ page: 1, pageSize: EVERYONE });
 
   const [salespersonId, setSalespersonId] = useState("");
   const [type, setType] = useState<"flat" | "percentage" | "tiered">("percentage");

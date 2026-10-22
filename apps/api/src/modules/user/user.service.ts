@@ -113,11 +113,14 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
   const employees = await Employee.find({ organizationId: orgId, userId: { $in: rows.map((u) => u._id) } })
     .select("userId departmentId").lean<{ userId: Types.ObjectId; departmentId?: Types.ObjectId | null }[]>();
   const employeeDept = new Map(employees.map((e) => [String(e.userId), e.departmentId ? String(e.departmentId) : ""]));
+  // The roles in one read: a picker now loads hundreds of people, and a read each was hundreds of round trips.
+  const roleIds = [...new Set(rows.flatMap((u) => u.memberships.filter((m) => m.organizationId.equals(orgId)).map((m) => String(m.roleId))))];
+  const roles = new Map((await Role.find({ _id: { $in: roleIds } }).select("key name")).map((r) => [String(r._id), r]));
   const results: UserDTO[] = [];
   for (const u of rows) {
     const membership = u.memberships.find((m) => m.organizationId.equals(orgId));
     if (!membership) continue;
-    const role = await Role.findById(membership.roleId).select("key name");
+    const role = roles.get(String(membership.roleId));
     if (!role) continue;
     const deptId = membership.departmentId?.toString();
     const department = deptId && deptNames.has(deptId) ? { id: deptId, name: deptNames.get(deptId)! } : null;

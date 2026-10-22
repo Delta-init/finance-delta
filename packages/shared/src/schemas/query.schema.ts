@@ -43,6 +43,11 @@ export const customerQuerySchema = listQuerySchema.extend({
 export type CustomerQuery = z.infer<typeof customerQuerySchema>;
 
 export const userQuerySchema = listQuerySchema.extend({
+  /**
+   * Up to 1,000 (2026-10-22): the salesperson pickers load everybody — at 100 a payroll of more than a hundred
+   * lost everyone past the hundredth name (Vandana, Yamini …) from every picker.
+   */
+  pageSize: z.coerce.number().int().min(1).max(1000).default(10),
   status: z.enum(["active", "suspended"]).optional(),
   /**
    * Leave out accounts that exist only so a payroll employee can be named as a

@@ -51,7 +51,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { useCustomers } from "@/features/customers/api";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import { useTaxConfig, useOrganization } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 import { useCan } from "@/lib/use-can";
@@ -201,11 +201,14 @@ export function InvoiceForm({
   title,
   submitLabel,
   onSubmit,
+  alsoSubmit,
 }: {
   initial?: Invoice;
   title: string;
   submitLabel: string;
   onSubmit: (input: CreateInvoiceInput) => Promise<void>;
+  /** A second way to save — "Save & resend to client" on one already sent (2026-10-22). Checked the same way. */
+  alsoSubmit?: { label: string; onSubmit: (input: CreateInvoiceInput) => Promise<void> };
 }) {
   const router = useRouter();
   const { baseCurrency, rateBetween, ratesDate } = useCurrency();
@@ -220,7 +223,7 @@ export function InvoiceForm({
   const mineOnly = ownOnly("invoice:read", "invoice:read:own");
 
   const { data: users } = useUsers(
-    { pageSize: 100, sort: "name", dir: "asc" },
+    { pageSize: EVERYONE, sort: "name", dir: "asc" },
     { enabled: !mineOnly },
   );
   const { data: taxConfig } = useTaxConfig();
@@ -375,10 +378,10 @@ export function InvoiceForm({
     }
   };
 
-  async function submit(values: FormValues) {
+  async function submit(values: FormValues, how: (input: CreateInvoiceInput) => Promise<void> = onSubmit) {
     setError(null);
     try {
-      await onSubmit(toApiInput(values));
+      await how(toApiInput(values));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save invoice");
     }
@@ -402,7 +405,7 @@ export function InvoiceForm({
           setSalespersonModalOpen(false);
         }}
       />
-    <form onSubmit={handleSubmit(submit)}>
+    <form onSubmit={handleSubmit((v) => submit(v))}>
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface/85 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3">
@@ -418,6 +421,11 @@ export function InvoiceForm({
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
+          {alsoSubmit && (
+            <Button type="button" variant="outline" disabled={isSubmitting} onClick={handleSubmit((v) => submit(v, alsoSubmit.onSubmit))}>
+              {alsoSubmit.label}
+            </Button>
+          )}
           <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : submitLabel}</Button>
         </div>
       </div>

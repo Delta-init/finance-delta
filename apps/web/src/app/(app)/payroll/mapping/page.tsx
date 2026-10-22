@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAllDepartments } from "@/features/departments/api";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import {
   useApplySync, useCreateOrgLink, useHrmsOrganizations, useIntegrationHealth,
   useOrgLinks, useRemoveOrgLink, useSyncPreview,
@@ -59,7 +59,7 @@ export default function PayrollMappingPage() {
   const departments = useAllDepartments();
   // 100 is the server's maximum; asking for 200 was rejected outright, which
   // left the finance-login picker silently empty rather than merely short.
-  const users = useUsers({ page: 1, pageSize: 100 });
+  const users = useUsers({ page: 1, pageSize: EVERYONE });
 
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, SyncDecision>>({});

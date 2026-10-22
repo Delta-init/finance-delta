@@ -17,7 +17,7 @@ import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
@@ -127,7 +127,7 @@ export default function ExpensesPage() {
     if (sp) setSalesperson(sp);
   }, []);
   const canPickSalesperson = useCan().can("user:read");
-  const { data: userList } = useUsers({ pageSize: 100, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
+  const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
   useEffect(() => t.resetPage(), [status, payment, category, subcategory, recurring, dateFrom, dateTo, salesperson]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).

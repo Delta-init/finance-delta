@@ -22,7 +22,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
-import { useUsers } from "@/features/users/api";
+import { useUsers, EVERYONE } from "@/features/users/api";
 import { useTableQuery } from "@/lib/use-table-query";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
@@ -197,7 +197,7 @@ export function InvoiceManager() {
   }
 
   const { data: users } = useUsers(
-    { pageSize: 100, sort: "name", dir: "asc" },
+    { pageSize: EVERYONE, sort: "name", dir: "asc" },
     { enabled: !mineOnly },
   );
 

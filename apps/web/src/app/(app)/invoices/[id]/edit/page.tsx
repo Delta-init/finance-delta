@@ -4,7 +4,7 @@ import { use } from "react";
 import { useRouter } from "next/navigation";
 import { approvalBlocksEditing, type UpdateInvoiceInput } from "@delta/shared";
 import { InvoiceForm } from "@/features/invoices/InvoiceForm";
-import { useInvoice, useUpdateInvoice } from "@/features/invoices/api";
+import { useInvoice, useResendInvoice, useUpdateInvoice } from "@/features/invoices/api";
 import { useCan } from "@/lib/use-can";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -18,14 +18,17 @@ export default function EditInvoicePage({
   const router = useRouter();
   const { data: invoice, isLoading } = useInvoice(id);
   const update = useUpdateInvoice(id);
+  const resend = useResendInvoice();
   const { can } = useCan();
 
   if (isLoading) return <div className="p-6 text-sm text-foreground-muted">Loading…</div>;
   if (!invoice) return <div className="p-6 text-sm text-foreground-muted">Invoice not found.</div>;
-  if (invoice.status !== "draft") {
+  // A sent invoice can be corrected (2026-10-22) — the invoice page offered Edit and the server allowed it, but
+  // this screen still said drafts only. A voided one cannot: it is a cancelled record, restored first.
+  if (invoice.status === "void") {
     return (
       <div className="p-6 text-sm text-foreground-muted">
-        Only draft invoices can be edited.
+        This invoice was voided. Restore it first, then make the correction.
       </div>
     );
   }
@@ -51,12 +54,30 @@ export default function EditInvoicePage({
     }
   }
 
+  // Already with the client: saved, and the corrected invoice emailed to them again.
+  async function handleSaveAndResend(input: UpdateInvoiceInput) {
+    try {
+      await update.mutateAsync(input);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to save invoice");
+      return;
+    }
+    try {
+      await resend.mutateAsync({ id });
+      toast.success("Saved, and the corrected invoice sent to the client again");
+    } catch (e) {
+      toast.error(`Saved — but not resent: ${e instanceof ApiError ? e.message : "the email could not be sent"}`);
+    }
+    router.push(`/invoices/${id}`);
+  }
+
   return (
     <InvoiceForm
       initial={invoice}
       title={`Edit ${invoice.invoiceNumber}`}
       submitLabel="Save changes"
       onSubmit={handleSubmit}
+      alsoSubmit={invoice.status !== "draft" ? { label: "Save & resend to client", onSubmit: handleSaveAndResend } : undefined}
     />
   );
 }

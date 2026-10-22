@@ -10,6 +10,12 @@ import { api, type QueryParams } from "@/lib/api";
 
 const KEY = ["users"] as const;
 
+/**
+ * A page size that takes in everybody, for the salesperson pickers (2026-10-22). At 100 — the old cap — a payroll of
+ * more than a hundred lost everyone past the hundredth name from every picker.
+ */
+export const EVERYONE = 1000;
+
 export function useUsers(params: QueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, params],

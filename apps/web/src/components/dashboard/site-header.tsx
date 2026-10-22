@@ -39,7 +39,8 @@ function GlobalSearch() {
     staleTime: 10_000,
   });
 
-  const hasResults = data && (data.invoices.length + data.quotations.length + data.customers.length) > 0;
+  // Quotations are out of finance's menus (the user, 2026-10-22), so the search does not offer them either.
+  const hasResults = data && (data.invoices.length + data.customers.length) > 0;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -57,7 +58,6 @@ function GlobalSearch() {
 
   const allResults = data ? [
     ...data.invoices.map((r) => ({ ...r, type: "Invoice" })),
-    ...data.quotations.map((r) => ({ ...r, type: "Quotation" })),
     ...data.customers.map((r) => ({ ...r, type: "Customer" })),
   ] : [];
 

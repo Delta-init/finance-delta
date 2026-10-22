@@ -1,34 +1,40 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
-  GraduationCap,
   LayoutDashboard,
-  FileText,
-  ClipboardList,
   ReceiptText,
+  Receipt,
   Users2,
+  UserCog,
   ShoppingCart,
   Truck,
   Landmark,
   BarChart3,
   Package,
+  PackageSearch,
   ShieldCheck,
   Tags,
   Settings,
   LifeBuoy,
   LogOut,
-  FileX2,
   CreditCard,
-  TrendingUp,
+  Percent,
+  PiggyBank,
+  Network,
+  UserRound,
+  CalendarDays,
   Building2,
   Repeat,
   Link2,
   Wallet,
+  WalletMinimal,
   WalletCards,
   HandCoins,
   Banknote,
+  BadgeDollarSign,
   ClipboardCheck,
   Coins,
   UserPlus,
@@ -36,16 +42,19 @@ import {
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
-import { canViewLate, useLateEntriesMe } from "@/features/late-entries/api";
+import { useLateEntriesMe } from "@/features/late-entries/api";
+import { useUiStore } from "@/store/ui";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
+  SidebarGroupToggle,
+  SidebarGroupItems,
+  SidebarFlyout,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { OrgSwitcher } from "@/components/org-switcher/OrgSwitcher";
@@ -91,15 +100,29 @@ interface NavItem {
 }
 
 interface NavGroup {
+  /** Remembered open or closed under this, per browser. */
+  key: string;
+  /** A category, opened and closed by its row; without one, its items stand on their own (the Dashboard). */
   label?: string;
+  /** The category's icon when the menu is minimised — one each, none alike. */
+  icon?: LucideIcon;
   items: NavItem[];
 }
 
 /** Deciding any one of these makes somebody an approver. */
 const APPROVER_PERMISSIONS = ["invoice:write", "budget:approve", "tetra_deposit:approve", "expense:approve", "bill:approve", "payroll:approve"] as const satisfies readonly Permission[];
 
+/*
+ * The menu in categories (the user, 2026-10-22: "collapse like sidebar items, with a parent like categories, the
+ * sidebar more friendly"), each opened and closed by its own row.
+ *
+ * Out of the menu since then: Quotations, Sales Orders, New Enrolment (enrolments come from the CRMs), Purchase
+ * Orders and Vendor Credits — like Credit Notes before them (2026-10-21). Their pages, and anything already made in
+ * them, stay as they were.
+ */
 const NAV: NavGroup[] = [
   {
+    key: "home",
     items: [
       // Ungated deliberately: everybody needs somewhere to land, and the page
       // itself decides whether to show the company overview or the reader's
@@ -109,83 +132,105 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    key: "sales",
     label: "Sales",
+    icon: BadgeDollarSign,
     items: [
-      { href: "/quotations", label: "Quotations", icon: FileText, enabled: true, permission: "quotation:read" },
-      { href: "/sales-orders", label: "Sales Orders", icon: ClipboardList, enabled: true, permission: "salesorder:read" },
       { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
+      { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
+      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
+    ],
+  },
+  {
+    // Everything that waits on somebody in finance.
+    key: "approvals",
+    label: "Approvals",
+    icon: ClipboardCheck,
+    items: [
       // Only for people who can actually decide. Somebody who sees just their
       // own invoices is on the far side of this queue, and a menu item leading
       // to "not something your role does" is worse than no menu item.
       // Everything waiting on a decision, of every kind, so anybody who decides
       // any of them belongs here.
       { href: "/approvals", label: "Approvals", icon: ClipboardCheck, enabled: true, permission: [...APPROVER_PERMISSIONS], badge: "total" },
-      // Expenses, bills and payments typed in with an old date, for a manager to approve or reject — and, since
-      // 2026-10-20, for whoever sees expenses or bills to read (their own, with only their own expenses).
+      // Entries typed in with an old date, for a manager to approve or reject — managers only again (2026-10-22).
       { href: "/late-entries", label: "Late Entries", icon: Clock, enabled: true, managerOnly: true },
-      // Taking an enrolment is the counsellor's whole job, so it is its own
-      // entry rather than something reached through the invoice list.
-      { href: "/enrolments/new", label: "New Enrolment", icon: GraduationCap, enabled: true, permission: ["invoice:write", "invoice:write:own"] },
-      // Credit Notes taken out of the menu (the user, 2026-10-21: "remove the credit note") — not used here; any
-      // already made, and their pages, stay as they were.
-      { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
-      { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
-    ],
-  },
-  {
-    label: "Purchases",
-    items: [
-      { href: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList, enabled: true, permission: "po:read" },
-      { href: "/procurement", label: "Procurement", icon: ClipboardList, enabled: true, permission: "expense:approve", badge: "procurement" },
-      { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read", badge: "bill" },
-      { href: "/vendor-credits", label: "Vendor Credits", icon: FileX2, enabled: true, permission: "bill:read" },
-      { href: "/vendors", label: "Vendors", icon: Truck, enabled: true, permission: "vendor:read" },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      { href: "/expenses", label: "Expenses", icon: ReceiptText, enabled: true, permission: ["expense:read", "expense:read:own"], badge: "expense" },
-      { href: "/budgets", label: "Budgets & Funds", icon: WalletCards, enabled: true, permission: ["budget:read", "budget:read:own", "budget:manage", "budget:request", "budget:approve"], badge: "fund_request" },
-      // Every deposit Tetra Commission sent — the record; they are decided on Approvals.
-      { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
-      { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
-      { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
-      // Every email finance tried to send, and whether it went (admins and accountants).
-      { href: "/email-log", label: "Email Log", icon: MailCheck, enabled: true, permission: "ledger:write" },
-      // A tin is a bank account underneath, and finding it meant knowing that.
-      // The people who keep one do not think of it as a bank account.
-      { href: "/petty-cash", label: "Petty Cash", icon: Wallet, enabled: true, permission: "banking:read" },
-      { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
-      { href: "/reports", label: "Reports", icon: BarChart3, enabled: true, permission: "report:read" },
-      { href: "/reports/daily", label: "Daily Report", icon: BarChart3, enabled: true, permission: "report:read" },
-      { href: "/reports/salesperson", label: "Salesperson", icon: TrendingUp, enabled: true, permission: "report:read" },
-      { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true, permission: "report:read" },
-      { href: "/commissions", label: "Commissions", icon: TrendingUp, enabled: true, permission: "commission:read" },
-      { href: "/loans", label: "Loans & Credit", icon: Landmark, enabled: true, permission: "loan:read" },
-      { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read", badge: "payroll" },
-      { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
+      { href: "/procurement", label: "Procurement", icon: PackageSearch, enabled: true, permission: "expense:approve", badge: "procurement" },
       // Paid out on approval, like a purchase request — so the same right.
       { href: "/advances", label: "Salary Advances", icon: HandCoins, enabled: true, permission: "expense:approve", badge: "salary_advance" },
       // Hiring requests whose cost is not budgeted, after HR approved them in HRMS (2026-10-15).
       { href: "/hiring", label: "Hiring Requests", icon: UserPlus, enabled: true, permission: "expense:approve", badge: "hiring" },
       // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
       { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
+      // Every deposit Tetra Commission sent — the record; they are decided on Approvals.
+      { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
     ],
   },
   {
+    key: "expenses",
+    label: "Expenses",
+    icon: Receipt,
+    items: [
+      { href: "/expenses", label: "Expenses", icon: Receipt, enabled: true, permission: ["expense:read", "expense:read:own"], badge: "expense" },
+      { href: "/expenses/recurring", label: "Recurring", icon: Repeat, enabled: true, permission: "expense:read" },
+      { href: "/budgets", label: "Budgets & Funds", icon: WalletCards, enabled: true, permission: ["budget:read", "budget:read:own", "budget:manage", "budget:request", "budget:approve"], badge: "fund_request" },
+    ],
+  },
+  {
+    key: "purchases",
+    label: "Purchases",
+    icon: ShoppingCart,
+    items: [
+      { href: "/bills", label: "Bills", icon: ShoppingCart, enabled: true, permission: "bill:read", badge: "bill" },
+      { href: "/vendors", label: "Vendors", icon: Truck, enabled: true, permission: "vendor:read" },
+      { href: "/inventory", label: "Inventory", icon: Package, enabled: true, permission: "inventory:read" },
+    ],
+  },
+  {
+    key: "banking",
+    label: "Banking",
+    icon: Landmark,
+    items: [
+      { href: "/banking", label: "Banking", icon: Landmark, enabled: true, permission: "banking:read" },
+      // A tin is a bank account underneath, and finding it meant knowing that.
+      // The people who keep one do not think of it as a bank account.
+      { href: "/petty-cash", label: "Petty Cash", icon: WalletMinimal, enabled: true, permission: "banking:read" },
+      { href: "/loans", label: "Loans & Credit", icon: PiggyBank, enabled: true, permission: "loan:read" },
+    ],
+  },
+  {
+    key: "payroll",
+    label: "Payroll",
+    icon: Wallet,
+    items: [
+      { href: "/payroll/runs", label: "Payroll", icon: Wallet, enabled: true, permission: "payroll:read", badge: "payroll" },
+      { href: "/payroll/mapping", label: "Payroll Mapping", icon: Link2, enabled: true, permission: "payroll:read" },
+      { href: "/commissions", label: "Commissions", icon: Percent, enabled: true, permission: "commission:read" },
+    ],
+  },
+  {
+    key: "reports",
+    label: "Reports",
+    icon: BarChart3,
+    items: [
+      { href: "/reports", label: "Reports", icon: BarChart3, enabled: true, permission: "report:read" },
+      { href: "/reports/daily", label: "Daily Report", icon: CalendarDays, enabled: true, permission: "report:read" },
+      { href: "/reports/salesperson", label: "Salesperson", icon: UserRound, enabled: true, permission: "report:read" },
+      { href: "/reports/department", label: "Dept. Report", icon: Building2, enabled: true, permission: "report:read" },
+    ],
+  },
+  {
+    key: "admin",
     label: "Administration",
+    icon: Settings,
     items: [
-      { href: "/admin/users", label: "Users", icon: Users2, enabled: true, permission: "user:read" },
+      { href: "/admin/users", label: "Users", icon: UserCog, enabled: true, permission: "user:read" },
       { href: "/admin/roles", label: "Roles", icon: ShieldCheck, enabled: true, permission: "role:read" },
-      { href: "/admin/departments", label: "Departments", icon: Building2, enabled: true, permission: "department:update" },
+      { href: "/admin/departments", label: "Departments", icon: Network, enabled: true, permission: "department:update" },
       { href: "/admin/tags", label: "Tags", icon: Tags, enabled: true, permission: "tag:read" },
+      // Every email finance tried to send, and whether it went (admins and accountants).
+      { href: "/email-log", label: "Email Log", icon: MailCheck, enabled: true, permission: "ledger:write" },
       { href: "/settings", label: "Settings", icon: Settings, enabled: true, permission: "organization:read" },
-    ],
-  },
-  {
-    label: "Platform",
-    items: [
       { href: "/platform", label: "All Organizations", icon: Building2, enabled: true, superAdminOnly: true },
     ],
   },
@@ -211,29 +256,85 @@ export function AppSidebar({
     !user.isSuperAdmin &&
     hasPermission(user.permissions, "invoice:read:own") &&
     !hasPermission(user.permissions, "invoice:read");
-  const { collapsed, setOpenMobile, isMobile } = useSidebar();
+  const { collapsed, setOpenMobile, isMobile, toggle } = useSidebar();
   const closeOnMobile = () => isMobile && setOpenMobile(false);
+  const navGroups = useUiStore((s) => s.navGroups);
+  const setNavGroup = useUiStore((s) => s.setNavGroup);
 
   // Only asked for by somebody who decides something; for everybody else there
   // is nothing it could count.
   const approver = user.isSuperAdmin || APPROVER_PERMISSIONS.some((p) => hasPermission(user.permissions, p));
   const { data: waiting } = useApprovalSummary(approver);
   const { data: late } = useLateEntriesMe();
-  const badgeFor = (key?: ApprovalType | "total") => {
+  const badgeFor = (item: NavItem) => {
+    if (item.managerOnly) return late?.isManager ? late.pending : 0;
+    const key = item.badge;
     if (!key || !waiting) return 0;
     if (key === "total") return waiting.total;
     return waiting.groups.find((g) => g.type === key)?.count ?? 0;
   };
 
+  const groups = NAV.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (item.superAdminOnly && !user.isSuperAdmin) return false;
+      // Managers only (2026-10-22) — tagged Manager here, or a super admin.
+      if (item.managerOnly && !late?.isManager) return false;
+      if (
+        item.hideWhenOwnScopedOnly &&
+        ownScopedOnly &&
+        !(item.unhideWith && hasPermission(user.permissions, item.unhideWith))
+      ) {
+        return false;
+      }
+      if (item.permission && !user.isSuperAdmin) {
+        const needed = Array.isArray(item.permission) ? item.permission : [item.permission];
+        if (!needed.some((p) => hasPermission(user.permissions, p))) return false;
+      }
+      return true;
+    }),
+  })).filter((g) => g.items.length > 0);
+
+  // The page you are on: the longest match, so /expenses/recurring is Recurring and not Expenses too.
+  const activeHref = groups
+    .flatMap((g) => g.items.map((i) => i.href))
+    .filter((href) => pathname === href || pathname.startsWith(href + "/"))
+    .sort((a, b) => b.length - a.length)[0];
+  const activeGroup = groups.find((g) => g.items.some((i) => i.href === activeHref))?.key;
+  // A category opens by itself for the page you go to, even one you had shut; shut again by hand, it stays shut.
+  useEffect(() => {
+    if (activeGroup && useUiStore.getState().navGroups[activeGroup] === false) setNavGroup(activeGroup, true);
+  }, [activeGroup, setNavGroup]);
+  const isOpen = (key: string) => navGroups[key] ?? key === activeGroup;
+
+  const button = (item: NavItem) => (
+    <SidebarMenuItem key={item.href}>
+      <SidebarMenuButton
+        href={item.href}
+        label={item.label}
+        icon={<item.icon className="h-4 w-4" />}
+        active={item.href === activeHref}
+        disabled={!item.enabled}
+        onNavigate={closeOnMobile}
+        badge={badgeFor(item)}
+      />
+    </SidebarMenuItem>
+  );
+
   return (
     <Sidebar>
       {/* ── Org switcher header ─────────────────────────────────── */}
-      <div className={cn("border-b border-white/10", collapsed ? "px-2 py-3" : "px-3 py-3")}>
+      <div className={cn("border-b border-white/10", collapsed ? "flex justify-center px-2 py-3" : "px-3 py-3")}>
         {collapsed ? (
-          /* Collapsed: show just the org avatar */
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/20 text-xs font-bold text-primary-foreground">
+          /* Minimised: the organization's initials — a click opens the menu out, to switch it. */
+          <button
+            type="button"
+            onClick={toggle}
+            title={`${user.orgName} — open the menu`}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/20 text-xs font-bold text-primary-foreground transition-colors hover:bg-white/30"
+          >
             {user.orgName.slice(0, 2).toUpperCase() || "Δ"}
-          </span>
+          </button>
         ) : (
           <OrgSwitcher />
         )}
@@ -241,56 +342,74 @@ export function AppSidebar({
 
       {/* ── Nav ─────────────────────────────────────────────────── */}
       <SidebarContent>
-        {NAV.map((group, gi) => {
-          const items = group.items.filter((item) => {
-            if (item.superAdminOnly && !user.isSuperAdmin) return false;
-            if (item.managerOnly && !canViewLate(late)) return false;
-            if (
-              item.hideWhenOwnScopedOnly &&
-              ownScopedOnly &&
-              !(item.unhideWith && hasPermission(user.permissions, item.unhideWith))
-            ) {
-              return false;
-            }
-            if (item.permission && !user.isSuperAdmin) {
-              const needed = Array.isArray(item.permission) ? item.permission : [item.permission];
-              if (!needed.some((p) => hasPermission(user.permissions, p))) return false;
-            }
-            return true;
-          });
-          if (items.length === 0) return null;
-          return (
-            <SidebarGroup key={group.label ?? gi}>
-              {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
-              <SidebarMenu>
-                {items.map((item) => {
-                  const active = pathname === item.href || pathname.startsWith(item.href + "/");
-                  return (
-                    <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton
-                        href={item.href}
-                        label={item.label}
-                        icon={<item.icon className="h-4 w-4" />}
-                        active={active}
-                        disabled={!item.enabled}
-                        onNavigate={closeOnMobile}
-                        badge={item.managerOnly ? (late?.isManager ? late.pending : 0) : badgeFor(item.badge)}
-                      />
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroup>
-          );
-        })}
+        {collapsed ? (
+          // Minimised: one icon a category, its pages beside it on pointing (2026-10-22).
+          <SidebarMenu className="gap-1 px-2">
+            {groups.map((group) =>
+              group.label && group.icon ? (
+                <li key={group.key}>
+                  <SidebarFlyout
+                    label={group.label}
+                    icon={<group.icon className="h-[18px] w-[18px]" />}
+                    current={group.key === activeGroup}
+                    onNavigate={closeOnMobile}
+                    items={group.items.map((item) => ({
+                      href: item.href, label: item.label, icon: <item.icon className="h-4 w-4" />,
+                      active: item.href === activeHref, badge: badgeFor(item),
+                    }))}
+                  />
+                </li>
+              ) : (
+                group.items.map(button)
+              ),
+            )}
+          </SidebarMenu>
+        ) : (
+          groups.map((group) =>
+            group.label ? (
+              <SidebarGroup key={group.key} className="py-0.5">
+                <SidebarGroupToggle
+                  label={group.label}
+                  icon={group.icon ? <group.icon className="h-4 w-4" /> : null}
+                  open={isOpen(group.key)}
+                  onToggle={() => setNavGroup(group.key, !isOpen(group.key))}
+                  badge={group.items.reduce((n, item) => n + badgeFor(item), 0)}
+                  current={group.key === activeGroup}
+                  controls={`nav-${group.key}`}
+                />
+                <SidebarGroupItems open={isOpen(group.key)} id={`nav-${group.key}`}>
+                  <SidebarMenu>{group.items.map(button)}</SidebarMenu>
+                </SidebarGroupItems>
+              </SidebarGroup>
+            ) : (
+              <SidebarGroup key={group.key} className="pb-1">
+                <SidebarMenu>{group.items.map(button)}</SidebarMenu>
+              </SidebarGroup>
+            ),
+          )
+        )}
       </SidebarContent>
 
       {/* ── Footer: user info ───────────────────────────────────── */}
       <SidebarFooter>
-        <div className={cn("flex items-center gap-2 rounded-md p-1.5", collapsed && "justify-center")}>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-xs font-semibold text-primary-foreground">
+        <div className={cn("flex items-center gap-2 rounded-md p-1.5", collapsed && "flex-col justify-center")}>
+          <span
+            title={collapsed ? `${user.name} — ${user.isSuperAdmin ? "Super Admin" : user.roleName}` : undefined}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-xs font-semibold text-primary-foreground"
+          >
             {user.name.slice(0, 2).toUpperCase()}
           </span>
+          {collapsed && (
+            // Minimised, signing out was nowhere to be found (2026-10-22).
+            <button
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              aria-label="Sign out"
+              title="Sign out"
+              className="rounded-md p-1.5 text-primary-foreground/60 transition-colors hover:bg-white/10 hover:text-primary-foreground"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          )}
           {!collapsed && (
             <>
               <div className="min-w-0 flex-1">

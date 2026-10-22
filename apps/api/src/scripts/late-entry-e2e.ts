@@ -14,6 +14,7 @@
  *   6. An invoice payment: the same; an edit moving one back, rejected — its date and its line back.
  *   7. Entries finance makes itself (no one typing) are not asked; with days 0 nothing is.
  *   8. Super admins decide when nobody is tagged; the page answers who is a manager and how many wait.
+ *   9. Only managers read them (2026-10-22); 12–13 the old dates, for managers, across their organizations.
  *  14. A rejection sticks (2026-10-22): not asked again with another old date; a date that is not late clears it, and a
  *      rejected expense can then be sent. One card per record, its earlier requests under it; other records for the
  *      same money flagged as possible copies.
@@ -120,7 +121,7 @@ check("the managers are emailed (Mona — not Asha, not Omar)", mail?.to?.includ
 check("waiting: it can't be marked paid", /waiting for a manager/.test(await refusal(ex.markExpensePaid(ORG, e1.id, { paidOn: RECENT } as never))));
 const e1b = await expense(OLD, "Late receipt", { requiresApproval: true });
 check("…nor approved as a claim", /waiting for a manager/.test(await refusal(ex.approveExpense(ORG, e1b.id, OMAR, "Omar"))));
-check("Omar (not a manager, no expense or bill access) can't see the page", /see expenses or bills/.test(await refusal(late.listLateEntries(ORG, OMAR, { state: "pending" }))));
+check("Omar (not a manager) can't see the page", /for managers/.test(await refusal(late.listLateEntries(ORG, OMAR, { state: "pending" }))));
 check("…nor decide", /tagged Manager/.test(await refusal(late.decideLateEntry(ORG, OMAR, String(le1._id), "approved", ""))));
 check("Mona sees both waiting, oldest first", (await late.listLateEntries(ORG, MONA, { state: "pending" })).map((x) => x.refId).join() === [e1.id, e1b.id].join());
 await users.updateUser(ORG, ASHA, { isManager: true }, { userId: MONA, isSuperAdmin: false });
@@ -255,7 +256,7 @@ const decided = await late.listLateEntries(ORG, String(root._id), { state: "deci
 check("decided ones listed, newest first, with who decided", decided[0]?.refId === e6.id && decided[0]?.decidedByName === "Root Admin" && decided.some((x) => x.state === "rejected"), j(decided[0]));
 
 /* ── 9 ── */
-step("9. Who reads them (2026-10-20): expense or bill access reads all, own-expense access reads their own");
+step("9. Who reads them (2026-10-22): managers only — expense or bill access no longer does");
 const OTHER_REF = new Types.ObjectId();
 await LateEntryModel.collection.insertOne({
   organizationId: new Types.ObjectId(ORG), kind: "expense", refId: OTHER_REF, number: "EXP-OMAR", title: "Omar's taxi", amountMinor: 5_000,
@@ -263,16 +264,12 @@ await LateEntryModel.collection.insertOne({
   decidedByName: "Root Admin", decidedAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
 });
 const e9 = await expense(OLD, "Another late one");
-const reader = await late.lateEntryMe(ORG, OMAR, ["expense:read"]);
-check("Omar with expense:read: reads them all, isn't a manager, counts what waits", reader.canView === true && reader.scope === "all" && !reader.isManager && reader.pending >= 1, j(reader));
-const allRows = await late.listLateEntries(ORG, OMAR, { state: "all" }, ["expense:read"]);
-check("…All: waiting and decided together, his own and Asha's", allRows.some((x) => x.state === "pending" && x.refId === e9.id) && allRows.some((x) => x.number === "EXP-OMAR") && allRows.some((x) => x.state === "approved" && x.refId !== String(OTHER_REF)), j(allRows.map((x) => [x.number, x.state])));
-check("…never a button: he can't decide", allRows.every((x) => !x.canDecide) && /tagged Manager/.test(await refusal(late.decideLateEntry(ORG, OMAR, String((await entryFor(e9.id))._id), "approved", ""))));
-check("bill:read reads them too", (await late.lateEntryMe(ORG, OMAR, ["bill:read"])).scope === "all");
-const own = await late.listLateEntries(ORG, OMAR, { state: "all" }, ["expense:read:own"]);
-check("Omar with only his own expenses: only his own", own.length === 1 && own[0]?.number === "EXP-OMAR", j(own.map((x) => x.number)));
-const ownMe = await late.lateEntryMe(ORG, OMAR, ["expense:write:own"]);
-check("…/me says own, counting only his own waiting (none)", ownMe.scope === "own" && ownMe.canView === true && ownMe.pending === 0, j(ownMe));
+const reader = await late.lateEntryMe(ORG, OMAR);
+check("Omar, not a manager: can't read them, nothing counted", reader.canView === false && reader.scope === "none" && !reader.isManager && reader.pending === 0, j(reader));
+check("…the list refused, even his own entered late", /for managers/.test(await refusal(late.listLateEntries(ORG, OMAR, { state: "all" }))));
+check("…nor decide", /tagged Manager/.test(await refusal(late.decideLateEntry(ORG, OMAR, String((await entryFor(e9.id))._id), "approved", ""))));
+const allRows = await late.listLateEntries(ORG, String(root._id), { state: "all" });
+check("a manager reads them all: waiting and decided together, Omar's and Asha's", allRows.some((x) => x.state === "pending" && x.refId === e9.id) && allRows.some((x) => x.number === "EXP-OMAR") && allRows.some((x) => x.state === "approved" && x.refId !== String(OTHER_REF)), j(allRows.map((x) => [x.number, x.state])));
 const waitingNow = await late.listLateEntries(ORG, String(root._id), { state: "pending" });
 check("a manager still decides them, and sees the buttons", waitingNow.some((x) => x.refId === e9.id && x.canDecide), j(waitingNow.map((x) => [x.number, x.canDecide])));
 
@@ -319,23 +316,24 @@ check("a waiting line deleted: no longer asked", (await entryFor(l4.id))?.state 
 
 /* ── 12 ── */
 step("12. Old dates: everything entered with a date before the day it was typed");
-const old = await late.oldDateEntries(ORG, OMAR, ["expense:read"]);
+const old = await late.oldDateEntries(ORG, String(root._id));
 const oldExp = old.rows.find((r: any) => r.id === e10.id);
 check("an expense typed yesterday-dated: listed, typed in finance, 1 day back, with its late entry", oldExp?.origin === "typed" && oldExp.daysBack === 1 && oldExp.late?.state === "pending", j(oldExp));
 const oldLine = old.rows.find((r: any) => r.id === l2.id);
 check("a bank line: listed with its late entry and its account's link", oldLine?.kind === "bank_line" && oldLine.late?.state === "approved" && oldLine.href === `/banking/${cash.id}`, j(oldLine));
 check("counts by how it got in, and the rules", old.counts.all === old.rows.length && old.counts.typed >= 2 && old.rules.minDays === 1 && old.rules.lateEntryDays === 1, j({ counts: old.counts, rules: old.rules }));
-check("only their own expenses: not for them", /see expenses or bills/.test(await refusal(late.oldDateEntries(ORG, OMAR, ["expense:read:own"]))));
+check("not a manager: not for them", /for managers/.test(await refusal(late.oldDateEntries(ORG, OMAR))));
 
 /* ── 13 ── */
-step("13. Old dates across organizations (2026-10-21): every one the reader reads");
+step("13. Old dates across organizations (2026-10-21): every one the reader is a manager in (2026-10-22)");
 const org2 = await Organization.create({ name: "Delta Bangalore E2E", baseCurrency: "INR" });
 const org3 = await Organization.create({ name: "Hidden E2E", baseCurrency: "AED" });
 const reader2 = await Role.create({ organizationId: org2._id, key: "reader", name: "Reader", permissions: ["expense:read"] });
-const nobody3 = await Role.create({ organizationId: org3._id, key: "none", name: "None", permissions: ["customer:read"] });
+const reader3 = await Role.create({ organizationId: org3._id, key: "reader", name: "Reader", permissions: ["expense:read", "bill:read"] });
+await users.updateUser(ORG, OMAR, { isManager: true }, { userId: ASHA, isSuperAdmin: false });
 await User.updateOne({ _id: omar._id }, { $push: { memberships: { $each: [
-  { organizationId: org2._id, roleId: reader2._id, status: "active" },
-  { organizationId: org3._id, roleId: nobody3._id, status: "active" },
+  { organizationId: org2._id, roleId: reader2._id, status: "active", isManager: true },
+  { organizationId: org3._id, roleId: reader3._id, status: "active" },
 ] } } });
 const inOrg = (o: any, date: string) => ex.createExpense(String(o._id), OMAR, {
   category: "travel_transport", subcategory: "business_taxi", description: "Auto", expenseDate: date, amountMinor: 5_000, currency: "AED", categoryOther: "", taxPct: 0,
@@ -343,13 +341,14 @@ const inOrg = (o: any, date: string) => ex.createExpense(String(o._id), OMAR, {
 } as never);
 const x2 = await inOrg(org2, back(3));
 const x3 = await inOrg(org3, back(4));
-const across = await late.oldDateEntries(ORG, OMAR, ["expense:read"]);
+const across = await late.oldDateEntries(ORG, OMAR);
 const r2 = across.rows.find((r: any) => r.id === x2.id);
-check("Omar reads this organization and Bangalore (expense:read there): both listed, each with its organization", !!r2 && r2.orgName === "Delta Bangalore E2E" && across.rows.some((r: any) => r.orgId === ORG), j(across.organizations));
-check("…not the one where his role sees no expenses", !across.rows.some((r: any) => r.id === x3.id) && !across.organizations.some((o: any) => o.name === "Hidden E2E"), j(across.organizations));
+check("Omar, tagged Manager here and in Bangalore: both listed, each with its organization", !!r2 && r2.orgName === "Delta Bangalore E2E" && across.rows.some((r: any) => r.orgId === ORG), j(across.organizations));
+check("…not the one where he isn't tagged, though his role there sees expenses and bills", !across.rows.some((r: any) => r.id === x3.id) && !across.organizations.some((o: any) => o.name === "Hidden E2E"), j(across.organizations));
 check("organizations with their counts, and the current one named", across.currentOrgId === ORG && across.organizations.find((o: any) => o.name === "Delta Bangalore E2E")?.count === 1 && across.counts.all === across.rows.length, j({ orgs: across.organizations, cur: across.currentOrgId }));
-const bySa = await late.oldDateEntries(ORG, String(root._id), []);
+const bySa = await late.oldDateEntries(ORG, String(root._id));
 check("a super admin: every organization, the hidden one too", bySa.rows.some((r: any) => r.id === x3.id) && bySa.organizations.length === 3, j(bySa.organizations));
+await users.updateUser(ORG, OMAR, { isManager: false }, { userId: ASHA, isSuperAdmin: false });
 
 /* ── 14 ── */
 step("14. A rejection sticks; one card per record; possible copies (2026-10-22)");

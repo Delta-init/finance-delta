@@ -22,15 +22,10 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useVendor, useUpdateVendor } from "@/features/vendors/api";
-import { usePurchaseOrders } from "@/features/purchase-orders/api";
 import { useBills } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
-
-const PO_STATUS_TONE: Record<string, "neutral" | "primary" | "warning" | "success" | "danger"> = {
-  draft: "neutral", sent: "primary", received: "warning", billed: "success", cancelled: "danger",
-};
 
 const BILL_STATUS_TONE: Record<string, "neutral" | "primary" | "warning" | "success" | "danger"> = {
   draft: "neutral", pending_approval: "warning", approved: "primary",
@@ -61,7 +56,6 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const { baseCurrency: orgCurrency } = useCurrency();
   const { data: vendor, isLoading } = useVendor(id);
   const updateVendor = useUpdateVendor();
-  const { data: poData } = usePurchaseOrders({ vendorId: id, limit: "50", sort: "createdAt", dir: "desc" });
   const { data: billData } = useBills({ vendorId: id, limit: "50", sort: "createdAt", dir: "desc" });
 
   const [editOpen, setEditOpen] = useState(false);
@@ -86,7 +80,6 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   if (!vendor) return <div className="flex h-64 items-center justify-center text-foreground-muted">Vendor not found.</div>;
 
   const initials = vendor.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  const pos = poData?.data ?? [];
   const bills = billData?.data ?? [];
 
   return (
@@ -165,35 +158,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          {pos.length > 0 && (
-            <div className="rounded-lg border border-border bg-surface overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-                <h2 className="text-sm font-semibold">Purchase Orders</h2>
-                <Link href={`/purchase-orders/new`} className="text-xs text-primary hover:underline">+ New PO</Link>
-              </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-foreground-muted">
-                    <th className="px-5 py-2.5 text-left font-medium">PO #</th>
-                    <th className="px-3 py-2.5 text-left font-medium">Date</th>
-                    <th className="px-3 py-2.5 text-left font-medium">Status</th>
-                    <th className="px-5 py-2.5 text-right font-medium">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {pos.map((po) => (
-                    <tr key={po.id} className="cursor-pointer hover:bg-surface-muted" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
-                      <td className="px-5 py-2.5 font-medium text-primary">{po.poNumber}</td>
-                      <td className="px-3 py-2.5 text-foreground-muted">{po.issueDate}</td>
-                      <td className="px-3 py-2.5"><Badge tone={PO_STATUS_TONE[po.status] ?? "neutral"} className="capitalize">{po.status}</Badge></td>
-                      <td className="px-5 py-2.5 text-right"><MoneyDisplay minor={po.totalMinor} currency={po.currency} className="font-medium" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
+          {/* Purchase orders taken out of finance's menus (the user, 2026-10-22) — any made stay on their own pages. */}
           {bills.length > 0 && (
             <div className="rounded-lg border border-border bg-surface overflow-hidden">
               <div className="flex items-center justify-between px-5 py-3 border-b border-border">
@@ -223,11 +188,10 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
             </div>
           )}
 
-          {pos.length === 0 && bills.length === 0 && (
+          {bills.length === 0 && (
             <div className="rounded-lg border border-border bg-surface p-8 text-center text-foreground-muted text-sm">
-              No purchase orders or bills yet.{" "}
-              <Link href="/purchase-orders/new" className="text-primary hover:underline">Create a PO</Link> or{" "}
-              <Link href="/bills/new" className="text-primary hover:underline">record a bill</Link>.
+              No bills yet.{" "}
+              <Link href="/bills/new" className="text-primary hover:underline">Record a bill</Link>.
             </div>
           )}
         </div>

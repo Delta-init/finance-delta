@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import {
-  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, hasPermission, isLateDate, lateEntryCutoff,
+  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, isLateDate, lateEntryCutoff,
   type LateEntry, type LateEntryCopy, type LateEntryEarlier, type LateEntryKind, type LateEntryMe, type LateEntryQuery,
 } from "@delta/shared";
 import { env } from "../../config/env";
@@ -327,16 +327,12 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
 // ── The page ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Who reads the page (the user, 2026-10-20: "why are late entries not visible"): managers and whoever sees
- * expenses or bills read every one; whoever only has their own expenses reads their own; nobody else. Only
- * managers decide.
+ * Who reads the page: managers only — tagged Manager here, or a super admin (the user, 2026-10-22: "late entries
+ * only show for the managers"). From 2026-10-20 whoever saw expenses or bills read every one too, and whoever only
+ * had their own expenses their own; everybody else now sees a late entry on the record itself. Only managers decide.
  */
-type LateScope = "all" | "own" | "none";
-function scopeOf(manager: boolean, permissions: string[]): LateScope {
-  if (manager || hasPermission(permissions, "expense:read") || hasPermission(permissions, "bill:read")) return "all";
-  if (hasPermission(permissions, "expense:read:own") || hasPermission(permissions, "expense:write:own")) return "own";
-  return "none";
-}
+type LateScope = "all" | "none";
+const scopeOf = (manager: boolean): LateScope => (manager ? "all" : "none");
 
 /** The names of whoever decides: the people tagged Manager, or with none tagged the super admins. */
 async function managerNames(orgId: string): Promise<string[]> {
@@ -348,20 +344,17 @@ async function managerNames(orgId: string): Promise<string[]> {
   return people.map((u) => String(u.name ?? "")).filter(Boolean).sort();
 }
 
-export async function lateEntryMe(orgId: string, userId: string, permissions: string[] = []): Promise<LateEntryMe> {
+export async function lateEntryMe(orgId: string, userId: string): Promise<LateEntryMe> {
   const [manager, days, managers] = await Promise.all([isManager(orgId, userId), lateEntryDaysOf(orgId), managerNames(orgId)]);
-  const scope = scopeOf(manager, permissions);
-  const pending = scope === "none" ? 0 : await LateEntryModel.countDocuments({
-    organizationId: oid(orgId), state: "pending", ...(scope === "own" ? { enteredById: oid(userId) } : {}),
-  });
+  const scope = scopeOf(manager);
+  const pending = scope === "none" ? 0 : await LateEntryModel.countDocuments({ organizationId: oid(orgId), state: "pending" });
   return { isManager: manager, pending, days, canView: scope !== "none", scope, managers };
 }
 
-export async function listLateEntries(orgId: string, userId: string, q: LateEntryQuery, permissions: string[] = []): Promise<LateEntry[]> {
+export async function listLateEntries(orgId: string, userId: string, q: LateEntryQuery): Promise<LateEntry[]> {
   const manager = await isManager(orgId, userId);
-  const scope = scopeOf(manager, permissions);
-  if (scope === "none") throw new AppError("FORBIDDEN", "Late entries are for people who see expenses or bills");
-  const base = { organizationId: oid(orgId), ...(scope === "own" ? { enteredById: oid(userId) } : {}) };
+  if (scopeOf(manager) === "none") throw new AppError("FORBIDDEN", "Late entries are for managers — people tagged Manager, or a super admin");
+  const base = { organizationId: oid(orgId) };
 
   const waiting = async () => {
     const rows = await LateEntryModel.find({ ...base, state: "pending" }).sort({ createdAt: 1 }).limit(500).lean<any[]>();
@@ -478,25 +471,15 @@ async function notifyEnterer(orgId: string, e: any): Promise<void> {
 
 /**
  * The organizations whose old-date entries this person reads (2026-10-21, "show all organizations"): a super admin,
- * every one; anybody else, each organization they are an active member of where they would read every late entry —
- * tagged Manager there, or their role there sees expenses or bills. The current organization goes by the session's
- * permissions; the others by the role they hold in each.
+ * every one; anybody else, each organization they are an active member of and tagged Manager in (managers only since
+ * 2026-10-22).
  */
-async function oldDateOrgs(orgId: string, userId: string, permissions: string[]): Promise<{ _id: Types.ObjectId; name: string }[]> {
+async function oldDateOrgs(userId: string): Promise<{ _id: Types.ObjectId; name: string }[]> {
   if (!Types.ObjectId.isValid(userId)) return [];
   const u = await User.findOne({ _id: oid(userId), status: "active" }).select("isSuperAdmin memberships").lean<any>();
   if (!u) return [];
   if (u.isSuperAdmin) return Organization.find().select("name").sort({ name: 1 }).lean<any[]>();
-  const active = ((u.memberships ?? []) as any[]).filter((m) => m.status === "active");
-  const { Role } = await import("../role/role.model");
-  const roles = await Role.find({ _id: { $in: active.map((m) => m.roleId) } }).select("permissions").lean<any[]>();
-  const permsOf = new Map(roles.map((r) => [String(r._id), (r.permissions ?? []) as string[]]));
-  const ids = active
-    .filter((m) => {
-      const perms = String(m.organizationId) === String(orgId) ? permissions : permsOf.get(String(m.roleId)) ?? [];
-      return scopeOf(!!m.isManager, perms) === "all";
-    })
-    .map((m) => m.organizationId);
+  const ids = ((u.memberships ?? []) as any[]).filter((m) => m.status === "active" && m.isManager).map((m) => m.organizationId);
   return Organization.find({ _id: { $in: ids } }).select("name").sort({ name: 1 }).lean<any[]>();
 }
 
@@ -504,14 +487,14 @@ async function oldDateOrgs(orgId: string, userId: string, permissions: string[])
  * The finance side of Root's Pending → Finance "Entered with an old date" (the user, 2026-10-21: "finance is not
  * showing them — show that", then "show all organizations"): every organization this person reads (oldDateOrgs) —
  * the last 30 days' entries dated a day or more before they were typed in — typed in finance, recorded by an
- * approval, or brought from HRMS — each with its organization and its late entry, if any. Whoever reads every late
- * entry where they are reads this; the "own" readers do not (it is everybody's).
+ * approval, or brought from HRMS — each with its organization and its late entry, if any. For the managers, as the
+ * late entries are (2026-10-22).
  */
-export async function oldDateEntries(orgId: string, userId: string, permissions: string[] = []) {
+export async function oldDateEntries(orgId: string, userId: string) {
   const manager = await isManager(orgId, userId);
-  if (scopeOf(manager, permissions) !== "all") throw new AppError("FORBIDDEN", "Entries with an old date are for people who see expenses or bills");
+  if (scopeOf(manager) !== "all") throw new AppError("FORBIDDEN", "Entries with an old date are for managers — people tagged Manager, or a super admin");
   const { backdatedIn, BACKDATE_MIN_DAYS, ENTERED_WITHIN_DAYS } = await import("../integrations/portal-watch.service");
-  const orgs = await oldDateOrgs(orgId, userId, permissions);
+  const orgs = await oldDateOrgs(userId);
   const since = new Date(Date.now() - ENTERED_WITHIN_DAYS * 86_400_000);
   const rows = (await Promise.all(orgs.map((o) => backdatedIn({ _id: o._id, name: o.name }, since)))).flat()
     .sort((a, b) => b.enteredAt.localeCompare(a.enteredAt));

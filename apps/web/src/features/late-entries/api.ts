@@ -59,8 +59,11 @@ export function useOldDateEntries(enabled = true) {
   });
 }
 
-/** Reads the late entries page: a manager, or (since 2026-10-20) whoever sees expenses or bills, or their own. */
-export const canViewLate = (me: { isManager: boolean; canView?: boolean } | undefined) => Boolean(me?.canView ?? me?.isManager);
+/**
+ * Reads the late entries page: managers only — tagged Manager, or a super admin (the user, 2026-10-22: "late entries
+ * only show for the managers"; from 2026-10-20 whoever saw expenses or bills read them too).
+ */
+export const canViewLate = (me: { isManager: boolean } | undefined) => Boolean(me?.isManager);
 
 export function useDecideLateEntry() {
   const qc = useQueryClient();

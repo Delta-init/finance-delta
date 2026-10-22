@@ -7,23 +7,23 @@ import { decideLateEntry, lateEntryMe, listLateEntries, oldDateEntries } from ".
 
 /*
  * Late entries (2026-10-17). No permission of their own: the Manager tag decides, and the service checks it on every
- * call. Since 2026-10-20 whoever sees expenses or bills reads them all, and whoever only has their own expenses reads
- * their own (late-entry.service.ts, scopeOf); /me answers anybody with which.
+ * call — reading them too, managers only again since 2026-10-22 (late-entry.service.ts, scopeOf); /me answers anybody
+ * whether they are one.
  */
 const router = Router();
 router.use(authenticate);
 
 router.get("/me", asyncHandler(async (req, res) => {
-  ok(res, await lateEntryMe(req.auth!.organizationId, req.auth!.userId, req.auth!.permissions));
+  ok(res, await lateEntryMe(req.auth!.organizationId, req.auth!.userId));
 }));
 
 // Everything entered with an old date — Root's Pending → Finance list, for this organization (2026-10-21).
 router.get("/old-dates", asyncHandler(async (req, res) => {
-  ok(res, await oldDateEntries(req.auth!.organizationId, req.auth!.userId, req.auth!.permissions));
+  ok(res, await oldDateEntries(req.auth!.organizationId, req.auth!.userId));
 }));
 
 router.get("/", asyncHandler(async (req, res) => {
-  ok(res, await listLateEntries(req.auth!.organizationId, req.auth!.userId, parseQuery(lateEntryQuerySchema, req.query), req.auth!.permissions));
+  ok(res, await listLateEntries(req.auth!.organizationId, req.auth!.userId, parseQuery(lateEntryQuerySchema, req.query)));
 }));
 
 router.post("/:id/approve", validateBody(decideLateEntrySchema), asyncHandler(async (req, res) => {

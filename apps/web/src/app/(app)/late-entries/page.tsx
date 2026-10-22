@@ -17,15 +17,13 @@ import { useSwitchOrganization } from "@/features/organization/switch";
 /**
  * Late entries (the user, 2026-10-17): expenses, bills and payments typed in with a date more than the organization's
  * days back, each with the reason it was late — for somebody tagged Manager (or a super admin) to approve, or reject
- * with a reason. Nobody decides their own. Since 2026-10-20 whoever sees expenses or bills reads them all too (and
- * whoever only has their own expenses, their own) — Waiting, Decided and All — without the buttons.
+ * with a reason. Nobody decides their own. Managers only again since 2026-10-22 (from 2026-10-20 whoever saw expenses
+ * or bills read them too); everybody else sees the late entry on the record itself.
  */
 export default function LateEntriesPage() {
   const { data: me, isLoading: meLoading } = useLateEntriesMe();
   const [tab, setTab] = useState<"pending" | "decided" | "all" | "old">("pending");
   const canView = canViewLate(me);
-  // Whoever reads every late entry also sees everything entered with an old date (2026-10-21) — not the "own" readers.
-  const readsAll = !!me && (me.isManager || me.scope === "all");
   const { data, isLoading } = useLateEntries(tab === "old" ? "pending" : tab, canView && tab !== "old");
   const rows = data ?? [];
 
@@ -35,12 +33,11 @@ export default function LateEntriesPage() {
       <div className="p-4 md:p-6">
         <Card className="px-5 py-16 text-center text-sm text-foreground-muted">
           <ShieldAlert className="mx-auto mb-3 h-8 w-8 opacity-40" />
-          Late entries are for people who see expenses or bills.
+          Late entries are for managers — people tagged Manager, or a super admin.
         </Card>
       </div>
     );
   }
-  const deciders = (me.managers ?? []).join(", ");
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -50,17 +47,8 @@ export default function LateEntriesPage() {
         description={`Expenses, bills, payments and bank / cash lines dated ${me.days === 1 ? "before the day they were typed in" : `${me.days} or more days back`}. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back. A rejected one is not asked again.`}
         action={me.pending > 0 ? <Badge tone="warning">{me.pending} waiting</Badge> : undefined}
       />
-      {!me.isManager && (
-        <Card className="flex items-start gap-2 px-4 py-3 text-sm text-foreground-muted">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            {me.scope === "own" ? "Your own late entries. " : ""}
-            Only people tagged Manager approve or reject them{deciders ? ` — ${deciders}` : ""}.
-          </span>
-        </Card>
-      )}
       <div className="flex gap-1 rounded-lg border border-border bg-surface p-1 text-sm w-fit">
-        {([...(["pending", "decided", "all"] as const), ...(readsAll ? (["old"] as const) : [])]).map((t) => (
+        {(["pending", "decided", "all", "old"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}

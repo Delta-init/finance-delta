@@ -307,10 +307,13 @@ export function InvoiceManager() {
       />
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3">
-        <div className="relative min-w-[200px] flex-1">
+        <div className="min-w-[200px] flex-1">
           <label className="mb-1 block text-xs font-medium text-foreground-muted">Search</label>
-          <Search className="pointer-events-none absolute left-2.5 top-[31px] h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
-          <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8" />
+          {/* Centred on the box itself, not a fixed offset from the label (it sat high — 2026-10-22). */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
+            <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8" />
+          </div>
         </div>
 
         {/* The rest only once Filters is pressed (2026-10-22); the search stays out. */}

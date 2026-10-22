@@ -25,6 +25,8 @@ import { useUsers, EVERYONE } from "@/features/users/api";
 import { useTableQuery } from "@/lib/use-table-query";
 import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
+import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
+import { InvoiceSummaryCards } from "./InvoiceSummaryCards";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import {
@@ -32,7 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useDeleteInvoice, useVoidInvoice, useInvoices } from "./api";
+import { useDeleteInvoice, useVoidInvoice, useInvoices, useInvoiceListSummary } from "./api";
 import { INVOICE_STATUS_TONE } from "./status";
 
 /** "not_required" says nothing to somebody reading a filter menu. */
@@ -64,8 +66,9 @@ export function InvoiceManager() {
   const [status, setStatus] = useUrlParam<InvoiceStatus | "all">("status", "all", { allowed: INVOICE_STATUSES });
   const [approval, setApproval] = useUrlParam<InvoiceApproval | "all">("approval", "all", { allowed: INVOICE_APPROVALS });
   const [salespersonId, setSalespersonId] = useUrlParam("salesperson", "");
-  const [issueFrom, setIssueFrom] = useUrlParam("issueFrom", "");
-  const [issueTo, setIssueTo] = useUrlParam("issueTo", "");
+  // When it was issued: Today, This week, This month, Last 30 days or Custom (2026-10-22) — beside the search.
+  const issued = useUrlDateRange({ fromKey: "issueFrom", toKey: "issueTo" });
+  const issueFrom = issued.from, issueTo = issued.to;
   const [dueFrom, setDueFrom] = useUrlParam("dueFrom", "");
   const [dueTo, setDueTo] = useUrlParam("dueTo", "");
   const [tagIds, setTagIds] = useUrlListParam("tags");
@@ -92,6 +95,8 @@ export function InvoiceManager() {
     tagIds: tagIds.length ? tagIds : undefined,
   };
   const { data, isLoading } = useInvoices(listParams);
+  // The cards above the table: what these same filters match, per currency (2026-10-22).
+  const summary = useInvoiceListSummary(listParams);
 
   // Somebody who only sees their own invoices has one salesperson to choose
   // from — themselves — and cannot read the user list to build the picker.
@@ -192,15 +197,15 @@ export function InvoiceManager() {
     { enabled: !mineOnly },
   );
 
-  const filterCount = countFilters(status, approval, salespersonId, issueFrom, issueTo, dueFrom, dueTo, tagIds);
-  const hasFilters = filterCount > 0;
+  // The range is on show beside the search, so the button counts the rest.
+  const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds);
+  const hasFilters = filterCount > 0 || issued.range !== "all";
 
   const clear = () => {
     setStatus("all");
     setApproval("all");
     setSalespersonId("");
-    setIssueFrom("");
-    setIssueTo("");
+    issued.setRange("all");
     setDueFrom("");
     setDueTo("");
     setTagIds([]);
@@ -315,6 +320,7 @@ export function InvoiceManager() {
             <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8" />
           </div>
         </div>
+        <Field label="Issued"><DateRangeQuick value={issued} /></Field>
 
         {/* The rest only once Filters is pressed (2026-10-22); the search stays out. */}
         {filtersOpen && (<>
@@ -363,8 +369,6 @@ export function InvoiceManager() {
         </Field>
         )}
 
-        <Field label="Issue from"><DatePicker value={issueFrom} onChange={setIssueFrom} clearable placeholder="Any" className="w-[140px]" /></Field>
-        <Field label="Issue to"><DatePicker value={issueTo} onChange={setIssueTo} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Due from"><DatePicker value={dueFrom} onChange={setDueFrom} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Due to"><DatePicker value={dueTo} onChange={setDueTo} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Tags"><div className="w-[180px]"><TagPicker value={tagIds} onChange={setTagIds} placeholder="Any tags…" /></div></Field>
@@ -376,6 +380,9 @@ export function InvoiceManager() {
         )}
         </>)}
       </div>
+
+      {/* An API from before the cards answers 404: the page then simply has none. */}
+      {!summary.error && <InvoiceSummaryCards summary={summary.data} loading={summary.isLoading} />}
 
       {/* Only once something is ticked. A row of controls that is always there
           but usually does nothing is worse than none. */}

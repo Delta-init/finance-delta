@@ -15,6 +15,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { useTableQuery } from "@/lib/use-table-query";
 import { countFilters, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
+import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from "@/features/expenses/api";
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { useExpenseCategories } from "@/features/expense-categories/api";
@@ -121,8 +122,9 @@ export default function ExpensesPage() {
   const pickCategory = (v: string) => { setCategory(v); setSubcategory("all"); };
   const subOptions = category === "all" ? [] : subcategoriesOf(categoryList, category);
   const [recurring, setRecurring] = useUrlParam("recurring", "all");
-  const [dateFrom, setDateFrom] = useUrlParam("from", "");
-  const [dateTo, setDateTo] = useUrlParam("to", "");
+  // When it was spent: Today, This week, This month, Last 30 days or Custom (2026-10-22) — beside the search.
+  const spent = useUrlDateRange({ fromKey: "from", toKey: "to" });
+  const dateFrom = spent.from, dateTo = spent.to;
   // One salesperson's expenses (2026-10-21) — also from a link (?salespersonId=), as the expense page gives.
   const [salesperson, setSalesperson] = useUrlParam("salespersonId", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -145,8 +147,9 @@ export default function ExpensesPage() {
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
-  const filterCount = countFilters(status, payment, category, subcategory, recurring, dateFrom, dateTo, salesperson);
-  const hasFilters = filterCount > 0 || !!t.q;
+  // The range is on show beside the search, so the button counts the rest.
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson);
+  const hasFilters = filterCount > 0 || spent.range !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
@@ -334,6 +337,7 @@ export default function ExpensesPage() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
           <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Search expenses…" className="pl-8" />
         </div>
+        <DateRangeQuick value={spent} />
 
         {/* The rest only once Filters is pressed (2026-10-22); the search stays out. */}
         {filtersOpen && (<>
@@ -399,19 +403,6 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
 
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-[140px]"
-        />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-[140px]"
-        />
-
         {hasFilters && (
           <Button
             variant="ghost"
@@ -423,8 +414,7 @@ export default function ExpensesPage() {
               // Counted by hasFilters, so it put the Clear button on screen and
               // was then the one thing the button did not clear.
               setRecurring("all");
-              setDateFrom("");
-              setDateTo("");
+              spent.setRange("all");
               setSalesperson("all");
               t.setQ("");
             }}

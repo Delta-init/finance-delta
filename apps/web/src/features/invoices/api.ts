@@ -5,10 +5,11 @@ import type {
   CreateInvoiceInput,
   Invoice,
   InvoiceSummary,
+  InvoiceListSummary,
   RecordPaymentInput,
   UpdateInvoiceInput,
 } from "@delta/shared";
-import { api, type QueryParams } from "@/lib/api";
+import { api, qs, type QueryParams } from "@/lib/api";
 
 const KEY = ["invoices"] as const;
 
@@ -18,6 +19,17 @@ export function useInvoices(params: QueryParams, options?: { enabled?: boolean }
     queryFn: () => api.getList<Invoice>("invoices", params),
     placeholderData: (prev) => prev,
     enabled: options?.enabled ?? true,
+  });
+}
+
+/** The list's cards: what the table's filters match (2026-10-22); the page, its size and its sort are not filters. */
+export function useInvoiceListSummary(params: QueryParams = {}) {
+  const { page: _p, pageSize: _s, sort: _o, dir: _d, ...filters } = params as Record<string, unknown>;
+  return useQuery({
+    queryKey: [...KEY, "list-summary", filters],
+    queryFn: () => api.get<InvoiceListSummary>(`invoices/list-summary${qs(filters as QueryParams)}`),
+    placeholderData: (prev) => prev,
+    retry: false,
   });
 }
 

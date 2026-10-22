@@ -14,6 +14,7 @@ import type {
   UploadedExpenseFile,
 } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, lateEntryCutoff, resolveCategoryName } from "@delta/shared";
+import { throughDay } from "../../lib/day-range";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import type { ParsedFile } from "../../middleware/upload";
@@ -188,7 +189,7 @@ function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scope): Re
   if (query.subcategory) and.push({ subcategory: query.subcategory });
   if (query.submittedById) and.push({ submittedById: new Types.ObjectId(query.submittedById) });
   if (query.dateFrom) and.push({ expenseDate: { $gte: new Date(query.dateFrom) } });
-  if (query.dateTo) and.push({ expenseDate: { $lte: new Date(query.dateTo) } });
+  if (query.dateTo) and.push({ expenseDate: throughDay(query.dateTo) });
   if (query.projectName) and.push({ projectName: { $regex: query.projectName, $options: "i" } });
   if (query.costCentre) and.push({ costCentre: { $regex: query.costCentre, $options: "i" } });
   if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });

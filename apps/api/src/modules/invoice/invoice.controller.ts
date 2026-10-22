@@ -22,6 +22,11 @@ export const list = asyncHandler(async (req, res) => {
   ok(res, result.data, result.meta);
 });
 
+/** The list's cards: what its filters match (2026-10-22). */
+export const listSummary = asyncHandler(async (req, res) => {
+  ok(res, await invoiceService.invoiceListSummary(orgId(req), parseQuery(invoiceQuerySchema, req.query), readScope(req)));
+});
+
 export const get = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.getInvoice(orgId(req), req.params.id!, readScope(req)));
 });

@@ -14,13 +14,13 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
 import { ExportButton } from "@/components/ui/export-button";
 import { useTableQuery } from "@/lib/use-table-query";
 import { countFilters, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
+import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import type { ExportColumn } from "@/lib/export";
 import { CreditCard, Search, X, Printer, Trash2 } from "lucide-react";
 
@@ -53,10 +53,11 @@ export default function PaymentsPage() {
   const t = useTableQuery({ initialSort: { key: "paidOn", dir: "desc" } });
   // In the address bar (2026-10-22), folded away until Filters is pressed.
   const [method, setMethod] = useUrlParam("method", "all");
-  const [dateFrom, setDateFrom] = useUrlParam("from", "");
-  const [dateTo, setDateTo] = useUrlParam("to", "");
+  // When it was paid: Today, This week, This month, Last 30 days or Custom (2026-10-22) — beside the search.
+  const paid = useUrlDateRange({ fromKey: "from", toKey: "to" });
+  const dateFrom = paid.from, dateTo = paid.to;
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const filterCount = countFilters(method, dateFrom, dateTo);
+  const filterCount = countFilters(method);
 
 
   const queryParams = {
@@ -72,8 +73,8 @@ export default function PaymentsPage() {
   const del = useDeletePaymentFromList();
   const [deleting, setDeleting] = useState<PaymentDTO | null>(null);
 
-  const hasFilters = method !== "all" || !!dateFrom || !!dateTo || !!t.q;
-  const clear = () => { setMethod("all"); setDateFrom(""); setDateTo(""); t.setQ(""); };
+  const hasFilters = method !== "all" || paid.range !== "all" || !!t.q;
+  const clear = () => { setMethod("all"); paid.setRange("all"); t.setQ(""); };
 
   const columns: Column<PaymentDTO>[] = [
     {
@@ -176,6 +177,7 @@ export default function PaymentsPage() {
             <Input value={t.q} onChange={(e) => t.setQ(e.target.value)} placeholder="Invoice # or customer…" className="pl-8 w-52" />
           </div>
         </Field>
+        <Field label="Paid"><DateRangeQuick value={paid} /></Field>
         {filtersOpen && (<>
         <Field label="Method">
           <Select value={method} onValueChange={(v) => setMethod(v)}>
@@ -191,12 +193,6 @@ export default function PaymentsPage() {
               ))}
             </SelectContent>
           </Select>
-        </Field>
-        <Field label="Date from">
-          <DatePicker value={dateFrom} onChange={setDateFrom} clearable placeholder="Any" className="w-[150px]" />
-        </Field>
-        <Field label="Date to">
-          <DatePicker value={dateTo} onChange={setDateTo} clearable placeholder="Any" className="w-[150px]" />
         </Field>
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clear} className="self-end">

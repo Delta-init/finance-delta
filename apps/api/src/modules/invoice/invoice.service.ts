@@ -14,6 +14,8 @@ import {
   type Invoice as InvoiceDTO,
   type InvoiceQuery,
   type InvoiceSummary,
+  type InvoiceListSummary,
+  type InvoiceListSummaryCurrency,
   type MoneyByCurrency,
   type InvoiceStatus,
   type Paginated,
@@ -27,6 +29,7 @@ import {
   notifyDecided,
 } from "./approval-notify.service";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
+import { throughDay } from "../../lib/day-range";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
 import { invoiceNumberingFor, invoiceComputationDefaults } from "../organization/organization.service";
@@ -474,11 +477,11 @@ export async function invoiceSummary(orgId: string, scope: Scope): Promise<Invoi
   };
 }
 
-export async function listInvoices(
-  orgId: string,
-  query: InvoiceQuery,
-  scope: Scope,
-): Promise<Paginated<InvoiceDTO>> {
+/**
+ * What the Invoices list's filters match — the table, its export and its cards (2026-10-22) all ask with this one,
+ * so they cannot disagree.
+ */
+function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scope): Record<string, unknown> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
   const or = searchOr(query.q, ["invoiceNumber", "customerName", "salespersonName", "reference"]);
@@ -500,9 +503,9 @@ export async function listInvoices(
 
   if (query.salespersonId) and.push({ salespersonId: new Types.ObjectId(query.salespersonId) });
   if (query.issueFrom) and.push({ issueDate: { $gte: new Date(query.issueFrom) } });
-  if (query.issueTo) and.push({ issueDate: { $lte: new Date(query.issueTo) } });
+  if (query.issueTo) and.push({ issueDate: throughDay(query.issueTo) });
   if (query.dueFrom) and.push({ dueDate: { $gte: new Date(query.dueFrom) } });
-  if (query.dueTo) and.push({ dueDate: { $lte: new Date(query.dueTo) } });
+  if (query.dueTo) and.push({ dueDate: throughDay(query.dueTo) });
   if (query.tagIds?.length) and.push({ tagIds: { $in: query.tagIds } });
 
   // Not taken from `query`: asking for another salesperson's invoices must
@@ -512,7 +515,15 @@ export async function listInvoices(
     ...scopeFilter(scope, "salespersonId"),
   };
   if (and.length) filter.$and = and;
+  return filter;
+}
 
+export async function listInvoices(
+  orgId: string,
+  query: InvoiceQuery,
+  scope: Scope,
+): Promise<Paginated<InvoiceDTO>> {
+  const filter = invoiceListFilter(orgId, query, scope);
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
     Invoice.find(filter)
@@ -526,6 +537,45 @@ export async function listInvoices(
     data: rows.map((r) => toDTO(r as unknown as InvoiceDoc)),
     meta: pageMeta(total, query.page, query.pageSize),
   };
+}
+
+/**
+ * The Invoices list's cards (the user, 2026-10-22: "stat cards like the expenses, with the filters' effect"): what
+ * the table's filters match, a line per currency and never added together — invoiced, paid, still owed and, of that,
+ * overdue. Drafts and voided invoices are counted but are not money owed or paid, so they stay out of the amounts
+ * (unless filtered for).
+ */
+export async function invoiceListSummary(orgId: string, query: InvoiceQuery, scope: Scope): Promise<InvoiceListSummary> {
+  const filter = Invoice.find().cast(Invoice, invoiceListFilter(orgId, query, scope));
+  const now = new Date();
+  const notMoney = query.status === "draft" || query.status === "void" ? [] : ["draft", "void"];
+  const owing = { $gt: [{ $ifNull: ["$balanceMinor", 0] }, 0] };
+  const late = {
+    $and: [owing, { $in: ["$status", ["sent", "viewed", "partial", "overdue"]] }, { $ne: [{ $ifNull: ["$dueDate", null] }, null] }, { $lt: ["$dueDate", now] }],
+  };
+  const sumIf = (cond: unknown, what: unknown) => ({ $sum: { $cond: [cond, what, 0] } });
+  const [all, groups] = await Promise.all([
+    Invoice.countDocuments(filter),
+    Invoice.aggregate<{ _id: string | null } & Omit<InvoiceListSummaryCurrency, "currency">>([
+      { $match: { ...filter, status: { $nin: notMoney } } },
+      {
+        $group: {
+          _id: "$currency",
+          count: { $sum: 1 },
+          totalMinor: { $sum: { $ifNull: ["$totalMinor", 0] } },
+          paidMinor: { $sum: { $ifNull: ["$amountPaidMinor", 0] } },
+          paidCount: sumIf({ $gt: [{ $ifNull: ["$amountPaidMinor", 0] }, 0] }, 1),
+          balanceMinor: sumIf(owing, "$balanceMinor"),
+          balanceCount: sumIf(owing, 1),
+          overdueMinor: sumIf(late, "$balanceMinor"),
+          overdueCount: sumIf(late, 1),
+        },
+      },
+      { $sort: { totalMinor: -1 } },
+    ]),
+  ]);
+  const byCurrency = groups.map(({ _id, ...g }) => ({ currency: _id || "AED", ...g }));
+  return { count: all, leftOut: all - byCurrency.reduce((n, g) => n + g.count, 0), byCurrency };
 }
 
 export async function getInvoice(orgId: string, id: string, scope: Scope): Promise<InvoiceDTO> {

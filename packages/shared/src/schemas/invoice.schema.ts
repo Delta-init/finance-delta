@@ -684,6 +684,33 @@ export const invoiceSummarySchema = z.object({
 });
 export type InvoiceSummary = z.infer<typeof invoiceSummarySchema>;
 
+/** One currency's line on the Invoices list's cards (2026-10-22). */
+export interface InvoiceListSummaryCurrency {
+  currency: string;
+  /** Invoices whose money is counted here. */
+  count: number;
+  /** What they were raised for. */
+  totalMinor: number;
+  /** Received against them, and how many have received anything. */
+  paidMinor: number;
+  paidCount: number;
+  /** Still owed, and how many owe it. */
+  balanceMinor: number;
+  balanceCount: number;
+  /** Of that, past its due date. */
+  overdueMinor: number;
+  overdueCount: number;
+}
+
+/** The Invoices list's cards: what its filters match, per currency. */
+export interface InvoiceListSummary {
+  /** Every invoice the filters match — what the table lists. */
+  count: number;
+  /** Matched but not money — drafts and voided — so not in the amounts, unless filtered for. */
+  leftOut: number;
+  byCurrency: InvoiceListSummaryCurrency[];
+}
+
 /** Sending an invoice back needs a reason whoever raised it can act on. */
 export const returnInvoiceSchema = z.object({
   reason: z.string().trim().min(1, "Say what needs correcting").max(300),

@@ -13,7 +13,7 @@ import type {
   ExpenseAttachmentInput,
   UploadedExpenseFile,
 } from "@delta/shared";
-import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
+import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, lateEntryCutoff, resolveCategoryName } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
 import type { ParsedFile } from "../../middleware/upload";
@@ -30,7 +30,7 @@ import { resolveExpenseCategory } from "../expense-category/expense-category.ser
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { lateView, isLatePending } from "../late-entry/late-entry.model";
-import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
+import { lateEntryDaysOf, lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 
 /** Resolve a category's display name: denormalized value, then default label, then a humanized slug. */
 function categoryDisplay(slug: string, denorm?: string): string {
@@ -615,8 +615,10 @@ export async function submitExpense(orgId: string, id: string, scope: Scope): Pr
   assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
+  // Not "enter it again": that made a second expense for the same money (2026-10-22). Its date changed to one that is
+  // not late, the rejection no longer stands (lateForDate) and it can be sent.
   if ((doc as unknown as { lateEntry?: { state?: string } }).lateEntry?.state === "rejected") {
-    throw new AppError("CONFLICT", "A manager rejected it being entered late — enter it again with its reason, or change its date");
+    throw new AppError("CONFLICT", `A manager rejected it being entered late — give it a date from ${lateEntryCutoff(await lateEntryDaysOf(orgId))} on to send it again`);
   }
   doc.status = "submitted";
   await doc.save();

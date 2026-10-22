@@ -59,6 +59,37 @@ export const recordLateEntrySchema = z.object({
 });
 export type RecordLateEntry = z.infer<typeof recordLateEntrySchema>;
 
+/** Another request on the same record — asked before, or moved again — shown under its one card (2026-10-22). */
+export const lateEntryEarlierSchema = z.object({
+  id: z.string(),
+  state: z.enum(LATE_ENTRY_STATES),
+  date: z.string(),
+  previousDate: z.string().optional(),
+  reason: z.string(),
+  enteredByName: z.string(),
+  enteredAt: z.string(),
+  decidedByName: z.string().optional(),
+  decidedAt: z.string().optional(),
+  decisionNote: z.string().optional(),
+});
+export type LateEntryEarlier = z.infer<typeof lateEntryEarlierSchema>;
+
+/**
+ * Another record's request that looks like the same money typed twice: the same amount (either way round), currency
+ * and date (2026-10-22, "duplicates showing in Waiting").
+ */
+export const lateEntryCopySchema = z.object({
+  id: z.string(),
+  kind: z.enum(LATE_ENTRY_KINDS),
+  number: z.string(),
+  title: z.string(),
+  state: z.enum(LATE_ENTRY_STATES),
+  date: z.string(),
+  href: z.string(),
+  decidedByName: z.string().optional(),
+});
+export type LateEntryCopy = z.infer<typeof lateEntryCopySchema>;
+
 export const lateEntrySchema = z.object({
   id: z.string(),
   kind: z.enum(LATE_ENTRY_KINDS),
@@ -83,6 +114,10 @@ export const lateEntrySchema = z.object({
   href: z.string(),
   /** False for the person who entered it: somebody else decides it. */
   canDecide: z.boolean(),
+  /** One card per record (2026-10-22): its other requests, newest first. Absent from an older API. */
+  earlier: z.array(lateEntryEarlierSchema).optional(),
+  /** Other records that look like the same money typed twice. Absent from an older API. */
+  possibleCopies: z.array(lateEntryCopySchema).optional(),
 });
 export type LateEntry = z.infer<typeof lateEntrySchema>;
 

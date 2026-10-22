@@ -14,6 +14,9 @@
  *   6. An invoice payment: the same; an edit moving one back, rejected — its date and its line back.
  *   7. Entries finance makes itself (no one typing) are not asked; with days 0 nothing is.
  *   8. Super admins decide when nobody is tagged; the page answers who is a manager and how many wait.
+ *  14. A rejection sticks (2026-10-22): not asked again with another old date; a date that is not late clears it, and a
+ *      rejected expense can then be sent. One card per record, its earlier requests under it; other records for the
+ *      same money flagged as possible copies.
  *
  * Run through scripts/late-entry-e2e.sh. Scratch databases only.
  */
@@ -347,6 +350,61 @@ check("…not the one where his role sees no expenses", !across.rows.some((r: an
 check("organizations with their counts, and the current one named", across.currentOrgId === ORG && across.organizations.find((o: any) => o.name === "Delta Bangalore E2E")?.count === 1 && across.counts.all === across.rows.length, j({ orgs: across.organizations, cur: across.currentOrgId }));
 const bySa = await late.oldDateEntries(ORG, String(root._id), []);
 check("a super admin: every organization, the hidden one too", bySa.rows.some((r: any) => r.id === x3.id) && bySa.organizations.length === 3, j(bySa.organizations));
+
+/* ── 14 ── */
+step("14. A rejection sticks; one card per record; possible copies (2026-10-22)");
+const ROOT = String(root._id);
+const before14 = await LateEntryModel.countDocuments({ refId: new Types.ObjectId(e2.id) });
+check("an edit rejected once: moving it to another old date is refused, with the manager's reason",
+  /Mona Manager rejected this being entered late \("Keep the original date"\) — it can't be asked again\. Give it a date from \d{4}-\d{2}-\d{2} on/.test(
+    await refusal(ex.updateExpense(ORG, e2.id, { expenseDate: OLDER, lateReason: "Try again" } as never, ALL, typing("Try again")))),
+  await refusal(ex.updateExpense(ORG, e2.id, { expenseDate: OLDER, lateReason: "Try again" } as never, ALL, typing("Try again"))));
+check("…and nothing new waits for it", (await LateEntryModel.countDocuments({ refId: new Types.ObjectId(e2.id) })) === before14);
+e2 = await ex.updateExpense(ORG, e2.id, { expenseDate: TODAY } as never, ALL, typing());
+check("given today's date: the rejection no longer stands, nothing asked", e2.expenseDate === TODAY && !e2.lateEntry && (await LateEntryModel.countDocuments({ refId: new Types.ObjectId(e2.id) })) === before14, j({ d: e2.expenseDate, l: e2.lateEntry ?? null }));
+check("a new expense rejected for its date: sending it again says which date it needs",
+  (await refusal(ex.submitExpense(ORG, e1b.id, ALL))).includes(`give it a date from ${TODAY} on to send it again`), await refusal(ex.submitExpense(ORG, e1b.id, ALL)));
+check("…another old date: refused", /can't be asked again/.test(await refusal(ex.updateExpense(ORG, e1b.id, { expenseDate: OLDER, lateReason: "x" } as never, ALL, typing("x")))));
+await ex.updateExpense(ORG, e1b.id, { expenseDate: TODAY } as never, ALL, typing());
+const sent = await ex.submitExpense(ORG, e1b.id, ALL);
+check("…today's date: it can be sent again, for an approver", sent.status === "submitted" && !sent.lateEntry, j({ s: sent.status, l: sent.lateEntry ?? null }));
+
+// e6 was approved (step 8); its date moved back again: a new request — one card, the approval under it.
+await ex.updateExpense(ORG, e6.id, { expenseDate: OLDER, lateReason: "Belongs to the month before" } as never, ALL, typing("Belongs to the month before"));
+const all14 = await late.listLateEntries(ORG, ROOT, { state: "all" });
+const e6cards = all14.filter((x) => x.refId === e6.id);
+check("approved, then moved back again: one card on All — the new request, the approval under it",
+  e6cards.length === 1 && e6cards[0]!.state === "pending" && e6cards[0]!.earlier?.length === 1 && e6cards[0]!.earlier![0]!.state === "approved" && e6cards[0]!.earlier![0]!.decidedByName === "Root Admin", j(e6cards));
+await late.decideLateEntry(ORG, ROOT, e6cards[0]!.id, "approved", "Fine");
+const dec14 = (await late.listLateEntries(ORG, ROOT, { state: "decided" })).filter((x) => x.refId === e6.id);
+check("…decided: still one card, the newest decision, the earlier one under it", dec14.length === 1 && dec14[0]!.id === e6cards[0]!.id && dec14[0]!.earlier?.length === 1, j(dec14));
+
+// The same money typed twice: two expenses, and the cash line typed for one of them.
+const twinDate = back(3);
+const t1 = await expense(twinDate, "Receipt late", { amountMinor: 77_700 });
+const t2 = await expense(twinDate, "Receipt late again", { amountMinor: 77_700 });
+const t3 = await banking.addTransaction(ORG, cash.id, { date: twinDate, description: "Cash paid", reference: "OUT-77", amountMinor: -77_700, notes: "" } as never, "manual", undefined, typing("Slip late"));
+const t4 = await expense(twinDate, "Different", { amountMinor: 77_701 });
+const w14 = await late.listLateEntries(ORG, ROOT, { state: "pending" });
+const card = (refId: string) => w14.find((x) => x.refId === refId);
+check("two expenses, same amount and date: each flagged as a possible copy of the other",
+  card(t1.id)?.possibleCopies?.some((c) => c.number === t2.expenseNumber && c.state === "pending") === true && card(t2.id)?.possibleCopies?.some((c) => c.number === t1.expenseNumber) === true, j({ c: card(t1.id)?.possibleCopies ?? null }));
+check("…the cash line typed for the same money too (paid out, the amount the other way round)",
+  card(t3.id)?.possibleCopies?.length === 2 && card(t1.id)?.possibleCopies?.some((c) => c.kind === "bank_line") === true, j({ c: card(t3.id)?.possibleCopies ?? null }));
+check("…a different amount: not flagged", !card(t4.id)?.possibleCopies, j({ c: card(t4.id)?.possibleCopies ?? null }));
+await late.decideLateEntry(ORG, ROOT, card(t2.id)!.id, "rejected", "Entered twice");
+const after14 = (await late.listLateEntries(ORG, ROOT, { state: "pending" })).find((x) => x.refId === t1.id);
+check("the copy rejected: the one left says so", after14?.possibleCopies?.some((c) => c.number === t2.expenseNumber && c.state === "rejected" && c.decidedByName === "Root Admin") === true, j({ c: after14?.possibleCopies ?? null }));
+const BILL_REF = new Types.ObjectId();
+const asDecided = (kind: string, paymentId: Types.ObjectId | null) => LateEntryModel.collection.insertOne({
+  organizationId: new Types.ObjectId(ORG), kind, refId: BILL_REF, paymentId, number: "BILL-PAIR", title: "Gulf Supplies", amountMinor: 33_300,
+  currency: "AED", date: new Date(back(5)), reason: "Late", state: "approved", enteredById: asha._id, enteredByName: "Asha Accountant",
+  decidedByName: "Root Admin", decidedAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
+});
+await asDecided("bill", null);
+await asDecided("bill_payment", new Types.ObjectId());
+const pair = (await late.listLateEntries(ORG, ROOT, { state: "decided" })).filter((x) => x.number === "BILL-PAIR");
+check("a bill and its payment, same amount and date: two cards, neither a copy of the other", pair.length === 2 && pair.every((x) => !x.possibleCopies), j(pair));
 
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();

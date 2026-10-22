@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import {
-  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, hasPermission, isLateDate,
-  type LateEntry, type LateEntryKind, type LateEntryMe, type LateEntryQuery,
+  DEFAULT_LATE_ENTRY_DAYS, LATE_ENTRY_KIND_LABELS, formatMoney, hasPermission, isLateDate, lateEntryCutoff,
+  type LateEntry, type LateEntryCopy, type LateEntryEarlier, type LateEntryKind, type LateEntryMe, type LateEntryQuery,
 } from "@delta/shared";
 import { env } from "../../config/env";
 import { AppError } from "../../lib/http";
@@ -22,7 +22,8 @@ import { LateEntryModel, type RecordLate } from "./late-entry.model";
  *     stays out of its bank account;
  *   - approved: it carries on as any other;
  *   - rejected (with a reason): an edit that moved the date back has its date put back; a new expense is rejected, a
- *     new bill voided, a new payment removed.
+ *     new bill voided, a new payment removed. It sticks (2026-10-22): the record is not asked again with another old
+ *     date, only given one that is not late — which clears it.
  * A manager is somebody tagged Manager in this organization; a super admin decides too, so nothing is stuck when
  * nobody is tagged. Nobody decides their own. Only the screens people type into ask (their controllers pass who is
  * typing): approvals, HRMS, payroll and Tetra Commission make entries that are not asked.
@@ -74,7 +75,17 @@ export async function lateForDate(
   if (before && day(before) === day(date)) return same;
   const days = await lateEntryDaysOf(orgId);
   if (!isLateDate(new Date(date), days)) {
-    return current?.state === "pending" ? { next: null, pending: null, withdraw: true } : same;
+    // Back within the days: a waiting one is no longer asked, and a rejected one no longer stands in its way — an
+    // expense rejected for its old date can be sent again once it carries a date that is not late (2026-10-22).
+    if (current?.state === "pending") return { next: null, pending: null, withdraw: true };
+    return current?.state === "rejected" ? { next: null, pending: null, withdraw: false } : same;
+  }
+  // A manager said no: the same record is not asked again with another old date (the user, 2026-10-22: "the late
+  // entry is showing the rejected, then approved is showing again").
+  if (current?.state === "rejected") {
+    const who = current.decidedByName || "A manager";
+    const note = current.decisionNote ? ` ("${current.decisionNote}")` : "";
+    throw new AppError("CONFLICT", `${who} rejected this being entered late${note} — it can't be asked again. Give it a date from ${lateEntryCutoff(days)} on, or leave its date as it is`);
   }
   const reason = String(actor.reason ?? "").trim();
   if (!reason) {
@@ -149,6 +160,67 @@ function toDTO(e: any, userId: string, manager: boolean): LateEntry {
     href: hrefOf(e),
     canDecide: manager && e.state === "pending" && String(e.enteredById) !== String(userId),
   };
+}
+
+// ── One card per record; what looks like the same money twice (the user, 2026-10-22) ─────────────────────────────
+
+const recordKey = (e: any) => `${e.kind}|${e.refId}|${e.paymentId ?? ""}`;
+
+/** The record's other requests — asked before, moved again — shown on its one card, newest first. */
+function earlierOf(e: any): LateEntryEarlier {
+  return {
+    id: String(e._id), state: e.state, date: day(e.date), ...(e.previousDate ? { previousDate: day(e.previousDate) } : {}),
+    reason: e.reason ?? "", enteredByName: e.enteredByName ?? "", enteredAt: new Date(e.createdAt).toISOString(),
+    ...(e.decidedByName ? { decidedByName: e.decidedByName } : {}),
+    ...(e.decidedAt ? { decidedAt: new Date(e.decidedAt).toISOString() } : {}),
+    ...(e.decisionNote ? { decisionNote: e.decisionNote } : {}),
+  };
+}
+
+/**
+ * Another record asked about the same money: the same amount (either way round — an expense and the cash line typed
+ * for it), currency and date. A bill and a payment on it share a number but are not copies; two payments on one
+ * invoice or bill are, when they match.
+ */
+function isCopy(a: any, b: any): boolean {
+  if (String(a._id) === String(b._id) || recordKey(a) === recordKey(b)) return false;
+  if (String(a.refId) === String(b.refId) && a.kind !== b.kind) return false;
+  const amount = Math.abs(a.amountMinor ?? 0);
+  return amount > 0 && amount === Math.abs(b.amountMinor ?? 0) && (a.currency ?? "AED") === (b.currency ?? "AED") && day(a.date) === day(b.date);
+}
+
+function copyOf(e: any): LateEntryCopy {
+  return {
+    id: String(e._id), kind: e.kind, number: e.number ?? "", title: e.title ?? "", state: e.state, date: day(e.date), href: hrefOf(e),
+    ...(e.decidedByName ? { decidedByName: e.decidedByName } : {}),
+  };
+}
+
+/**
+ * The page's cards: each record once — its newest request (waiting before decided), the others under it — and, for
+ * all but the ones no longer asked, the other records that look like the same money typed twice.
+ */
+async function cardsOf(base: Record<string, unknown>, rows: any[], userId: string, manager: boolean): Promise<LateEntry[]> {
+  const first = new Map<string, any>();
+  for (const e of rows) if (!first.has(recordKey(e))) first.set(recordKey(e), e);
+  const shown = [...first.values()];
+  if (!shown.length) return [];
+  const [related, alike] = await Promise.all([
+    LateEntryModel.find({ ...base, refId: { $in: shown.map((e) => e.refId) } }).sort({ createdAt: -1 }).lean<any[]>(),
+    LateEntryModel.find({
+      ...base, state: { $in: ["pending", "approved", "rejected"] },
+      amountMinor: { $in: [...new Set(shown.flatMap((e) => [Math.abs(e.amountMinor ?? 0), -Math.abs(e.amountMinor ?? 0)]))] },
+    }).sort({ createdAt: -1 }).limit(2000).lean<any[]>(),
+  ]);
+  return shown.map((e) => {
+    const earlier = related.filter((x) => recordKey(x) === recordKey(e) && String(x._id) !== String(e._id)).slice(0, 10);
+    const copies = e.state === "withdrawn" ? [] : alike.filter((x) => isCopy(e, x)).slice(0, 5);
+    return {
+      ...toDTO(e, userId, manager),
+      ...(earlier.length ? { earlier: earlier.map(earlierOf) } : {}),
+      ...(copies.length ? { possibleCopies: copies.map(copyOf) } : {}),
+    };
+  });
 }
 
 // ── The records themselves ────────────────────────────────────────────────────────────────────────────────────
@@ -305,7 +377,7 @@ export async function listLateEntries(orgId: string, userId: string, q: LateEntr
     .sort({ decidedAt: -1, updatedAt: -1 }).limit(200).lean<any[]>();
 
   const rows = q.state === "pending" ? await waiting() : q.state === "decided" ? await decided() : [...(await waiting()), ...(await decided())];
-  return rows.map((e) => toDTO(e, userId, manager));
+  return cardsOf(base, rows, userId, manager);
 }
 
 export async function decideLateEntry(

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Clock, Check, X, Loader2, ShieldAlert, ExternalLink } from "lucide-react";
+import { Clock, Check, X, Loader2, ShieldAlert, ExternalLink, Copy } from "lucide-react";
 import { LATE_ENTRY_KIND_LABELS, type LateEntry } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,7 @@ export default function LateEntriesPage() {
       <PageHeader
         icon={Clock}
         title="Late entries"
-        description={`Expenses, bills, payments and bank / cash lines dated ${me.days === 1 ? "before the day they were typed in" : `${me.days} or more days back`}. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back.`}
+        description={`Expenses, bills, payments and bank / cash lines dated ${me.days === 1 ? "before the day they were typed in" : `${me.days} or more days back`}. Approve them, or reject them with a reason: a new one rejected is rejected, voided or removed; one whose date was moved back gets its date back. A rejected one is not asked again.`}
         action={me.pending > 0 ? <Badge tone="warning">{me.pending} waiting</Badge> : undefined}
       />
       {!me.isManager && (
@@ -136,6 +136,41 @@ function EntryCard({ entry: e, isManager }: { entry: LateEntry; isManager: boole
           </div>
         )}
       </dl>
+      {!!e.possibleCopies?.length && (
+        // Another record for the same money (2026-10-22, "duplicates showing in Waiting"): typed twice, or an expense
+        // and the cash line typed for it.
+        <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
+          <p className="flex items-center gap-1.5 font-medium text-warning">
+            <Copy className="h-3.5 w-3.5" /> Possible copy — the same amount and date as:
+          </p>
+          <ul className="space-y-0.5">
+            {e.possibleCopies.map((c) => (
+              <li key={c.id}>
+                <Link href={c.href} className="font-medium hover:underline">{LATE_ENTRY_KIND_LABELS[c.kind]} {c.number}</Link>
+                {c.title && <span className="text-foreground-muted"> · {c.title}</span>}
+                <span className="text-foreground-muted"> — {STATE_LABEL[c.state].toLowerCase()}{c.decidedByName ? ` by ${c.decidedByName}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!e.earlier?.length && (
+        // One card per record (2026-10-22): what was asked about it before, open when a manager rejected it once.
+        <details className="text-sm" open={e.earlier.some((x) => x.state === "rejected")}>
+          <summary className="cursor-pointer text-foreground-muted">Asked before about this record ({e.earlier.length})</summary>
+          <ul className="mt-1.5 space-y-1.5 border-l border-border pl-3">
+            {e.earlier.map((x) => (
+              <li key={x.id}>
+                <Badge tone={STATE_TONE[x.state]}>{STATE_LABEL[x.state]}</Badge>{" "}
+                dated {x.date}{x.previousDate ? ` (moved back from ${x.previousDate})` : ""} — {x.enteredByName || "—"}, {new Date(x.enteredAt).toLocaleDateString()}: {x.reason}
+                {x.decidedByName && (
+                  <span className="text-foreground-muted"> · {x.state === "rejected" ? "rejected" : "approved"} by {x.decidedByName}{x.decisionNote ? ` — ${x.decisionNote}` : ""}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {e.state === "pending" && (
         e.canDecide ? (
           <div className="space-y-2">

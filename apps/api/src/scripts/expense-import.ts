@@ -2,8 +2,9 @@
  * The old books' expenses brought into finance (the user, 2026-10-21: "we need to backfill this" — the export
  * Expense_2_Recategorized_17_Categories.xlsx, 6,395 rows from 2023-09 to 2026-10, each given one of the 17 categories).
  *
- * The data file is made outside the repo (it holds salaries) by root/outputs/expense-import/convert.py, which decides
- * each row's organization ("aed" or "inr"), category and subcategory; this script only brings the rows in:
+ * The data file is made outside the repo (it holds salaries) by root/outputs/expense-import/convert_raw.py (from the
+ * raw exports, 2026-10-22 — convert.py's categorized sheet repeated a split expense's total on every line), which
+ * decides each row's organization ("aed" or "inr"), category and subcategory; this script only brings the rows in:
  *
  *   - each row an expense on its own date, approved and paid, numbered HX-00001… in date order (the EXP- numbers carry
  *     on as they are), created on its own date too — so nothing reads it as entered late — and filed where the data says;
@@ -13,7 +14,11 @@
  *     each organization's category first;
  *   - a row that matches an expense finance already has — same organization, day and total, not voided, not imported —
  *     is skipped and listed, so nothing finance recorded itself is counted twice;
- *   - a row already imported (its key, "import:<batch>:<row>") is skipped, so running it again only adds what is missing.
+ *   - a row already imported is skipped — by its key: the old books' own id of the line ("import:<key>", 2026-10-22),
+ *     else "import:<batch>:<row>" — so running it again, or with a newer export, only adds what is missing;
+ *   - while expenses of another import are still in finance it writes nothing: two imports of the same books would
+ *     count them twice (the first, from the categorized sheet, has to be cleared with its --undo first);
+ *   - VAT as the old books had it (taxMinor of the total), and the line's reference.
  *
  * Reads and prints only, unless --write. Run it from apps/api on the server (Bun reads MONGODB_URI from the .env), after
  * the API with this change is deployed:
@@ -50,17 +55,23 @@ export interface ImportRow {
   paymentMethod: "cash" | "bank_transfer" | null;
   needsReview: boolean;
   notes: string;
+  /** The old books' own id of the line (2026-10-22): the same line in another export is the same expense. */
+  key?: string;
+  /** VAT inside totalMinor, and its rate. */
+  taxMinor?: number;
+  taxPct?: number;
+  reference?: string;
 }
 export interface ImportData {
   batch: string;
-  source: string;
+  source: string | string[];
   subcategoriesToAdd: { category: string; slug: string; name: string; inPnl: boolean }[];
   rows: ImportRow[];
 }
 
 const SEQ_KEY = "expense_import";
 const PREFIX = "HX-";
-const keyOf = (batch: string, row: number) => `import:${batch}:${row}`;
+const keyOf = (batch: string, r: Pick<ImportRow, "row" | "key">) => (r.key ? `import:${r.key}` : `import:${batch}:${r.row}`);
 
 interface OrgPlan {
   org: string;
@@ -71,6 +82,8 @@ interface OrgPlan {
   already: number;
   overlaps: { row: number; date: string; total: string; description: string; matches: string }[];
   repeats: number;
+  /** Expenses of another import still in finance: nothing is written while there are any. */
+  otherImports: number;
   problems: string[];
 }
 export interface ImportPlan { batch: string; orgs: OrgPlan[]; by: string; backup?: string }
@@ -112,7 +125,7 @@ export async function importExpenses(opts: {
     if (!Types.ObjectId.isValid(orgId)) throw new Error(`--org-${code} is not an organization id`);
     const org = await Organization.findById(orgId).select("name baseCurrency").lean<{ _id: Types.ObjectId; name: string; baseCurrency?: string } | null>();
     if (!org) throw new Error(`No organization ${orgId}`);
-    const p: OrgPlan = { org: org.name, orgId, currency: org.baseCurrency ?? "AED", subcategoriesToAdd: [], toImport: [], already: 0, overlaps: [], repeats: 0, problems: [] };
+    const p: OrgPlan = { org: org.name, orgId, currency: org.baseCurrency ?? "AED", subcategoriesToAdd: [], toImport: [], already: 0, overlaps: [], repeats: 0, otherImports: 0, problems: [] };
     plan.orgs.push(p);
 
     // Where they go: the organization's categories, with what the data adds.
@@ -132,9 +145,16 @@ export async function importExpenses(opts: {
     }
     if (p.problems.length) continue;
 
+    // Another import of these books still here: two would count every expense twice.
+    p.otherImports = await Expense.countDocuments({ organizationId: org._id, "source.kind": "import", "source.key": { $nin: rows.map((r) => keyOf(data.batch, r)) } });
+    if (p.otherImports) {
+      p.problems.push(`${p.otherImports} expense(s) of another import are still here — take that import out first (its --undo), or this would count them twice`);
+      continue;
+    }
+
     // Already in: imported before, or recorded by finance itself on that day for that total.
     const imported = new Set(
-      (await Expense.find({ organizationId: org._id, "source.key": { $in: rows.map((r) => keyOf(data.batch, r.row)) } }).select("source.key").lean<any[]>())
+      (await Expense.find({ organizationId: org._id, "source.key": { $in: rows.map((r) => keyOf(data.batch, r)) } }).select("source.key").lean<any[]>())
         .map((e) => String(e.source.key)),
     );
     const dates = rows.map((r) => r.date).sort();
@@ -149,7 +169,7 @@ export async function importExpenses(opts: {
     }
     const seen = new Map<string, number>();
     for (const r of rows) {
-      if (imported.has(keyOf(data.batch, r.row))) { p.already++; continue; }
+      if (imported.has(keyOf(data.batch, r))) { p.already++; continue; }
       const k = `${r.date}|${r.totalMinor}`;
       const match = ownAt.get(k);
       if (match?.length) {
@@ -172,7 +192,7 @@ export async function importExpenses(opts: {
   const file = path.join(dir, `expense-import-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   const backup = {
     at: new Date().toISOString(), batch: data.batch, source: data.source,
-    orgs: plan.orgs.map((o) => ({ orgId: o.orgId, subcategoriesAdded: o.subcategoriesToAdd, keys: o.toImport.map((r) => keyOf(data.batch, r.row)) })),
+    orgs: plan.orgs.map((o) => ({ orgId: o.orgId, subcategoriesAdded: o.subcategoriesToAdd, keys: o.toImport.map((r) => keyOf(data.batch, r)) })),
   };
   fs.writeFileSync(file, JSON.stringify(backup, null, 2));
   const back = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -216,7 +236,8 @@ export async function importExpenses(opts: {
         legacyCategory: { slug: "import", name: r.account },
         description: r.description,
         expenseDate: at,
-        amountMinor: r.totalMinor, taxPct: 0, taxInclusive: false, taxMinor: 0, totalMinor: r.totalMinor,
+        amountMinor: r.totalMinor - (r.taxMinor ?? 0), taxPct: r.taxMinor ? r.taxPct ?? 0 : 0, taxInclusive: !!r.taxMinor,
+        taxMinor: r.taxMinor ?? 0, totalMinor: r.totalMinor, reference: r.reference ?? "",
         currency: r.currency,
         paymentAccount: r.paidThrough,
         ...(r.paymentMethod ? { paymentMethod: r.paymentMethod } : {}),
@@ -224,7 +245,7 @@ export async function importExpenses(opts: {
         submittedById: by._id, submittedByName: "Imported (old books)",
         status: "approved", approvedById: by._id, approvedByName: by.name, approvedAt: at,
         notes: r.notes,
-        source: { kind: "import", key: keyOf(data.batch, r.row) },
+        source: { kind: "import", key: keyOf(data.batch, r) },
       });
       const err = doc.validateSync();
       if (err) throw new Error(`Row ${r.row}: ${err.message}`);

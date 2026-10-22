@@ -182,6 +182,43 @@ const redo = await imp.importExpenses({ ...opts, write: true });
 const first = await Expense.findOne({ organizationId: hq._id, "source.kind": "import" }).sort({ expenseNumber: 1 }).lean<any>();
 check("imported again after the undo: numbering from HX-00001 again", first?.expenseNumber === "HX-00001" && imp.countOf(redo) === 10, j([first?.expenseNumber, imp.countOf(redo)]));
 
+/* ── 6 ── */
+step("6. From the raw exports (2026-10-22): the old books' ids, VAT, and never two imports at once");
+const rawRow = (key: string, over: Partial<import("./expense-import").ImportRow>) => row(0, { key, notes: `Imported from the old books (Zoho expense, id ${key}).`, ...over });
+const raw = {
+  batch: "zoho-expenses-e2e", source: ["Expense (5).xlsx", "Expense (7).xlsx"], subcategoriesToAdd: data.subcategoriesToAdd,
+  rows: [
+    rawRow("zoho-exp:R1:aaaa:1", { row: 1, date: "2024-02-29", description: "muthu feb salary", totalMinor: 125_000, category: "payroll_benefits", subcategory: "basic_salary", account: "Salary and Wages" }),
+    rawRow("zoho-exp:R1:bbbb:1", { row: 2, date: "2024-02-29", description: "muthu feb commission", totalMinor: 68_000, category: "sales_commission", subcategory: "sales_commission", account: "Sales Commission" }),
+    rawRow("zoho-exp:R2:cccc:1", { row: 3, date: "2023-11-02", description: "Office supplies", totalMinor: 67_500, taxMinor: 3_214, taxPct: 5, reference: "237028" }),
+  ],
+};
+const rawFile = path.join(dir, "raw.json");
+fs.writeFileSync(rawFile, JSON.stringify(raw));
+const blocked = await imp.importExpenses({ ...opts, file: rawFile, write: true });
+const hqBlocked = blocked.orgs.find((o) => o.orgId === HQ)!;
+check("the earlier import still here: refused, saying so, nothing written",
+  hqBlocked.otherImports === 7 && hqBlocked.problems.some((p) => /another import are still here/.test(p)) && !blocked.backup
+  && (await Expense.countDocuments({ "source.key": /^import:zoho-exp:/ })) === 0, j(hqBlocked.problems));
+await imp.undoImport(redo.backup!, true);
+const rawDone = await imp.importExpenses({ ...opts, file: rawFile, write: true });
+const rawRows = await Expense.find({ "source.key": /^import:zoho-exp:/ }).sort({ expenseNumber: 1 }).lean<any[]>();
+check("once it is out: the 3 lines, each with its own amount (the split salary + commission as 1,250 and 680)",
+  rawRows.length === 3 && j(rawRows.filter((r) => /muthu/.test(r.description)).map((r) => r.totalMinor).sort()) === j([125_000, 68_000].sort()), j(rawRows.map((r) => [r.description, r.totalMinor])));
+const vat = rawRows.find((r) => r.reference === "237028");
+check("VAT as the old books had it: 675 with 32.14 inside, the reference kept",
+  vat?.totalMinor === 67_500 && vat?.taxMinor === 3_214 && vat?.amountMinor === 64_286 && vat?.taxPct === 5 && vat?.taxInclusive === true, j(vat));
+check("keyed by the old books' id", rawRows.every((r) => /^import:zoho-exp:R[12]:/.test(r.source.key)), j(rawRows.map((r) => r.source.key)));
+const newer = { ...raw, batch: "zoho-expenses-e2e-newer", rows: [...raw.rows,
+  rawRow("zoho-exp:R3:dddd:1", { row: 4, date: "2026-10-12", description: "meta", totalMinor: 2_770, category: "advertising_marketing", subcategory: "meta_ads", account: "Advertising & Marketing" })] };
+const newerFile = path.join(dir, "newer.json");
+fs.writeFileSync(newerFile, JSON.stringify(newer));
+const more = await imp.importExpenses({ ...opts, file: newerFile, write: false });
+const hqMore = more.orgs.find((o) => o.orgId === HQ)!;
+check("a newer export (another batch): the 3 already in, only the new line to add — not refused as another import",
+  hqMore.already === 3 && hqMore.toImport.length === 1 && !hqMore.problems.length && hqMore.otherImports === 0, j([hqMore.already, hqMore.toImport.length, hqMore.problems]));
+void rawDone;
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} passed\x1b[0m`);
 await mongoose.disconnect();

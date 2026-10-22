@@ -106,7 +106,33 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     notes: (doc.notes as string) ?? "",
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
     lateEntry: lateView((doc as unknown as { lateEntry?: unknown }).lateEntry),
+    ...transferView(doc),
   };
+}
+
+/** The line's side of a transfer, if it is one (2026-10-22). */
+function transferView(doc: BankTransactionDoc): { transfer?: BankTransactionDTO["transfer"] } {
+  const t = (doc as unknown as { transfer?: Record<string, unknown> | null }).transfer;
+  if (!t?.id) return {};
+  return {
+    transfer: {
+      id: String(t.id),
+      direction: (doc.amountMinor as number) < 0 ? "out" : "in",
+      otherAccountId: String(t.otherAccountId),
+      otherAccountName: String(t.otherAccountName ?? ""),
+      otherTransactionId: String(t.otherTransactionId),
+      otherAmountMinor: Number(t.otherAmountMinor ?? 0),
+      otherCurrency: String(t.otherCurrency ?? ""),
+    },
+  };
+}
+
+/** A transfer's line is changed as the transfer — both sides together — never on its own. */
+function refuseTransferLine(tx: unknown): void {
+  const t = (tx as { transfer?: { id?: unknown; otherAccountName?: string } | null }).transfer;
+  if (t?.id) {
+    throw new AppError("CONFLICT", `This line is one side of a transfer with ${t.otherAccountName ?? "another account"} — change or delete it as a transfer, so both sides move together.`);
+  }
 }
 
 function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
@@ -314,7 +340,7 @@ export async function recalculateRunningBalances(
  */
 // Return type inferred from findOne, so the caller gets a hydrated document it
 // can save rather than the plain shape BankTransactionDoc describes.
-async function assertEditable(orgId: string, accountId: string, txId: string) {
+export async function assertEditable(orgId: string, accountId: string, txId: string) {
   const tx = await BankTransaction.findOne({
     _id: new Types.ObjectId(txId),
     accountId: new Types.ObjectId(accountId),
@@ -364,6 +390,7 @@ export async function updateTransaction(
   late?: LateActor,
 ): Promise<BankTransactionDTO> {
   const tx = await assertEditable(orgId, accountId, txId);
+  refuseTransferLine(tx);
 
   const lateNow = input.date !== undefined && tx.source === "manual"
     ? await lateForDate(orgId, late ? { ...late, reason: input.lateReason ?? late.reason } : undefined, input.date, tx.date as Date, (tx as any).lateEntry)
@@ -481,6 +508,7 @@ export async function deleteTransaction(
   txId: string,
 ): Promise<void> {
   const tx = await assertEditable(orgId, accountId, txId);
+  refuseTransferLine(tx);
   const account = tx.accountId as Types.ObjectId;
   await BankTransaction.deleteOne({ _id: tx._id });
   await withdrawLateFor(orgId, "bank_line", tx._id);

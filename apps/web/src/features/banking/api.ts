@@ -15,6 +15,8 @@ import type {
   StartReconciliationInput,
   UpdateReconciliationInput,
   CashCountInput,
+  CreateTransferInput,
+  UpdateTransferInput,
 } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
@@ -120,6 +122,36 @@ export function useUpdateBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: ({ txId, input }: { txId: string; input: UpdateBankTransactionInput }) =>
       api.patch<BankTransaction>(`bank-accounts/${accountId}/transactions/${txId}`, input),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** Transfers between the organization's own accounts (2026-10-22): both lines, and both accounts, at once. */
+export interface TransferResult { id: string; out: BankTransaction; in: BankTransaction }
+
+export function useCreateTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: CreateTransferInput) => api.post<TransferResult>("bank-accounts/transfers", input),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+export function useUpdateTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ id, input }: { id: string; input: UpdateTransferInput }) => api.patch<TransferResult>(`bank-accounts/transfers/${id}`, input),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+export function useDeleteTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (id: string) => api.del<void>(`bank-accounts/transfers/${id}`),
     onSuccess: () => refreshAccount(qc),
   });
 }

@@ -72,6 +72,24 @@ const bankTransactionSchema = new Schema(
     notes: { type: String, default: "" },
     /** Typed in with an old date: waiting for a manager, or what one decided (late-entry.service.ts, 2026-10-21). */
     lateEntry: { type: recordLateSchema, default: null },
+    /**
+     * One side of a transfer between the organization's own accounts (2026-10-22, transfer.service.ts): the pair
+     * share `id`; each names the other line and what moved there (another currency's figure, between currencies).
+     */
+    transfer: {
+      type: new Schema(
+        {
+          id: { type: Types.ObjectId, required: true },
+          otherAccountId: { type: Types.ObjectId, required: true },
+          otherAccountName: { type: String, required: true },
+          otherTransactionId: { type: Types.ObjectId, required: true },
+          otherAmountMinor: { type: Number, required: true },
+          otherCurrency: { type: String, required: true },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { timestamps: true },
 );
@@ -80,6 +98,7 @@ bankTransactionSchema.index({ organizationId: 1, accountId: 1, date: -1 });
 bankTransactionSchema.index({ organizationId: 1, accountId: 1, status: 1 });
 bankTransactionSchema.index({ organizationId: 1, accountId: 1, isReconciled: 1 });
 bankTransactionSchema.index({ organizationId: 1, importBatchId: 1 });
+bankTransactionSchema.index({ organizationId: 1, "transfer.id": 1 }, { partialFilterExpression: { "transfer.id": { $exists: true } } });
 // Enforced rather than merely checked: two imports racing each other would
 // both pass a read-then-write test and both insert. Partial, because only
 // imported rows carry a bank reference and nulls must not collide.

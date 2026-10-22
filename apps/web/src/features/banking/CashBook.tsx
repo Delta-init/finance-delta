@@ -3,7 +3,7 @@
 import { LateBadge } from "@/features/late-entries/LateReason";
 import { useState } from "react";
 import { useUrlPage, useUrlParam } from "@/lib/url-state";
-import { Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { ArrowLeftRight, Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { useCan } from "@/lib/use-can";
 import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
 import { CashCountDialog } from "@/features/banking/CashCountDialog";
 import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
+import { TransferDialog } from "@/features/banking/TransferDialog";
 import { EntryReceipts } from "@/features/banking/EntryReceipts";
 import {
   useBankTransactions,
@@ -100,6 +101,9 @@ export function CashBook({ account }: { account: BankAccount }) {
   // Null while adding, a row while correcting one. The dialog is the same.
   const [entry, setEntry] = useState<BankTransaction | null>(null);
   const [entryOpen, setEntryOpen] = useState(false);
+  // A transfer with another account (2026-10-22): made here, or a line of one corrected — both sides together.
+  const [transferLine, setTransferLine] = useState<BankTransaction | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const rows = data?.data ?? [];
   const filtered = Boolean(dateFrom || dateTo);
@@ -122,6 +126,11 @@ export function CashBook({ account }: { account: BankAccount }) {
         {canWrite && (
           <Button size="sm" onClick={() => { setEntry(null); setEntryOpen(true); }}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> New entry
+          </Button>
+        )}
+        {canWrite && (
+          <Button size="sm" variant="outline" onClick={() => { setTransferLine(null); setTransferOpen(true); }}>
+            <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Transfer
           </Button>
         )}
         {can("banking:reconcile") && (
@@ -227,6 +236,11 @@ export function CashBook({ account }: { account: BankAccount }) {
                   </td>
                   <td className="px-4 py-2">
                     {tx.description}
+                    {tx.transfer && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted" title="A transfer between your own accounts — not income or an expense">
+                        <ArrowLeftRight className="h-3 w-3" /> transfer
+                      </span>
+                    )}
                     {tx.lateEntry && <span className="ml-2"><LateBadge late={tx.lateEntry} /></span>}
                     {tx.matches.length > 0 && (
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">
@@ -259,7 +273,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                     {canWrite && (
                       <button
                         type="button"
-                        onClick={() => { setEntry(tx); setEntryOpen(true); }}
+                        onClick={() => (tx.transfer ? (setTransferLine(tx), setTransferOpen(true)) : (setEntry(tx), setEntryOpen(true)))}
                         className="mr-2 text-foreground-subtle hover:text-primary"
                         aria-label={`Edit ${tx.description}`}
                       >
@@ -285,7 +299,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                         document the button went, and an entry linked to the
                         wrong expense could only be deleted and typed again.
                         The server has always been able to undo it. */}
-                    {canWrite && (
+                    {canWrite && !tx.transfer && (
                       tx.matches.length === 0 ? (
                         <button
                           type="button"
@@ -316,7 +330,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                         </button>
                       )
                     )}
-                    {canWrite && (
+                    {canWrite && !tx.transfer && (
                       <button
                         type="button"
                         disabled={remove.isPending}
@@ -349,6 +363,7 @@ export function CashBook({ account }: { account: BankAccount }) {
         open={entryOpen}
         onClose={() => setEntryOpen(false)}
       />
+      <TransferDialog account={account} line={transferLine} open={transferOpen} onClose={() => setTransferOpen(false)} />
 
       <CashCountDialog account={account} open={counting} onClose={() => setCounting(false)} />
 

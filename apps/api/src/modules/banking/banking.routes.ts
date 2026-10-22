@@ -11,6 +11,8 @@ import {
   updateCashCountSchema,
   startReconciliationSchema,
   updateReconciliationSchema,
+  createTransferSchema,
+  updateTransferSchema,
 } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
@@ -20,6 +22,11 @@ import * as c from "./banking.controller";
 
 const router = Router();
 router.use(authenticate);
+
+// Transfers between the organization's own accounts (2026-10-22) — before "/:id", whose patterns they would meet.
+router.post("/transfers", requirePermission("banking:write"), validateBody(createTransferSchema), c.createTransfer);
+router.patch("/transfers/:transferId", requirePermission("banking:write"), validateBody(updateTransferSchema), c.updateTransfer);
+router.delete("/transfers/:transferId", requirePermission("banking:write"), c.deleteTransfer);
 
 // Bank accounts
 router.get("/", requirePermission("banking:read"), c.listAccounts);

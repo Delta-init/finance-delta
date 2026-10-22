@@ -5,8 +5,23 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, Plus, Upload, BarChart3, Search, X, TrendingUp, TrendingDown,
-  CheckCircle2, CircleDot, Ban, Copy, Pencil, Trash2, AlertTriangle, RotateCcw,
+  ArrowLeft,
+  Plus,
+  Upload,
+  BarChart3,
+  Search,
+  X,
+  TrendingUp,
+  TrendingDown,
+  CheckCircle2,
+  CircleDot,
+  Ban,
+  Copy,
+  Pencil,
+  Trash2,
+  AlertTriangle,
+  RotateCcw,
+  ArrowLeftRight,
 } from "lucide-react";
 import {
   type BankTransaction,
@@ -41,6 +56,7 @@ import {
   useDeleteBankTransaction,
 } from "@/features/banking/api";
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
+import { TransferDialog } from "@/features/banking/TransferDialog";
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 import { CashBook } from "@/features/banking/CashBook";
 import { CashCounts } from "@/features/banking/CashCounts";
@@ -77,6 +93,11 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [deleting, setDeleting] = useState<BankTransaction | null>(null);
+  // A transfer with another of the organization's accounts (2026-10-22): made here, or a line of one corrected or
+  // deleted — both sides together, so its lines do not open the single-line dialogs.
+  const [transferLine, setTransferLine] = useState<BankTransaction | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const openTransfer = (tx: BankTransaction | null) => { setTransferLine(tx); setTransferOpen(true); };
   const updateTx = useUpdateBankTransaction(id);
   const deleteTx = useDeleteBankTransaction(id);
 
@@ -115,7 +136,14 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
       sortable: true,
       cell: (tx) => (
         <div>
-          <p className="font-medium text-foreground max-w-xs truncate">{tx.description}</p>
+          <p className="font-medium text-foreground max-w-xs truncate">
+            {tx.description}
+            {tx.transfer && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 align-middle text-[11px] font-normal text-foreground-muted" title="A transfer between your own accounts — not income or an expense">
+                <ArrowLeftRight className="h-3 w-3" /> transfer
+              </span>
+            )}
+          </p>
           {tx.reference && (
             <p className="text-xs text-foreground-muted">{tx.reference}</p>
           )}
@@ -173,8 +201,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           tx={tx}
           accountId={id}
           onAction={handleTxAction}
-          onEdit={setEditing}
-          onDelete={setDeleting}
+          onEdit={(t) => (t.transfer ? openTransfer(t) : setEditing(t))}
+          onDelete={(t) => (t.transfer ? openTransfer(t) : setDeleting(t))}
         />
       ),
     },
@@ -363,6 +391,9 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         >
           <Plus className="h-4 w-4" /> Add
         </Button>
+        <Button variant="outline" size="sm" onClick={() => openTransfer(null)}>
+          <ArrowLeftRight className="h-4 w-4" /> Transfer
+        </Button>
 
         {hasFilters && (
           <Button
@@ -395,6 +426,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         isLoading={txLoading}
         emptyMessage="No transactions found."
       />
+
+      <TransferDialog account={account} line={transferLine} open={transferOpen} onClose={() => setTransferOpen(false)} />
 
       <EditTransactionDialog
         tx={editing}

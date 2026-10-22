@@ -102,6 +102,52 @@ export const updateBankTransactionSchema = z
 export type UpdateBankTransactionInput = z.infer<typeof updateBankTransactionSchema>;
 
 /**
+ * Money moved between two of the organization's own accounts (the user, 2026-10-22: "a new item in petty cash, an
+ * internal transfer") — a tin topped up from the bank, the tin's cash banked, one bank to another. One transfer is
+ * two linked lines, out of one account and into the other, on the same day; neither income nor an expense. Between
+ * accounts in different currencies both figures are given: what left, and what arrived.
+ */
+export const createTransferSchema = z.object({
+  fromAccountId: z.string().min(1, "Choose the account it comes from"),
+  toAccountId: z.string().min(1, "Choose the account it goes to"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date is required"),
+  /** What left the first account, in its currency. */
+  amountMinor: z.number().int().positive("Amount must be more than 0"),
+  /** What arrived in the second, in its currency — only between currencies (else the same as the amount). */
+  receivedMinor: z.number().int().positive().optional(),
+  reference: z.string().max(100).optional().default(""),
+  notes: z.string().max(1000).optional().default(""),
+  lateReason: lateReasonSchema,
+});
+export type CreateTransferInput = z.infer<typeof createTransferSchema>;
+
+/** Correcting a transfer: both of its lines move together. Which accounts it is between stays — delete it and redo. */
+export const updateTransferSchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    amountMinor: z.number().int().positive("Amount must be more than 0"),
+    receivedMinor: z.number().int().positive(),
+    reference: z.string().max(100),
+    notes: z.string().max(1000),
+    lateReason: z.string().trim().max(500),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, "Nothing to change");
+export type UpdateTransferInput = z.infer<typeof updateTransferSchema>;
+
+/** A line's side of a transfer: which way, and the other account and what moved there. */
+export const bankTransferLinkSchema = z.object({
+  id: z.string(),
+  direction: z.enum(["out", "in"]),
+  otherAccountId: z.string(),
+  otherAccountName: z.string(),
+  otherTransactionId: z.string(),
+  otherAmountMinor: z.number(),
+  otherCurrency: z.string(),
+});
+export type BankTransferLink = z.infer<typeof bankTransferLinkSchema>;
+
+/**
  * One line of a bank statement being imported.
  *
  * Stricter than a hand-typed transaction on purpose. The wizard parses dates
@@ -206,6 +252,8 @@ export const bankTransactionSchema = z.object({
   createdAt: z.string(),
   /** Typed in with an old date: waiting for a manager, or what one decided. */
   lateEntry: recordLateEntrySchema.optional(),
+  /** One side of a transfer between the organization's own accounts (2026-10-22). */
+  transfer: bankTransferLinkSchema.optional(),
 });
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 

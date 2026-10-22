@@ -71,6 +71,23 @@ export const updateTransaction = asyncHandler(async (req, res) => {
   ok(res, await svc.updateTransaction(org(req), req.params.id!, req.params.txId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }));
 });
 
+/** Transfers between the organization's own accounts (2026-10-22) — both lines at once. */
+export const createTransfer = asyncHandler(async (req, res) => {
+  const { createTransfer } = await import("./transfer.service");
+  created(res, await createTransfer(org(req), req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }));
+});
+
+export const updateTransfer = asyncHandler(async (req, res) => {
+  const { updateTransfer } = await import("./transfer.service");
+  ok(res, await updateTransfer(org(req), req.params.transferId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }));
+});
+
+export const deleteTransfer = asyncHandler(async (req, res) => {
+  const { deleteTransfer } = await import("./transfer.service");
+  await deleteTransfer(org(req), req.params.transferId!);
+  res.status(204).end();
+});
+
 export const deleteTransaction = asyncHandler(async (req, res) => {
   await svc.deleteTransaction(org(req), req.params.id!, req.params.txId!);
   res.status(204).end();

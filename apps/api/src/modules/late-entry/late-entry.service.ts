@@ -281,11 +281,18 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
     // Approved: the line stands. Rejected: a new one goes; one moved back gets its date back. Its account's balances follow.
     const { BankTransaction } = await import("../banking/bank-transaction.model");
     const { recalculateRunningBalances } = await import("../banking/banking.service");
-    const line = await BankTransaction.findOne({ _id: e.refId, organizationId: orgOid }).select("accountId").lean<any>();
+    const line = await BankTransaction.findOne({ _id: e.refId, organizationId: orgOid }).select("accountId transfer").lean<any>();
     if (!line) return;
-    if (decision === "rejected" && !e.previousDate) await BankTransaction.deleteOne({ _id: e.refId, organizationId: orgOid });
-    else await BankTransaction.updateOne({ _id: e.refId, organizationId: orgOid }, { $set: { lateEntry: sub, ...(decision === "rejected" ? { date: e.previousDate } : {}) } });
+    // One side of a transfer (2026-10-22): the other side is decided with it — both stand, both go, or both get
+    // their date back.
+    const pair = line.transfer?.otherTransactionId
+      ? await BankTransaction.findOne({ _id: line.transfer.otherTransactionId, organizationId: orgOid }).select("accountId").lean<any>()
+      : null;
+    const ids = [e.refId, ...(pair ? [pair._id] : [])];
+    if (decision === "rejected" && !e.previousDate) await BankTransaction.deleteMany({ _id: { $in: ids }, organizationId: orgOid });
+    else await BankTransaction.updateMany({ _id: { $in: ids }, organizationId: orgOid }, { $set: { lateEntry: sub, ...(decision === "rejected" ? { date: e.previousDate } : {}) } });
     await recalculateRunningBalances(orgId, line.accountId);
+    if (pair) await recalculateRunningBalances(orgId, pair.accountId);
     return;
   }
   if (e.kind === "bill_payment") {

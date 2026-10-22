@@ -445,6 +445,9 @@ export async function createExpense(
         }
       : undefined,
     mileage,
+    // Paid already from its account (2026-10-22): money out there at once (syncedDTO below puts the line in). Not one
+    // that waits for approval — that is paid once approved.
+    ...(input.paidOn && status === "approved" ? { paidOn: new Date(input.paidOn) } : {}),
     attachments: await resolveAttachments(orgId, input.attachments ?? [], []),
     projectName: input.projectName ?? "",
     departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,

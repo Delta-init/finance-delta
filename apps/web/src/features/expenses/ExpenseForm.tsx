@@ -224,6 +224,13 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   }, [org, accountList]); // eslint-disable-line react-hooks/exhaustive-deps
   const bankAccountId = watch("bankAccountId");
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
+  // Paid now from that account (2026-10-22): on saving it is paid, money out there at once, on this day — the
+  // expense's own date unless changed. Only on a new one that needs no approval; off, it waits for Mark as paid.
+  const [paidNow, setPaidNow] = useState(true);
+  const [paidOnTyped, setPaidOnTyped] = useState("");
+  const needsApproval = watch("requiresApproval");
+  const offersPaidNow = !isEdit && !!pickedAccount && !needsApproval;
+  const paidOn = paidOnTyped || watch("expenseDate");
   // What was typed before there was a list to pick from — kept while no account is picked.
   const typedAccount = (initialValues?.bankAccountId ?? NO_ACCOUNT) === NO_ACCOUNT ? (initialValues?.paymentAccount ?? "").trim() : "";
   // Shown back as it is entered, so nobody has to work out whether the figure
@@ -293,6 +300,7 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
       costCentre: values.costCentre ?? "",
       notes: values.notes ?? "",
       ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
+      ...(offersPaidNow && paidNow && paidOn ? { paidOn } : {}),
     };
 
     try {
@@ -548,13 +556,36 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
               </Select>
               {pickedAccount && pickedAccount.currency !== currency ? (
                 <p className="text-xs text-warning">{pickedAccount.accountName} is in {pickedAccount.currency} and this expense in {currency} — it stays out of the account's balance.</p>
-              ) : pickedAccount ? (
+              ) : pickedAccount && isEdit ? (
                 <p className="text-xs text-foreground-muted">Once paid, it shows in {pickedAccount.accountName} as money out.</p>
-              ) : typedAccount ? (
+              ) : pickedAccount && needsApproval ? (
+                <p className="text-xs text-foreground-muted">It needs approval first: it comes out of {pickedAccount.accountName} once approved and marked paid.</p>
+              ) : pickedAccount ? null : typedAccount ? (
                 <p className="text-xs text-foreground-muted">Written before: “{typedAccount}”</p>
               ) : null}
             </div>
           </div>
+          {offersPaidNow && pickedAccount && (
+            <div className="space-y-2 rounded-md border border-border bg-surface-muted/40 p-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                <input type="checkbox" className="h-4 w-4 rounded border-border" checked={paidNow} onChange={(e) => setPaidNow(e.target.checked)} />
+                Paid now from {pickedAccount.accountName}
+              </label>
+              {paidNow ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-foreground-muted">
+                  <span>Paid on</span>
+                  <Input type="date" value={paidOn} onChange={(e) => setPaidOnTyped(e.target.value)} className="h-8 w-[160px]" />
+                  <span>
+                    {pickedAccount.currency === currency
+                      ? `— saved as paid: ${pickedAccount.accountName} goes down by this amount on that day.`
+                      : "— saved as paid; the account is in another currency, so its balance does not move."}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-foreground-muted">Saved unpaid — it comes out of {pickedAccount.accountName} when it is marked paid.</p>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Reference</Label>
             <Input {...register("reference")} placeholder="Receipt #, invoice #, etc." />

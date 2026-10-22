@@ -134,6 +134,12 @@ export const createExpenseSchema = z.object({
    * than inventing a deadline nobody agreed to.
    */
   dueDate: z.string().optional(),
+  /**
+   * Paid already, from its account, on this day (2026-10-22: "when entering the expense on the bank it needs to reduce
+   * the amount in the bank"): saved as paid, so it shows in the account as money out at once. Only for one that needs
+   * no approval — one that does is paid once approved. Left out, it stays unpaid until marked paid.
+   */
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Paid on must be a date").optional(),
   requiresApproval: z.boolean().optional().default(false),
   isRecurring: z.boolean().optional().default(false),
   recurrence: z
@@ -178,7 +184,8 @@ export const createExpenseSchema = z.object({
 });
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
 
-export const updateExpenseSchema = createExpenseSchema.partial();
+// Paying is its own step once saved (Mark as paid / unpaid), so an edit does not take a paid date.
+export const updateExpenseSchema = createExpenseSchema.partial().omit({ paidOn: true });
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 
 export const rejectExpenseSchema = z.object({

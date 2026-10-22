@@ -85,7 +85,12 @@ export const salesOrderQuerySchema = listQuerySchema.extend({
 });
 export type SalesOrderQuery = z.infer<typeof salesOrderQuerySchema>;
 
-import { invoiceStatusSchema } from "./invoice.schema";
+import { invoiceStatusSchema, PAYMENT_METHODS } from "./invoice.schema";
+
+/**
+ * The account a list is narrowed to (2026-10-22): a Banking account's id, or "none" for the ones with no account.
+ */
+const bankAccountFilterSchema = z.union([z.literal("none"), z.string().regex(/^[a-f\d]{24}$/i, "Invalid bank account")]).optional();
 
 export const invoiceQuerySchema = listQuerySchema.extend({
   status: invoiceStatusSchema.optional(),
@@ -96,6 +101,9 @@ export const invoiceQuerySchema = listQuerySchema.extend({
   issueTo: z.string().optional(),
   dueFrom: z.string().optional(),
   dueTo: z.string().optional(),
+  /** Invoices with a payment by this method, or into this account ("none": one with no account) — 2026-10-22. */
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  bankAccountId: bankAccountFilterSchema,
 });
 export type InvoiceQuery = z.infer<typeof invoiceQuerySchema>;
 
@@ -128,6 +136,7 @@ export type VendorCreditQuery = z.infer<typeof vendorCreditQuerySchema>;
 import {
   expenseStatusSchema,
   expensePaymentStatusSchema,
+  expensePaymentMethodSchema,
 } from "./expense.schema";
 
 export const expenseQuerySchema = listQuerySchema.extend({
@@ -145,6 +154,9 @@ export const expenseQuerySchema = listQuerySchema.extend({
   /** Expenses for one salesperson (2026-10-21). */
   salespersonId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   isRecurring: queryBool,
+  /** Paid by this method, or from this account ("none": no account) — 2026-10-22. */
+  paymentMethod: expensePaymentMethodSchema.optional(),
+  bankAccountId: bankAccountFilterSchema,
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
 

@@ -481,7 +481,26 @@ export async function invoiceSummary(orgId: string, scope: Scope): Promise<Invoi
  * What the Invoices list's filters match — the table, its export and its cards (2026-10-22) all ask with this one,
  * so they cannot disagree.
  */
-function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scope): Record<string, unknown> {
+/**
+ * A payment by the method asked for, into the account asked for (2026-10-22: "filter for the payment mode with bank").
+ * The account is its link, or — on a payment from before payments were linked to Banking — the account's name as
+ * typed; "none" is a payment in no account. Both on the same payment: "by card into Delta Bank".
+ */
+async function paymentListFilter(orgId: string, query: InvoiceQuery): Promise<Record<string, unknown> | null> {
+  const want: Record<string, unknown>[] = [];
+  if (query.paymentMethod) want.push({ method: query.paymentMethod });
+  if (query.bankAccountId === "none") {
+    want.push({ bankAccountId: null }, { $or: [{ accountName: "" }, { accountName: null }] });
+  } else if (query.bankAccountId) {
+    const { BankAccount } = await import("../banking/bank-account.model");
+    const acc = await BankAccount.findOne({ _id: query.bankAccountId, organizationId: orgId }).select("accountName").lean<{ accountName?: string }>();
+    const id = new Types.ObjectId(query.bankAccountId);
+    want.push(acc?.accountName ? { $or: [{ bankAccountId: id }, { bankAccountId: null, accountName: acc.accountName }] } : { bankAccountId: id });
+  }
+  return want.length ? { payments: { $elemMatch: { $and: want } } } : null;
+}
+
+async function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scope): Promise<Record<string, unknown>> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
   const or = searchOr(query.q, ["invoiceNumber", "customerName", "salespersonName", "reference"]);
@@ -507,6 +526,8 @@ function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scope): Re
   if (query.dueFrom) and.push({ dueDate: { $gte: new Date(query.dueFrom) } });
   if (query.dueTo) and.push({ dueDate: throughDay(query.dueTo) });
   if (query.tagIds?.length) and.push({ tagIds: { $in: query.tagIds } });
+  const paid = await paymentListFilter(orgId, query);
+  if (paid) and.push(paid);
 
   // Not taken from `query`: asking for another salesperson's invoices must
   // narrow the result to nothing, never widen it.
@@ -523,7 +544,7 @@ export async function listInvoices(
   query: InvoiceQuery,
   scope: Scope,
 ): Promise<Paginated<InvoiceDTO>> {
-  const filter = invoiceListFilter(orgId, query, scope);
+  const filter = await invoiceListFilter(orgId, query, scope);
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
     Invoice.find(filter)
@@ -546,7 +567,7 @@ export async function listInvoices(
  * (unless filtered for).
  */
 export async function invoiceListSummary(orgId: string, query: InvoiceQuery, scope: Scope): Promise<InvoiceListSummary> {
-  const filter = Invoice.find().cast(Invoice, invoiceListFilter(orgId, query, scope));
+  const filter = Invoice.find().cast(Invoice, await invoiceListFilter(orgId, query, scope));
   const now = new Date();
   const notMoney = query.status === "draft" || query.status === "void" ? [] : ["draft", "void"];
   const owing = { $gt: [{ $ifNull: ["$balanceMinor", 0] }, 0] };

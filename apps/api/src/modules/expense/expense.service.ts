@@ -179,7 +179,7 @@ const SORT = {
  * What the Expenses list's filters match — the table, its export and its cards (2026-10-21) read the same
  * filter, so they cannot disagree.
  */
-function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scope): Record<string, unknown> {
+async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scope): Promise<Record<string, unknown>> {
   const and: Record<string, unknown>[] = [];
   // Notes too: an imported row's "[Needs review]", its old account, its accountant's note (2026-10-21).
   const or = searchOr(query.q, ["expenseNumber", "description", "submittedByName", "notes"]);
@@ -195,6 +195,17 @@ function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scope): Re
   if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });
   if (query.salespersonId) and.push({ salespersonId: new Types.ObjectId(query.salespersonId) });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
+  // How it was paid, and from which account (2026-10-22): its link, or on an older one the account's name as typed;
+  // "none" is one paid from no account.
+  if (query.paymentMethod) and.push({ paymentMethod: query.paymentMethod });
+  if (query.bankAccountId === "none") {
+    and.push({ bankAccountId: null, $or: [{ paymentAccount: "" }, { paymentAccount: null }] });
+  } else if (query.bankAccountId) {
+    const { BankAccount } = await import("../banking/bank-account.model");
+    const acc = await BankAccount.findOne({ _id: query.bankAccountId, organizationId: orgId }).select("accountName").lean<{ accountName?: string }>();
+    const id = new Types.ObjectId(query.bankAccountId);
+    and.push(acc?.accountName ? { $or: [{ bankAccountId: id }, { bankAccountId: null, paymentAccount: acc.accountName }] } : { bankAccountId: id });
+  }
 
   // The derived status, expressed as the query that produces it, so filtering
   // and the badge on the row cannot disagree. The three are exclusive: unpaid
@@ -224,7 +235,7 @@ export async function listExpenses(
   query: ExpenseQuery,
   scope: Scope,
 ): Promise<Paginated<ExpenseDTO>> {
-  const filter = expenseListFilter(orgId, query, scope);
+  const filter = await expenseListFilter(orgId, query, scope);
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
     Expense.find(filter).sort(sort).skip(skipFor(query.page, query.pageSize)).limit(query.pageSize)
@@ -240,7 +251,7 @@ export async function listExpenses(
  * counted but their money left out (it was not spent), unless the status filter asks for them.
  */
 export async function expenseSummary(orgId: string, query: ExpenseQuery, scope: Scope): Promise<ExpenseSummary> {
-  const filter = Expense.find().cast(Expense, expenseListFilter(orgId, query, scope));
+  const filter = Expense.find().cast(Expense, await expenseListFilter(orgId, query, scope));
   const todayStart = new Date(new Date().toISOString().slice(0, 10));
   const notSpent = query.status === "voided" || query.status === "rejected" ? [] : ["voided", "rejected"];
   const unpaid = { $eq: [{ $ifNull: ["$paidOn", null] }, null] };

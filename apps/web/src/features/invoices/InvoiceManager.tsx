@@ -7,6 +7,7 @@ import { Plus, Search, X, ReceiptText, Trash2, Ban } from "lucide-react";
 import {
   INVOICE_STATUSES,
   INVOICE_APPROVALS,
+  PAYMENT_METHODS,
   type Invoice,
   type InvoiceStatus,
   type InvoiceApproval,
@@ -27,6 +28,7 @@ import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { InvoiceSummaryCards } from "./InvoiceSummaryCards";
+import { BankAccountFilter, PaymentMethodFilter, accountsOf, methodsOf } from "@/features/banking/PaymentFilters";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import {
@@ -53,6 +55,8 @@ const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
   { header: "Issue", value: (inv) => inv.issueDate },
   { header: "Due", value: (inv) => inv.dueDate },
   { header: "Status", value: (inv) => inv.status },
+  { header: "Paid by", value: (inv) => methodsOf(inv.payments.map((p) => p.method)) },
+  { header: "Bank", value: (inv) => accountsOf(inv.payments.map((p) => p.accountName)) },
   { header: "Currency", value: (inv) => inv.currency },
   { header: "Total", value: (inv) => inv.totalMinor / 100 },
   { header: "Balance", value: (inv) => inv.balanceMinor / 100 },
@@ -72,6 +76,9 @@ export function InvoiceManager() {
   const [dueFrom, setDueFrom] = useUrlParam("dueFrom", "");
   const [dueTo, setDueTo] = useUrlParam("dueTo", "");
   const [tagIds, setTagIds] = useUrlListParam("tags");
+  // How it was paid and into which account (2026-10-22): any of its payments.
+  const [paymentMethod, setPaymentMethod] = useUrlParam("paidBy", "");
+  const [bankAccountId, setBankAccountId] = useUrlParam("bank", "");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -93,6 +100,8 @@ export function InvoiceManager() {
     dueFrom: dueFrom || undefined,
     dueTo: dueTo || undefined,
     tagIds: tagIds.length ? tagIds : undefined,
+    paymentMethod: paymentMethod || undefined,
+    bankAccountId: bankAccountId || undefined,
   };
   const { data, isLoading } = useInvoices(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-22).
@@ -198,7 +207,7 @@ export function InvoiceManager() {
   );
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds);
+  const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds, paymentMethod, bankAccountId);
   const hasFilters = filterCount > 0 || issued.range !== "all";
 
   const clear = () => {
@@ -209,6 +218,8 @@ export function InvoiceManager() {
     setDueFrom("");
     setDueTo("");
     setTagIds([]);
+    setPaymentMethod("");
+    setBankAccountId("");
   };
 
   const columns: Column<Invoice>[] = [
@@ -247,6 +258,17 @@ export function InvoiceManager() {
           {inv.status}
         </Badge>
       ),
+    },
+    // How it was paid and where it landed (2026-10-22) — every payment's, each once; "—" while nothing is paid.
+    {
+      key: "paidBy",
+      header: "Paid by",
+      cell: (inv) => <span className="text-foreground-muted">{methodsOf(inv.payments.map((p) => p.method)) || "—"}</span>,
+    },
+    {
+      key: "bank",
+      header: "Bank",
+      cell: (inv) => <span className="text-foreground-muted">{accountsOf(inv.payments.map((p) => p.accountName)) || "—"}</span>,
     },
     {
       key: "total",
@@ -372,6 +394,8 @@ export function InvoiceManager() {
         <Field label="Due from"><DatePicker value={dueFrom} onChange={setDueFrom} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Due to"><DatePicker value={dueTo} onChange={setDueTo} clearable placeholder="Any" className="w-[140px]" /></Field>
         <Field label="Tags"><div className="w-[180px]"><TagPicker value={tagIds} onChange={setTagIds} placeholder="Any tags…" /></div></Field>
+        <Field label="Paid by"><PaymentMethodFilter methods={PAYMENT_METHODS} value={paymentMethod} onChange={setPaymentMethod} /></Field>
+        <Field label="Bank account"><BankAccountFilter value={bankAccountId} onChange={setBankAccountId} /></Field>
 
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clear}>

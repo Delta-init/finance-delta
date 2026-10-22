@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
-import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS } from "@delta/shared";
+import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS, expensePaymentMethodSchema, paymentMethodLabel } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { FilterToggle } from "@/components/ui/filter-toggle";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from "@/features/expenses/api";
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
+import { BankAccountFilter, PaymentMethodFilter } from "@/features/banking/PaymentFilters";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import { useUsers, EVERYONE } from "@/features/users/api";
@@ -64,6 +65,8 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Submitted By", value: (e) => e.submittedByName },
   { header: "Salesperson", value: (e) => e.salesperson?.name ?? "" },
   { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
+  { header: "Paid by", value: (e) => paymentMethodLabel(e.paymentMethod) },
+  { header: "Bank", value: (e) => e.paymentAccount ?? "" },
   { header: "Currency", value: (e) => e.currency },
   { header: "Total", value: (e) => e.totalMinor / 100 },
 ];
@@ -127,6 +130,9 @@ export default function ExpensesPage() {
   const dateFrom = spent.from, dateTo = spent.to;
   // One salesperson's expenses (2026-10-21) — also from a link (?salespersonId=), as the expense page gives.
   const [salesperson, setSalesperson] = useUrlParam("salespersonId", "all");
+  // How it was paid and from which account (2026-10-22).
+  const [paymentMethod, setPaymentMethod] = useUrlParam("paidBy", "");
+  const [bankAccountId, setBankAccountId] = useUrlParam("bank", "");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
@@ -142,13 +148,15 @@ export default function ExpensesPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     salespersonId: salesperson === "all" ? undefined : salesperson,
+    paymentMethod: paymentMethod || undefined,
+    bankAccountId: bankAccountId || undefined,
   };
   const { data, isLoading } = useExpenses(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson);
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId);
   const hasFilters = filterCount > 0 || spent.range !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
@@ -258,6 +266,17 @@ export default function ExpensesPage() {
           ) : null}
         </div>
       ),
+    },
+    // How it was paid and from which account (2026-10-22); "—" when it says none.
+    {
+      key: "paidBy",
+      header: "Paid by",
+      cell: (e) => <span className="text-foreground-muted">{paymentMethodLabel(e.paymentMethod) || "—"}</span>,
+    },
+    {
+      key: "bank",
+      header: "Bank",
+      cell: (e) => <span className="text-foreground-muted">{e.paymentAccount || "—"}</span>,
     },
     {
       key: "total",
@@ -403,12 +422,17 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
 
+        <PaymentMethodFilter methods={expensePaymentMethodSchema.options} value={paymentMethod} onChange={setPaymentMethod} anyLabel="All payment methods" />
+        <BankAccountFilter value={bankAccountId} onChange={setBankAccountId} anyLabel="All bank accounts" />
+
         {hasFilters && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setStatus("all");
+              setPaymentMethod("");
+              setBankAccountId("");
               setPayment("all");
               pickCategory("all");
               // Counted by hasFilters, so it put the Clear button on screen and

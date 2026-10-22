@@ -1,18 +1,15 @@
 "use client";
 
-import { Calendar as CalendarIcon, X } from "lucide-react";
-import { Calendar } from "./calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "./popover";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** value/onChange use ISO date strings ("YYYY-MM-DD") to match forms + filters. */
-function toYMD(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
+/**
+ * A date (value/onChange as "YYYY-MM-DD", to match forms + filters), picked with the browser's own date picker (the
+ * user, 2026-10-22: "use the native calendar instead of the custom calendar in every date input area") — the
+ * browser's calendar on a computer, the phone's date wheel on a phone, and the date can be typed in. The same props
+ * as the pop-up calendar it replaced, so every screen using it changed with this file. A native date box shows the
+ * browser's own dd/mm/yyyy when empty; `placeholder` is kept as its accessible name.
+ */
 export function DatePicker({
   value,
   onChange,
@@ -26,43 +23,31 @@ export function DatePicker({
   clearable?: boolean;
   className?: string;
 }) {
-  const date = value ? new Date(`${value}T00:00:00`) : undefined;
-  const label = date
-    ? date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-    : placeholder;
-
+  const showClear = clearable && !!value;
   return (
-    <Popover>
-      <PopoverTrigger asChild>
+    <div className={cn("relative", className)}>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={placeholder}
+        className={cn(
+          "h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground shadow-xs transition-colors focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+          !value && "text-foreground-subtle",
+          showClear && "pr-7",
+        )}
+      />
+      {showClear && (
         <button
           type="button"
-          className={cn(
-            "flex h-9 items-center gap-2 rounded-md border border-border bg-surface px-3 text-sm shadow-xs transition-colors hover:bg-surface-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30",
-            !value && "text-foreground-subtle",
-            className,
-          )}
+          onClick={() => onChange("")}
+          aria-label="Clear the date"
+          title="Clear"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-foreground-subtle hover:text-foreground"
         >
-          <CalendarIcon className="h-4 w-4 shrink-0 text-foreground-subtle" />
-          <span className="flex-1 text-nowrap text-left">{label}</span>
-          {clearable && value && (
-            <X
-              className="h-3.5 w-3.5 text-foreground-subtle hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange("");
-              }}
-            />
-          )}
+          <X className="h-3.5 w-3.5" />
         </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0">
-        <Calendar
-          mode="single"
-          selected={date}
-          onSelect={(d) => onChange(d ? toYMD(d) : "")}
-          defaultMonth={date}
-        />
-      </PopoverContent>
-    </Popover>
+      )}
+    </div>
   );
 }

@@ -18,6 +18,7 @@ import { useCurrency } from "@/lib/currency-context";
 import { useDailyReport } from "@/features/reports/api";
 import { DailyBreakdownDialog, type DailyPick } from "@/features/reports/DailyBreakdownDialog";
 import { useAllDepartments } from "@/features/departments/api";
+import { DAILY_VIEWS, groupDaily, type DailyView, type PeriodRow } from "@/features/reports/daily-periods";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const monthStart = () => {
@@ -41,6 +42,8 @@ export default function DailyReportPage() {
   const [from, setFrom] = useUrlParam("from", monthStart());
   const [to, setTo] = useUrlParam("to", today());
   const [departmentId, setDepartmentId] = useUrlParam("department", ALL);
+  // By day, week or month (2026-10-22) — the same days added up.
+  const [view, setView] = useUrlParam<DailyView>("view", "day", { allowed: DAILY_VIEWS });
 
   const { data: departments } = useAllDepartments();
   const { data, isLoading } = useDailyReport(
@@ -55,7 +58,12 @@ export default function DailyReportPage() {
   const scope = departmentId === ALL ? undefined : departmentId;
   const deptName = departments?.find((d) => d.id === departmentId)?.name;
   const pickRange = (kind: DailyPick["kind"]) => setPick({ kind, from, to, departmentId: scope, label: `${from} — ${to}${deptName ? ` · ${deptName}` : ""}` });
-  const pickDay = (kind: DailyPick["kind"], date: string) => setPick({ kind, from: date, to: date, departmentId: scope, label: `${date}${deptName ? ` · ${deptName}` : ""}` });
+  const pickPeriod = (kind: DailyPick["kind"], p: PeriodRow) =>
+    setPick({ kind, from: p.from, to: p.to, departmentId: scope, label: `${p.label}${p.note ? ` ${p.note}` : ""}${deptName ? ` · ${deptName}` : ""}` });
+  const periods = groupDaily(rows, view, from, to);
+  // A week or a month opened up: its own days, by day.
+  const drillInto = (p: PeriodRow) => { setFrom(p.from); setTo(p.to); setView("day"); };
+  const unit = view === "day" ? "Day" : view === "week" ? "Week" : "Month";
   const totals = data?.totals ?? { incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 };
 
   const kpis = [
@@ -75,7 +83,7 @@ export default function DailyReportPage() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Daily Report"
-        description="Income received, expenses, and invoiced revenue per day — click any figure to see where it came from, or a date for the whole day"
+        description="Income received, expenses, and invoiced revenue by day, week or month — click any figure to see where it came from, a date for the whole day, or a week or month to open it day by day"
         icon={CalendarDays}
       />
 
@@ -112,6 +120,20 @@ export default function DailyReportPage() {
             </SelectContent>
           </Select>
         )}
+        <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm" role="tablist" aria-label="By day, week or month">
+          {DAILY_VIEWS.map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              onClick={() => setView(v)}
+              className={`rounded-md px-3 py-1.5 font-medium transition-colors ${view === v ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground-muted hover:text-foreground"}`}
+            >
+              {v === "day" ? "Daily" : v === "week" ? "Weekly" : "Monthly"}
+            </button>
+          ))}
+        </div>
         {departmentId !== ALL && (
           <span className="text-xs text-foreground-subtle">
             Income & revenue scoped to this department; expenses are org-wide.
@@ -150,7 +172,7 @@ export default function DailyReportPage() {
       {/* Daily table */}
       <Card>
         <CardHeader>
-          <CardTitle>Day by Day</CardTitle>
+          <CardTitle>{unit} by {unit}</CardTitle>
           <CardDescription>
             {from} — {to}
           </CardDescription>
@@ -169,7 +191,7 @@ export default function DailyReportPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-surface-muted text-xs font-medium uppercase tracking-wide text-foreground-subtle">
-                    <th className="px-4 py-3 text-left">Date</th>
+                    <th className="px-4 py-3 text-left">{view === "day" ? "Date" : unit}</th>
                     <th className="px-4 py-3 text-right">Income</th>
                     <th className="px-4 py-3 text-right">Expenses</th>
                     <th className="px-4 py-3 text-right">Revenue (Invoiced)</th>
@@ -177,32 +199,44 @@ export default function DailyReportPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
+                  {periods.map((r) => (
                     <tr
-                      key={r.date}
+                      key={r.key}
                       className="border-b border-border last:border-0 hover:bg-surface-muted/50 transition-colors"
                     >
                       <td className="px-4 py-3 font-medium">
-                        {/* The whole day in one table (2026-10-22). */}
-                        <Link
-                          href={`/reports/daily/${r.date}${scope ? `?department=${scope}` : ""}`}
-                          className="text-primary underline-offset-2 hover:underline"
-                          title="Everything on this day, in one table"
-                        >
-                          {r.date}
-                        </Link>
+                        {view === "day" ? (
+                          // The whole day in one table (2026-10-22).
+                          <Link
+                            href={`/reports/daily/${r.from}${scope ? `?department=${scope}` : ""}`}
+                            className="text-primary underline-offset-2 hover:underline"
+                            title="Everything on this day, in one table"
+                          >
+                            {r.label}
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => drillInto(r)}
+                            className="text-left text-primary underline-offset-2 hover:underline"
+                            title={`This ${view}, day by day`}
+                          >
+                            {r.label}
+                            {r.note && <span className="ml-1.5 text-xs font-normal text-foreground-muted">{r.note}</span>}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric text-success">
-                        {r.incomeMinor ? <CellButton onClick={() => pickDay("income", r.date)}>{fmt(currency, convert(r.incomeMinor))}</CellButton> : "—"}
+                        {r.incomeMinor ? <CellButton onClick={() => pickPeriod("income", r)}>{fmt(currency, convert(r.incomeMinor))}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric text-danger">
-                        {r.expenseMinor ? <CellButton onClick={() => pickDay("expense", r.date)}>{fmt(currency, convert(r.expenseMinor))}</CellButton> : "—"}
+                        {r.expenseMinor ? <CellButton onClick={() => pickPeriod("expense", r)}>{fmt(currency, convert(r.expenseMinor))}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric">
-                        {r.revenueMinor ? <CellButton onClick={() => pickDay("revenue", r.date)}>{fmt(currency, convert(r.revenueMinor))}</CellButton> : "—"}
+                        {r.revenueMinor ? <CellButton onClick={() => pickPeriod("revenue", r)}>{fmt(currency, convert(r.revenueMinor))}</CellButton> : "—"}
                       </td>
                       <td className={`px-4 py-3 text-right font-numeric font-semibold ${r.netMinor >= 0 ? "text-success" : "text-danger"}`}>
-                        <CellButton onClick={() => pickDay("net", r.date)}>{fmt(currency, convert(r.netMinor))}</CellButton>
+                        <CellButton onClick={() => pickPeriod("net", r)}>{fmt(currency, convert(r.netMinor))}</CellButton>
                       </td>
                     </tr>
                   ))}

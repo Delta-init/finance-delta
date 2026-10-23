@@ -123,9 +123,10 @@ export const getReconciliationOpening = asyncHandler(async (req, res) => {
   ok(res, await svc.reconciliationOpening(org(req), req.params.id!, String(req.query.from ?? "")));
 });
 
-/** GET /bank-accounts/:id/reconciliations/:sessionId/lines[?earlier=1] — the lines to tick, not paged. */
+/** GET /bank-accounts/:id/reconciliations/:sessionId/lines[?earlier=1][?ticked=1] — the lines to tick (or only those ticked), not paged. */
 export const getReconciliationLines = asyncHandler(async (req, res) => {
-  ok(res, await svc.reconciliationLines(org(req), req.params.sessionId!, req.query.earlier === "1" || req.query.earlier === "true"));
+  const yes = (v: unknown) => v === "1" || v === "true";
+  ok(res, await svc.reconciliationLines(org(req), req.params.sessionId!, yes(req.query.earlier), yes(req.query.ticked)));
 });
 
 export const getReconciliation = asyncHandler(async (req, res) => {

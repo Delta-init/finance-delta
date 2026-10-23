@@ -96,6 +96,8 @@ let history: any = null;
 why = await refused((async () => { history = await banking.listReconciliations(org, bank, { page: 1, pageSize: 5 }); })(), /^$/);
 check("lists the sessions without failing", why === "not refused" && history?.data?.length === 1, why);
 check("…the completed one with its period", history?.data?.[0]?.periodFrom === day(5) && history?.data?.[0]?.status === "completed", j(history?.data?.[0]));
+const ticked = await banking.reconciliationLines(org, s1.id, false, true);
+check("its lines (the bank page's panel): the six it reconciled, each with its statement date", ticked.length === 6 && ticked.every((l) => l.isReconciled && l.statementDate === l.date) && ticked[0]?.description === "Line 5", j(ticked.map((l) => [l.description, l.statementDate])));
 
 step("5. The next period");
 o = await banking.reconciliationOpening(org, bank, day(11));

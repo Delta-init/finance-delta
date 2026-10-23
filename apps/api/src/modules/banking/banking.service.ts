@@ -1115,9 +1115,15 @@ export async function reconciliationOpening(orgId: string, accountId: string, pe
  * before it, which cleared only on this statement — and whatever it has ticked. A session without a period lists every
  * unreconciled line, as before. Not paged (at most 3000).
  */
-export async function reconciliationLines(orgId: string, sessionId: string, earlier: boolean): Promise<BankTransactionDTO[]> {
+export async function reconciliationLines(orgId: string, sessionId: string, earlier: boolean, tickedOnly = false): Promise<BankTransactionDTO[]> {
   const session = await ReconciliationSession.findOne({ _id: new Types.ObjectId(sessionId), organizationId: new Types.ObjectId(orgId) }).lean<any>();
   if (!session) throw new AppError("NOT_FOUND", "Reconciliation session not found");
+  // Only what it ticked — a completed reconciliation's lines, for the bank page's Reconciliations tab (2026-10-23).
+  if (tickedOnly) {
+    const ticked = await BankTransaction.find({ organizationId: session.organizationId, _id: { $in: session.reconciledTransactionIds ?? [] } })
+      .sort({ date: 1, _id: 1 }).limit(3000).lean();
+    return withExpenseCategories(orgId, (ticked as unknown as BankTransactionDoc[]).map(txToDTO));
+  }
   const date: Record<string, Date> = {};
   if (session.periodTo) date.$lt = new Date(Date.parse(`${dateOnly(session.periodTo)}T00:00:00Z`) + 86_400_000);
   if (session.periodFrom && !earlier) date.$gte = new Date(`${dateOnly(session.periodFrom)}T00:00:00.000Z`);

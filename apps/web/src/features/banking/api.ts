@@ -286,11 +286,12 @@ export function useReconciliationOpening(accountId: string, from: string) {
 }
 
 /** A session's lines to tick: its period's unreconciled ones (+ earlier ones on request) and what it ticked — not paged. */
-export function useReconciliationLines(accountId: string, sessionId: string, earlier: boolean) {
+export function useReconciliationLines(accountId: string, sessionId: string, earlier: boolean, opts: { tickedOnly?: boolean; enabled?: boolean } = {}) {
+  const q = opts.tickedOnly ? "?ticked=1" : earlier ? "?earlier=1" : "";
   return useQuery({
-    queryKey: [...reconcileKey(accountId), sessionId, "lines", earlier],
-    queryFn: () => api.get<BankTransaction[]>(`bank-accounts/${accountId}/reconciliations/${sessionId}/lines${earlier ? "?earlier=1" : ""}`),
-    enabled: !!accountId && !!sessionId,
+    queryKey: [...reconcileKey(accountId), sessionId, "lines", earlier, !!opts.tickedOnly],
+    queryFn: () => api.get<BankTransaction[]>(`bank-accounts/${accountId}/reconciliations/${sessionId}/lines${q}`),
+    enabled: !!accountId && !!sessionId && (opts.enabled ?? true),
   });
 }
 

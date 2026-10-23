@@ -47,6 +47,7 @@ import { ApiError } from "@/lib/api";
 import {
   useBankAccount,
   useBankTransactions,
+  useReconciliations,
   useExcludeTransaction,
   useMarkDuplicate,
   useRestoreTransaction,
@@ -60,6 +61,7 @@ import { TransferDialog } from "@/features/banking/TransferDialog";
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 import { CashBook } from "@/features/banking/CashBook";
 import { CashCounts } from "@/features/banking/CashCounts";
+import { ReconciliationsTab } from "@/features/banking/ReconciliationsTab";
 import { OpeningBalanceDialog } from "@/features/banking/OpeningBalanceDialog";
 import { useCan } from "@/lib/use-can";
 
@@ -91,6 +93,9 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const [dateTo, setDateTo] = useUrlParam("to", "");
   const [source, setSource] = useUrlParam("source", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Transactions or Reconciliations (2026-10-23) — a bank account's; kept in the address bar.
+  const [tab, setTab] = useUrlParam("tab", "transactions");
+  const { data: reconciliations } = useReconciliations(id, { page: 1, pageSize: 1 });
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [deleting, setDeleting] = useState<BankTransaction | null>(null);
   // A transfer with another of the organization's accounts (2026-10-22): made here, or a line of one corrected or
@@ -330,6 +335,28 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
 
       {account.accountType !== "petty_cash" && <PaymentDetailsCard account={account} />}
 
+      {/* Transactions, and — for a bank account — its Reconciliations (2026-10-23), each in its own tab. */}
+      {account.accountType !== "petty_cash" && (
+        <div className="flex w-fit gap-1 rounded-lg border border-border bg-surface p-1 text-sm" role="tablist">
+          {([["transactions", "Transactions"], ["reconciliations", "Reconciliations"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`rounded-md px-3 py-1.5 font-medium ${tab === key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
+            >
+              {label}
+              {key === "reconciliations" && (reconciliations?.meta.total ?? 0) > 0 && <span className="ml-1.5 tabular-nums">({reconciliations?.meta.total})</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {account.accountType !== "petty_cash" && tab === "reconciliations" ? (
+        <ReconciliationsTab accountId={id} />
+      ) : (<>
       {/* Transactions */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="relative min-w-[200px] flex-1">
@@ -426,6 +453,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         isLoading={txLoading}
         emptyMessage="No transactions found."
       />
+      </>)}
 
       <TransferDialog account={account} line={transferLine} open={transferOpen} onClose={() => setTransferOpen(false)} />
 

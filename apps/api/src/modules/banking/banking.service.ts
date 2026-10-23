@@ -193,6 +193,16 @@ function refuseTransferLine(tx: unknown): void {
   }
 }
 
+/**
+ * A session's statement dates as the screen reads them. A document gives a Map; a lean read (the history list) gives a
+ * plain object — both, and none on an older session.
+ */
+function statementDatesView(v: unknown): Record<string, string> {
+  if (!v) return {};
+  const entries = v instanceof Map ? [...v.entries()] : Object.entries(v as Record<string, unknown>);
+  return Object.fromEntries(entries.filter(([, d]) => d).map(([k, d]) => [k, dateOnly(new Date(d as Date))]));
+}
+
 function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
   return {
     id: doc._id.toString(),
@@ -212,9 +222,7 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
     reconciledTransactionIds: (doc.reconciledTransactionIds as unknown as Types.ObjectId[]).map(
       (id) => id.toString(),
     ),
-    statementDates: Object.fromEntries(
-      [...((doc as unknown as { statementDates?: Map<string, Date> }).statementDates ?? new Map()).entries()].map(([k, v]) => [k, dateOnly(v)]),
-    ),
+    statementDates: statementDatesView((doc as unknown as { statementDates?: unknown }).statementDates),
     completedAt: doc.completedAt
       ? (doc.completedAt as unknown as Date).toISOString()
       : undefined,

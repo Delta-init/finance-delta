@@ -91,6 +91,12 @@ const done = await banking.completeReconciliation(org, s1.id, "Accountant");
 check("completed", done.status === "completed");
 check("only the ticked lines reconciled", (await BankTransaction.countDocuments({ accountId: new Types.ObjectId(bank), isReconciled: true })) === 6);
 
+step("4b. The history list (the Reconcile page's first request)");
+let history: any = null;
+why = await refused((async () => { history = await banking.listReconciliations(org, bank, { page: 1, pageSize: 5 }); })(), /^$/);
+check("lists the sessions without failing", why === "not refused" && history?.data?.length === 1, why);
+check("…the completed one with its period", history?.data?.[0]?.periodFrom === day(5) && history?.data?.[0]?.status === "completed", j(history?.data?.[0]));
+
 step("5. The next period");
 o = await banking.reconciliationOpening(org, bank, day(11));
 check("11 Oct opens at the last reconciliation's closing balance", o.source === "last_reconciliation" && o.openingBalanceMinor === closing && o.reconciledTo === day(10), j(o));

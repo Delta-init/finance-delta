@@ -21,6 +21,8 @@ import { useCreateBill, useUpdateBill } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { useFileDrop } from "@/components/ui/file-drop";
+import { useExpenseCategories } from "@/features/expense-categories/api";
+import { CategoryPicker, choiceComplete } from "@/features/expense-categories/CategoryPicker";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
@@ -43,6 +45,9 @@ const formSchema = z.object({
   notes: z.string().optional().default(""),
   requiresApproval: z.boolean().default(false),
   lineItems: z.array(lineSchema).min(1, "At least one line item required"),
+  // What the bill is for (2026-10-23) — required; its expense is filed under it.
+  category: z.string().min(1, "Choose the bill's category"),
+  subcategory: z.string().optional().default(""),
 });
 export type BillFormValues = z.infer<typeof formSchema>;
 
@@ -104,11 +109,14 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
         notes: "",
         requiresApproval: false,
         lineItems: [emptyLine()],
+        category: "",
+        subcategory: "",
         ...initialValues,
       },
     });
 
   const { fields, append, remove } = useFieldArray({ control, name: "lineItems" });
+  const { data: categories, isLoading: categoriesLoading } = useExpenseCategories();
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
   // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
@@ -166,6 +174,10 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
       toast.error("Give the reason it is entered late — a manager will need to approve it");
       return;
     }
+    if (!choiceComplete(categories, { category: values.category, subcategory: values.subcategory ?? "" })) {
+      toast.error("Choose the bill's category and subcategory");
+      return;
+    }
     const input: CreateBillInput = {
       vendorId: values.vendorId,
       sourcePOId: values.sourcePOId || undefined,
@@ -175,6 +187,8 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
       paymentTerms: values.paymentTerms ?? "",
       notes: values.notes ?? "",
       requiresApproval: values.requiresApproval,
+      category: values.category,
+      ...(values.subcategory ? { subcategory: values.subcategory } : {}),
       lineItems: values.lineItems.map((l) => ({
         description: l.description,
         quantity: l.quantity,
@@ -269,6 +283,15 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
                 </SelectContent>
               </Select>
             </div>
+            {/* What it is for (2026-10-23): its expense is filed under it. */}
+            <CategoryPicker
+              categories={categories ?? []}
+              value={{ category: watch("category") ?? "", subcategory: watch("subcategory") ?? "" }}
+              onChange={(v) => { setValue("category", v.category, { shouldValidate: true }); setValue("subcategory", v.subcategory); }}
+              idPrefix="bill"
+              loading={categoriesLoading}
+            />
+            {errors.category && <p className="text-xs text-danger sm:col-span-2">{errors.category.message}</p>}
             {!isEdit && (
               <div className="flex items-center gap-2 pt-6">
                 <input

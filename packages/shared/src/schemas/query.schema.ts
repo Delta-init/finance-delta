@@ -156,6 +156,8 @@ export const expenseQuerySchema = listQuerySchema.extend({
   isRecurring: queryBool,
   /** Paid by this method, or from this account ("none": no account) — 2026-10-22. */
   paymentMethod: expensePaymentMethodSchema.optional(),
+  /** Where it came from (2026-10-23): typed here, a bill, HRMS, or the old books. */
+  source: z.enum(["typed", "bill", "hrms", "import"]).optional(),
   bankAccountId: bankAccountFilterSchema,
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;

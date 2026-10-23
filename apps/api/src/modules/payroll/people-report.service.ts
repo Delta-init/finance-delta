@@ -151,7 +151,7 @@ export async function peopleReport(orgId: string, query: Query) {
             status: { $in: ["approved", "submitted"] },
             $or: [{ salespersonId: { $in: userIds } }, { salespersonId: null, submittedById: { $in: userIds } }],
             // The old books' imported rows are nobody's claim, whoever ran the import.
-            "source.kind": { $ne: "import" },
+            "source.kind": { $nin: ["import", "bill"] },
             ...(await pnlExpenseFilter(orgId)),
           },
         },
@@ -261,7 +261,7 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
           organizationId: org, expenseDate: { $gte: from, $lte: to }, status: { $in: ["approved", "submitted"] },
           // Entered for them (2026-10-21), or their own claim for nobody — as the cost above counts them.
           $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
-          "source.kind": { $ne: "import" },
+          "source.kind": { $nin: ["import", "bill"] },
           ...pnl,
         })
           .select("expenseNumber description categoryName expenseDate totalMinor status currency salespersonId submittedByName")

@@ -138,18 +138,20 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   // Settling is a different question from approving, so it is gated on the
   // update permission rather than the approver's. Decided-against claims have
   // nothing to settle.
+  // A bill's own expense (2026-10-23) follows its bill: nothing is done to it here.
+  const fromBill = expense.bill ?? null;
   const canMarkPaid =
-    can("expense:update") && !["voided", "rejected"].includes(expense.status);
+    !fromBill && can("expense:update") && !["voided", "rejected"].includes(expense.status);
 
   const canEdit =
-    expense.status !== "voided" &&
+    !fromBill && expense.status !== "voided" &&
     (can("expense:update") || ["draft", "rejected"].includes(expense.status));
 
   // Submitted is when it *can* be approved; expense:approve is who may. Without
   // the permission these were still rendered, so a claimant saw Approve and
   // Reject on their own claim and got a refusal for pressing either.
-  const canApproveReject = expense.status === "submitted" && can("expense:approve");
-  const canVoid = expense.status !== "voided" && expense.status !== "approved";
+  const canApproveReject = !fromBill && expense.status === "submitted" && can("expense:approve");
+  const canVoid = !fromBill && expense.status !== "voided" && expense.status !== "approved";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -177,6 +179,13 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             )}
           </div>
           <p className="text-sm text-foreground-muted">{expense.description}</p>
+          {fromBill && (
+            <p className="mt-1 text-xs text-foreground-muted">
+              From bill{" "}
+              <Link href={`/bills/${fromBill.id}`} className="font-medium text-primary hover:underline">{fromBill.number}</Link>
+              {" "}— it follows the bill: change, pay or void it there.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {canEdit && (
@@ -208,12 +217,12 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               </Button>
             </>
           )}
-          {expense.status === "approved" && (
+          {!fromBill && expense.status === "approved" && (
             <Button variant="outline" size="sm" onClick={() => handleAction(() => voidExpense.mutateAsync(undefined), "Expense voided")} loading={voidExpense.isPending}>
               <Ban className="h-4 w-4" /> Void
             </Button>
           )}
-          {can("expense:delete") && (
+          {!fromBill && can("expense:delete") && (
             <Button variant="outline" size="sm" onClick={() => setDeleteOpen(true)} className="text-danger hover:border-danger/50">
               <Trash2 className="h-4 w-4" /> Delete
             </Button>

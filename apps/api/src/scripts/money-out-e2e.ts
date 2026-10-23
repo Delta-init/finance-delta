@@ -162,7 +162,7 @@ check("cash → Delta Petty, with its line", String(placed.bankAccountId) === pe
 /* ── 6 ── */
 step("6. A bill payment");
 const vendor = await Vendor.create({ organizationId: org._id, vendorCode: "VEN-00001", name: "Gulf Supplies", email: "a@e2e-out.test", phone: "+971400000000", currency: "AED", status: "active" });
-const b = await bills.createBill(ORG, { vendorId: String(vendor._id), billDate: "2026-10-10", dueDate: "2026-10-20", currency: "AED",
+const b = await bills.createBill(ORG, { category: "office_supplies", subcategory: "stationery", vendorId: String(vendor._id), billDate: "2026-10-10", dueDate: "2026-10-20", currency: "AED",
   lineItems: [{ description: "Paper", quantity: 1, unitPriceMinor: 100_000, discountPct: 0, taxPct: 0 }], notes: "", paymentTerms: "", requiresApproval: false } as never);
 const bankBefore = await balanceOf(bank.id);
 let bd = await bills.recordBillPayment(ORG, b.id, { method: "bank_transfer", amountMinor: 60_000, paidOn: "2026-10-15", reference: "", accountName: "", notes: "", chargesMinor: 0 } as never);
@@ -199,7 +199,7 @@ const adcb = await old({ expenseNumber: "EXP-OLD-1", paymentMethod: "cash", paym
 const blankCash = await old({ expenseNumber: "EXP-OLD-2", paymentMethod: "cash", paymentAccount: "" });
 const online = await old({ expenseNumber: "EXP-OLD-3", paymentMethod: "online", paymentAccount: "Main current" });
 await old({ expenseNumber: "EXP-OLD-4", paymentMethod: "bank_transfer", paymentAccount: "Bank", status: "voided", paidOn: new Date("2026-09-02") });
-const b2 = await bills.createBill(ORG, { vendorId: String(vendor._id), billDate: "2026-09-10", dueDate: "2026-09-20", currency: "AED",
+const b2 = await bills.createBill(ORG, { category: "office_supplies", subcategory: "stationery", vendorId: String(vendor._id), billDate: "2026-09-10", dueDate: "2026-09-20", currency: "AED",
   lineItems: [{ description: "Chairs", quantity: 1, unitPriceMinor: 50_000, discountPct: 0, taxPct: 0 }], notes: "", paymentTerms: "", requiresApproval: false } as never);
 await bills.recordBillPayment(ORG, b2.id, { method: "cheque", amountMinor: 50_000, paidOn: "2026-09-15", reference: "", accountName: "", bankAccountId: "", notes: "", chargesMinor: 0 } as never);
 

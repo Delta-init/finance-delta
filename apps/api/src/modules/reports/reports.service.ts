@@ -320,6 +320,8 @@ export async function getDailyReport(
     organizationId: oid(orgId),
     expenseDate: { $gte: fromDate, $lte: toDate },
     status: { $in: ["approved", "submitted"] },
+    // Not a bill's own expense (2026-10-23): this report has never counted bills, and still doesn't.
+    "source.kind": { $ne: "bill" },
     ...(await pnlExpenseFilter(orgId)),
   })
     .select("expenseDate totalMinor")
@@ -423,6 +425,7 @@ export async function getDailyBreakdown(
       organizationId: oid(orgId),
       expenseDate: { $gte: fromDate, $lte: toDate },
       status: { $in: ["approved", "submitted"] },
+      "source.kind": { $ne: "bill" },
       ...(await pnlExpenseFilter(orgId)),
     })
       .select("expenseNumber categoryName subcategoryName description expenseDate totalMinor currency submittedByName status departmentId")
@@ -580,6 +583,8 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
       organizationId: oid(orgId),
       expenseDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $in: ["approved", "submitted"] },
+      // A bill's own expense (2026-10-23): "Supplier bills" counts the bill.
+      "source.kind": { $ne: "bill" },
       ...pnl,
     })
       .select("category totalMinor")
@@ -737,6 +742,8 @@ export async function getCashFlow(
         organizationId: oid(orgId),
         expenseDate: { $gte: fromDate, $lte: toDate },
         status: { $in: ["approved", "submitted"] },
+        // A bill's own expense (2026-10-23): its payments are counted with the bills.
+        "source.kind": { $ne: "bill" },
       },
     },
     { $group: { _id: null, total: { $sum: "$totalMinor" } } },

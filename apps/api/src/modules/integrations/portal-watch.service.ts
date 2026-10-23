@@ -150,7 +150,7 @@ export async function backdatedIn(org: { _id: Types.ObjectId; name: string }, si
     Bill.find({ organizationId: orgId, $or: [{ createdAt: { $gte: since } }, { "payments.createdAt": { $gte: since } }] })
       .select("billNumber vendorName totalMinor currency billDate createdAt payments lateEntry").lean(),
     // Not the old books' imported rows: brought in at once, they were never entered late.
-    Expense.find({ organizationId: orgId, createdAt: { $gte: since }, "source.kind": { $ne: "import" } })
+    Expense.find({ organizationId: orgId, createdAt: { $gte: since }, "source.kind": { $nin: ["import", "bill"] } })
       .select("expenseNumber description categoryName totalMinor currency expenseDate createdAt submittedByName source.kind lateEntry").lean(),
     BankTransaction.find({ organizationId: orgId, source: "manual", createdAt: { $gte: since }, "matches.0": { $exists: false } })
       .select("accountId accountName description reference amountMinor currency type date createdAt lateEntry").lean(),

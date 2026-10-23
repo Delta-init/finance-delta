@@ -147,6 +147,8 @@ export async function applyVendorCredit(orgId: string, id: string, input: ApplyV
   bill.amountPaidMinor = ((bill.amountPaidMinor as number) ?? 0) + applyAmount;
   bill.status = bill.balanceMinor <= 0 ? "paid" : "partially_paid";
   await bill.save();
+  // Paid off by the credit: its expense follows (2026-10-23).
+  await (await import("../bill/bill-expense")).syncBillExpense(orgId, bill._id);
 
   vc.amountAppliedMinor = ((vc.amountAppliedMinor as number) ?? 0) + applyAmount;
   if ((vc.amountAppliedMinor as number) >= (vc.totalMinor as number)) vc.status = "applied";

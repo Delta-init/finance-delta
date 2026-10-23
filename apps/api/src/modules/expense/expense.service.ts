@@ -25,6 +25,7 @@ import {
 } from "./expense-notify.service";
 import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { Expense, type ExpenseDoc } from "./expense.model";
+import { billOfExpense } from "../bill/bill-expense";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
@@ -160,8 +161,25 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     salesperson: d.salespersonId ? { id: String(d.salespersonId), name: String(d.salespersonName ?? "") } : null,
     costCentre: (doc.costCentre as string) ?? "",
     notes: (doc.notes as string) ?? "",
+    ...sourceView(doc),
     createdAt: doc.createdAt.toISOString(),
   };
+}
+
+/** Where it came from, and the bill it is when it is one (2026-10-23). */
+function sourceView(doc: unknown): Pick<ExpenseDTO, "source" | "bill"> {
+  const kind = String((doc as { source?: { kind?: string } }).source?.kind ?? "");
+  const bill = billOfExpense(doc);
+  return {
+    source: kind === "bill" ? "bill" : kind === "import" ? "import" : kind.startsWith("hrms_") ? "hrms" : "typed",
+    ...(bill ? { bill: { id: bill.billId, number: bill.billNumber } } : {}),
+  };
+}
+
+/** A bill's own expense (2026-10-23) follows its bill: it is changed, paid, approved and removed there. */
+function refuseBillExpense(doc: unknown): void {
+  const bill = billOfExpense(doc);
+  if (bill) throw new AppError("CONFLICT", `${(doc as { expenseNumber?: string }).expenseNumber ?? "This expense"} comes from bill ${bill.billNumber} — change it on the bill.`);
 }
 
 const SORT = {
@@ -195,6 +213,11 @@ async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scop
   if (query.departmentId) and.push({ departmentId: new Types.ObjectId(query.departmentId) });
   if (query.salespersonId) and.push({ salespersonId: new Types.ObjectId(query.salespersonId) });
   if (query.isRecurring !== undefined) and.push({ isRecurring: query.isRecurring });
+  // Where it came from (2026-10-23).
+  if (query.source === "bill") and.push({ "source.kind": "bill" });
+  else if (query.source === "import") and.push({ "source.kind": "import" });
+  else if (query.source === "hrms") and.push({ "source.kind": { $in: ["hrms_procurement", "hrms_advance", "hrms_one_time"] } });
+  else if (query.source === "typed") and.push({ "source.kind": { $exists: false } });
   // How it was paid, and from which account (2026-10-22): its link, or on an older one the account's name as typed;
   // "none" is one paid from no account.
   if (query.paymentMethod) and.push({ paymentMethod: query.paymentMethod });
@@ -482,6 +505,7 @@ export async function updateExpense(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   assertOwned(scope, doc.submittedById, "Expense");
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "A voided expense can't be edited");
@@ -627,6 +651,7 @@ function assertNotWaiting(doc: unknown, what: string): void {
 export async function submitExpense(orgId: string, id: string, scope: Scope): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
@@ -651,6 +676,7 @@ export async function approveExpense(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   if (doc.status !== "submitted") throw new AppError("CONFLICT", "Only submitted expenses can be approved");
   assertNotWaiting(doc, "approved");
 
@@ -674,6 +700,7 @@ export async function rejectExpense(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   if (doc.status !== "submitted") throw new AppError("CONFLICT", "Only submitted expenses can be rejected");
 
   const d = doc as unknown as Record<string, unknown>;
@@ -690,6 +717,7 @@ export async function rejectExpense(
 export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "Expense is already voided");
   doc.status = "voided";
@@ -713,6 +741,7 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
 export async function deleteExpense(orgId: string, id: string): Promise<void> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   const kind = String((doc as unknown as { source?: { kind?: string } }).source?.kind ?? "");
   if (kind.startsWith("hrms_")) {
     throw new AppError("CONFLICT", `${doc.expenseNumber} came from HRMS, which keeps its number — void it instead.`);
@@ -761,6 +790,7 @@ export async function markExpensePaid(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
 
   const status = doc.status as string;
   if (status === "voided") throw new AppError("CONFLICT", "A voided expense cannot be marked paid");
@@ -788,6 +818,7 @@ export async function markExpensePaid(
 export async function markExpenseUnpaid(orgId: string, id: string): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   if (!(doc as unknown as Record<string, unknown>).paidOn) {
     throw new AppError("CONFLICT", "This expense is not marked paid");
   }
@@ -804,6 +835,7 @@ export async function setRecurrenceActive(
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   const d = doc as unknown as Record<string, unknown>;
   if (!doc.isRecurring || !d.recurrence)
     throw new AppError("CONFLICT", "This expense is not a recurring template");
@@ -818,6 +850,7 @@ export async function setRecurrenceActive(
 export async function stopRecurrence(orgId: string, id: string): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
   if (!doc.isRecurring)
     throw new AppError("CONFLICT", "This expense is not a recurring template");
   doc.isRecurring = false;

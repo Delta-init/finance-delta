@@ -171,7 +171,8 @@ const KINDS: Kind[] = [
     // queue it is meant to work through.
     allowed: (can) => can("expense:approve") && (can("expense:read") || can("expense:read:own")),
     read: async (org) => {
-      const filter = { organizationId: org, status: "submitted" };
+      // Not a bill's own expense (2026-10-23): it is approved with its bill.
+      const filter = { organizationId: org, status: "submitted", "source.kind": { $ne: "bill" } };
       const [count, rows] = await Promise.all([
         Expense.countDocuments(filter),
         Expense.find(filter).sort({ updatedAt: -1 }).limit(LATEST)
@@ -723,8 +724,9 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["submitted"], approved: ["approved"], rejected: ["rejected"] });
       const { docs, total } = await newest(
         Expense,
-        // A purchase request's expense is listed as the purchase request; an imported row of the old books was never decided here.
-        narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $nin: ["hrms_procurement", "import"] } }, ctx, "expense"),
+        // A purchase request's expense is listed as the purchase request; an imported row of the old books was never decided
+        // here; a bill's own expense (2026-10-23) is decided with its bill, listed as the bill.
+        narrowed({ organizationId: ctx.org, status: { $in: states }, "source.kind": { $nin: ["hrms_procurement", "import", "bill"] } }, ctx, "expense"),
         { $cond: [{ $eq: ["$status", "submitted"] }, "$updatedAt", firstOf("$approvedAt", "$updatedAt")] },
         "expenseNumber category categoryName subcategoryName description submittedByName totalMinor currency status approvedByName approvedAt rejectedReason updatedAt createdAt",
         ctx,

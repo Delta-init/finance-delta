@@ -49,6 +49,9 @@ export default function EditBillPage({ params }: { params: Promise<{ id: string 
     paymentTerms: bill.paymentTerms || "",
     notes: bill.notes || "",
     requiresApproval: false,
+    // A bill from before categories starts with none: it is asked for on this edit (2026-10-23).
+    category: bill.category?.slug ?? "",
+    subcategory: bill.category?.subcategory ?? "",
     lineItems: bill.lineItems.map((l) => ({
       description: l.description,
       quantity: l.quantity,

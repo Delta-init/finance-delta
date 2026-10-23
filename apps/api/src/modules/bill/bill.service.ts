@@ -11,6 +11,9 @@ import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/mone
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { isLatePending, lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
+import { syncBillExpense } from "./bill-expense";
+import { resolveExpenseCategory } from "../expense-category/expense-category.service";
+import { User } from "../user/user.model";
 
 function lineTotal(l: { quantity: number; unitPriceMinor: number; discountPct: number; taxPct: number }) {
   const sub = l.quantity * l.unitPriceMinor;
@@ -113,6 +116,10 @@ function toDTO(doc: BillDoc): BillDTO {
     lateEntry: lateView(d.lateEntry),
     notes: (doc.notes as string) ?? "",
     paymentTerms: (d.paymentTerms as string) ?? "",
+    ...(d.category
+      ? { category: { slug: String(d.category), name: String(d.categoryName || d.category), ...(d.subcategory ? { subcategory: String(d.subcategory), subcategoryName: String(d.subcategoryName || d.subcategory) } : {}) } }
+      : {}),
+    ...(d.expenseId ? { expense: { id: String(d.expenseId), number: String(d.expenseNumber ?? "") } } : {}),
     createdAt: doc.createdAt.toISOString(),
   };
 }
@@ -187,6 +194,9 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
   const billNumber = await nextNumber(orgId, "bill", "BILL-");
 
   const lateNow = await lateForDate(orgId, late, input.billDate, null, null);
+  // What it is for, checked against the organization's categories (2026-10-23) — its expense is filed under it.
+  const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
+  const creator = late?.userId ? await User.findById(late.userId).select("name").lean<{ name?: string }>() : null;
   const approvalStatus = input.requiresApproval ? "pending" : "not_required";
   const status = input.requiresApproval ? "pending_approval" : "approved";
 
@@ -210,6 +220,12 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
     status,
     approvalStatus,
     lateEntry: lateNow.next ?? null,
+    category: cat.category,
+    categoryName: cat.categoryName,
+    subcategory: cat.subcategory,
+    subcategoryName: cat.subcategoryName,
+    createdById: late?.userId ? new Types.ObjectId(late.userId) : null,
+    createdByName: creator?.name ?? "",
   });
   if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, billLateInfo(doc));
   // Held for approval: the accountants are told, as for every approval request.
@@ -219,7 +235,8 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
       currency: (doc.currency as string) ?? "AED", dueDate: doc.dueDate as Date,
     });
   }
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 export async function updateBill(orgId: string, id: string, input: UpdateBillInput, late?: LateActor): Promise<BillDTO> {
@@ -245,6 +262,14 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
   if (input.dueDate) doc.dueDate = new Date(input.dueDate) as unknown as typeof doc.dueDate;
   if (input.notes !== undefined) doc.notes = input.notes;
   if (input.paymentTerms !== undefined) (doc as unknown as Record<string, unknown>).paymentTerms = input.paymentTerms;
+  // Its category (2026-10-23): changed when given; a bill from before categories gets one on its first edit.
+  const d = doc as unknown as Record<string, unknown>;
+  if (input.category !== undefined) {
+    const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
+    Object.assign(d, { category: cat.category, categoryName: cat.categoryName, subcategory: cat.subcategory, subcategoryName: cat.subcategoryName });
+  } else if (!d.category) {
+    throw new AppError("VALIDATION_ERROR", "Choose the bill's category");
+  }
 
   if (input.lineItems) {
     const lines = input.lineItems.map((l) => ({ ...l, lineTotalMinor: lineTotal(l) }));
@@ -283,7 +308,8 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
   await doc.save();
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, billLateInfo(doc));
   else if (lateNow?.withdraw) await withdrawLateFor(orgId, "bill", doc._id);
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 export async function approveBill(orgId: string, id: string): Promise<BillDTO> {
@@ -294,7 +320,8 @@ export async function approveBill(orgId: string, id: string): Promise<BillDTO> {
   doc.status = "approved";
   (doc as unknown as Record<string, unknown>).approvalStatus = "approved";
   await doc.save();
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 export async function rejectBill(orgId: string, id: string): Promise<BillDTO> {
@@ -304,7 +331,8 @@ export async function rejectBill(orgId: string, id: string): Promise<BillDTO> {
   doc.status = "draft";
   (doc as unknown as Record<string, unknown>).approvalStatus = "rejected";
   await doc.save();
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 /* ── The Banking account a payment came out of, and its line there (2026-10-16) ─────────────────────────────── */
@@ -411,6 +439,7 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
   const added = (doc.payments as unknown as { _id: unknown }[]).at(-1);
   if (added && lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, added));
   if (added) await syncBillPaymentLine(orgId, doc._id, added._id);
+  await syncBillExpense(orgId, doc._id);
   return billDTO(orgId, doc._id);
 }
 
@@ -539,6 +568,7 @@ export async function updateBillPayment(
   if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, p));
   else if (lateNow.withdraw) await withdrawLateFor(orgId, "bill_payment", doc._id, paymentId);
   await syncBillPaymentLine(orgId, doc._id, paymentId);
+  await syncBillExpense(orgId, doc._id);
   return billDTO(orgId, doc._id);
 }
 
@@ -566,7 +596,8 @@ export async function deleteBillPayment(orgId: string, id: string, paymentId: st
   await doc.save();
   if (line) await syncDebitLine(orgId, line, null);
   await withdrawLateFor(orgId, "bill_payment", doc._id, paymentId);
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 export async function voidBill(orgId: string, id: string): Promise<BillDTO> {
@@ -578,7 +609,8 @@ export async function voidBill(orgId: string, id: string): Promise<BillDTO> {
   await doc.save();
   await withdrawLateFor(orgId, "bill", doc._id);
   await withdrawLateFor(orgId, "bill_payment", doc._id);
-  return toDTO(doc as unknown as BillDoc);
+  await syncBillExpense(orgId, doc._id);
+  return billDTO(orgId, doc._id);
 }
 
 /**
@@ -637,4 +669,6 @@ export async function deleteBill(orgId: string, id: string): Promise<void> {
 
   await doc.deleteOne();
   await withdrawLateFor(orgId, "bill", doc._id);
+  // Its expense goes with it.
+  await syncBillExpense(orgId, doc._id);
 }

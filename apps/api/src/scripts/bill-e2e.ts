@@ -122,6 +122,7 @@ async function main() {
       "/bills",
       {
         vendorId: String(vendor._id),
+        category: "office_supplies", subcategory: "stationery",
         billDate: today,
         dueDate: today,
         currency: "AED",
@@ -209,6 +210,7 @@ async function main() {
       "/purchase-orders",
       {
         vendorId: String(vendor._id),
+        category: "office_supplies", subcategory: "stationery",
         issueDate: today,
         currency: "AED",
         lineItems: [
@@ -242,6 +244,7 @@ async function main() {
       "/vendor-credits",
       {
         vendorId: String(vendor._id),
+        category: "office_supplies", subcategory: "stationery",
         sourceBillId: id,
         reason: "Returned goods",
         issueDate: today,

@@ -56,10 +56,13 @@ const expenseAttachmentSchema = new Schema(
 const expenseSourceSchema = new Schema(
   {
     // "import": a row of the old books, brought in by scripts/expense-import.ts (2026-10-21) — key "import:<batch>:<row>".
-    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time", "import"], required: true },
+    // "bill": a bill's own expense (bill-expense.ts, 2026-10-23) — key "bill:<bill id>"; it follows the bill.
+    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time", "import", "bill"], required: true },
     key: { type: String, required: true },
-    hrmsOrgId: { type: String, required: function (this: { kind?: string }) { return this.kind !== "import"; } },
-    requestId: { type: String, required: function (this: { kind?: string }) { return this.kind !== "import"; } },
+    hrmsOrgId: { type: String, required: function (this: { kind?: string }) { return String(this.kind ?? "").startsWith("hrms_"); } },
+    requestId: { type: String, required: function (this: { kind?: string }) { return String(this.kind ?? "").startsWith("hrms_"); } },
+    billId: { type: Schema.Types.ObjectId, ref: "Bill" },
+    billNumber: { type: String },
     round: { type: Number, default: 0 },
     deliveredAt: { type: Date },
   },
@@ -106,7 +109,8 @@ const expenseSchema = new Schema(
       enum: ["bank_transfer", "cash", "cheque", "card", "online"],
     },
     reference: { type: String, default: "" },
-    submittedById: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    // A bill's expense from before bills kept who typed them in has nobody (2026-10-23).
+    submittedById: { type: Schema.Types.ObjectId, ref: "User", required: function (this: { source?: { kind?: string } }) { return this.source?.kind !== "bill"; } },
     submittedByName: { type: String, required: true },
     status: {
       type: String,

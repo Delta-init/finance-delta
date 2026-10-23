@@ -91,7 +91,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
         { $group: { _id: null, total: { $sum: "$subtotalMinor" } } },
       ]),
       Expense.aggregate([
-        { $match: { organizationId: oid(orgId), expenseDate: { $gte: mtdStart, $lte: mtdEnd }, status: { $in: ["approved", "submitted"] }, ...pnl } },
+        { $match: { organizationId: oid(orgId), expenseDate: { $gte: mtdStart, $lte: mtdEnd }, status: { $in: ["approved", "submitted"] }, "source.kind": { $ne: "bill" }, ...pnl } },
         { $group: { _id: null, total: { $sum: "$totalMinor" } } },
       ]),
     ]),
@@ -102,7 +102,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
         { $group: { _id: null, total: { $sum: "$subtotalMinor" } } },
       ]),
       Expense.aggregate([
-        { $match: { organizationId: oid(orgId), expenseDate: { $gte: lmStart, $lte: lmEnd }, status: { $in: ["approved", "submitted"] }, ...pnl } },
+        { $match: { organizationId: oid(orgId), expenseDate: { $gte: lmStart, $lte: lmEnd }, status: { $in: ["approved", "submitted"] }, "source.kind": { $ne: "bill" }, ...pnl } },
         { $group: { _id: null, total: { $sum: "$totalMinor" } } },
       ]),
     ]),

@@ -179,6 +179,8 @@ export async function convertPOToBill(orgId: string, id: string): Promise<{ bill
   doc.status = "billed";
   doc.set("sourceBillId", bill._id);
   await doc.save();
+  // Its expense, filed as Pending classification until the bill is given a category (2026-10-23).
+  await (await import("../bill/bill-expense")).syncBillExpense(orgId, bill._id);
 
   return { billId: String(bill._id), billNumber: bill.billNumber };
 }

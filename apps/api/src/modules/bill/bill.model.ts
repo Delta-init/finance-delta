@@ -89,6 +89,20 @@ const billSchema = new Schema(
     lateEntry: { type: recordLateSchema, default: null },
     notes: { type: String, default: "" },
     paymentTerms: { type: String, default: "" },
+    /**
+     * What it is for (the user, 2026-10-23): an expense category and subcategory, by slug, names kept as they were.
+     * Its expense (bill-expense.ts) is filed under them. Absent on bills from before.
+     */
+    category: { type: String, default: null },
+    categoryName: { type: String, default: "" },
+    subcategory: { type: String, default: null },
+    subcategoryName: { type: String, default: "" },
+    /** Who typed it in — its expense is "submitted" by them. */
+    createdById: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    createdByName: { type: String, default: "" },
+    /** The expense it made, kept in step with it. */
+    expenseId: { type: Schema.Types.ObjectId, ref: "Expense", default: null },
+    expenseNumber: { type: String, default: "" },
   },
   { timestamps: true },
 );

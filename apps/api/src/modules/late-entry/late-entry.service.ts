@@ -275,6 +275,8 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
       else set.status = "voided";
     }
     await Bill.updateOne({ _id: e.refId, organizationId: orgOid }, { $set: set });
+    // Its expense follows: its date back, or voided with it (2026-10-23).
+    await (await import("../bill/bill-expense")).syncBillExpense(orgId, e.refId);
     return;
   }
   if (e.kind === "bank_line") {
@@ -302,7 +304,10 @@ async function apply(orgId: string, e: any, decision: "approved" | "rejected", b
       $set: { "payments.$.lateEntry": sub, ...(decision === "rejected" && e.previousDate ? { "payments.$.paidOn": e.previousDate } : {}) },
     });
     if (decision === "rejected" && !e.previousDate) await bills.deleteBillPayment(orgId, String(e.refId), String(e.paymentId));
-    else await bills.resyncBillPaymentLine(orgId, String(e.refId), String(e.paymentId));
+    else {
+      await bills.resyncBillPaymentLine(orgId, String(e.refId), String(e.paymentId));
+      await (await import("../bill/bill-expense")).syncBillExpense(orgId, e.refId);
+    }
     return;
   }
   // An invoice payment.

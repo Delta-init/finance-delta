@@ -169,7 +169,7 @@ check("gone some other way: the page drops it", !pageNow.some((x) => x.refId ===
 /* ── 4 ── */
 step("4. A bill");
 const vendor = await Vendor.create({ organizationId: org._id, vendorCode: "VEN-00001", name: "Gulf Supplies", email: "v@e2e-late.test", phone: "+971400000000", currency: "AED", status: "active" });
-const bill = (date: string, reason?: string, over: Record<string, unknown> = {}) => bills.createBill(ORG, { vendorId: String(vendor._id), billDate: date, dueDate: RECENT, currency: "AED",
+const bill = (date: string, reason?: string, over: Record<string, unknown> = {}) => bills.createBill(ORG, { category: "office_supplies", subcategory: "stationery", vendorId: String(vendor._id), billDate: date, dueDate: RECENT, currency: "AED",
   lineItems: [{ description: "Paper", quantity: 1, unitPriceMinor: 50_000, discountPct: 0, taxPct: 0 }], notes: "", paymentTerms: "", requiresApproval: false, ...over } as never, typing(reason));
 const pay = (id: string, date: string, reason?: string, over: Record<string, unknown> = {}) => bills.recordBillPayment(ORG, id, { method: "bank_transfer", amountMinor: 20_000, paidOn: date, reference: "", accountName: "", notes: "", chargesMinor: 0, ...over } as never, typing(reason));
 check("10 days back with no reason: refused", /give the reason/.test(await refusal(bill(OLD))));

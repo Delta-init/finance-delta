@@ -590,6 +590,28 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
               <p className="text-sm font-medium">{bill.paymentTerms}</p>
             </div>
           )}
+
+          {/* What it is for, and the expense it made (2026-10-23) — kept in step with the bill. */}
+          <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
+            <div className="space-y-0.5">
+              <p className="text-xs text-foreground-muted">Category</p>
+              {bill.category ? (
+                <p className="text-sm font-medium">
+                  {bill.category.name}
+                  {bill.category.subcategoryName && <span className="text-foreground-muted"> › {bill.category.subcategoryName}</span>}
+                </p>
+              ) : (
+                <p className="text-sm text-warning">None yet — edit the bill to choose one</p>
+              )}
+            </div>
+            {bill.expense && (
+              <div className="space-y-0.5 border-t border-border pt-2">
+                <p className="text-xs text-foreground-muted">Expense</p>
+                <Link href={`/expenses/${bill.expense.id}`} className="text-sm font-medium text-primary hover:underline">{bill.expense.number}</Link>
+                <p className="text-[11px] text-foreground-subtle">Follows this bill — its amount, date, category and payment.</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

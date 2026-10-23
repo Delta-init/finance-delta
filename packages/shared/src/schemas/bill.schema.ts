@@ -61,6 +61,12 @@ export const createBillSchema = z.object({
   requiresApproval: z.boolean().optional().default(false),
   /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
   lateReason: lateReasonSchema,
+  /**
+   * What the bill is for (the user, 2026-10-23): an expense category and one of its subcategories — required. The
+   * bill's expense is filed under them.
+   */
+  category: z.string().min(1, "Choose the bill's category").max(60),
+  subcategory: z.string().max(60).optional(),
 });
 export type CreateBillInput = z.infer<typeof createBillSchema>;
 
@@ -128,6 +134,10 @@ export const billSchema = z.object({
   lateEntry: recordLateEntrySchema.optional(),
   notes: z.string(),
   paymentTerms: z.string(),
+  /** What it is for (2026-10-23); absent on bills from before. */
+  category: z.object({ slug: z.string(), name: z.string(), subcategory: z.string().optional(), subcategoryName: z.string().optional() }).optional(),
+  /** The expense it made (2026-10-23). */
+  expense: z.object({ id: z.string(), number: z.string() }).optional(),
   createdAt: z.string(),
 });
 export type Bill = z.infer<typeof billSchema>;

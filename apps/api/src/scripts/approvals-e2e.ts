@@ -268,14 +268,14 @@ async function main() {
 
   const vendor = await request("POST", "/vendors", { name: "Printer Co", email: "vendor@e2e-approvals.test", phone: "+971500000001" }, tAdmin);
   const bill = await request("POST", "/bills", {
-    vendorId: vendor.body?.data?.id, billDate: new Date().toISOString().slice(0, 10), dueDate: "2026-10-28", currency: "AED",
+    category: "office_supplies", subcategory: "stationery", vendorId: vendor.body?.data?.id, billDate: new Date().toISOString().slice(0, 10), dueDate: "2026-10-28", currency: "AED",
     lineItems: [{ description: "Brochures", quantity: 1, unitPriceMinor: 1200_00 }], requiresApproval: true,
   }, tAdmin);
   check("a bill held for approval", bill.status === 201 && bill.body?.data?.status === "pending_approval", JSON.stringify(bill.body).slice(0, 200));
   const billTo = await recipientsOf(`Bill ${bill.body?.data?.billNumber} needs approval`);
   check("…is mailed to the accountant", billTo.length === 1 && billTo[0] === "accountant@e2e-approvals.test", JSON.stringify(billTo));
   const plain = await request("POST", "/bills", {
-    vendorId: vendor.body?.data?.id, billDate: new Date().toISOString().slice(0, 10), dueDate: "2026-10-28", currency: "AED",
+    category: "office_supplies", subcategory: "stationery", vendorId: vendor.body?.data?.id, billDate: new Date().toISOString().slice(0, 10), dueDate: "2026-10-28", currency: "AED",
     lineItems: [{ description: "Paper", quantity: 1, unitPriceMinor: 100_00 }],
   }, tAdmin);
   check("a bill that needs no approval mails nobody", plain.status === 201 && (await recipientsOf(`Bill ${plain.body?.data?.billNumber} needs approval`)).length === 0);

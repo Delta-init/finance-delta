@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
 import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS, expensePaymentMethodSchema, paymentMethodLabel } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
@@ -67,6 +68,7 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
   { header: "Paid by", value: (e) => paymentMethodLabel(e.paymentMethod) },
   { header: "Bank", value: (e) => e.paymentAccount ?? "" },
+  { header: "Bill", value: (e) => e.bill?.number ?? "" },
   { header: "Currency", value: (e) => e.currency },
   { header: "Total", value: (e) => e.totalMinor / 100 },
 ];
@@ -133,6 +135,8 @@ export default function ExpensesPage() {
   // How it was paid and from which account (2026-10-22).
   const [paymentMethod, setPaymentMethod] = useUrlParam("paidBy", "");
   const [bankAccountId, setBankAccountId] = useUrlParam("bank", "");
+  // Where it came from (2026-10-23): typed here, a bill, HRMS, or the old books.
+  const [source, setSource] = useUrlParam("source", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
@@ -150,13 +154,14 @@ export default function ExpensesPage() {
     salespersonId: salesperson === "all" ? undefined : salesperson,
     paymentMethod: paymentMethod || undefined,
     bankAccountId: bankAccountId || undefined,
+    source: source === "all" ? undefined : source,
   };
   const { data, isLoading } = useExpenses(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId);
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId, source);
   const hasFilters = filterCount > 0 || spent.range !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
@@ -278,6 +283,14 @@ export default function ExpensesPage() {
       header: "Bank",
       cell: (e) => <span className="text-foreground-muted">{e.paymentAccount || "—"}</span>,
     },
+    // The bill it is, when it is one (2026-10-23).
+    {
+      key: "bill",
+      header: "Bill",
+      cell: (e) => e.bill
+        ? <Link href={`/bills/${e.bill.id}`} onClick={(ev) => ev.stopPropagation()} className="text-primary hover:underline">{e.bill.number}</Link>
+        : <span className="text-foreground-subtle">—</span>,
+    },
     {
       key: "total",
       header: "Total",
@@ -291,7 +304,8 @@ export default function ExpensesPage() {
       align: "right",
       cell: (e) => (
         <div className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
-          {e.status !== "voided" && (
+          {/* A bill's own expense is changed on its bill. */}
+          {!e.bill && e.status !== "voided" && (
             <button
               type="button"
               title="Edit"
@@ -301,7 +315,7 @@ export default function ExpensesPage() {
               <Pencil className="h-4 w-4" />
             </button>
           )}
-          {canRemove && (
+          {canRemove && !e.bill && (
             <button
               type="button"
               title={e.status === "voided" ? "Delete" : "Void or delete"}
@@ -423,6 +437,16 @@ export default function ExpensesPage() {
         </Select>
 
         <PaymentMethodFilter methods={expensePaymentMethodSchema.options} value={paymentMethod} onChange={setPaymentMethod} anyLabel="All payment methods" />
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger className="w-[150px]" aria-label="Source"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All sources</SelectItem>
+            <SelectItem value="typed">Typed here</SelectItem>
+            <SelectItem value="bill">From bills</SelectItem>
+            <SelectItem value="hrms">From HRMS</SelectItem>
+            <SelectItem value="import">Old books</SelectItem>
+          </SelectContent>
+        </Select>
         <BankAccountFilter value={bankAccountId} onChange={setBankAccountId} anyLabel="All bank accounts" />
 
         {hasFilters && (
@@ -433,6 +457,7 @@ export default function ExpensesPage() {
               setStatus("all");
               setPaymentMethod("");
               setBankAccountId("");
+              setSource("all");
               setPayment("all");
               pickCategory("all");
               // Counted by hasFilters, so it put the Clear button on screen and

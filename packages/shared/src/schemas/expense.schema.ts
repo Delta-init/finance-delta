@@ -266,6 +266,10 @@ export const expenseSchema = z.object({
   salesperson: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
   costCentre: z.string(),
   notes: z.string(),
+  /** Made by a bill (2026-10-23): it follows the bill, and is changed there. */
+  bill: z.object({ id: z.string(), number: z.string() }).optional(),
+  /** Where it came from: typed here, a bill, HRMS, or the old books. */
+  source: z.enum(["typed", "bill", "hrms", "import"]).optional(),
   createdAt: z.string(),
 });
 export type Expense = z.infer<typeof expenseSchema>;

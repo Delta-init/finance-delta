@@ -7,6 +7,9 @@ const reconciliationSessionSchema = new Schema(
     accountName: { type: String, required: true },
     currency: { type: String, required: true },
     statementDate: { type: Date, required: true },
+    /** The period the statement covers (2026-10-23): only its lines are listed. Absent on older sessions. */
+    periodFrom: { type: Date },
+    periodTo: { type: Date },
     statementBalanceMinor: { type: Number, required: true },
     openingBookBalanceMinor: { type: Number, required: true },
     closingBookBalanceMinor: { type: Number, required: true },

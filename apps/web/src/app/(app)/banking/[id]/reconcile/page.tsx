@@ -1,12 +1,9 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,21 +12,34 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
+import { rangeDates } from "@/lib/date-range";
+import { cn } from "@/lib/utils";
 import {
   useBankAccount,
-  useBankTransactions,
+  useReconciliationLines,
+  useReconciliationOpening,
   useStartReconciliation,
   useUpdateReconciliation,
   useCompleteReconciliation,
   useReconciliations,
 } from "@/features/banking/api";
 
-const startSchema = z.object({
-  statementDate: z.string().min(1, "Statement date is required"),
-  statementBalanceDisplay: z.string().min(1, "Statement balance is required"),
-  notes: z.string().optional(),
-});
-type StartFormValues = z.infer<typeof startSchema>;
+/*
+ * A reconciliation covers a period (the user, 2026-10-23: "reconcile by a specific date — this month, this week,
+ * today"): only that period's unreconciled lines are listed, and the statement's balance at its start (filled in from
+ * the last reconciliation or the book) plus the ticked lines must come to its closing balance.
+ */
+type PeriodKey = "today" | "week" | "month" | "lastMonth" | "custom";
+const PERIODS: Array<[PeriodKey, string]> = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["lastMonth", "Last month"], ["custom", "Custom"]];
+function periodDates(key: Exclude<PeriodKey, "custom">): { from: string; to: string } {
+  if (key !== "lastMonth") return rangeDates(key);
+  const { from } = rangeDates("month");
+  const first = new Date(`${from}T00:00:00Z`);
+  const lastOfPrev = new Date(first.getTime() - 86_400_000);
+  const firstOfPrev = new Date(Date.UTC(lastOfPrev.getUTCFullYear(), lastOfPrev.getUTCMonth(), 1));
+  return { from: firstOfPrev.toISOString().slice(0, 10), to: lastOfPrev.toISOString().slice(0, 10) };
+}
+const toDisplay = (minor: number) => (minor / 100).toFixed(2);
 
 function toMinor(val: string): number {
   const n = parseFloat(val);
@@ -45,25 +55,52 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
 
   const startReconciliation = useStartReconciliation(id);
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<StartFormValues>({
-    resolver: zodResolver(startSchema),
-    defaultValues: { statementDate: new Date().toISOString().slice(0, 10) },
-  });
+  const initial = periodDates("month");
+  const [period, setPeriod] = useState<PeriodKey>("month");
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+  const [statementDate, setStatementDate] = useState(initial.to);
+  const [opening, setOpening] = useState("");
+  const [openingTouched, setOpeningTouched] = useState(false);
+  const [closing, setClosing] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { data: suggested } = useReconciliationOpening(id, from);
+  // The opening balance follows the period until somebody types one.
+  useEffect(() => {
+    if (suggested && !openingTouched) setOpening(toDisplay(suggested.openingBalanceMinor));
+  }, [suggested, openingTouched]);
 
-  async function onStart(values: StartFormValues) {
+  function pickPeriod(key: PeriodKey) {
+    setPeriod(key);
+    if (key === "custom") return;
+    const d = periodDates(key);
+    setFrom(d.from);
+    setTo(d.to);
+    setStatementDate(d.to);
+    setOpeningTouched(false);
+  }
+  const reconciledTo = suggested?.reconciledTo ?? null;
+  const overlaps = !!reconciledTo && from <= reconciledTo;
+  const invalid = !from || !to || from > to || !statementDate || statementDate < to || closing.trim() === "" || opening.trim() === "" || overlaps;
+
+  async function onStart() {
+    if (invalid) return;
+    setBusy(true);
     try {
       await startReconciliation.mutateAsync({
-        statementDate: values.statementDate,
-        statementBalanceMinor: toMinor(values.statementBalanceDisplay),
-        notes: values.notes ?? "",
+        statementDate,
+        statementBalanceMinor: toMinor(closing),
+        periodFrom: from,
+        periodTo: to,
+        openingBalanceMinor: toMinor(opening),
+        notes,
       });
-      toast.success("Reconciliation session started");
+      toast.success("Reconciliation started");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to start reconciliation");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -97,6 +134,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
           <table className="w-full text-sm">
             <thead className="bg-surface-muted">
               <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-foreground-muted">Period</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-foreground-muted">Statement Date</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-foreground-muted">Statement Balance</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-foreground-muted">Difference</th>
@@ -108,6 +146,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
                 .filter((s) => s.status === "completed")
                 .map((s) => (
                   <tr key={s.id} className="border-t border-border">
+                    <td className="px-4 py-2.5 text-foreground-muted">{s.periodFrom && s.periodTo ? `${s.periodFrom} → ${s.periodTo}` : "—"}</td>
                     <td className="px-4 py-2.5 text-foreground-muted">{s.statementDate}</td>
                     <td className="px-4 py-2.5 text-right">
                       <MoneyDisplay minor={s.statementBalanceMinor} currency={s.currency} />
@@ -127,44 +166,65 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
       <div className="rounded-lg border border-border bg-surface p-6 space-y-4">
         <h2 className="text-sm font-semibold text-foreground-muted uppercase tracking-wide">Start New Reconciliation</h2>
         <p className="text-sm text-foreground-muted">
-          Enter the closing balance from your bank statement. Then check off transactions that appear on the statement.
+          Pick the period the statement covers, then enter its balances. Only that period&apos;s unreconciled lines are listed to tick.
         </p>
-
-        <form onSubmit={handleSubmit(onStart)} className="space-y-4">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Period</Label>
+            <div className="inline-flex flex-wrap rounded-lg border border-border bg-surface p-0.5" role="tablist" aria-label="Period">
+              {PERIODS.map(([key, label]) => (
+                <button key={key} type="button" role="tab" aria-selected={period === key} onClick={() => pickPeriod(key)}
+                  className={cn("rounded-md px-3 py-1.5 text-sm", period === key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:text-foreground")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-4 pt-1">
+              <div className="space-y-1">
+                <Label htmlFor="periodFrom">From</Label>
+                <Input id="periodFrom" type="date" value={from} onChange={(e) => { setPeriod("custom"); setFrom(e.target.value); setOpeningTouched(false); }} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="periodTo">To</Label>
+                <Input id="periodTo" type="date" value={to} min={from} onChange={(e) => { setPeriod("custom"); setTo(e.target.value); if (statementDate < e.target.value) setStatementDate(e.target.value); }} />
+              </div>
+            </div>
+            {reconciledTo && (
+              <p className={cn("text-xs", overlaps ? "text-danger" : "text-foreground-muted")}>
+                Reconciled up to {reconciledTo}{overlaps ? " — start the period after that day" : ""}.
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label htmlFor="statementDate">Statement Date *</Label>
-              <Input id="statementDate" type="date" {...register("statementDate")} />
-              {errors.statementDate && <p className="text-xs text-danger">{errors.statementDate.message}</p>}
+              <Label htmlFor="openingBalance">Opening balance ({account?.currency ?? "AED"}) *</Label>
+              <Input id="openingBalance" type="number" step="0.01" value={opening} onChange={(e) => { setOpening(e.target.value); setOpeningTouched(true); }} placeholder="0.00" />
+              <p className="text-xs text-foreground-muted">
+                {suggested?.source === "last_reconciliation" ? "From the last reconciliation's closing balance" : "From the book on the day before — change it to the statement's own figure"}
+              </p>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="statementBalanceDisplay">
-                Statement Balance ({account?.currency ?? "AED"}) *
-              </Label>
-              <Input
-                id="statementBalanceDisplay"
-                type="number"
-                step="0.01"
-                {...register("statementBalanceDisplay")}
-                placeholder="0.00"
-              />
-              {errors.statementBalanceDisplay && (
-                <p className="text-xs text-danger">{errors.statementBalanceDisplay.message}</p>
-              )}
+              <Label htmlFor="statementBalanceDisplay">Closing balance ({account?.currency ?? "AED"}) *</Label>
+              <Input id="statementBalanceDisplay" type="number" step="0.01" value={closing} onChange={(e) => setClosing(e.target.value)} placeholder="0.00" />
+              <p className="text-xs text-foreground-muted">The statement&apos;s balance at the end of the period</p>
             </div>
           </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="notes">Notes</Label>
-            <Input id="notes" {...register("notes")} placeholder="Optional notes…" />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="statementDate">Statement date *</Label>
+              <Input id="statementDate" type="date" value={statementDate} min={to} onChange={(e) => setStatementDate(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="notes">Notes</Label>
+              <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes…" />
+            </div>
           </div>
-
           <div className="flex justify-end">
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Starting…" : "Start Reconciliation"}
+            <Button type="button" onClick={onStart} disabled={invalid || busy}>
+              {busy ? "Starting…" : "Start Reconciliation"}
             </Button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
@@ -175,14 +235,12 @@ function ActiveReconciliation({
   session,
 }: {
   accountId: string;
-  session: { id: string; statementBalanceMinor: number; openingBookBalanceMinor: number; closingBookBalanceMinor: number; differenceMinor: number; currency: string; statementDate: string; reconciledTransactionIds: string[]; statementDates?: Record<string, string>; status: string };
+  session: { id: string; statementBalanceMinor: number; openingBookBalanceMinor: number; closingBookBalanceMinor: number; differenceMinor: number; currency: string; statementDate: string; reconciledTransactionIds: string[]; statementDates?: Record<string, string>; periodFrom?: string; periodTo?: string; status: string };
 }) {
   const router = useRouter();
-  const { data: txData } = useBankTransactions(accountId, {
-    page: 1,
-    pageSize: 100,
-    isReconciled: "false",
-  });
+  // The period's unreconciled lines — all of them — and what is ticked; earlier ones only when asked (2026-10-23).
+  const [earlier, setEarlier] = useState(false);
+  const { data: lines, isLoading: linesLoading } = useReconciliationLines(accountId, session.id, earlier);
   const updateReconciliation = useUpdateReconciliation(accountId, session.id);
   const completeReconciliation = useCompleteReconciliation(accountId, session.id);
   const [selected, setSelected] = useState<Set<string>>(
@@ -192,7 +250,12 @@ function ActiveReconciliation({
      line — and the expense it pays — takes it when the reconciliation is completed. */
   const [dates, setDates] = useState<Record<string, string>>(session.statementDates ?? {});
 
-  const transactions = txData?.data ?? [];
+  const transactions = lines ?? [];
+  const shown = useMemo(() => {
+    let debits = 0, credits = 0;
+    for (const tx of transactions) { if (tx.amountMinor < 0) debits += -tx.amountMinor; else credits += tx.amountMinor; }
+    return { debits, credits };
+  }, [transactions]);
 
   function toggle(txId: string) {
     setSelected((prev) => {
@@ -259,7 +322,9 @@ function ActiveReconciliation({
             <h1 className="text-xl font-semibold">Reconciliation in Progress</h1>
             <Badge tone="warning">Open</Badge>
           </div>
-          <p className="text-sm text-foreground-muted">Statement date: {session.statementDate}</p>
+          <p className="text-sm text-foreground-muted">
+            {session.periodFrom && session.periodTo ? `Period ${session.periodFrom} → ${session.periodTo} · ` : ""}Statement date: {session.statementDate}
+          </p>
         </div>
       </div>
 
@@ -299,11 +364,17 @@ function ActiveReconciliation({
       <div className="rounded-lg border border-border bg-surface overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <p className="text-sm font-semibold">
-            Unreconciled Transactions
+            {session.periodFrom ? "Unreconciled lines in the period" : "Unreconciled Transactions"}
             <span className="ml-2 text-xs font-normal text-foreground-muted">
-              {selected.size} of {transactions.length} checked
+              {selected.size} of {transactions.length} checked · out <MoneyDisplay minor={shown.debits} currency={session.currency} /> · in <MoneyDisplay minor={shown.credits} currency={session.currency} />
             </span>
           </p>
+          {session.periodFrom && (
+            <label className="flex items-center gap-2 text-xs text-foreground-muted">
+              <input type="checkbox" checked={earlier} onChange={(e) => setEarlier(e.target.checked)} className="rounded border-border" />
+              Show earlier unreconciled lines
+            </label>
+          )}
           <button
             onClick={() => {
               if (selected.size === transactions.length) {
@@ -332,7 +403,7 @@ function ActiveReconciliation({
               {transactions.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-foreground-muted text-sm">
-                    No unreconciled transactions
+                    {linesLoading ? "Loading…" : "No unreconciled transactions"}
                   </td>
                 </tr>
               )}

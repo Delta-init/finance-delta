@@ -5,6 +5,7 @@ import type {
   BankAccount as BankAccountDTO,
   BankTransaction as BankTransactionDTO,
   ReconciliationSession as ReconciliationSessionDTO,
+  ReconciliationOpening,
   BankAccountQuery,
   BankTransactionQuery,
   Paginated,
@@ -200,6 +201,8 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
     currency: doc.currency,
     statementDate: dateOnly(doc.statementDate as unknown as Date),
     statementBalanceMinor: doc.statementBalanceMinor,
+    ...((doc as unknown as { periodFrom?: Date }).periodFrom ? { periodFrom: dateOnly((doc as unknown as { periodFrom: Date }).periodFrom) } : {}),
+    ...((doc as unknown as { periodTo?: Date }).periodTo ? { periodTo: dateOnly((doc as unknown as { periodTo: Date }).periodTo) } : {}),
     openingBookBalanceMinor: doc.openingBookBalanceMinor,
     closingBookBalanceMinor: doc.closingBookBalanceMinor,
     differenceMinor: doc.differenceMinor,
@@ -1028,10 +1031,26 @@ export async function startReconciliation(
   });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
 
-  const openingBalance = (account.lastReconciledStatementBalanceMinor as number | undefined) ??
-    (account.openingBalanceMinor as number) ?? 0;
+  if (await ReconciliationSession.exists({ organizationId: new Types.ObjectId(orgId), accountId: new Types.ObjectId(accountId), status: "open" })) {
+    throw new AppError("CONFLICT", "A reconciliation of this account is open already — complete it first");
+  }
 
-  const closingBookBalance = (account.currentBalanceMinor as number) ?? 0;
+  // A period (2026-10-23): it can't start before the last completed reconciliation ends — no line is reconciled twice.
+  if (input.periodFrom && input.periodTo) {
+    const reconciledTo = await lastReconciledDay(orgId, accountId);
+    if (reconciledTo && input.periodFrom <= reconciledTo) {
+      throw new AppError("VALIDATION_ERROR", `This account is reconciled up to ${reconciledTo} — start the period on ${nextDay(reconciledTo)} or later`);
+    }
+    if (input.statementDate < input.periodTo) throw new AppError("VALIDATION_ERROR", "The statement date can't be before the period's last day");
+  }
+
+  const openingBalance = input.openingBalanceMinor
+    ?? (input.periodFrom ? (await reconciliationOpening(orgId, accountId, input.periodFrom)).openingBalanceMinor : undefined)
+    ?? (account.lastReconciledStatementBalanceMinor as number | undefined)
+    ?? (account.openingBalanceMinor as number) ?? 0;
+
+  // Nothing ticked yet: the book stands at the opening balance (a period's) or the account's balance (as before).
+  const closingBookBalance = input.periodFrom ? openingBalance : (account.currentBalanceMinor as number) ?? 0;
   const differenceMinor = input.statementBalanceMinor - closingBookBalance;
 
   const doc = await ReconciliationSession.create({
@@ -1041,12 +1060,67 @@ export async function startReconciliation(
     currency: account.currency,
     statementDate: new Date(input.statementDate),
     statementBalanceMinor: input.statementBalanceMinor,
+    ...(input.periodFrom && input.periodTo ? { periodFrom: new Date(`${input.periodFrom}T00:00:00.000Z`), periodTo: new Date(`${input.periodTo}T00:00:00.000Z`) } : {}),
     openingBookBalanceMinor: openingBalance,
     closingBookBalanceMinor: closingBookBalance,
     differenceMinor,
     notes: input.notes ?? "",
   });
   return sessionToDTO(doc);
+}
+
+const nextDay = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+const prevDay = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
+/** The last day the account's completed reconciliations cover (a period's end, else an older one's statement date). */
+async function lastReconciledDay(orgId: string, accountId: string): Promise<string | null> {
+  const done = await ReconciliationSession.find({ organizationId: new Types.ObjectId(orgId), accountId: new Types.ObjectId(accountId), status: "completed" })
+    .select("periodTo statementDate").lean<Array<{ periodTo?: Date; statementDate: Date }>>();
+  const ends = done.map((s) => dateOnly(s.periodTo ?? s.statementDate)).sort();
+  return ends.at(-1) ?? null;
+}
+
+/**
+ * What a period starting on `periodFrom` opens at (2026-10-23): the closing balance of a completed reconciliation that
+ * ends the day before, else the book — the running balance after the last line before that day (the opening balance
+ * when there is none). The Reconcile screen fills it in; the person changes it to the statement's own figure.
+ */
+export async function reconciliationOpening(orgId: string, accountId: string, periodFrom: string): Promise<ReconciliationOpening> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(periodFrom)) throw new AppError("VALIDATION_ERROR", "from is YYYY-MM-DD");
+  const org = new Types.ObjectId(orgId), acc = new Types.ObjectId(accountId);
+  const account = await BankAccount.findOne({ _id: acc, organizationId: org }).select("openingBalanceMinor").lean<{ openingBalanceMinor?: number }>();
+  if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
+  const reconciledTo = await lastReconciledDay(orgId, accountId);
+  const before = prevDay(periodFrom);
+  const ending = await ReconciliationSession.findOne({
+    organizationId: org, accountId: acc, status: "completed",
+    $or: [{ periodTo: new Date(`${before}T00:00:00.000Z`) }, { periodTo: null, statementDate: new Date(`${before}T00:00:00.000Z`) }],
+  }).sort({ completedAt: -1 }).select("statementBalanceMinor").lean<{ statementBalanceMinor: number }>();
+  if (ending) return { periodFrom, openingBalanceMinor: ending.statementBalanceMinor, source: "last_reconciliation", reconciledTo };
+  const last = await BankTransaction.findOne({ organizationId: org, accountId: acc, date: { $lt: new Date(`${periodFrom}T00:00:00.000Z`) } })
+    .sort({ date: -1, _id: -1 }).select("runningBalanceMinor").lean<{ runningBalanceMinor?: number }>();
+  return { periodFrom, openingBalanceMinor: last?.runningBalanceMinor ?? account.openingBalanceMinor ?? 0, source: "book", reconciledTo };
+}
+
+/**
+ * The lines a session lists (2026-10-23): every unreconciled line of its period — `earlier` adds the unreconciled ones
+ * before it, which cleared only on this statement — and whatever it has ticked. A session without a period lists every
+ * unreconciled line, as before. Not paged (at most 3000).
+ */
+export async function reconciliationLines(orgId: string, sessionId: string, earlier: boolean): Promise<BankTransactionDTO[]> {
+  const session = await ReconciliationSession.findOne({ _id: new Types.ObjectId(sessionId), organizationId: new Types.ObjectId(orgId) }).lean<any>();
+  if (!session) throw new AppError("NOT_FOUND", "Reconciliation session not found");
+  const date: Record<string, Date> = {};
+  if (session.periodTo) date.$lt = new Date(Date.parse(`${dateOnly(session.periodTo)}T00:00:00Z`) + 86_400_000);
+  if (session.periodFrom && !earlier) date.$gte = new Date(`${dateOnly(session.periodFrom)}T00:00:00.000Z`);
+  const docs = await BankTransaction.find({
+    organizationId: session.organizationId, accountId: session.accountId,
+    $or: [
+      { isReconciled: { $ne: true }, ...(Object.keys(date).length ? { date } : {}) },
+      { _id: { $in: session.reconciledTransactionIds ?? [] } },
+    ],
+  }).sort({ date: 1, _id: 1 }).limit(3000).lean();
+  return withExpenseCategories(orgId, (docs as unknown as BankTransactionDoc[]).map(txToDTO));
 }
 
 export async function updateReconciliation(

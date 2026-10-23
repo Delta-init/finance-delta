@@ -7,6 +7,7 @@ import type {
   BankAccount,
   BankTransaction,
   ReconciliationSession,
+  ReconciliationOpening,
   CreateBankTransactionInput,
   UpdateBankTransactionInput,
   BulkImportTransactionsInput,
@@ -271,6 +272,24 @@ export function useReconciliation(accountId: string, sessionId: string | undefin
       api.get<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations/${sessionId}`,
       ),
+    enabled: !!accountId && !!sessionId,
+  });
+}
+
+/** What a period starting on `from` opens at — the last reconciliation's closing balance, else the book's (2026-10-23). */
+export function useReconciliationOpening(accountId: string, from: string) {
+  return useQuery({
+    queryKey: [...reconcileKey(accountId), "opening", from],
+    queryFn: () => api.get<ReconciliationOpening>(`bank-accounts/${accountId}/reconciliations/opening?from=${encodeURIComponent(from)}`),
+    enabled: !!accountId && /^\d{4}-\d{2}-\d{2}$/.test(from),
+  });
+}
+
+/** A session's lines to tick: its period's unreconciled ones (+ earlier ones on request) and what it ticked — not paged. */
+export function useReconciliationLines(accountId: string, sessionId: string, earlier: boolean) {
+  return useQuery({
+    queryKey: [...reconcileKey(accountId), sessionId, "lines", earlier],
+    queryFn: () => api.get<BankTransaction[]>(`bank-accounts/${accountId}/reconciliations/${sessionId}/lines${earlier ? "?earlier=1" : ""}`),
     enabled: !!accountId && !!sessionId,
   });
 }

@@ -281,11 +281,19 @@ export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 
 // ── Reconciliation ────────────────────────────────────────────────────────────
 
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A date is YYYY-MM-DD");
 export const startReconciliationSchema = z.object({
   statementDate: z.string().min(1, "Statement date is required"),
   statementBalanceMinor: z.number(),
+  /* The period this statement covers (the user, 2026-10-23: "reconcile by this month, this week, today") — only its
+     unreconciled lines are listed — and the statement's balance at its start, which the ticked lines are added to.
+     Without them a session works as before (every unreconciled line, from the last reconciled balance). */
+  periodFrom: isoDay.optional(),
+  periodTo: isoDay.optional(),
+  openingBalanceMinor: z.number().int().optional(),
   notes: z.string().optional().default(""),
-});
+}).refine((v) => !v.periodFrom || !v.periodTo || v.periodFrom <= v.periodTo, { message: "The period ends before it starts", path: ["periodTo"] })
+  .refine((v) => !!v.periodFrom === !!v.periodTo, { message: "Give the period's first and last day", path: ["periodFrom"] });
 export type StartReconciliationInput = z.infer<typeof startReconciliationSchema>;
 
 export const updateReconciliationSchema = z.object({
@@ -304,6 +312,9 @@ export const reconciliationSessionSchema = z.object({
   currency: z.string(),
   statementDate: z.string(),
   statementBalanceMinor: z.number(),
+  /** The period it covers (2026-10-23); absent on a session started before periods. */
+  periodFrom: z.string().optional(),
+  periodTo: z.string().optional(),
   openingBookBalanceMinor: z.number(),
   closingBookBalanceMinor: z.number(),
   differenceMinor: z.number(),
@@ -319,3 +330,12 @@ export const reconciliationSessionSchema = z.object({
   createdAt: z.string(),
 });
 export type ReconciliationSession = z.infer<typeof reconciliationSessionSchema>;
+
+/** The balance a period starts from: the last reconciliation's closing balance when it ends the day before, else the book's. */
+export interface ReconciliationOpening {
+  periodFrom: string;
+  openingBalanceMinor: number;
+  source: "last_reconciliation" | "book";
+  /** The last completed reconciliation's last day — a new period must start after it. */
+  reconciledTo: string | null;
+}

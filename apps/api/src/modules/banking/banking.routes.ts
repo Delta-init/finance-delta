@@ -70,6 +70,9 @@ router.post("/:id/transactions/:txId/restore", requirePermission("banking:write"
 // Reconciliation
 router.get("/:id/reconciliations", requirePermission("banking:read"), c.listReconciliations);
 router.post("/:id/reconciliations", requirePermission("banking:reconcile"), validateBody(startReconciliationSchema), c.startReconciliation);
+// A period's opening balance, and a session's lines to tick (2026-10-23) — before /:sessionId.
+router.get("/:id/reconciliations/opening", requirePermission("banking:read"), c.getReconciliationOpening);
+router.get("/:id/reconciliations/:sessionId/lines", requirePermission("banking:read"), c.getReconciliationLines);
 router.get("/:id/reconciliations/:sessionId", requirePermission("banking:read"), c.getReconciliation);
 router.patch("/:id/reconciliations/:sessionId", requirePermission("banking:reconcile"), validateBody(updateReconciliationSchema), c.updateReconciliation);
 router.post("/:id/reconciliations/:sessionId/complete", requirePermission("banking:reconcile"), c.completeReconciliation);

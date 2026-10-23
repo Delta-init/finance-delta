@@ -118,6 +118,16 @@ export const startReconciliation = asyncHandler(async (req, res) => {
   created(res, await svc.startReconciliation(org(req), req.params.id!, req.body));
 });
 
+/** GET /bank-accounts/:id/reconciliations/opening?from=YYYY-MM-DD — what a period starting that day opens at. */
+export const getReconciliationOpening = asyncHandler(async (req, res) => {
+  ok(res, await svc.reconciliationOpening(org(req), req.params.id!, String(req.query.from ?? "")));
+});
+
+/** GET /bank-accounts/:id/reconciliations/:sessionId/lines[?earlier=1] — the lines to tick, not paged. */
+export const getReconciliationLines = asyncHandler(async (req, res) => {
+  ok(res, await svc.reconciliationLines(org(req), req.params.sessionId!, req.query.earlier === "1" || req.query.earlier === "true"));
+});
+
 export const getReconciliation = asyncHandler(async (req, res) => {
   ok(res, await svc.getReconciliation(org(req), req.params.sessionId!));
 });

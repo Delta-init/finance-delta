@@ -258,6 +258,23 @@ export interface HrmsProcurementRequest {
   createdAt: string;
 }
 
+/** Which procurement finance's full record asks HRMS for (2026-10-23): one status, or all. */
+export type HrmsProcurementHistoryStatus = "requested" | "hr_approved" | "approved" | "rejected" | "ordered" | "received" | "cancelled" | "all";
+
+/** A procurement request as finance's full record has it — any status or kind, with both decisions. */
+export interface HrmsProcurementRecord extends HrmsProcurementRequest {
+  kind: "existing" | "new";
+  status: "requested" | "hr_approved" | "approved" | "rejected" | "ordered" | "received" | "cancelled";
+  hrReviewedBy?: { _id: string; name: string } | null;
+  rejectedBy?: "hr" | "finance" | null;
+  financeReviewedAt?: string | null;
+  financeNote?: string;
+  purchaseOrderRef?: string;
+  notes?: string;
+  reportUrl?: string;
+  updatedAt?: string;
+}
+
 /** A salary advance HR has approved, waiting on finance to pay it out. */
 export interface HrmsSalaryAdvance {
   _id: string;
@@ -503,6 +520,11 @@ export const hrmsClient = {
   /** What HR has approved and is waiting on the money decision. */
   async procurementRequests(organizationId: string): Promise<HrmsProcurementRequest[]> {
     return (await request<HrmsProcurementRequest[]>("GET", "/procurement/requests", { query: { organizationId } })).data;
+  },
+
+  /** Finance's full record (2026-10-23): every request of one status, or all — newest first. HRMS before then answers only its queue. */
+  async procurementHistory(organizationId: string, status: HrmsProcurementHistoryStatus): Promise<HrmsProcurementRecord[]> {
+    return (await request<HrmsProcurementRecord[]>("GET", "/procurement/requests", { query: { organizationId, status } })).data;
   },
 
   /**

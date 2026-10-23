@@ -3,7 +3,7 @@ import type { ApproveProcurementInput, RejectProcurementInput } from "@delta/sha
 import { EXPENSE_DEFAULTS, computeExpenseTax, resolveCategoryName } from "@delta/shared";
 import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { PayrollDeptLink } from "../payroll-mapping/dept-link.model";
-import { hrmsClient, type HrmsProcurementRequest } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsProcurementRequest, type HrmsProcurementRecord, type HrmsProcurementHistoryStatus } from "../../lib/hrms-client";
 import { Expense } from "../expense/expense.model";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { Department } from "../department/department.model";
@@ -86,6 +86,51 @@ export async function listWaiting(orgId: string): Promise<ProcurementRow[]> {
     })
     // Soonest needed first; a request with no date sorts last rather than first.
     .sort((a, b) => (a.neededBy ?? "9999").localeCompare(b.neededBy ?? "9999"));
+}
+
+/** Which statuses finance's full record offers (2026-10-23). */
+export const PROCUREMENT_HISTORY_STATUSES = ["requested", "hr_approved", "approved", "rejected", "ordered", "received", "cancelled", "all"] as const satisfies readonly HrmsProcurementHistoryStatus[];
+
+export interface ProcurementHistoryRow extends HrmsProcurementRecord {
+  hrmsOrgId: string;
+  /** The expense finance recorded when it approved it — any round of it. */
+  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null } | null;
+}
+
+/**
+ * Every procurement request from HRMS — what is still with HR, waiting on finance, approved, ordered, received,
+ * refused or cancelled, and what was already bought (the user, 2026-10-23) — with the expense finance made for it.
+ */
+export async function listHistory(orgId: string, status: HrmsProcurementHistoryStatus): Promise<ProcurementHistoryRow[]> {
+  if (!hrmsClient.isConfigured()) throw new AppError("CONFLICT", "The HRMS integration is not configured.");
+  const hrmsOrgIds = await linkedOrgIds(orgId);
+  const rows: Array<HrmsProcurementRecord & { hrmsOrgId: string }> = [];
+  for (const hrmsOrgId of hrmsOrgIds) {
+    const got = await hrmsClient.procurementHistory(hrmsOrgId, status);
+    // An HRMS from before the full record ignores ?status= and sends its queue (no status on the rows): say so.
+    if (got.some((r) => !r.status || (status !== "all" && r.status !== status))) {
+      throw new AppError("UNAVAILABLE", "HRMS needs updating before finance can show every procurement request.");
+    }
+    rows.push(...got.map((r) => ({ ...r, hrmsOrgId })));
+  }
+  // The expense of any round: its key is hrms:<org>:<request>:<round>.
+  const made = rows.length
+    ? await Expense.find({
+        organizationId: new Types.ObjectId(orgId),
+        "source.key": { $in: rows.flatMap((r) => Array.from({ length: (r.resubmitCount ?? 0) + 1 }, (_, i) => `hrms:${r.hrmsOrgId}:${r._id}:${i}`)) },
+      }).select("expenseNumber status source totalMinor createdAt").sort({ createdAt: 1 }).lean()
+    : [];
+  const madeFor = new Map<string, (typeof made)[number]>();
+  for (const e of made) madeFor.set(String(e.source?.key).split(":").slice(0, 3).join(":"), e);
+  return rows
+    .map((r) => {
+      const e = madeFor.get(`hrms:${r.hrmsOrgId}:${r._id}`);
+      return {
+        ...r,
+        expense: e ? { id: String(e._id), expenseNumber: String(e.expenseNumber), status: String(e.status), totalMinor: typeof e.totalMinor === "number" ? e.totalMinor : null } : null,
+      };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 async function requireRow(orgId: string, hrmsOrgId: string, requestId: string): Promise<HrmsProcurementRequest> {

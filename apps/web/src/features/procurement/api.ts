@@ -30,6 +30,25 @@ export interface ProcurementRequest {
   expense: { id: string; expenseNumber: string; status: string } | null;
 }
 
+/** Which statuses finance's full record asks for (2026-10-23). */
+export type ProcurementHistoryStatus = "requested" | "hr_approved" | "approved" | "rejected" | "ordered" | "received" | "cancelled" | "all";
+
+/** One request in finance's full record — any status or kind, with HR's and finance's decisions. */
+export interface ProcurementRecord extends Omit<ProcurementRequest, "suggestedDepartmentId" | "expense"> {
+  kind: "existing" | "new";
+  status: Exclude<ProcurementHistoryStatus, "all">;
+  hrReviewedBy?: { _id: string; name: string } | null;
+  hrReviewedAt?: string | null;
+  rejectedBy?: "hr" | "finance" | null;
+  financeReviewedAt?: string | null;
+  financeNote?: string;
+  purchaseOrderRef?: string;
+  notes?: string;
+  reportUrl?: string;
+  /** The expense finance recorded when it approved it. */
+  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null } | null;
+}
+
 export interface ProcurementApproval {
   expense: { id: string; expenseNumber: string; totalMinor: number; currency: string };
 }
@@ -42,6 +61,16 @@ export function useProcurementRequests() {
   return useQuery({
     queryKey: [...KEY, "waiting"],
     queryFn: () => api.get<ProcurementRequest[]>("procurement"),
+    retry: false,
+  });
+}
+
+/** Every request from HRMS, read live like the queue (2026-10-23). */
+export function useProcurementHistory(status: ProcurementHistoryStatus, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, "history", status],
+    queryFn: () => api.get<ProcurementRecord[]>(`procurement/history?status=${status}`),
+    enabled,
     retry: false,
   });
 }

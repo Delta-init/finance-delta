@@ -140,6 +140,8 @@ export default function ExpensesPage() {
   const [source, setSource] = useUrlParam("source", "all");
   // Its bank statement date (2026-10-23): entered when the account is reconciled, or still pending.
   const [statement, setStatement] = useUrlParam("statement", "all");
+  // …or the days the bank statement shows them (2026-10-23), in the Filters panel beside the rest.
+  const stmt = useUrlDateRange({ fromKey: "stmtFrom", toKey: "stmtTo", rangeKey: "stmtRange" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
@@ -159,13 +161,15 @@ export default function ExpensesPage() {
     bankAccountId: bankAccountId || undefined,
     source: source === "all" ? undefined : source,
     statement: statement === "all" ? undefined : statement,
+    statementFrom: stmt.from || undefined,
+    statementTo: stmt.to || undefined,
   };
   const { data, isLoading } = useExpenses(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId, source, statement);
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId, source, statement, stmt.range);
   const hasFilters = filterCount > 0 || spent.range !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
@@ -240,6 +244,7 @@ export default function ExpensesPage() {
     {
       key: "statementDate",
       header: "Statement date",
+      sortable: true,
       cell: (e) => e.statementDate
         ? <span className="text-foreground-muted">{e.statementDate}</span>
         : e.statementState === "pending"
@@ -470,6 +475,11 @@ export default function ExpensesPage() {
             <SelectItem value="entered">Statement date entered</SelectItem>
           </SelectContent>
         </Select>
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-foreground-muted">Statement date</span>
+          <DateRangeQuick value={stmt} />
+          {stmt.range !== "all" && <span className="text-xs text-foreground-subtle">Only expenses reconciled with a statement date — pending and cash ones are left out</span>}
+        </div>
 
         {hasFilters && (
           <Button
@@ -481,6 +491,7 @@ export default function ExpensesPage() {
               setBankAccountId("");
               setSource("all");
               setStatement("all");
+              stmt.setRange("all");
               setPayment("all");
               pickCategory("all");
               // Counted by hasFilters, so it put the Clear button on screen and

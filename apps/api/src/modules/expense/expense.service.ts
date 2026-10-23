@@ -201,6 +201,7 @@ const SORT = {
   description: "description",
   category: "category",
   date: "expenseDate",
+  statementDate: "statementDate",
   status: "status",
   total: "totalMinor",
   submittedBy: "submittedByName",
@@ -235,6 +236,9 @@ async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scop
   // Its bank statement date: entered at reconciliation, or still waiting for one (2026-10-23).
   if (query.statement === "entered") and.push({ statementDate: { $ne: null } });
   else if (query.statement === "pending") and.push({ statementDate: null, ...NEEDS_STATEMENT });
+  // …or its statement date in a range (2026-10-23): one with none (pending, cash) is never in it.
+  if (query.statementFrom) and.push({ statementDate: { $ne: null, $gte: new Date(query.statementFrom) } });
+  if (query.statementTo) and.push({ statementDate: { $ne: null, ...throughDay(query.statementTo) } });
   // How it was paid, and from which account (2026-10-22): its link, or on an older one the account's name as typed;
   // "none" is one paid from no account.
   if (query.paymentMethod) and.push({ paymentMethod: query.paymentMethod });

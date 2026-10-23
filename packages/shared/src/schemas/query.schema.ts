@@ -161,6 +161,9 @@ export const expenseQuerySchema = listQuerySchema.extend({
   bankAccountId: bankAccountFilterSchema,
   /** Its bank statement date: entered at reconciliation, or still pending (2026-10-23). */
   statement: z.enum(["pending", "entered"]).optional(),
+  /** Its bank statement date between these days (YYYY-MM-DD, both included) — only expenses that have one. */
+  statementFrom: z.string().optional(),
+  statementTo: z.string().optional(),
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
 

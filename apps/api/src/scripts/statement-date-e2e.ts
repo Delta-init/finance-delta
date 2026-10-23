@@ -10,6 +10,7 @@
  *   - reconciling: a date given for a ticked line is kept with the session; one after the statement's own date is
  *     refused; on completing, each ticked line gets its statement date — the one given, else its own date — and so
  *     does its expense (entered); lines not ticked stay pending;
+ *   - the Statement date range (from / to, each alone too) and sorting by it — pending and cash never in a range;
  *   - a line replaced (the expense paid on another day) is no longer on a statement: pending again;
  *   - the backfill script's rule: reconciled bank lines without one get their own date.
  *
@@ -104,6 +105,13 @@ pend = (await list("pending")).map((e) => e.expenseNumber);
 check("the filters agree: pending only the one not ticked, entered the two", pend.join() === later.expenseNumber && (await list("entered")).length === 2, j(pend));
 const lineDto = (await banking.listTransactions(org, String(bank), { page: 1, pageSize: 50 } as never)).data.find((t: any) => t.id === cardLine);
 check("the bank line's own view shows it", lineDto?.statementDate === D2, j(lineDto));
+
+const byRange = async (from?: string, to?: string) => (await ex.listExpenses(org, expenseQuerySchema.parse({ pageSize: 100, ...(from ? { statementFrom: from } : {}), ...(to ? { statementTo: to } : {}) }), { all: true } as never)).data.map((e) => e.expenseNumber).sort();
+check("statement date range " + D2 + "…" + D2 + ": only the card expense (the transfer is on " + D1 + ")", (await byRange(D2, D2)).join() === card.expenseNumber, j(await byRange(D2, D2)));
+check("…" + D0 + "…" + D3 + ": both reconciled; never the pending or the cash ones", (await byRange(D0, D3)).join() === [card.expenseNumber, transfer.expenseNumber].sort().join(), j(await byRange(D0, D3)));
+check("…from " + D2 + " only: the card one; to " + D1 + " only: the transfer", (await byRange(D2)).join() === card.expenseNumber && (await byRange(undefined, D1)).join() === transfer.expenseNumber);
+const sorted = (await ex.listExpenses(org, expenseQuerySchema.parse({ pageSize: 100, statement: "entered", sort: "statementDate", dir: "asc" }), { all: true } as never)).data.map((e) => e.statementDate);
+check("sorted by statement date", sorted.join() === [D1, D2].join(), j(sorted));
 
 step("3. A replaced line is not on a statement");
 await Expense.updateOne({ _id: later.id }, { $set: { statementDate: new Date(`${D2}T00:00:00.000Z`) } }); // as if it had been reconciled

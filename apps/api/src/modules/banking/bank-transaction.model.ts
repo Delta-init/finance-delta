@@ -47,6 +47,11 @@ const bankTransactionSchema = new Schema(
     isReconciled: { type: Boolean, default: false },
     reconciledSessionId: { type: String },
     /**
+     * The day the bank's statement shows it (the user, 2026-10-23) — written when the reconciliation that ticks it
+     * is completed, its own date unless the person reconciling gave another. Its expense carries it too.
+     */
+    statementDate: { type: Date, default: null },
+    /**
      * The receipt behind the entry.
      *
      * A tin runs on paper: a voucher, a till slip, a photo of a signed chit.

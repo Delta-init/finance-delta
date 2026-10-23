@@ -102,6 +102,11 @@ const expenseSchema = new Schema(
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
     bankTransactionId: { type: Schema.Types.ObjectId, default: null },
     bankNote: { type: String, default: "" },
+    /**
+     * The day the bank's statement shows it (the user, 2026-10-23) — written only when its bank line is reconciled
+     * (banking.service.ts writeStatementDates), never from the expense form. Cleared when its line is replaced.
+     */
+    statementDate: { type: Date, default: null },
     /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */
     lateEntry: { type: recordLateSchema, default: null },
     paymentMethod: {

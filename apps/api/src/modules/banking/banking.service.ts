@@ -92,6 +92,7 @@ function txToDTO(doc: BankTransactionDoc): BankTransactionDTO {
     matches,
     isReconciled: (doc.isReconciled as boolean) ?? false,
     reconciledSessionId: (doc.reconciledSessionId as string | undefined) ?? undefined,
+    statementDate: (doc as unknown as { statementDate?: Date | null }).statementDate ? dateOnly((doc as unknown as { statementDate: Date }).statementDate) : undefined,
     attachments: (((doc as unknown as { attachments?: unknown[] }).attachments) ?? []).map((a) => {
       const r = a as Record<string, unknown>;
       return {
@@ -207,6 +208,9 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
       (doc as unknown as { adjustmentTransactionId?: string }).adjustmentTransactionId ?? undefined,
     reconciledTransactionIds: (doc.reconciledTransactionIds as unknown as Types.ObjectId[]).map(
       (id) => id.toString(),
+    ),
+    statementDates: Object.fromEntries(
+      [...((doc as unknown as { statementDates?: Map<string, Date> }).statementDates ?? new Map()).entries()].map(([k, v]) => [k, dateOnly(v)]),
     ),
     completedAt: doc.completedAt
       ? (doc.completedAt as unknown as Date).toISOString()
@@ -1071,11 +1075,24 @@ export async function updateReconciliation(
   const closingBookBalance = (session.openingBookBalanceMinor as number) + reconciledTotal;
   const differenceMinor = (session.statementBalanceMinor as number) - closingBookBalance;
 
+  /* The statement's day for a ticked line, where it isn't the line's own (2026-10-23). Only for lines ticked in this
+     session, and never after the statement's own date — a line can't be on a statement that ends before it. */
+  const ticked = new Map((reconciledTxs as unknown as { _id: Types.ObjectId; date: Date }[]).map((t) => [String(t._id), t]));
+  const statementEnd = dateOnly(session.statementDate as unknown as Date);
+  const statementDates = new Map<string, Date>();
+  for (const [id, day] of Object.entries(input.statementDates ?? {})) {
+    const tx = ticked.get(id);
+    if (!tx) continue;
+    if (day > statementEnd) throw new AppError("VALIDATION_ERROR", `A statement date can't be after the statement's own date (${statementEnd})`);
+    if (day !== dateOnly(tx.date)) statementDates.set(id, new Date(`${day}T00:00:00.000Z`));
+  }
+
   const updated = await ReconciliationSession.findByIdAndUpdate(
     sessionId,
     {
       $set: {
         reconciledTransactionIds: reconciledIds,
+        ...(input.statementDates !== undefined ? { statementDates } : {}),
         closingBookBalanceMinor: closingBookBalance,
         differenceMinor,
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -1085,6 +1102,24 @@ export async function updateReconciliation(
   );
   if (!updated) throw new AppError("NOT_FOUND", "Reconciliation session not found");
   return sessionToDTO(updated);
+}
+
+/**
+ * The day the statement shows each line just reconciled (the user, 2026-10-23: "the statement date — only at the
+ * bank reconcile time we can enter it"): the one given for it in the session, else its own date — on the line and on
+ * the expense paid by it, whose Statement date stops being pending.
+ */
+async function writeStatementDates(orgId: string, ids: Types.ObjectId[], given: Map<string, Date> | undefined): Promise<void> {
+  if (!ids.length) return;
+  const org = new Types.ObjectId(orgId);
+  const lines = await BankTransaction.find({ _id: { $in: ids }, organizationId: org }).select("date").lean<{ _id: Types.ObjectId; date: Date }[]>();
+  if (!lines.length) return;
+  const dayOf = (l: { _id: Types.ObjectId; date: Date }) => given?.get(String(l._id)) ?? new Date(`${dateOnly(l.date)}T00:00:00.000Z`);
+  await BankTransaction.bulkWrite(lines.map((l) => ({ updateOne: { filter: { _id: l._id }, update: { $set: { statementDate: dayOf(l) } } } })));
+  const { Expense } = await import("../expense/expense.model");
+  await Expense.bulkWrite(lines.map((l) => ({
+    updateMany: { filter: { organizationId: org, bankTransactionId: l._id }, update: { $set: { statementDate: dayOf(l) } } },
+  })));
 }
 
 export async function completeReconciliation(
@@ -1108,6 +1143,7 @@ export async function completeReconciliation(
     },
     { $set: { isReconciled: true, reconciledSessionId: sessionId } },
   );
+  await writeStatementDates(orgId, reconciledIds, (session as unknown as { statementDates?: Map<string, Date> }).statementDates);
 
   await BankAccount.updateOne(
     { _id: session.accountId, organizationId: new Types.ObjectId(orgId) },

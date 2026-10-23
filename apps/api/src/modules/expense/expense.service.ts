@@ -89,6 +89,18 @@ function paymentStatus(paidOn: Date | undefined, dueDate: Date | undefined): Exp
   return dateOnly(dueDate) < new Date().toISOString().slice(0, 10) ? "overdue" : "unpaid";
 }
 
+/*
+ * Its bank statement date (the user, 2026-10-23): written when its bank line is reconciled. An expense in a bank
+ * account (it has a line there) paid by transfer, card, cheque or online is waiting for one until then — "pending";
+ * cash and petty cash, and one in no account, have no statement — "none". The badge and the filter read the same rule.
+ */
+const STATEMENT_METHODS = ["bank_transfer", "card", "cheque", "online"];
+const NEEDS_STATEMENT = { bankTransactionId: { $ne: null }, paymentMethod: { $in: STATEMENT_METHODS } };
+function statementState(d: Record<string, unknown>): "entered" | "pending" | "none" {
+  if (d.statementDate) return "entered";
+  return d.bankTransactionId && STATEMENT_METHODS.includes(String(d.paymentMethod ?? "")) ? "pending" : "none";
+}
+
 function toDTO(doc: ExpenseDoc): ExpenseDTO {
   const d = doc as unknown as Record<string, unknown>;
   const rec = d.recurrence as { frequency: string; nextDate: Date; endDate?: Date; isActive?: boolean } | undefined;
@@ -122,6 +134,8 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     bankAccountId: d.bankAccountId ? String(d.bankAccountId) : undefined,
     inBank: d.bankAccountId ? Boolean(d.bankTransactionId) : undefined,
     bankNote: (d.bankNote as string) || undefined,
+    statementDate: d.statementDate ? dateOnly(d.statementDate as Date) : undefined,
+    statementState: statementState(d),
     lateEntry: lateView(d.lateEntry),
     paymentMethod: (d.paymentMethod as ExpenseDTO["paymentMethod"]) ?? undefined,
     reference: (doc.reference as string) ?? "",
@@ -218,6 +232,9 @@ async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scop
   else if (query.source === "import") and.push({ "source.kind": "import" });
   else if (query.source === "hrms") and.push({ "source.kind": { $in: ["hrms_procurement", "hrms_advance", "hrms_one_time"] } });
   else if (query.source === "typed") and.push({ "source.kind": { $exists: false } });
+  // Its bank statement date: entered at reconciliation, or still waiting for one (2026-10-23).
+  if (query.statement === "entered") and.push({ statementDate: { $ne: null } });
+  else if (query.statement === "pending") and.push({ statementDate: null, ...NEEDS_STATEMENT });
   // How it was paid, and from which account (2026-10-22): its link, or on an older one the account's name as typed;
   // "none" is one paid from no account.
   if (query.paymentMethod) and.push({ paymentMethod: query.paymentMethod });
@@ -372,7 +389,9 @@ export async function syncExpenseLine(orgId: string, id: unknown): Promise<void>
   }
   try {
     const txId = await syncDebitLine(orgId, doc.bankTransactionId, want);
-    await Expense.updateOne({ _id: doc._id }, { $set: { bankTransactionId: txId, bankNote: note } });
+    // A new line (or none) has not been on a statement: its statement date goes until that one is reconciled.
+    const replaced = String(txId ?? "") !== String(doc.bankTransactionId ?? "");
+    await Expense.updateOne({ _id: doc._id }, { $set: { bankTransactionId: txId, bankNote: note, ...(replaced ? { statementDate: null } : {}) } });
   } catch (err) {
     await Expense.updateOne({ _id: doc._id }, { $set: { bankNote: `Not put in the account: ${(err as Error).message}`.slice(0, 300) } });
   }

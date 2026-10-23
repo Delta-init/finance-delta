@@ -420,6 +420,21 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-sm font-medium mt-0.5">{expense.expenseDate}</p>
             </div>
 
+            {/* The day the bank statement shows it — entered only when the account is reconciled (2026-10-23). */}
+            {expense.statementState && expense.statementState !== "none" && (
+              <div>
+                <p className="text-xs text-foreground-muted">Statement Date</p>
+                {expense.statementDate ? (
+                  <p className="text-sm font-medium mt-0.5">{expense.statementDate}</p>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium mt-0.5 text-warning">Pending</p>
+                    <p className="text-xs text-foreground-muted mt-0.5">Set when {expense.paymentAccount || "its bank account"} is reconciled</p>
+                  </>
+                )}
+              </div>
+            )}
+
             {expense.paymentMethod && (
               <div>
                 <p className="text-xs text-foreground-muted">Payment Method</p>

@@ -216,6 +216,11 @@ export const expenseSchema = z.object({
   bankAccountId: z.string().optional(),
   inBank: z.boolean().optional(),
   bankNote: z.string().optional(),
+  /* The day the bank's statement shows it (the user, 2026-10-23) — entered only when the account is reconciled,
+     never on the expense itself. "pending": paid from a bank account, not reconciled yet; "none": cash, petty cash, or
+     in no account in finance. */
+  statementDate: z.string().optional(),
+  statementState: z.enum(["entered", "pending", "none"]).optional(),
   /** Typed in late: waiting for a manager, or what one decided. */
   lateEntry: recordLateEntrySchema.optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),

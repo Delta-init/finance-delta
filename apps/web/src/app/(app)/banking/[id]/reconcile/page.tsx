@@ -175,7 +175,7 @@ function ActiveReconciliation({
   session,
 }: {
   accountId: string;
-  session: { id: string; statementBalanceMinor: number; openingBookBalanceMinor: number; closingBookBalanceMinor: number; differenceMinor: number; currency: string; statementDate: string; reconciledTransactionIds: string[]; status: string };
+  session: { id: string; statementBalanceMinor: number; openingBookBalanceMinor: number; closingBookBalanceMinor: number; differenceMinor: number; currency: string; statementDate: string; reconciledTransactionIds: string[]; statementDates?: Record<string, string>; status: string };
 }) {
   const router = useRouter();
   const { data: txData } = useBankTransactions(accountId, {
@@ -188,6 +188,9 @@ function ActiveReconciliation({
   const [selected, setSelected] = useState<Set<string>>(
     new Set(session.reconciledTransactionIds),
   );
+  /* The day the statement shows each ticked line, where it isn't the line's own date (the user, 2026-10-23): the
+     line — and the expense it pays — takes it when the reconciliation is completed. */
+  const [dates, setDates] = useState<Record<string, string>>(session.statementDates ?? {});
 
   const transactions = txData?.data ?? [];
 
@@ -206,11 +209,19 @@ function ActiveReconciliation({
   const difference = session.statementBalanceMinor - closingBookBalance;
   const isBalanced = difference === 0;
 
+  /** What is ticked, with the statement dates given for those lines. */
+  function progress() {
+    const statementDates: Record<string, string> = {};
+    for (const tx of transactions) {
+      const d = dates[tx.id];
+      if (selected.has(tx.id) && d && d !== tx.date) statementDates[tx.id] = d;
+    }
+    return { reconciledTransactionIds: Array.from(selected), statementDates };
+  }
+
   async function handleSave() {
     try {
-      await updateReconciliation.mutateAsync({
-        reconciledTransactionIds: Array.from(selected),
-      });
+      await updateReconciliation.mutateAsync(progress());
       toast.success("Progress saved");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to save");
@@ -223,6 +234,9 @@ function ActiveReconciliation({
       return;
     }
     try {
+      // What is on screen — the ticks and the statement dates — is saved first, so nothing typed since the last
+      // save is lost.
+      await updateReconciliation.mutateAsync(progress());
       await completeReconciliation.mutateAsync();
       toast.success("Reconciliation completed");
       router.push(`/banking/${accountId}`);
@@ -309,6 +323,7 @@ function ActiveReconciliation({
               <tr>
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted w-10"></th>
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted">Date</th>
+                <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted" title="The day the bank statement shows it — the line's own date unless you change it">Statement date</th>
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted">Description</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-foreground-muted">Amount</th>
               </tr>
@@ -316,7 +331,7 @@ function ActiveReconciliation({
             <tbody>
               {transactions.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-foreground-muted text-sm">
+                  <td colSpan={5} className="px-4 py-8 text-center text-foreground-muted text-sm">
                     No unreconciled transactions
                   </td>
                 </tr>
@@ -339,6 +354,20 @@ function ActiveReconciliation({
                     />
                   </td>
                   <td className="px-4 py-2.5 text-foreground-muted">{tx.date}</td>
+                  <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                    {selected.has(tx.id) ? (
+                      <input
+                        type="date"
+                        aria-label={`Statement date for ${tx.description}`}
+                        value={dates[tx.id] ?? tx.date}
+                        max={session.statementDate}
+                        onChange={(e) => setDates((prev) => ({ ...prev, [tx.id]: e.target.value || tx.date }))}
+                        className={`h-8 rounded-md border bg-surface px-2 text-xs ${dates[tx.id] && dates[tx.id] !== tx.date ? "border-primary text-foreground" : "border-border text-foreground-muted"}`}
+                      />
+                    ) : (
+                      <span className="text-xs text-foreground-subtle">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     <p className="font-medium text-foreground max-w-xs truncate">{tx.description}</p>
                     {tx.reference && <p className="text-xs text-foreground-muted">{tx.reference}</p>}

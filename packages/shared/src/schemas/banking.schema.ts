@@ -256,6 +256,8 @@ export const bankTransactionSchema = z.object({
   matches: z.array(bankTransactionMatchSchema),
   isReconciled: z.boolean(),
   reconciledSessionId: z.string().optional(),
+  /** The day the bank statement shows it — entered when it is reconciled (2026-10-23). */
+  statementDate: z.string().optional(),
   attachments: z.array(bankTransactionAttachmentSchema).default([]),
   notes: z.string(),
   createdAt: z.string(),
@@ -288,6 +290,9 @@ export type StartReconciliationInput = z.infer<typeof startReconciliationSchema>
 
 export const updateReconciliationSchema = z.object({
   reconciledTransactionIds: z.array(z.string()),
+  /* The day the statement shows each ticked line, where it isn't the line's own date (2026-10-23): line id →
+     YYYY-MM-DD. Kept with the session; written to the lines (and their expenses) when it is completed. */
+  statementDates: z.record(z.string(), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A statement date is YYYY-MM-DD")).optional(),
   notes: z.string().optional(),
 });
 export type UpdateReconciliationInput = z.infer<typeof updateReconciliationSchema>;
@@ -304,6 +309,8 @@ export const reconciliationSessionSchema = z.object({
   differenceMinor: z.number(),
   status: z.enum(["open", "completed"]),
   reconciledTransactionIds: z.array(z.string()),
+  /** Line id → the statement's date for it, where it was changed from the line's own (2026-10-23). */
+  statementDates: z.record(z.string(), z.string()).default({}),
   completedAt: z.string().optional(),
   completedByName: z.string().optional(),
   /** Set when the count posted an entry to bring the book to the counted figure. */

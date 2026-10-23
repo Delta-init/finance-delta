@@ -159,6 +159,8 @@ export const expenseQuerySchema = listQuerySchema.extend({
   /** Where it came from (2026-10-23): typed here, a bill, HRMS, or the old books. */
   source: z.enum(["typed", "bill", "hrms", "import"]).optional(),
   bankAccountId: bankAccountFilterSchema,
+  /** Its bank statement date: entered at reconciliation, or still pending (2026-10-23). */
+  statement: z.enum(["pending", "entered"]).optional(),
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
 

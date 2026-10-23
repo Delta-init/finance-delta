@@ -13,6 +13,8 @@ const reconciliationSessionSchema = new Schema(
     differenceMinor: { type: Number, required: true },
     status: { type: String, enum: ["open", "completed"], default: "open" },
     reconciledTransactionIds: { type: [Types.ObjectId], default: [] },
+    /** Line id → the statement's date for it, where it isn't the line's own (2026-10-23); written to the lines on completion. */
+    statementDates: { type: Map, of: Date, default: {} },
     completedAt: { type: Date },
     completedByName: { type: String },
     /**

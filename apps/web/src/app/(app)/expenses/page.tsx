@@ -63,6 +63,7 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Category", value: (e) => e.categoryName || e.category },
   { header: "Subcategory", value: (e) => e.subcategoryName ?? "" },
   { header: "Date", value: (e) => e.expenseDate },
+  { header: "Statement date", value: (e) => e.statementDate ?? (e.statementState === "pending" ? "Pending" : "") },
   { header: "Submitted By", value: (e) => e.submittedByName },
   { header: "Salesperson", value: (e) => e.salesperson?.name ?? "" },
   { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
@@ -137,6 +138,8 @@ export default function ExpensesPage() {
   const [bankAccountId, setBankAccountId] = useUrlParam("bank", "");
   // Where it came from (2026-10-23): typed here, a bill, HRMS, or the old books.
   const [source, setSource] = useUrlParam("source", "all");
+  // Its bank statement date (2026-10-23): entered when the account is reconciled, or still pending.
+  const [statement, setStatement] = useUrlParam("statement", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
   const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
@@ -155,13 +158,14 @@ export default function ExpensesPage() {
     paymentMethod: paymentMethod || undefined,
     bankAccountId: bankAccountId || undefined,
     source: source === "all" ? undefined : source,
+    statement: statement === "all" ? undefined : statement,
   };
   const { data, isLoading } = useExpenses(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId, source);
+  const filterCount = countFilters(status, payment, category, subcategory, recurring, salesperson, paymentMethod, bankAccountId, source, statement);
   const hasFilters = filterCount > 0 || spent.range !== "all" || !!t.q;
 
   // True when this person only ever sees their own claims.
@@ -231,6 +235,16 @@ export default function ExpensesPage() {
       header: "Date",
       sortable: true,
       cell: (e) => <span className="text-foreground-muted">{e.expenseDate}</span>,
+    },
+    // The day the bank statement shows it — entered when the account is reconciled (2026-10-23).
+    {
+      key: "statementDate",
+      header: "Statement date",
+      cell: (e) => e.statementDate
+        ? <span className="text-foreground-muted">{e.statementDate}</span>
+        : e.statementState === "pending"
+          ? <Badge tone="warning" title="Set when its bank account is reconciled">Pending</Badge>
+          : <span className="text-foreground-subtle">—</span>,
     },
     // Dropped for somebody who only ever sees their own: a column repeating
     // the reader's own name on every row is a column of no information.
@@ -448,6 +462,14 @@ export default function ExpensesPage() {
           </SelectContent>
         </Select>
         <BankAccountFilter value={bankAccountId} onChange={setBankAccountId} anyLabel="All bank accounts" />
+        <Select value={statement} onValueChange={setStatement}>
+          <SelectTrigger className="w-[170px]" aria-label="Statement date"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any statement date</SelectItem>
+            <SelectItem value="pending">Statement date pending</SelectItem>
+            <SelectItem value="entered">Statement date entered</SelectItem>
+          </SelectContent>
+        </Select>
 
         {hasFilters && (
           <Button
@@ -458,6 +480,7 @@ export default function ExpensesPage() {
               setPaymentMethod("");
               setBankAccountId("");
               setSource("all");
+              setStatement("all");
               setPayment("all");
               pickCategory("all");
               // Counted by hasFilters, so it put the Clear button on screen and

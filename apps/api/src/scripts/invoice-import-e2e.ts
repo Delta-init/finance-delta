@@ -35,6 +35,8 @@ const reports = await import("../modules/reports/reports.service");
 const { backdatedIn } = await import("../modules/integrations/portal-watch.service");
 const { runInstalmentReminders } = await import("../jobs/instalment-reminder.worker");
 const imp = await import("./invoice-import");
+const invoices = await import("../modules/invoice/invoice.service");
+const { invoiceQuerySchema } = await import("@delta/shared");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -147,6 +149,22 @@ const pl = await reports.getProfitLoss(ORG, "2024-01-01", "2024-12-31");
 check("2024 income in the P&L: the four 2024 invoices, net of VAT", pl.income.total === 142_857 + 200_000 + 60_000 + 114_286 + 95_238, j(pl.income));
 const income = await reports.getDailyBreakdown(ORG, "income", "2024-03-01", "2024-03-05");
 check("the Daily Report names where it came from: Old books", income.groups.find((g) => g.key === "crm")?.items.some((i) => i.name === "Old books") === true, j(income.groups));
+
+step("3b. The Invoices list and an invoice's page (2026-10-24: sorted by number it answered 500)");
+const paidOne = (await Invoice.find({ "external.source": "old_books", "payments.0": { $exists: true } }).lean<any[]>())[0];
+check("an imported payment now has its timestamps (its paid date)", !!paidOne && paidOne.payments[0].createdAt instanceof Date
+  && paidOne.payments[0].createdAt.getTime() === new Date(paidOne.payments[0].paidOn).getTime(), j(paidOne?.payments));
+// As the 5,561 imported before this fix were: no timestamps on the payment.
+await Invoice.collection.updateOne({ _id: paidOne._id }, { $unset: { "payments.$[].createdAt": "", "payments.$[].updatedAt": "" } });
+const all = { all: true } as const;
+for (const dir of ["asc", "desc"] as const) {
+  let page: Awaited<ReturnType<typeof invoices.listInvoices>> | null = null, why = "";
+  try { page = await invoices.listInvoices(ORG, invoiceQuerySchema.parse({ page: 1, pageSize: 50, sort: "number", dir }), all); } catch (e) { why = (e as Error).message; }
+  check(`the list sorted by number, ${dir}: answers, with the imported ones`, !!page && page.data.some((i) => i.invoiceNumber === paidOne.invoiceNumber), why || j(page?.data.map((i) => i.invoiceNumber)));
+}
+let shown: Awaited<ReturnType<typeof invoices.getInvoice>> | null = null, whyNot = "";
+try { shown = await invoices.getInvoice(ORG, String(paidOne._id), all); } catch (e) { whyNot = (e as Error).message; }
+check("…its page answers; the payment's time is its paid date", shown?.payments[0]?.createdAt?.slice(0, 10) === new Date(paidOne.payments[0].paidOn).toISOString().slice(0, 10), whyNot || j(shown?.payments));
 
 /* ── 4 ── */
 step("4. Again, and the undo");

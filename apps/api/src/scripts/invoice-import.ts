@@ -310,6 +310,8 @@ export async function importInvoices(opts: { file: string; orgId: string; write:
       amountPaidMinor: inv.paidMinor, balanceMinor: inv.balanceMinor,
       notes: inv.notes, terms: inv.terms,
       payments: inv.paidMinor > 0 ? [{
+        // Its timestamps too: the raw insert below skips the ones Mongoose would set on a save.
+        createdAt: dayStart(inv.lastPaymentDate!), updatedAt: dayStart(inv.lastPaymentDate!),
         method: "other", amountMinor: inv.paidMinor, paidOn: dayStart(inv.lastPaymentDate!),
         reference: "Old books", externalRef: `${OLD_BOOKS_SOURCE}:${inv.zohoId}`,
         notes: "Paid in the old books by this date — how, and in how many payments, the export does not say.",

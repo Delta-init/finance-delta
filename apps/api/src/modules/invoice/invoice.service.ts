@@ -294,7 +294,9 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
             }
           : {}),
         ...(lateView(pm.lateEntry) ? { lateEntry: lateView(pm.lateEntry) } : {}),
-        createdAt: pm.createdAt.toISOString(),
+        // An old-books invoice's payment was inserted without timestamps (2026-10-24: the Invoices list sorted by number
+        // answered 500): its paid date stands in.
+        createdAt: new Date((pm.createdAt as Date | undefined) ?? pm.paidOn).toISOString(),
       };
     }),
     sourceQuoteId: doc.sourceQuoteId?.toString(),

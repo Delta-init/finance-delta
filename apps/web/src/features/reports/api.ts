@@ -17,6 +17,7 @@ import type {
   SalesByItemReport,
   ExpenseByCategoryReport,
   CustomerStatementReport,
+  AnalysisReport,
 } from "@delta/shared";
 import { api } from "@/lib/api";
 
@@ -164,5 +165,18 @@ export function useCustomerStatement(
         `reports/customer-statement/${customerId}?from=${from}&to=${to}`,
       ),
     enabled: !!customerId && !!from && !!to,
+  });
+}
+
+// ── Expense and Revenue reports (2026-10-24) ──────────────────────────────────
+
+/** An Expense or Revenue report: the period, basis, grouping and filters as query parameters. */
+export function useAnalysisReport(kind: "expense" | "revenue", params: Record<string, string>) {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== ""));
+  return useQuery({
+    queryKey: [...KEY, "analysis", kind, qs.toString()],
+    queryFn: () => api.get<AnalysisReport>(`reports/${kind}-analysis?${qs.toString()}`),
+    placeholderData: (prev) => prev,
+    retry: false,
   });
 }

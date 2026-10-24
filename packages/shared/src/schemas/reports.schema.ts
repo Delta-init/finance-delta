@@ -122,6 +122,77 @@ export type DailyBreakdown = {
   records: DailyBreakdownRecord[];
 };
 
+// ── Expense and Revenue reports (the user, 2026-10-24) ───────────────────────
+
+/*
+ * "A report on expenses and revenue — by category, by employee, by department, with more filters." Each record keeps
+ * its key in every dimension (category, employee, department, …); the report groups by one of them, and filters by
+ * any. The names behind the keys are in `options`, which lists every value found in the period before the filters,
+ * so a filter can't hide its own choices.
+ */
+export const EXPENSE_DIMENSIONS = ["category", "subcategory", "employee", "submittedBy", "department", "method", "bank", "source", "status", "paid", "month"] as const;
+export type ExpenseDimension = (typeof EXPENSE_DIMENSIONS)[number];
+export const REVENUE_DIMENSIONS = ["salesperson", "department", "course", "customer", "crm", "academy", "method", "bank", "status", "month"] as const;
+export type RevenueDimension = (typeof REVENUE_DIMENSIONS)[number];
+
+export const ANALYSIS_DIMENSION_LABELS: Record<ExpenseDimension | RevenueDimension, string> = {
+  category: "Category", subcategory: "Subcategory", employee: "Employee", submittedBy: "Submitted by", department: "Department",
+  method: "Payment method", bank: "Bank account", source: "Source", status: "Status", paid: "Paid or not", month: "Month",
+  salesperson: "Salesperson", course: "Course / product", customer: "Customer", crm: "CRM", academy: "Academy",
+};
+
+export type AnalysisRecord = {
+  id: string;
+  date: string; // YYYY-MM-DD
+  number: string;
+  title: string;
+  detail: string;
+  /** In the organization's currency; a credit note is negative. */
+  amountMinor: number;
+  href: string;
+  /** Its key in each dimension; the names are in the report's options. */
+  dims: Record<string, string>;
+};
+
+export type AnalysisOption = { key: string; name: string; count: number };
+
+export type AnalysisGroup = {
+  key: string;
+  name: string;
+  count: number;
+  amountMinor: number;
+  /** A category's subcategories, when grouped by category. */
+  sub?: AnalysisGroup[];
+};
+
+export type AnalysisReport = {
+  kind: "expense" | "revenue";
+  from: string;
+  to: string;
+  currency: string;
+  /** Expenses: "expense" (expense date) or "paid" (paid date). Revenue: "invoiced" (issue date) or "collected" (payment date). */
+  basis: string;
+  groupBy: string;
+  totals: {
+    amountMinor: number;
+    count: number;
+    /** Expenses. */
+    paidMinor?: number;
+    unpaidMinor?: number;
+    /** Revenue: invoiced before credit notes, the credit notes, collected in the period, still owed on these invoices. */
+    invoicedMinor?: number;
+    creditMinor?: number;
+    collectedMinor?: number;
+    outstandingMinor?: number;
+  };
+  groups: AnalysisGroup[];
+  months: { month: string; amountMinor: number; count: number }[];
+  options: Record<string, AnalysisOption[]>;
+  records: AnalysisRecord[];
+  /** More records matched than are listed (the newest are). */
+  capped: boolean;
+};
+
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
 
 export type MadePaymentsReport = {

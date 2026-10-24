@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import * as svc from "./reports.service";
+import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
 
@@ -151,4 +152,37 @@ export const customerStatement = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
   const to = dateParam(req, "to", todayStr());
   ok(res, await svc.getCustomerStatement(org(req), req.params.customerId!, from, to));
+});
+
+// ── Expense and Revenue reports (2026-10-24) ──────────────────────────────────
+
+/** The period (either end may be left open — all time), the basis, the grouping and the filters. */
+function analysisQuery(req: Request, allowed: readonly string[], basis: string, groupBy: string): AnalysisQuery {
+  const day = (key: string) => {
+    const v = req.query[key];
+    if (v === undefined || v === "") return "";
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new AppError("VALIDATION_ERROR", `Invalid date for '${key}' (expected YYYY-MM-DD)`);
+    return v;
+  };
+  const from = day("from"), to = day("to");
+  if (from && to && from > to) throw new AppError("VALIDATION_ERROR", "The period ends before it starts");
+  const g = typeof req.query.groupBy === "string" && req.query.groupBy ? req.query.groupBy : groupBy;
+  if (!allowed.includes(g)) throw new AppError("VALIDATION_ERROR", `groupBy must be one of ${allowed.join(", ")}`);
+  return {
+    from, to, groupBy: g,
+    basis: typeof req.query.basis === "string" && req.query.basis ? req.query.basis : basis,
+    filters: analysisFilters(req.query as Record<string, unknown>, allowed),
+    pnlOnly: req.query.pnl === "1" || req.query.pnl === "true",
+    search: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : "",
+  };
+}
+
+/** GET /reports/expense-analysis?from&to&basis=expense|paid&groupBy=category&<dimension>=<key>…&pnl=1&q= */
+export const expenseAnalysis = asyncHandler(async (req, res) => {
+  ok(res, await getExpenseAnalysis(org(req), analysisQuery(req, EXPENSE_DIMENSION_KEYS, "expense", "category")));
+});
+
+/** GET /reports/revenue-analysis?from&to&basis=invoiced|collected&groupBy=salesperson&<dimension>=<key>…&q= */
+export const revenueAnalysis = asyncHandler(async (req, res) => {
+  ok(res, await getRevenueAnalysis(org(req), analysisQuery(req, REVENUE_DIMENSION_KEYS, "invoiced", "salesperson")));
 });

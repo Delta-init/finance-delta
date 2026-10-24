@@ -35,4 +35,8 @@ router.get("/sales-by-item", c.salesByItem);
 router.get("/expense-by-category", c.expenseByCategory);
 router.get("/customer-statement/:customerId", c.customerStatement);
 
+// Expense and Revenue reports: grouped by any dimension, filtered by any (2026-10-24)
+router.get("/expense-analysis", c.expenseAnalysis);
+router.get("/revenue-analysis", c.revenueAnalysis);
+
 export default router;

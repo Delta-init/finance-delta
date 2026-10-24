@@ -11,6 +11,7 @@ import {
   Receipt,
   FileBarChart,
   ChevronRight,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -27,6 +28,33 @@ interface ReportCategory {
 }
 
 const CATEGORIES: ReportCategory[] = [
+  // The Expense and Revenue reports (2026-10-24): grouped and filtered by every dimension.
+  {
+    href: "/reports/expenses",
+    icon: Wallet,
+    iconBg: "bg-danger/10",
+    iconColor: "text-danger",
+    title: "Expense report",
+    description: "Every expense by category, employee, department and more.",
+    reports: [
+      "By category and subcategory, employee, department",
+      "By payment method, bank account, source, paid or not",
+      "Filters for each, P&L only, export",
+    ],
+  },
+  {
+    href: "/reports/revenue",
+    icon: TrendingUp,
+    iconBg: "bg-success/10",
+    iconColor: "text-success",
+    title: "Revenue report",
+    description: "Invoiced or collected, by salesperson, department, course and more.",
+    reports: [
+      "Invoiced less credit notes, or collected",
+      "By salesperson, department, course, customer",
+      "By CRM, academy, payment method, bank account",
+    ],
+  },
   {
     href: "/reports/receivables",
     icon: ArrowDownCircle,

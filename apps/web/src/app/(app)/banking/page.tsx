@@ -35,7 +35,7 @@ export default function BankingPage() {
   const [isActive, setIsActive] = useUrlParam("active", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const { data, isLoading } = useBankAccounts({
+  const { data, isLoading, isPlaceholderData } = useBankAccounts({
     ...t.baseParams,
     accountType: accountType === "all" ? undefined : accountType,
     isActive: isActive === "all" ? undefined : isActive,
@@ -185,7 +185,7 @@ export default function BankingPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(a) => router.push(`/banking/${a.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No bank accounts found."
       />
     </div>

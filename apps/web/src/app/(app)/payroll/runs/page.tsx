@@ -168,7 +168,7 @@ export default function PayrollRunsPage() {
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           onRowClick={(r) => router.push(`/payroll/runs/${r.id}`)}
-          isLoading={runs.isLoading}
+          isLoading={runs.isLoading} isFetching={runs.isPlaceholderData}
           emptyMessage="No payroll has been imported yet."
         />
       </Card>

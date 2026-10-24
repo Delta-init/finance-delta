@@ -96,7 +96,7 @@ export default function TetraDepositsPage() {
     from: dateFrom ? startOf(dateFrom) : undefined,
     to: dateTo ? dayAfter(dateTo) : undefined,
   };
-  const { data, isLoading } = useTetraDepositList({ ...t.baseParams, ...filters }, allowed);
+  const { data, isLoading, isPlaceholderData } = useTetraDepositList({ ...t.baseParams, ...filters }, allowed);
   const counts = data?.meta.counts;
   const hasFilters = !!(dateFrom || dateTo || t.q);
 
@@ -295,7 +295,7 @@ export default function TetraDepositsPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(d) => setOpenId(d.id)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage={hasFilters ? "No deposits match these filters." : "No deposits here yet."}
       />
 

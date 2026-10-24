@@ -30,8 +30,8 @@ export default function OtherReportsPage() {
   const [from, setFrom] = useUrlParam("from", yearStart());
   const [to, setTo] = useUrlParam("to", today());
 
-  const { data: salesData, isLoading: salesLoading } = useSalesByItem(from, to);
-  const { data: expenseData, isLoading: expenseLoading } = useExpenseByCategory(from, to);
+  const { data: salesData, isLoading: salesLoading, isPlaceholderData: salesRefreshing } = useSalesByItem(from, to);
+  const { data: expenseData, isLoading: expenseLoading, isPlaceholderData: expenseRefreshing } = useExpenseByCategory(from, to);
 
   const salesColumns: Column<SalesItemRow>[] = [
     { key: "description", header: "Item / Description", sortable: true, cell: (r) => <>{r.description}</> },
@@ -138,7 +138,7 @@ export default function OtherReportsPage() {
           pageSize={salesData?.items.length || 10}
           onPageChange={() => {}}
           onPageSizeChange={() => {}}
-          isLoading={salesLoading}
+          isLoading={salesLoading} isFetching={salesRefreshing}
           emptyMessage="No sales data for this period."
         />
       </section>
@@ -162,7 +162,7 @@ export default function OtherReportsPage() {
           pageSize={expenseData?.categories.length || 10}
           onPageChange={() => {}}
           onPageSizeChange={() => {}}
-          isLoading={expenseLoading}
+          isLoading={expenseLoading} isFetching={expenseRefreshing}
           emptyMessage="No expense data for this period."
         />
       </section>

@@ -39,7 +39,7 @@ export default function RecordsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const { data, isLoading } = useCommissionRecords({ from, to, status: status || undefined, page, pageSize: 20 });
+  const { data, isLoading, isPlaceholderData } = useCommissionRecords({ from, to, status: status || undefined, page, pageSize: 20 });
   const { mutate: markPaid, isPending: paying } = useMarkPaid();
   const { mutate: cancel } = useCancelRecord();
 
@@ -194,7 +194,7 @@ export default function RecordsPage() {
         pageSize={20}
         onPageChange={setPage}
         onPageSizeChange={() => {}}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No commission records found for the selected filters."
       />
     </div>

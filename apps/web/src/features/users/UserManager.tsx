@@ -72,7 +72,7 @@ export function UserManager() {
   // The team who can sign in, or the salespeople who can't yet (2026-10-20).
   const [tab, setTab] = useUrlParam<"team" | "salespeople">("tab", "team", { allowed: ["team", "salespeople"] });
 
-  const { data, isLoading } = useUsers({
+  const { data, isLoading, isPlaceholderData } = useUsers({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     tagIds: tagIds.length ? tagIds : undefined,
@@ -394,7 +394,7 @@ export function UserManager() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         selectable
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No users match your filters."
       />}
       {editing && (

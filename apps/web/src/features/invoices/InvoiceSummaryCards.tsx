@@ -1,6 +1,7 @@
 "use client";
 
 import type { InvoiceListSummary, InvoiceListSummaryCurrency } from "@delta/shared";
+import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { MoneyDisplay } from "@/components/ui/money";
 import { cn } from "@/lib/utils";
@@ -12,7 +13,7 @@ import { useCurrency } from "@/lib/currency-context";
  * together. From the server with the table's own filters, so the two always agree. Drafts and voided invoices are
  * counted but are not money.
  */
-export function InvoiceSummaryCards({ summary, loading }: { summary: InvoiceListSummary | undefined; loading: boolean }) {
+export function InvoiceSummaryCards({ summary, loading, refreshing = false }: { summary: InvoiceListSummary | undefined; loading: boolean; /** The last filters' figures, while the new ones load (2026-10-24). */ refreshing?: boolean }) {
   const { baseCurrency } = useCurrency();
   if (!summary && !loading) return null;
   // The organization's own currency first, then the others by how many — the same order on every card.
@@ -37,9 +38,9 @@ export function InvoiceSummaryCards({ summary, loading }: { summary: InvoiceList
   );
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+    <div className={cn("grid grid-cols-2 gap-3 transition-opacity duration-150 md:grid-cols-3 xl:grid-cols-5", refreshing && "opacity-60")} aria-busy={refreshing}>
       <Card className="space-y-1.5 p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Invoices</p>
+        <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-foreground-muted">Invoices{refreshing && <Loader2 className="h-3 w-3 animate-spin" aria-label="Loading" />}</p>
         {loading && !summary ? (
           <div className="h-6 w-12 animate-pulse rounded bg-surface-muted" />
         ) : (

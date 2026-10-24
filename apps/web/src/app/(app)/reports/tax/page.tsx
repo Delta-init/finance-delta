@@ -19,7 +19,7 @@ export default function TaxPage() {
   const [from, setFrom] = useUrlParam("from", yearStart());
   const [to, setTo] = useUrlParam("to", today());
 
-  const { data, isLoading } = useVATReport(from, to);
+  const { data, isLoading, isPlaceholderData } = useVATReport(from, to);
 
   type RateRow = { code: string; rate: number; outputMinor: number; inputMinor: number };
 
@@ -139,7 +139,7 @@ export default function TaxPage() {
             pageSize={data?.byRate.length || 10}
             onPageChange={() => {}}
             onPageSizeChange={() => {}}
-            isLoading={isLoading}
+            isLoading={isLoading} isFetching={isPlaceholderData}
             emptyMessage="No tax data for this period."
           />
         </section>

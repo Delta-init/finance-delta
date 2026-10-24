@@ -37,8 +37,8 @@ export default function PayablesPage() {
   const [from, setFrom] = useUrlParam("from", yearStart());
   const [to, setTo] = useUrlParam("to", today());
 
-  const { data: paymentsData, isLoading: paymentsLoading } = useMadePayments(from, to);
-  const { data: agedData, isLoading: agedLoading } = useAgedPayables();
+  const { data: paymentsData, isLoading: paymentsLoading, isPlaceholderData: paymentsRefreshing } = useMadePayments(from, to);
+  const { data: agedData, isLoading: agedLoading, isPlaceholderData: agedRefreshing } = useAgedPayables();
 
   const agedRows: (AgedItem & { band: string })[] = agedData
     ? [
@@ -142,7 +142,7 @@ export default function PayablesPage() {
             pageSize={paymentsData?.byVendor.length || 10}
             onPageChange={() => {}}
             onPageSizeChange={() => {}}
-            isLoading={paymentsLoading}
+            isLoading={paymentsLoading} isFetching={paymentsRefreshing}
             emptyMessage="No payments found for this period."
           />
         )}
@@ -172,7 +172,7 @@ export default function PayablesPage() {
           pageSize={agedRows.length || 10}
           onPageChange={() => {}}
           onPageSizeChange={() => {}}
-          isLoading={agedLoading}
+          isLoading={agedLoading} isFetching={agedRefreshing}
           emptyMessage="No outstanding payables."
         />
       </section>

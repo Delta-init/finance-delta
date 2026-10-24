@@ -57,7 +57,7 @@ export default function VendorsPage() {
   const [status, setStatus] = useUrlParam("status", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const { data, isLoading } = useVendors({ ...t.baseParams, status: status === "all" ? undefined : status });
+  const { data, isLoading, isPlaceholderData } = useVendors({ ...t.baseParams, status: status === "all" ? undefined : status });
   const createMutation = useCreateVendor();
   const updateMutation = useUpdateVendor();
   const deleteMutation = useDeleteVendor();
@@ -194,7 +194,7 @@ export default function VendorsPage() {
 
       <DataTable columns={columns} data={data?.data} getRowId={(v) => v.id} total={data?.meta.total ?? 0}
         page={t.page} pageSize={t.pageSize} sort={t.sort} onPageChange={t.setPage} onPageSizeChange={t.setPageSize}
-        onSortChange={t.handleSort} onRowClick={(v) => router.push(`/vendors/${v.id}`)} selectable isLoading={isLoading}
+        onSortChange={t.handleSort} onRowClick={(v) => router.push(`/vendors/${v.id}`)} selectable isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No vendors found." />
     </div>
   );

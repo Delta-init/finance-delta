@@ -34,7 +34,7 @@ import {
 
 export function DepartmentManager() {
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const { data, isLoading } = useDepartments(t.baseParams);
+  const { data, isLoading, isPlaceholderData } = useDepartments(t.baseParams);
   const createDepartment = useCreateDepartment();
   const updateDepartment = useUpdateDepartment();
   const deleteDepartment = useDeleteDepartment();
@@ -184,7 +184,7 @@ export function DepartmentManager() {
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No departments yet. Create your first department."
       />
     </div>

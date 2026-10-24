@@ -32,7 +32,7 @@ export function ReconciliationsTab({ accountId }: { accountId: string }) {
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const { data, isLoading } = useReconciliations(accountId, { page, pageSize });
+  const { data, isLoading, isPlaceholderData } = useReconciliations(accountId, { page, pageSize });
   const [viewing, setViewing] = useState<ReconciliationSession | null>(null);
   const { can } = useCan();
   const canReconcile = can("banking:reconcile");
@@ -110,7 +110,7 @@ export function ReconciliationsTab({ accountId }: { accountId: string }) {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
         onRowClick={(s) => (s.status === "open" ? router.push(`/banking/${accountId}/reconcile`) : setViewing(s))}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="This account hasn't been reconciled yet — use Reconcile above."
       />
       {viewing && <ReconciledLines accountId={accountId} session={viewing} onClose={() => setViewing(null)} />}

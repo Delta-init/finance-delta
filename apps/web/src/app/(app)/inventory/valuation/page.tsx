@@ -11,7 +11,7 @@ import { useCurrency } from "@/lib/currency-context";
 
 export default function ValuationPage() {
   const { currency: orgCurrency } = useCurrency();
-  const { data: report, isLoading } = useValuationReport(orgCurrency);
+  const { data: report, isLoading, isPlaceholderData } = useValuationReport(orgCurrency);
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
 
   const columns: Column<ValuationRow>[] = [
@@ -115,7 +115,7 @@ export default function ValuationPage() {
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No inventory to value. Add items and record stock first."
       />
     </div>

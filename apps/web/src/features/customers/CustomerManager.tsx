@@ -126,7 +126,7 @@ export function CustomerManager() {
   const [tagIds, setTagIds] = useUrlListParam("tags");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const { data, isLoading } = useCustomers({
+  const { data, isLoading, isPlaceholderData } = useCustomers({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     tagIds: tagIds.length ? tagIds : undefined,
@@ -470,7 +470,7 @@ export function CustomerManager() {
         onSortChange={t.handleSort}
         onRowClick={(c) => router.push(`/customers/${c.id}`)}
         selectable
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No customers match your filters."
       />
     </div>

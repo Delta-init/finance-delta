@@ -45,7 +45,7 @@ export default function CreditNotesPage() {
   useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const listParams = { ...t.baseParams, status: status === "all" ? undefined : status };
-  const { data, isLoading } = useCreditNotes(listParams);
+  const { data, isLoading, isPlaceholderData } = useCreditNotes(listParams);
   const hasFilters = status !== "all" || !!t.q;
 
   const columns: Column<CreditNote>[] = [
@@ -119,7 +119,7 @@ export default function CreditNotesPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(cn) => router.push(`/credit-notes/${cn.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage={hasFilters ? "No credit notes match these filters." : "No credit notes yet — issue one from an invoice."}
       />
     </div>

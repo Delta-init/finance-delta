@@ -26,7 +26,7 @@ export default function DepartmentReportPage() {
   const pageSize = Number(sizeParam) || 25;
   const setPageSize = (n: number) => setSizeParam(String(n));
 
-  const { data, isLoading } = useDepartmentReport({ from, to });
+  const { data, isLoading, isPlaceholderData } = useDepartmentReport({ from, to });
   const rows = data?.departments ?? [];
   const currency = data?.currency ?? "AED";
 
@@ -82,7 +82,7 @@ export default function DepartmentReportPage() {
           pageSize={pageSize}
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
-          isLoading={isLoading}
+          isLoading={isLoading} isFetching={isPlaceholderData}
           // People with no department have no page to open — they are a bucket,
           // not a record.
           onRowClick={(d) => d.departmentId && router.push(`/reports/department/${d.departmentId}?from=${from}&to=${to}`)}

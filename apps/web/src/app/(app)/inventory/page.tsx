@@ -47,7 +47,7 @@ export default function InventoryPage() {
     lowStock: lowStock ? "true" : undefined,
     isActive: isActive === "all" ? undefined : isActive,
   };
-  const { data, isLoading } = useItems(listParams);
+  const { data, isLoading, isPlaceholderData } = useItems(listParams);
   const { data: lowStockItems } = useLowStockItems();
   const lowStockCount = lowStockItems?.length ?? 0;
 
@@ -257,7 +257,7 @@ export default function InventoryPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(i) => router.push(`/inventory/${i.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No items found."
       />
     </div>

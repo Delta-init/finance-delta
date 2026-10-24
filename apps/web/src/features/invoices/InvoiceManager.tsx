@@ -103,7 +103,7 @@ export function InvoiceManager() {
     paymentMethod: paymentMethod || undefined,
     bankAccountId: bankAccountId || undefined,
   };
-  const { data, isLoading } = useInvoices(listParams);
+  const { data, isLoading, isPlaceholderData } = useInvoices(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-22).
   const summary = useInvoiceListSummary(listParams);
 
@@ -406,7 +406,7 @@ export function InvoiceManager() {
       </div>
 
       {/* An API from before the cards answers 404: the page then simply has none. */}
-      {!summary.error && <InvoiceSummaryCards summary={summary.data} loading={summary.isLoading} />}
+      {!summary.error && <InvoiceSummaryCards summary={summary.data} loading={summary.isLoading} refreshing={summary.isPlaceholderData} />}
 
       {/* Only once something is ticked. A row of controls that is always there
           but usually does nothing is worse than none. */}
@@ -480,7 +480,7 @@ export function InvoiceManager() {
         selectable
         onSelectionChange={setSelectedIds}
         selectionResetKey={selectionResetKey}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No invoices match your filters."
       />
 

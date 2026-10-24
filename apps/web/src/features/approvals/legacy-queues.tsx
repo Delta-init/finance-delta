@@ -200,7 +200,7 @@ function InvoiceQueue() {
           onPageSizeChange={t.setPageSize}
           onSortChange={t.handleSort}
           onRowClick={(inv) => router.push(`/invoices/${inv.id}`)}
-          isLoading={waiting.isLoading}
+          isLoading={waiting.isLoading} isFetching={waiting.isPlaceholderData}
           emptyMessage={
             returnedRows.length > 0
               ? "Nothing waiting on you. The ones above are with whoever raised them."

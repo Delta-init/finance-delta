@@ -29,7 +29,7 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
   const pageSize = Number(sizeParam) || 25;
   const setPageSize = (n: number) => setSizeParam(String(n));
 
-  const { data, isLoading } = usePeopleReport({ from, to, departmentId: id });
+  const { data, isLoading, isPlaceholderData } = usePeopleReport({ from, to, departmentId: id });
   const rows = data?.rows ?? [];
   const totals = data?.totals;
   const currency = data?.currency ?? "AED";
@@ -97,7 +97,7 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
           pageSize={pageSize}
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
-          isLoading={isLoading}
+          isLoading={isLoading} isFetching={isPlaceholderData}
           onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
           detailTitle={(r) => r.name}
           emptyMessage="Nobody is mapped to this department."

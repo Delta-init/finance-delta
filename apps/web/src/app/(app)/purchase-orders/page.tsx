@@ -39,7 +39,7 @@ export default function PurchaseOrdersPage() {
   const [status, setStatus] = useState("all");
   useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = usePurchaseOrders({ ...t.baseParams, status: status === "all" ? undefined : status });
+  const { data, isLoading, isPlaceholderData } = usePurchaseOrders({ ...t.baseParams, status: status === "all" ? undefined : status });
 
   const columns: Column<PurchaseOrder>[] = [
     { key: "number", header: "PO #", sortable: true, cell: (p) => <span className="font-medium text-primary">{p.poNumber}</span> },
@@ -86,7 +86,7 @@ export default function PurchaseOrdersPage() {
       <DataTable columns={columns} data={data?.data} getRowId={(p) => p.id} total={data?.meta.total ?? 0}
         page={t.page} pageSize={t.pageSize} sort={t.sort} onPageChange={t.setPage} onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort} onRowClick={(p) => router.push(`/purchase-orders/${p.id}`)}
-        isLoading={isLoading} emptyMessage="No purchase orders found." />
+        isLoading={isLoading} isFetching={isPlaceholderData} emptyMessage="No purchase orders found." />
     </div>
   );
 }

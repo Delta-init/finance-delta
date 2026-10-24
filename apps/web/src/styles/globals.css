@@ -115,6 +115,15 @@
   }
 }
 
+/* A table fetching again: a short bar sweeping along its top edge (DataTable, 2026-10-24). */
+@keyframes datatable-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [role="progressbar"] > div { animation-duration: 3s !important; }
+}
+
 @keyframes delta-spin {
   to {
     transform: rotate(360deg);

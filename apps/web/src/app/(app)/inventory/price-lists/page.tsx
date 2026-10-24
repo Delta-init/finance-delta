@@ -15,7 +15,7 @@ import { usePriceLists, useDeletePriceList } from "@/features/inventory/api";
 export default function PriceListsPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const { data: priceLists, isLoading } = usePriceLists();
+  const { data: priceLists, isLoading, isPlaceholderData } = usePriceLists();
   const deletePriceList = useDeletePriceList();
 
   async function handleDelete(e: React.MouseEvent, id: string) {
@@ -122,7 +122,7 @@ export default function PriceListsPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(pl) => router.push(`/inventory/price-lists/${pl.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No price lists. Create one to set custom pricing."
       />
     </div>

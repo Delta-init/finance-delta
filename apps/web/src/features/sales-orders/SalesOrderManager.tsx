@@ -47,7 +47,7 @@ export function SalesOrderManager() {
   const [tagIds, setTagIds] = useState<string[]>([]);
   useEffect(() => t.resetPage(), [status, tagIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useSalesOrders({
+  const { data, isLoading, isPlaceholderData } = useSalesOrders({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     tagIds: tagIds.length ? tagIds : undefined,
@@ -116,7 +116,7 @@ export function SalesOrderManager() {
         onSortChange={t.handleSort}
         onRowClick={(o) => router.push(`/sales-orders/${o.id}`)}
         selectable
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No sales orders match your filters."
       />
     </div>

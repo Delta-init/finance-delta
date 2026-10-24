@@ -37,7 +37,7 @@ export default function VendorCreditsPage() {
   const [status, setStatus] = useState("all");
   useEffect(() => t.resetPage(), [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useVendorCredits({
+  const { data, isLoading, isPlaceholderData } = useVendorCredits({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
   });
@@ -96,7 +96,7 @@ export default function VendorCreditsPage() {
       <DataTable columns={columns} data={data?.data} getRowId={(vc) => vc.id} total={data?.meta.total ?? 0}
         page={t.page} pageSize={t.pageSize} sort={t.sort} onPageChange={t.setPage} onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort} onRowClick={(vc) => router.push(`/vendor-credits/${vc.id}`)}
-        isLoading={isLoading} emptyMessage="No vendor credits found." />
+        isLoading={isLoading} isFetching={isPlaceholderData} emptyMessage="No vendor credits found." />
     </div>
   );
 }

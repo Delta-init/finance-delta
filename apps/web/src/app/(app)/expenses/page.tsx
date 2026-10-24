@@ -164,7 +164,7 @@ export default function ExpensesPage() {
     statementFrom: stmt.from || undefined,
     statementTo: stmt.to || undefined,
   };
-  const { data, isLoading } = useExpenses(listParams);
+  const { data, isLoading, isPlaceholderData } = useExpenses(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-21).
   const summary = useExpenseSummary(listParams);
 
@@ -509,7 +509,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* An API from before the cards answers 404: the page then simply has none. */}
-      {!summary.error && <ExpenseSummaryCards summary={summary.data} loading={summary.isLoading} />}
+      {!summary.error && <ExpenseSummaryCards summary={summary.data} loading={summary.isLoading} refreshing={summary.isPlaceholderData} />}
 
       <DataTable
         columns={columns}
@@ -523,7 +523,7 @@ export default function ExpensesPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(e) => router.push(`/expenses/${e.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No expenses found."
       />
 

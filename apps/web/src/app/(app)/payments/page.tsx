@@ -66,7 +66,7 @@ export default function PaymentsPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   };
-  const { data, isLoading } = usePayments(queryParams);
+  const { data, isLoading, isPlaceholderData } = usePayments(queryParams);
   // Deleting a payment is the broad invoice right, as on the invoice itself (2026-10-16).
   const { can } = useCan();
   const canDelete = can("invoice:write");
@@ -218,7 +218,7 @@ export default function PaymentsPage() {
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No payments found."
       />
 

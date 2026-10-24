@@ -46,8 +46,8 @@ export default function ReceivablesPage() {
   const [groupBy, setGroupBy] = useUrlParam<GroupBy>("by", "customer");
 
   const { data: paymentsData, isLoading: paymentsLoading } = useReceivedPayments(from, to);
-  const { data: agedData, isLoading: agedLoading } = useAgedReceivables();
-  const { data: summaryData, isLoading: summaryLoading } = useInvoiceSummary(from, to, groupBy);
+  const { data: agedData, isLoading: agedLoading, isPlaceholderData: agedRefreshing } = useAgedReceivables();
+  const { data: summaryData, isLoading: summaryLoading, isPlaceholderData: summaryRefreshing } = useInvoiceSummary(from, to, groupBy);
 
   // Flatten aged items for the table with band label
   const agedRows: (AgedItem & { band: string })[] = agedData
@@ -188,7 +188,7 @@ export default function ReceivablesPage() {
           pageSize={agedRows.length || 10}
           onPageChange={() => {}}
           onPageSizeChange={() => {}}
-          isLoading={agedLoading}
+          isLoading={agedLoading} isFetching={agedRefreshing}
           emptyMessage="No outstanding receivables."
         />
       </section>
@@ -215,7 +215,7 @@ export default function ReceivablesPage() {
           pageSize={(summaryData?.items.length || 10)}
           onPageChange={() => {}}
           onPageSizeChange={() => {}}
-          isLoading={summaryLoading}
+          isLoading={summaryLoading} isFetching={summaryRefreshing}
           emptyMessage="No invoices found for this period."
         />
       </section>

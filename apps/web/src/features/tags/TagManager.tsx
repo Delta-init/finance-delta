@@ -39,7 +39,7 @@ import { TAG_HEX } from "./tag-colors";
 
 export function TagManager() {
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const { data, isLoading } = useTags(t.baseParams);
+  const { data, isLoading, isPlaceholderData } = useTags(t.baseParams);
   const createTag = useCreateTag();
   const updateTag = useUpdateTag();
   const deleteTag = useDeleteTag();
@@ -181,7 +181,7 @@ export function TagManager() {
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No tags yet. Create your first tag."
       />
     </div>

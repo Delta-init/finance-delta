@@ -22,7 +22,7 @@ const BASIS_LABELS: Record<string, string> = {
 };
 
 export default function StructuresPage() {
-  const { data, isLoading } = useCommissionStructures();
+  const { data, isLoading, isPlaceholderData } = useCommissionStructures();
 
   const columns: Column<CommissionStructure>[] = [
     {
@@ -114,7 +114,7 @@ export default function StructuresPage() {
         pageSize={data?.length || 20}
         onPageChange={() => {}}
         onPageSizeChange={() => {}}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No commission structures yet. Create one to start tracking commissions."
       />
     </div>

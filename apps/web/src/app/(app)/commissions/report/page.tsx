@@ -17,7 +17,7 @@ export default function CommissionReportPage() {
   const [from, setFrom] = useUrlParam("from", yearStart());
   const [to, setTo] = useUrlParam("to", today());
 
-  const { data: report, isLoading } = useCommissionReport(from, to);
+  const { data: report, isLoading, isPlaceholderData } = useCommissionReport(from, to);
 
   const columns: Column<CommissionReportRow>[] = [
     {
@@ -102,7 +102,7 @@ export default function CommissionReportPage() {
         pageSize={report?.rows.length || 20}
         onPageChange={() => {}}
         onPageSizeChange={() => {}}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No commission records found for this period."
       />
 

@@ -503,7 +503,7 @@ export default function ApprovalsPage() {
             onPageChange={t.setPage}
             onPageSizeChange={t.setPageSize}
             onRowClick={open}
-            isLoading={list.isLoading}
+            isLoading={list.isLoading} isFetching={list.isPlaceholderData}
             emptyMessage={list.isError ? "The approvals could not be loaded just now." : EMPTY[status]}
             detailTitle={(r) => `${TYPE_LABEL[r.type]} · ${r.title}`}
           />

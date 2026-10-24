@@ -70,7 +70,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   const filters: Record<string, string> = Object.fromEntries(config.filters.filter((d) => !hidden.includes(d)).map((d) => [d, search.get(`f_${d}`) ?? ""] as [string, string]).filter(([, v]) => v));
 
   const params: Record<string, string> = { from: period.from, to: period.to, basis, groupBy, q, ...(config.pnl && pnl === "1" ? { pnl: "1" } : {}), ...filters };
-  const { data, isLoading, isFetching, error } = useAnalysisReport(config.kind, params);
+  const { data, isLoading, isPlaceholderData: refreshing, error } = useAnalysisReport(config.kind, params);
   const currency = data?.currency ?? "AED";
   // A group clicked: its records, by the dimension it groups (a subcategory under a category).
   const [open, setOpen] = useState<{ g: AnalysisGroup; dim: string } | null>(null);
@@ -161,7 +161,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
       ) : (
         <>
           {/* Cards */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className={cn("grid grid-cols-2 gap-3 transition-opacity lg:grid-cols-4", refreshing && "opacity-60")} aria-busy={refreshing}>
             {isLoading || !data
               ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-24" />)
               : config.cards(data).map((c) => (
@@ -175,7 +175,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
               ))}
           </div>
 
-          <div className={cn("grid gap-5 lg:grid-cols-5", isFetching && "opacity-70")}>
+          <div className={cn("grid gap-5 transition-opacity lg:grid-cols-5", refreshing && "pointer-events-none opacity-60")}>
             {/* Groups */}
             <Card className="lg:col-span-3">
               <CardHeader className="pb-2"><CardTitle className="text-base">By {label(groupBy).toLowerCase()}</CardTitle></CardHeader>
@@ -256,7 +256,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
           )}
 
           {/* Every record */}
-          <Records title="Every record" records={data?.records ?? []} currency={currency} capped={!!data?.capped} onOpen={(r) => router.push(r.href)} isLoading={isLoading} />
+          <Records title="Every record" records={data?.records ?? []} currency={currency} capped={!!data?.capped} onOpen={(r) => router.push(r.href)} isLoading={isLoading} isFetching={refreshing} />
         </>
       )}
 
@@ -295,8 +295,8 @@ function GroupRow({ g, total, currency, onOpen, expander, nested }: { g: Analysi
   );
 }
 
-function Records({ title, records, currency, capped, onOpen, isLoading, compact }: {
-  title?: string; records: AnalysisRecord[]; currency: string; capped: boolean; onOpen: (r: AnalysisRecord) => void; isLoading?: boolean; compact?: boolean;
+function Records({ title, records, currency, capped, onOpen, isLoading, isFetching, compact }: {
+  title?: string; records: AnalysisRecord[]; currency: string; capped: boolean; onOpen: (r: AnalysisRecord) => void; isLoading?: boolean; isFetching?: boolean; compact?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(compact ? 10 : 25);
@@ -310,7 +310,7 @@ function Records({ title, records, currency, capped, onOpen, isLoading, compact 
   ];
   const table = (
     <DataTable columns={columns} data={rows} getRowId={(r) => r.id} total={records.length} page={page} pageSize={size}
-      onPageChange={setPage} onPageSizeChange={(n) => { setSize(n); setPage(1); }} onRowClick={onOpen} isLoading={isLoading}
+      onPageChange={setPage} onPageSizeChange={(n) => { setSize(n); setPage(1); }} onRowClick={onOpen} isLoading={isLoading} isFetching={isFetching}
       emptyMessage="No records." />
   );
   return title ? (

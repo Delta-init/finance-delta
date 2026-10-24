@@ -112,7 +112,7 @@ export default function EmailLogPage() {
         pageSize={t.pageSize}
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
-        isLoading={logs.isLoading}
+        isLoading={logs.isLoading} isFetching={logs.isPlaceholderData}
         emptyMessage={logs.isError ? "The email log could not be loaded — the finance server may still be updating." : "No emails match."}
         detailTitle={(r) => r.subject || "Email"}
       />

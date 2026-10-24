@@ -54,7 +54,7 @@ export default function BillsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterCount = countFilters(status, overdue);
 
-  const { data, isLoading } = useBills({
+  const { data, isLoading, isPlaceholderData } = useBills({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     overdue: overdue ? "true" : undefined,
@@ -240,7 +240,7 @@ export default function BillsPage() {
         selectionResetKey={selectionResetKey}
         page={t.page} pageSize={t.pageSize} sort={t.sort} onPageChange={t.setPage} onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort} onRowClick={(b) => router.push(`/bills/${b.id}`)}
-        isLoading={isLoading} emptyMessage="No bills found." />
+        isLoading={isLoading} isFetching={isPlaceholderData} emptyMessage="No bills found." />
 
       <Dialog open={confirming !== null} onOpenChange={(o) => !o && setConfirming(null)}>
         <DialogContent className="max-w-md">

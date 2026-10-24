@@ -106,7 +106,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const updateTx = useUpdateBankTransaction(id);
   const deleteTx = useDeleteBankTransaction(id);
 
-  const { data: txData, isLoading: txLoading } = useBankTransactions(id, {
+  const { data: txData, isLoading: txLoading, isPlaceholderData: txRefreshing } = useBankTransactions(id, {
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     dateFrom: dateFrom || undefined,
@@ -450,7 +450,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={txLoading}
+        isLoading={txLoading} isFetching={txRefreshing}
         emptyMessage="No transactions found."
       />
       </>)}

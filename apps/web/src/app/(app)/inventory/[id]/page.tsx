@@ -43,7 +43,7 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
   const { data: item, isLoading } = useItem(id);
   const { data: stockLevels } = useStockLevels(id);
   const t = useTableQuery({ initialSort: { key: "movementDate", dir: "desc" } });
-  const { data: movements } = useStockMovements(id, t.baseParams);
+  const { data: movements, isLoading: movementsLoading, isPlaceholderData: movementsRefreshing } = useStockMovements(id, t.baseParams);
   const updateItem = useUpdateItem(id);
   /*
    * Editable here because there is no item edit form at all — update is used
@@ -445,6 +445,8 @@ export default function ItemDetailPage({ params }: { params: Promise<{ id: strin
           onPageChange={t.setPage}
           onPageSizeChange={t.setPageSize}
           onSortChange={t.handleSort}
+          isLoading={movementsLoading}
+          isFetching={movementsRefreshing}
           emptyMessage="No movements recorded."
         />
       </div>

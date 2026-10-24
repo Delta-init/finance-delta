@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "./checkbox";
@@ -65,6 +66,13 @@ interface DataTableProps<T> {
   selectionResetKey?: string | number;
   onRowClick?: (row: T) => void;
   isLoading?: boolean;
+  /**
+   * The rows on screen are the last filter's / page's while the new ones load — a filter, the page, the rows per
+   * page or the sort changed (2026-10-24: "show loading for every filter apply and pagination"). Pass the query's
+   * isPlaceholderData, not isFetching, so a background refresh doesn't flash it. A bar runs along the top, the old
+   * rows dim and can't be clicked, and the page controls say Loading.
+   */
+  isFetching?: boolean;
   emptyMessage?: string;
   pageSizeOptions?: number[];
   /**
@@ -99,6 +107,7 @@ export function DataTable<T>({
   selectionResetKey,
   onRowClick,
   isLoading = false,
+  isFetching = false,
   emptyMessage = "No records found.",
   pageSizeOptions = [10, 25, 50],
   viewable = true,
@@ -141,9 +150,17 @@ export function DataTable<T>({
   // they are lifted out of the table.
   const detailColumns = columns.filter((c) => !c.hideInDetail && c.header !== "" && c.header != null);
 
+  // Fetching again with rows already showing; the first load keeps its own "Loading…" row.
+  const refreshing = isFetching && !isLoading;
+
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-      <div className="overflow-x-auto">
+    <div className="relative overflow-hidden rounded-xl border border-border bg-surface shadow-sm" aria-busy={isLoading || isFetching}>
+      {refreshing && (
+        <div className="absolute inset-x-0 top-0 z-20 h-0.5 overflow-hidden bg-primary/15" role="progressbar" aria-label="Loading">
+          <div className="h-full w-1/3 animate-[datatable-progress_1.1s_ease-in-out_infinite] rounded-full bg-primary" />
+        </div>
+      )}
+      <div className={cn("overflow-x-auto transition-opacity duration-150", refreshing && "pointer-events-none opacity-50")}>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-primary text-primary-foreground">
@@ -292,6 +309,11 @@ export function DataTable<T>({
         </div>
 
         <div className="flex items-center gap-3">
+          {refreshing && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-foreground-muted" aria-live="polite">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+            </span>
+          )}
           <span className="text-foreground-muted">
             {total === 0 ? "0" : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`} of {total}
           </span>

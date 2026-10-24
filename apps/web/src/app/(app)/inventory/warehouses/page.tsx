@@ -13,7 +13,7 @@ import Link from "next/link";
 export default function WarehousesPage() {
   const router = useRouter();
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const { data, isLoading } = useWarehouses({ ...t.baseParams });
+  const { data, isLoading, isPlaceholderData } = useWarehouses({ ...t.baseParams });
 
   const columns: Column<WarehouseType>[] = [
     {
@@ -73,7 +73,7 @@ export default function WarehousesPage() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         onRowClick={(w) => router.push(`/inventory/warehouses/${w.id}`)}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No warehouses. Add your first storage location."
       />
     </div>

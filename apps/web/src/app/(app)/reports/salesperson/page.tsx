@@ -40,7 +40,7 @@ export default function SalespeoplePage() {
   const [from, setFrom] = useUrlParam("from", monthStart());
   const [to, setTo] = useUrlParam("to", today());
 
-  const { data, isLoading } = usePeopleReport({ from, to, search: searched.trim() || undefined });
+  const { data, isLoading, isPlaceholderData } = usePeopleReport({ from, to, search: searched.trim() || undefined });
   const rows = data?.rows ?? [];
   const totals = data?.totals;
   const currency = data?.currency ?? "AED";
@@ -176,7 +176,7 @@ export default function SalespeoplePage() {
           pageSize={pageSize}
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
-          isLoading={isLoading}
+          isLoading={isLoading} isFetching={isPlaceholderData}
           onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
           detailTitle={(r) => r.name}
           emptyMessage="Nobody is mapped yet. Link an organization under Payroll Mapping first."

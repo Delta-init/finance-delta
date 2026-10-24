@@ -22,7 +22,7 @@ export default function LoanReportPage() {
   const [typeFilter, setTypeFilter] = useUrlParam("type", "");
   const [statusFilter, setStatusFilter] = useUrlParam("status", "");
 
-  const { data: report, isLoading } = useLoanReport();
+  const { data: report, isLoading, isPlaceholderData } = useLoanReport();
 
   const loans = (report?.loans ?? []).filter((l) => {
     if (typeFilter && l.type !== typeFilter) return false;
@@ -194,7 +194,7 @@ export default function LoanReportPage() {
         pageSize={loans.length || 20}
         onPageChange={() => {}}
         onPageSizeChange={() => {}}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No loans match the selected filters."
       />
 

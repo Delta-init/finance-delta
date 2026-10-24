@@ -53,7 +53,7 @@ export function QuotationManager() {
     tagIds: tagIds.length ? tagIds : undefined,
   };
 
-  const { data, isLoading } = useQuotations(queryParams);
+  const { data, isLoading, isPlaceholderData } = useQuotations(queryParams);
 
   const hasFilters =
     status !== "all" || issueFrom || issueTo || expiryFrom || expiryTo || tagIds.length > 0;
@@ -166,7 +166,7 @@ export function QuotationManager() {
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
         selectable
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No quotations match your filters."
       />
     </div>

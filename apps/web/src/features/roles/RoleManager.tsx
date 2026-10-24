@@ -43,7 +43,7 @@ const EMPTY: Draft = { name: "", description: "", permissions: [] };
 
 export function RoleManager() {
   const t = useTableQuery({ initialSort: { key: "name", dir: "asc" } });
-  const { data, isLoading } = useRoles(t.baseParams);
+  const { data, isLoading, isPlaceholderData } = useRoles(t.baseParams);
   const createRole = useCreateRole();
   const updateRole = useUpdateRole();
   const deleteRole = useDeleteRole();
@@ -299,7 +299,7 @@ export function RoleManager() {
         onPageChange={t.setPage}
         onPageSizeChange={t.setPageSize}
         onSortChange={t.handleSort}
-        isLoading={isLoading}
+        isLoading={isLoading} isFetching={isPlaceholderData}
         emptyMessage="No roles match your search."
       />
     </div>

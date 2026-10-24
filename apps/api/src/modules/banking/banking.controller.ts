@@ -137,6 +137,21 @@ export const updateReconciliation = asyncHandler(async (req, res) => {
   ok(res, await svc.updateReconciliation(org(req), req.params.sessionId!, req.body));
 });
 
+/** PATCH /bank-accounts/:id/reconciliations/:sessionId/details — an open one's period and figures, a completed one's notes. */
+export const editReconciliation = asyncHandler(async (req, res) => {
+  ok(res, await svc.editReconciliation(org(req), req.params.id!, req.params.sessionId!, req.body));
+});
+
+/** POST /bank-accounts/:id/reconciliations/:sessionId/reopen — the latest completed one, open again. */
+export const reopenReconciliation = asyncHandler(async (req, res) => {
+  ok(res, await svc.reopenReconciliation(org(req), req.params.id!, req.params.sessionId!));
+});
+
+/** DELETE /bank-accounts/:id/reconciliations/:sessionId — an open one, or the latest completed one undone. */
+export const deleteReconciliation = asyncHandler(async (req, res) => {
+  ok(res, await svc.deleteReconciliation(org(req), req.params.id!, req.params.sessionId!));
+});
+
 /** Who counted it, which the session records against the count. */
 async function counterName(req: Request): Promise<string> {
   const { User } = await import("../user/user.model");

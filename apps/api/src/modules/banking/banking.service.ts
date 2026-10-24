@@ -16,6 +16,7 @@ import type {
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
+  EditReconciliationInput,
   CashCountInput,
 } from "@delta/shared";
 import { fingerprint, compareCashCount } from "@delta/shared";
@@ -1425,6 +1426,158 @@ export async function updateCashCount(
   return recordCashCount(orgId, accountId, input, countedByName);
 }
 
+// ── Correcting a reconciliation (the user, 2026-10-23: "edit and delete for the reconciliations") ─────────────
+
+/** A bank reconciliation of this account — never a cash count, which Counts on a petty cash page withdraws. */
+async function bankSession(orgId: string, accountId: string, sessionId: string) {
+  const org = new Types.ObjectId(orgId);
+  const session = await ReconciliationSession.findOne({ _id: new Types.ObjectId(sessionId), accountId: new Types.ObjectId(accountId), organizationId: org });
+  if (!session) throw new AppError("NOT_FOUND", "Reconciliation not found");
+  const account = await BankAccount.findOne({ _id: session.accountId, organizationId: org }).select("accountType").lean<{ accountType?: string }>();
+  if (account?.accountType === "petty_cash" || (session as unknown as { adjustmentTransactionId?: string }).adjustmentTransactionId) {
+    throw new AppError("VALIDATION_ERROR", "This is a cash count — correct or withdraw it under Counts");
+  }
+  return session;
+}
+
+/**
+ * The account's latest completed reconciliation: the one ending last (a period's end, else its statement date), the
+ * last completed on a tie. Only it can be reopened or deleted — the one after an older one opens at that one's closing
+ * balance, so taking the older one away would leave it standing on nothing.
+ */
+async function latestCompletedId(orgId: string, accountId: string | Types.ObjectId): Promise<string | null> {
+  const done = await ReconciliationSession.find({ organizationId: new Types.ObjectId(orgId), accountId: new Types.ObjectId(String(accountId)), status: "completed" })
+    .select("periodTo statementDate completedAt").lean<Array<{ _id: Types.ObjectId; periodTo?: Date; statementDate: Date; completedAt?: Date }>>();
+  const end = (s: (typeof done)[number]) => dateOnly(s.periodTo ?? s.statementDate);
+  done.sort((a, b) => end(a).localeCompare(end(b)) || (a.completedAt?.getTime() ?? 0) - (b.completedAt?.getTime() ?? 0));
+  const last = done.at(-1);
+  return last ? String(last._id) : null;
+}
+
+async function refuseUnlessLatest(orgId: string, session: ReconciliationSessionDoc, doing: string): Promise<void> {
+  const latest = await latestCompletedId(orgId, session.accountId as unknown as Types.ObjectId);
+  if (latest === String(session._id)) return;
+  const other = latest ? await ReconciliationSession.findById(latest).select("periodFrom periodTo statementDate").lean<any>() : null;
+  const which = other ? (other.periodFrom && other.periodTo ? `${dateOnly(other.periodFrom)} → ${dateOnly(other.periodTo)}` : `to ${dateOnly(other.statementDate)}`) : "";
+  throw new AppError("CONFLICT", `Only the latest reconciliation can be ${doing}${which ? ` (${which})` : ""} — ${doing === "deleted" ? "delete" : "reopen"} that one first`);
+}
+
+/**
+ * A completed reconciliation's lines let go: no longer reconciled, open to changes again, and their statement dates —
+ * on the lines and on the expenses paid by them — cleared, so those expenses show Pending again. Says how many.
+ */
+async function releaseLines(orgId: string, session: ReconciliationSessionDoc): Promise<number> {
+  const org = new Types.ObjectId(orgId);
+  const lines = await BankTransaction.find({ organizationId: org, accountId: session.accountId, reconciledSessionId: String(session._id) }).select("_id").lean<{ _id: Types.ObjectId }[]>();
+  if (!lines.length) return 0;
+  const ids = lines.map((l) => l._id);
+  await BankTransaction.updateMany({ _id: { $in: ids }, organizationId: org }, { $set: { statementDate: null }, $unset: { isReconciled: "", reconciledSessionId: "" } });
+  const { Expense } = await import("../expense/expense.model");
+  await Expense.updateMany({ organizationId: org, bankTransactionId: { $in: ids } }, { $set: { statementDate: null } });
+  return ids.length;
+}
+
+/** The account's "last reconciled" goes back to whichever completed reconciliation now stands as the latest. */
+async function restoreLastReconciled(orgId: string, accountId: Types.ObjectId): Promise<void> {
+  const latest = await latestCompletedId(orgId, accountId);
+  const previous = latest ? await ReconciliationSession.findById(latest).select("completedAt statementBalanceMinor").lean<any>() : null;
+  await BankAccount.updateOne(
+    { _id: accountId, organizationId: new Types.ObjectId(orgId) },
+    previous
+      ? { $set: { lastReconciledAt: previous.completedAt ?? new Date(), lastReconciledStatementBalanceMinor: previous.statementBalanceMinor } }
+      : { $unset: { lastReconciledAt: "", lastReconciledStatementBalanceMinor: "" } },
+  );
+}
+
+/**
+ * Corrects a reconciliation. An open one: period, statement date, opening and closing balances, notes — with the
+ * checks starting one has (after the last completed one, the statement date not before the period's end), and none of
+ * its ticked lines or statement dates left outside them; the difference is worked out again. A completed one: notes.
+ */
+export async function editReconciliation(orgId: string, accountId: string, sessionId: string, input: EditReconciliationInput): Promise<ReconciliationSessionDTO> {
+  const session = await bankSession(orgId, accountId, sessionId);
+  const { notes, ...figures } = input;
+  if (session.status === "completed") {
+    if (Object.values(figures).some((v) => v !== undefined)) {
+      throw new AppError("VALIDATION_ERROR", "A completed reconciliation's period and figures can't be changed — reopen it first");
+    }
+    const updated = await ReconciliationSession.findByIdAndUpdate(session._id, { $set: { notes: notes ?? (session.notes as string) ?? "" } }, { new: true });
+    return { ...sessionToDTO(updated!), undoable: (await latestCompletedId(orgId, accountId)) === sessionId };
+  }
+
+  const was = sessionToDTO(session);
+  const periodFrom = input.periodFrom ?? was.periodFrom;
+  const periodTo = input.periodTo ?? was.periodTo;
+  const statementDate = input.statementDate ?? was.statementDate;
+  if (input.periodFrom && input.periodTo) {
+    const reconciledTo = await lastReconciledDay(orgId, accountId);
+    if (reconciledTo && input.periodFrom <= reconciledTo) {
+      throw new AppError("VALIDATION_ERROR", `This account is reconciled up to ${reconciledTo} — start the period on ${nextDay(reconciledTo)} or later`);
+    }
+  }
+  if (periodTo && statementDate < periodTo) throw new AppError("VALIDATION_ERROR", "The statement date can't be before the period's last day");
+
+  const ticked = await BankTransaction.find({ _id: { $in: session.reconciledTransactionIds }, organizationId: new Types.ObjectId(orgId), accountId: session.accountId })
+    .select("date amountMinor").lean<Array<{ _id: Types.ObjectId; date: Date; amountMinor: number }>>();
+  const after = periodTo ? ticked.filter((t) => dateOnly(t.date) > periodTo).length : 0;
+  if (after) throw new AppError("VALIDATION_ERROR", `${after === 1 ? "1 ticked line is" : `${after} ticked lines are`} after ${periodTo} — untick ${after === 1 ? "it" : "them"} first`);
+  const lateDates = Object.values(was.statementDates ?? {}).filter((d) => d > statementDate).length;
+  if (lateDates) throw new AppError("VALIDATION_ERROR", `${lateDates === 1 ? "1 line's statement date is" : `${lateDates} lines' statement dates are`} after ${statementDate} — change ${lateDates === 1 ? "it" : "them"} first`);
+
+  const opening = input.openingBalanceMinor ?? was.openingBookBalanceMinor;
+  const statementBalance = input.statementBalanceMinor ?? was.statementBalanceMinor;
+  // As ticking works it out; an old session (no period) with nothing ticked still stands at the account's balance.
+  const closing = periodFrom || ticked.length ? opening + ticked.reduce((n, t) => n + t.amountMinor, 0) : was.closingBookBalanceMinor;
+  const updated = await ReconciliationSession.findByIdAndUpdate(session._id, {
+    $set: {
+      ...(periodFrom && periodTo ? { periodFrom: new Date(`${periodFrom}T00:00:00.000Z`), periodTo: new Date(`${periodTo}T00:00:00.000Z`) } : {}),
+      statementDate: new Date(statementDate),
+      statementBalanceMinor: statementBalance,
+      openingBookBalanceMinor: opening,
+      closingBookBalanceMinor: closing,
+      differenceMinor: statementBalance - closing,
+      ...(notes !== undefined ? { notes } : {}),
+    },
+  }, { new: true });
+  return sessionToDTO(updated!);
+}
+
+/**
+ * Reopens the latest completed reconciliation: open again with its ticks, statement dates and figures kept, its lines
+ * let go until it is completed again, the account's "last reconciled" back to the one before. Refused while another
+ * reconciliation of the account is open.
+ */
+export async function reopenReconciliation(orgId: string, accountId: string, sessionId: string): Promise<ReconciliationSessionDTO> {
+  const session = await bankSession(orgId, accountId, sessionId);
+  if (session.status !== "completed") throw new AppError("VALIDATION_ERROR", "This reconciliation is open already");
+  await refuseUnlessLatest(orgId, session, "reopened");
+  if (await ReconciliationSession.exists({ organizationId: new Types.ObjectId(orgId), accountId: session.accountId, status: "open" })) {
+    throw new AppError("CONFLICT", "Another reconciliation of this account is open — complete or delete it first");
+  }
+  await releaseLines(orgId, session);
+  const updated = await ReconciliationSession.findByIdAndUpdate(session._id, { $set: { status: "open" }, $unset: { completedAt: "", completedByName: "" } }, { new: true });
+  await restoreLastReconciled(orgId, session.accountId as unknown as Types.ObjectId);
+  return sessionToDTO(updated!);
+}
+
+/**
+ * Deletes a reconciliation. An open one simply goes — its ticks were never written to the lines. A completed one
+ * (only the latest) is undone: its lines let go and their statement dates cleared, the account's "last reconciled"
+ * back to the one before. Says how many lines it let go.
+ */
+export async function deleteReconciliation(orgId: string, accountId: string, sessionId: string): Promise<{ unreconciled: number }> {
+  const session = await bankSession(orgId, accountId, sessionId);
+  if (session.status === "open") {
+    await ReconciliationSession.deleteOne({ _id: session._id });
+    return { unreconciled: 0 };
+  }
+  await refuseUnlessLatest(orgId, session, "deleted");
+  const unreconciled = await releaseLines(orgId, session);
+  await ReconciliationSession.deleteOne({ _id: session._id });
+  await restoreLastReconciled(orgId, session.accountId as unknown as Types.ObjectId);
+  return { unreconciled };
+}
+
 export async function getReconciliation(
   orgId: string,
   sessionId: string,
@@ -1434,7 +1587,8 @@ export async function getReconciliation(
     organizationId: new Types.ObjectId(orgId),
   });
   if (!doc) throw new AppError("NOT_FOUND", "Reconciliation session not found");
-  return sessionToDTO(doc);
+  const dto = sessionToDTO(doc);
+  return dto.status === "completed" ? { ...dto, undoable: (await latestCompletedId(orgId, doc.accountId as unknown as Types.ObjectId)) === dto.id } : dto;
 }
 
 export async function listReconciliations(
@@ -1455,8 +1609,9 @@ export async function listReconciliations(
       .lean(),
     ReconciliationSession.countDocuments(filter),
   ]);
+  const latest = await latestCompletedId(orgId, accountId);
   return {
-    data: (docs as unknown as ReconciliationSessionDoc[]).map(sessionToDTO),
+    data: (docs as unknown as ReconciliationSessionDoc[]).map(sessionToDTO).map((d) => (d.status === "completed" ? { ...d, undoable: d.id === latest } : d)),
     meta: pageMeta(total, page, pageSize),
   };
 }

@@ -305,6 +305,20 @@ export const updateReconciliationSchema = z.object({
 });
 export type UpdateReconciliationInput = z.infer<typeof updateReconciliationSchema>;
 
+/* Correcting a reconciliation (the user, 2026-10-23: "edit and delete for the reconciliations"). An open one: its
+   period, statement date, opening and closing balances and notes, checked as when it was started. A completed one:
+   its notes only — its figures are what its ticked lines were signed off against; reopen it to change them. */
+export const editReconciliationSchema = z.object({
+  periodFrom: isoDay.optional(),
+  periodTo: isoDay.optional(),
+  statementDate: isoDay.optional(),
+  statementBalanceMinor: z.number().int().optional(),
+  openingBalanceMinor: z.number().int().optional(),
+  notes: z.string().optional(),
+}).refine((v) => !v.periodFrom || !v.periodTo || v.periodFrom <= v.periodTo, { message: "The period ends before it starts", path: ["periodTo"] })
+  .refine((v) => !!v.periodFrom === !!v.periodTo, { message: "Give the period's first and last day", path: ["periodFrom"] });
+export type EditReconciliationInput = z.infer<typeof editReconciliationSchema>;
+
 export const reconciliationSessionSchema = z.object({
   id: z.string(),
   accountId: z.string(),
@@ -328,6 +342,8 @@ export const reconciliationSessionSchema = z.object({
   adjustmentTransactionId: z.string().optional(),
   notes: z.string(),
   createdAt: z.string(),
+  /** The account's latest completed reconciliation — the only one that can be reopened or deleted (2026-10-23). */
+  undoable: z.boolean().optional(),
 });
 export type ReconciliationSession = z.infer<typeof reconciliationSessionSchema>;
 

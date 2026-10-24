@@ -15,6 +15,7 @@ import type {
   MatchTransactionInput,
   StartReconciliationInput,
   UpdateReconciliationInput,
+  EditReconciliationInput,
   CashCountInput,
   CreateTransferInput,
   UpdateTransferInput,
@@ -329,6 +330,39 @@ export function useCompleteReconciliation(accountId: string, sessionId: string) 
       api.post<ReconciliationSession>(
         `bank-accounts/${accountId}/reconciliations/${sessionId}/complete`,
       ),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** An open reconciliation's period and figures, or a completed one's notes (2026-10-23). */
+export function useEditReconciliation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ sessionId, input }: { sessionId: string; input: EditReconciliationInput }) =>
+      api.patch<ReconciliationSession>(`bank-accounts/${accountId}/reconciliations/${sessionId}/details`, input),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** The latest completed reconciliation, open again — its lines let go until it is completed again. */
+export function useReopenReconciliation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (sessionId: string) =>
+      api.post<ReconciliationSession>(`bank-accounts/${accountId}/reconciliations/${sessionId}/reopen`),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** An open reconciliation removed, or the latest completed one undone; says how many lines it let go. */
+export function useDeleteReconciliation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (sessionId: string) =>
+      api.del<{ unreconciled: number }>(`bank-accounts/${accountId}/reconciliations/${sessionId}`),
     onSuccess: () => refreshAccount(qc),
   });
 }

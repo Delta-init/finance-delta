@@ -503,8 +503,12 @@ type ListKind = {
 
 /** The states of one kind that a status tab means. */
 function statesFor(status: ApprovalListStatus, by: { pending: string[]; approved: string[]; rejected: string[]; other?: string[] }): string[] {
+  if (status === "failed") return [];
   return status === "all" ? [...by.pending, ...by.approved, ...by.rejected, ...(by.other ?? [])] : by[status];
 }
+
+/** A Tetra deposit decided here that Tetra Commission turned down (2026-10-25): its own tab, out of Approved and Rejected. */
+const DEPOSIT_TURNED_DOWN = { status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" };
 
 /** The first of these fields a document has. */
 const firstOf = (...fields: string[]): unknown =>
@@ -642,9 +646,15 @@ const LIST_KINDS: ListKind[] = [
     allowed: (can) => can("tetra_deposit:approve"),
     list: async (ctx) => {
       const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["rejected"], other: ["closed"] });
+      // "Didn't go through" holds the ones Tetra Commission turned down; Approved and Rejected only what it took.
+      const which = ctx.status === "failed"
+        ? DEPOSIT_TURNED_DOWN
+        : ctx.status === "approved" || ctx.status === "rejected"
+          ? { status: { $in: states }, "delivery.state": { $ne: "failed" } }
+          : { status: { $in: states } };
       const { docs, total } = await newest(
         TetraDepositModel,
-        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "tetra_deposit"),
+        narrowed({ organizationId: ctx.org, ...which }, ctx, "tetra_deposit"),
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
         "type student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
         ctx,
@@ -1095,10 +1105,13 @@ function commissionOf(p: any): ApprovalCommission {
 export async function approvalList(
   auth: AuthContext,
   q: ApprovalListQuery,
-): Promise<{ rows: ApprovalRow[]; meta: { page: number; pageSize: number; total: number; pageCount: number; unavailable: string[] } }> {
+): Promise<{ rows: ApprovalRow[]; meta: { page: number; pageSize: number; total: number; pageCount: number; unavailable: string[]; failed: number } }> {
   const can = (p: Permission) => auth.isSuperAdmin || hasPermission(auth.permissions, p);
   const org = new Types.ObjectId(auth.organizationId);
-  const kinds = LIST_KINDS.filter((k) => k.allowed(can) && (!q.type || k.type === q.type));
+  // "Didn't go through" (2026-10-25): only the kinds whose decision goes on to another system and can be turned down.
+  const kinds = LIST_KINDS.filter((k) => k.allowed(can) && (!q.type || k.type === q.type) && (q.status !== "failed" || k.type === "tetra_deposit"));
+  // Its count, for the tab — whatever tab is showing.
+  const failed = can("tetra_deposit:approve") ? await TetraDepositModel.countDocuments({ organizationId: org, ...DEPOSIT_TURNED_DOWN }) : 0;
 
   const range = q.from || q.to
     ? { ...(q.from ? { $gte: new Date(q.from) } : {}), ...(q.to ? { $lt: new Date(q.to) } : {}) }
@@ -1146,7 +1159,7 @@ export async function approvalList(
 
   return {
     rows,
-    meta: { page: q.page, pageSize: q.pageSize, total, pageCount: Math.max(1, Math.ceil(total / q.pageSize)), unavailable },
+    meta: { page: q.page, pageSize: q.pageSize, total, pageCount: Math.max(1, Math.ceil(total / q.pageSize)), unavailable, failed },
   };
 }
 

@@ -246,7 +246,6 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
     if (!deposit) return;
     if (decision === "approved") {
       if (!amountValid) { toast.error("Enter the amount that arrived"); return; }
-      if (!transactionId.trim()) { toast.error("Enter the transaction ID"); return; }
     } else if (reason.trim().length < 5) {
       toast.error(decision === "sentBack" ? "Say what to correct before sending it back" : "Add a short reason before rejecting");
       return;
@@ -309,7 +308,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="tetra-txn">{balancePayment ? "Transaction ID / reference" : "Transaction ID"}</Label>
+                  <Label htmlFor="tetra-txn">{balancePayment ? "Transaction ID / reference" : "Transaction ID"} <span className="font-normal text-foreground-muted">(optional)</span></Label>
                   <Input id="tetra-txn" value={transactionId} onChange={(e) => setTransactionId(e.target.value)} maxLength={100} placeholder="As on the statement" />
                 </div>
                 <div className="space-y-1.5">

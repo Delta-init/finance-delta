@@ -400,9 +400,13 @@ async function main() {
     rowOf(approvedList, "procurement", "2 × Chairs")?.decidedBy === "Admin" && !approvedList.rows.some((r) => r.type === "expense" && r.title === "2 × Chairs"));
   check("a paid payroll run counts as approved, with who approved it", rowOf(approvedList, "payroll", "PR-4 · August 2026")?.decidedBy === "Admin",
     show(rowOf(approvedList, "payroll", "PR-4 · August 2026")));
-  const d2 = rowOf(approvedList, "tetra_deposit", "Student D2");
-  check("an approved deposit Tetra Commission did not take says so, at the amount approved",
-    d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00, show(d2));
+  // Since 2026-10-25 one Tetra Commission did not take is under "Didn't go through", not Approved.
+  const failedList = await listOf(tAdmin, { status: "failed", pageSize: 100 });
+  const d2 = rowOf(failedList, "tetra_deposit", "Student D2");
+  check("an approved deposit Tetra Commission did not take is under Didn't go through, at the amount approved, and not under Approved",
+    d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00 && !rowOf(approvedList, "tetra_deposit", "Student D2"), show(d2 ?? null));
+  check("…only what can be turned down is there, and it is counted",
+    failedList.rows.every((r) => r.type === "tetra_deposit") && (failedList as { meta?: { failed?: number } }).meta?.failed === failedList.rows.length, show((failedList as { meta?: unknown }).meta ?? null));
   check("nothing waiting or turned down among them, newest first",
     approvedList.rows.every((r) => r.status === "approved") && newestFirst(approvedList.rows));
 
@@ -417,8 +421,8 @@ async function main() {
   check("nothing else", rejectedList.rows.every((r) => r.status === "rejected" || r.status === "returned"));
 
   const everything = await listOf(tAdmin, { status: "all", pageSize: 100 });
-  check("All: waiting, approved and rejected together — and a deposit closed at Tetra's end",
-    everything.meta?.total === pendingList.meta.total + approvedList.meta.total + rejectedList.meta.total + 1
+  check("All: waiting, approved, rejected and didn't go through together — and a deposit closed at Tetra's end",
+    everything.meta?.total === pendingList.meta.total + approvedList.meta.total + rejectedList.meta.total + failedList.meta.total + 1
     && rowOf(everything, "tetra_deposit", "Student D4")?.status === "closed", `${everything.meta?.total}`);
 
   const enrolments = await listOf(tAdmin, { status: "approved", type: "invoice" });

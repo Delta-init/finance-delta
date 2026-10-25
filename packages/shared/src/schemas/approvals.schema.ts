@@ -57,7 +57,9 @@ export type ApprovalSummary = z.infer<typeof approvalSummarySchema>;
  * it: when it was decided, or while it waits, when it was sent for a decision.
  * The date range and the newest-first order are both on `at`.
  */
-export const approvalListStatusSchema = z.enum(["pending", "approved", "rejected", "all"]);
+/* "failed": decided here, but the other system turned the decision down (the user, 2026-10-25: "errored approvals shown
+   separately") — out of Approved and Rejected, which keep only what went through. */
+export const approvalListStatusSchema = z.enum(["pending", "approved", "rejected", "failed", "all"]);
 export type ApprovalListStatus = z.infer<typeof approvalListStatusSchema>;
 
 export const approvalListQuerySchema = z.object({

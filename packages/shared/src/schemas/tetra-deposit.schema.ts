@@ -197,8 +197,8 @@ export type TetraDepositStatus = z.infer<typeof tetraDepositStatusSchema>;
  * sending    being sent right now
  * queued     not reached yet — tried again on its own
  * delivered  Tetra Commission has it
- * failed     refused, for a reason that will not change by trying again
- *            (a transaction ID already used there): reopen it and decide again
+ * failed     refused, for a reason that will not change by trying again: on Approvals → "Didn't go through",
+ *            to send again or reopen and decide again
  */
 export const tetraDepositDeliverySchema = z.enum(["sending", "queued", "delivered", "failed"]);
 export type TetraDepositDelivery = z.infer<typeof tetraDepositDeliverySchema>;
@@ -208,7 +208,8 @@ export const decideTetraDepositSchema = z.discriminatedUnion("decision", [
     decision: z.literal("approved"),
     /** What actually arrived — the accountant may correct the requested amount. */
     amountMinor: z.number().int().positive().max(9_000_000_000_000),
-    transactionId: z.string().trim().min(1, "The transaction ID is required").max(100),
+    /** Optional (the user, 2026-10-25: "the transaction ID is not mandatory when finance approves"). */
+    transactionId: optionalText(100),
     paymentMethod: optionalText(60),
     mt5Login: optionalText(60),
     note: optionalText(1000),

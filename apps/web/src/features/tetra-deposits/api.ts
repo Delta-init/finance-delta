@@ -56,6 +56,15 @@ export function useDecideTetraDeposit(id: string) {
   });
 }
 
+/** A decision Tetra Commission turned down, sent to it again as it was (2026-10-25). */
+export function useResendTetraDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<TetraDepositDecisionResult>(`tetra-deposits/${id}/resend`),
+    onSettled: () => invalidate(qc),
+  });
+}
+
 export function useReopenTetraDeposit() {
   const qc = useQueryClient();
   return useMutation({

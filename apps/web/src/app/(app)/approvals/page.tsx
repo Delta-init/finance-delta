@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ClipboardCheck, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, ClipboardCheck, RefreshCw, Search, Send, X } from "lucide-react";
 import { ACADEMIES, ACADEMY_LABELS, ENROLMENT_CRMS, ENROLMENT_CRM_LABELS, describeOverdue, type ApprovalListStatus, type ApprovalRow, type ApprovalType } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ import { useApprovalList, useApprovalRaisers, useApprovalSummary } from "@/featu
 import { LegacyApprovalQueues } from "@/features/approvals/legacy-queues";
 import { useFundingRequests } from "@/features/budgets/api";
 import { FundingReviewDialog } from "@/features/budgets/review-dialog";
-import { useReopenTetraDeposit, useTetraDeposit } from "@/features/tetra-deposits/api";
+import { useReopenTetraDeposit, useResendTetraDeposit, useTetraDeposit } from "@/features/tetra-deposits/api";
 import { TetraDepositReviewDialog } from "@/features/tetra-deposits/review-dialog";
 import { useBalancePayment } from "@/features/balance-payments/api";
 import { BalancePaymentReviewDialog } from "@/features/balance-payments/review-dialog";
@@ -47,6 +47,8 @@ const STATUSES: { key: ApprovalListStatus; label: string }[] = [
   { key: "pending", label: "Pending" },
   { key: "approved", label: "Approved" },
   { key: "rejected", label: "Rejected" },
+  // Decided here, turned down by Tetra Commission (2026-10-25): kept apart, to send again or reopen.
+  { key: "failed", label: "Didn't go through" },
   { key: "all", label: "All" },
 ];
 
@@ -94,6 +96,7 @@ const EMPTY: Record<ApprovalListStatus, string> = {
   pending: "Nothing is waiting on you right now.",
   approved: "Nothing approved in this range.",
   rejected: "Nothing rejected or sent back in this range.",
+  failed: "Everything decided went through — nothing turned down.",
   all: "No approvals in this range.",
 };
 
@@ -128,6 +131,29 @@ function OutcomeLine({ system, label, tone, detail, code }: { system: string; la
       </div>
       {wrong && detail && <p className="ml-[50px] line-clamp-1 text-xs text-danger">{detail}</p>}
     </div>
+  );
+}
+
+/** A decided Tetra deposit that Tetra Commission turned down: sent to it again as it was (2026-10-25). */
+function SendAgainButton({ id }: { id: string }) {
+  const resend = useResendTetraDeposit();
+  return (
+    <Button
+      size="sm"
+      loading={resend.isPending}
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          const r = await resend.mutateAsync(id);
+          if (r.delivered) toast.success(r.message || "Sent — Tetra Commission has it");
+          else toast.error(`Tetra Commission did not accept it: ${r.message}`);
+        } catch (err) {
+          toast.error(err instanceof ApiError ? err.message : "Could not send it again");
+        }
+      }}
+    >
+      <Send className="h-3.5 w-3.5" /> Send again
+    </Button>
   );
 }
 
@@ -242,6 +268,8 @@ export default function ApprovalsPage() {
   const hasFilters = status !== "pending" || type !== "all" || !!dateFrom || !!dateTo || !!search || filtered;
   // Searched or filtered, the Pending count is what matches; otherwise everything waiting.
   const pendingCount = filtered && status === "pending" ? list.data?.meta.total ?? 0 : summary?.total ?? 0;
+  // Turned down by Tetra Commission, whatever tab is open (2026-10-25).
+  const failedCount = list.data?.meta.failed ?? 0;
   const procurementVisible = kinds.some((k) => k.type === "procurement");
   // Review a fund request or deposit here; reopen a deposit Tetra Commission turned down.
   const canDecide = (r: ApprovalRow) => r.status === "pending" && !!r.decideHere && !r.own;
@@ -363,7 +391,10 @@ export default function ApprovalsPage() {
                   <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); decide(r); }}>Review</Button>
                 </div>
               ) : canReopen(r) ? (
-                <ReopenButton id={r.id} />
+                <div className="flex items-center justify-end gap-2">
+                  <SendAgainButton id={r.id} />
+                  <ReopenButton id={r.id} />
+                </div>
               ) : null,
           },
         ]
@@ -419,6 +450,11 @@ export default function ApprovalsPage() {
                   {s.key === "pending" && pendingCount > 0 && (
                     <span className={cn("ml-1.5 rounded-full px-1.5 text-xs", status === s.key ? "bg-white/20" : "bg-warning/15 text-warning")}>
                       {pendingCount}
+                    </span>
+                  )}
+                  {s.key === "failed" && failedCount > 0 && (
+                    <span className={cn("ml-1.5 rounded-full px-1.5 text-xs", status === s.key ? "bg-white/20" : "bg-danger/15 text-danger")}>
+                      {failedCount}
                     </span>
                   )}
                 </button>

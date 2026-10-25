@@ -5,7 +5,7 @@ import { requirePermission } from "../../middleware/rbac";
 import { parseQuery, validateBody } from "../../middleware/validate";
 import { asyncHandler, ok } from "../../lib/http";
 import {
-  decideTetraDeposit, getTetraDeposit, listTetraDepositPage, listTetraDeposits, reopenTetraDeposit,
+  decideTetraDeposit, getTetraDeposit, listTetraDepositPage, listTetraDeposits, reopenTetraDeposit, resendTetraDeposit,
 } from "./tetra-deposit.service";
 
 /**
@@ -36,6 +36,10 @@ router.get("/:id", asyncHandler(async (req, res) => {
 
 router.post("/:id/decision", validateBody(decideTetraDepositSchema), asyncHandler(async (req, res) => {
   ok(res, await decideTetraDeposit(req.auth!, String(req.params.id), req.body));
+}));
+
+router.post("/:id/resend", asyncHandler(async (req, res) => {
+  ok(res, await resendTetraDeposit(req.auth!, String(req.params.id)));
 }));
 
 router.post("/:id/reopen", asyncHandler(async (req, res) => {

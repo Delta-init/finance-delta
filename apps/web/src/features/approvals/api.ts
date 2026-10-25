@@ -25,7 +25,7 @@ export function useApprovalSummary(enabled = true) {
 }
 
 /** What the list says about itself, besides the page: any kind it could not read. */
-export type ApprovalListMeta = PageMeta & { unavailable?: string[] };
+export type ApprovalListMeta = PageMeta & { unavailable?: string[]; /** Decided here, turned down by Tetra Commission (2026-10-25). */ failed?: number };
 
 /**
  * Every approval the signed-in person may decide, waiting and decided, newest

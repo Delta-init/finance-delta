@@ -518,7 +518,7 @@ function decisionFor(row: any): CommissionFundingDecision {
       ? {
           amountMinor: d.approvedAmountMinor,
           currency: String(row.currency ?? "USD"),
-          transactionId: d.transactionId,
+          ...(d.transactionId ? { transactionId: d.transactionId } : {}),
           ...(d.paymentMethod ? { paymentMethod: d.paymentMethod } : {}),
           ...(d.mt5Login ? { mt5Login: d.mt5Login } : {}),
           ...(d.note ? { note: d.note } : {}),
@@ -629,7 +629,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   const sentBack = input.decision === "rejected" && input.sentBack === true;
   if (sentBack && current?.type !== "BONUS") throw new AppError("VALIDATION_ERROR", "Only a bonus can be sent back to correct — reject this one instead");
   const decision = input.decision === "approved"
-    ? { ...decided, approvedAmountMinor: input.amountMinor, transactionId: input.transactionId, paymentMethod: input.paymentMethod, mt5Login: input.mt5Login, note: input.note }
+    ? { ...decided, approvedAmountMinor: input.amountMinor, ...(input.transactionId ? { transactionId: input.transactionId } : {}), paymentMethod: input.paymentMethod, mt5Login: input.mt5Login, note: input.note }
     : { ...decided, reason: input.reason, ...(sentBack ? { sentBack: true } : {}) };
 
   // One decision per request, whoever gets there first — claimed for sending in the same write.
@@ -641,7 +641,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
         events: {
           at: now, kind: input.decision, byName,
           text: input.decision === "approved"
-            ? `Approved at ${money(input.amountMinor, current?.currency ?? "USD")}, transaction ${input.transactionId}`
+            ? `Approved at ${money(input.amountMinor, current?.currency ?? "USD")}${input.transactionId ? `, transaction ${input.transactionId}` : ""}`
             : sentBack ? `Sent back to correct: ${input.reason}` : `Rejected: ${input.reason}`,
         },
       },
@@ -687,6 +687,33 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
     });
     throw new AppError("CONFLICT", `Tetra Commission did not accept it: ${outcome.message}`);
   }
+  const fresh = await TetraDepositModel.findById(row._id).lean();
+  return { deposit: tetraDepositDTO(fresh), delivered: outcome.kind === "delivered", message: outcome.message };
+}
+
+/**
+ * A decision Tetra Commission turned down, sent to it again as it was (the user, 2026-10-25: Approvals → "Didn't go
+ * through" → Send again) — for when what it refused has been put right there, or it no longer refuses it (a repeated
+ * transaction ID). Claimed first, so it is never sent twice at once. Turned down again, it stays where it was.
+ */
+export async function resendTetraDeposit(auth: AuthContext, id: string): Promise<TetraDepositDecisionResult> {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
+  const org = new Types.ObjectId(auth.organizationId);
+  const me = await User.findById(auth.userId).select("name").lean();
+  const row = await TetraDepositModel.findOneAndUpdate(
+    { _id: id, organizationId: org, status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" },
+    {
+      $set: { "delivery.state": "sending", "delivery.claimedAt": new Date() },
+      $push: { events: { at: new Date(), kind: "resent", byName: String(me?.name ?? ""), text: "Sent to Tetra Commission again" } },
+    },
+    { new: true },
+  ).lean();
+  if (!row) {
+    const other = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("_id").lean();
+    if (!other) throw new AppError("NOT_FOUND", "Deposit request not found");
+    throw new AppError("CONFLICT", "Only a decision Tetra Commission turned down can be sent again");
+  }
+  const outcome = await deliverDecision(row, false);
   const fresh = await TetraDepositModel.findById(row._id).lean();
   return { deposit: tetraDepositDTO(fresh), delivered: outcome.kind === "delivered", message: outcome.message };
 }

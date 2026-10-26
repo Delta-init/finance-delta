@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { CRM_BONUS_CURRENCY, enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
+import { ACADEMY_LABELS, CRM_BONUS_CURRENCY, enrolmentAcademy, enrolmentCrm, inboundEnrolmentLanguage } from "@delta/shared";
 import type { Academy, InboundEnrolmentInput, InboundEnrolmentResult, InboundEnrolmentCourse, InboundSalesNote, StoredReceipt } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
@@ -175,8 +175,22 @@ export async function intakeEnrolment(
     organizationId: new Types.ObjectId(orgId),
     "external.source": input.source,
     "external.externalId": input.externalId,
-  }).select("invoiceNumber customerId external approval");
+  }).select("invoiceNumber customerId external approval status enrolment.movedTo");
   if (existing) {
+    /*
+     * Moved back (2026-10-26): this organization's invoice moved to the other academy earlier and was voided, and the
+     * enrolment is now corrected for this academy again. The same invoice comes back — its number, its client —
+     * corrected and in front of an approver, and the other academy's sent-back one is voided in its turn.
+     */
+    const movedTo = existing.get("enrolment.movedTo") as { invoiceId?: Types.ObjectId; fromStatus?: string } | undefined;
+    if (movedTo?.invoiceId) {
+      const other = await Invoice.findById(movedTo.invoiceId).select("invoiceNumber organizationId status approval payments enrolment.academy");
+      if (other && other.status !== "void") refuseUnlessMovable(other);
+      await Invoice.updateOne({ _id: existing._id }, { $set: { status: movedTo.fromStatus || "draft" }, $unset: { "enrolment.movedTo": "" } });
+      const result = await resubmitReturned(orgId, String(existing._id), input, String(existing.customerId));
+      if (other && other.status !== "void") await moveOut(other, orgId, { id: String(existing._id), number: String(existing.invoiceNumber) }, intakeAcademy(input));
+      return result;
+    }
     /*
      * One exception to "already here, nothing to do": an invoice somebody sent
      * back.
@@ -219,6 +233,21 @@ export async function intakeEnrolment(
       flags: flagsFor(existing),
     };
   }
+
+  /*
+   * Moved to the other academy while sent back (the user, 2026-10-26: "when it is sent back we can change the
+   * location when correcting it"). The academy decides the organization — Dubai's books or Bangalore's — so the
+   * corrected enrolment arrives here, in the other one, under the same source and id. It is made here as a new
+   * enrolment with this organization's number, and the sent-back invoice in the other is voided, saying where it
+   * went. Only while it is sent back: anything else in the other organization's books stays where it is.
+   */
+  const elsewhere = await Invoice.findOne({
+    organizationId: { $ne: new Types.ObjectId(orgId) },
+    "external.source": input.source,
+    "external.externalId": input.externalId,
+    status: { $ne: "void" },
+  }).select("invoiceNumber organizationId status approval payments enrolment.academy");
+  if (elsewhere) refuseUnlessMovable(elsewhere);
 
   const flags: string[] = [];
   const salesperson = await resolveSalesperson(orgId, input, flags);
@@ -371,6 +400,8 @@ export async function intakeEnrolment(
       },
     },
   );
+
+  if (elsewhere) await moveOut(elsewhere, orgId, { id: invoice.id, number: invoice.invoiceNumber }, intakeAcademy(input));
 
   logger.info(
     { orgId, source: input.source, externalId: input.externalId, invoice: invoice.invoiceNumber, flags },
@@ -669,4 +700,36 @@ async function resubmitReturned(
     // flag the correction put right (another email given) must not come back.
     flags,
   };
+}
+
+/** An enrolment in the other academy's books may move only while it is sent back, and with nothing paid on it there. */
+function refuseUnlessMovable(other: { invoiceNumber?: unknown; approval?: unknown; payments?: unknown; get(path: string): unknown }): void {
+  const academy = ACADEMY_LABELS[(other.get("enrolment.academy") as Academy | undefined) ?? "dubai"] ?? "other";
+  if ((other as { approval?: { state?: string } }).approval?.state !== "returned") {
+    throw new AppError("CONFLICT", `This enrolment is already ${String(other.invoiceNumber)} in the ${academy} academy's books — it can move academy only while it is sent back`);
+  }
+  if (((other.payments as unknown[]) ?? []).length) {
+    throw new AppError("CONFLICT", `${String(other.invoiceNumber)} in the ${academy} academy's books has payments recorded — remove them there before it moves academy`);
+  }
+}
+
+/**
+ * The sent-back invoice left behind when its enrolment moved to the other academy (2026-10-26): voided, saying where
+ * it went — the organization, the invoice and its number — and its status kept, should it ever move back.
+ */
+async function moveOut(other: any, toOrgId: string, to: { id: string; number: string }, academy: Academy): Promise<void> {
+  const label = ACADEMY_LABELS[academy] ?? academy;
+  const reason = String(other.approval?.returnedReason ?? "").replace(/ — moved to the .* academy as .*$/, "");
+  const moved = await Invoice.updateOne(
+    { _id: other._id, "approval.state": "returned", status: { $ne: "void" } },
+    {
+      $set: {
+        status: "void",
+        "enrolment.movedTo": { organizationId: new Types.ObjectId(toOrgId), invoiceId: new Types.ObjectId(to.id), invoiceNumber: to.number, academy, at: new Date(), fromStatus: String(other.status ?? "draft") },
+        "approval.returnedReason": `${reason ? `${reason} — ` : ""}moved to the ${label} academy as ${to.number}`,
+      },
+    },
+  );
+  logger.info({ from: other.invoiceNumber, fromOrg: String(other.organizationId), to: to.number, toOrgId, voided: moved.modifiedCount === 1 },
+    "Sent-back enrolment moved to the other academy");
 }

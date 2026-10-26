@@ -290,6 +290,57 @@ async function main() {
   check("…the same name with no number: the name saved as resent, and a number that is not one never written over theirs",
     r.status < 300 && c?.name === "priya nair" && c?.phone === "+971501110005" && !emailFlag(r.body?.data?.flags), JSON.stringify({ name: c?.name, phone: c?.phone }));
 
+  step("Case 9 — corrected for the other academy (2026-10-26): moved to that academy's organization, the sent-back one voided");
+  const blr = await Organization.create({ name: "Bangalore E2E", baseCurrency: "INR", taxRates: [] });
+  const blrId = String(blr._id);
+  for (const def of SYSTEM_ROLES) {
+    await Role.create({ organizationId: blr._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });
+  }
+  const blrAdmin = (await Role.findOne({ organizationId: blr._id, key: "admin" }).lean())!._id;
+  await User.updateOne({ email: "approver@e2e-test.com" }, { $push: { memberships: { organizationId: blr._id, roleId: blrAdmin, status: "active" } } });
+  const sendTo = (toOrg: string, externalId: string, over: Record<string, unknown>) =>
+    signedPost(toOrg, "/api/v1/integrations/enrolments", {
+      externalId, source: "crm", crm: "delta",
+      course: { name: "Course 1 - Market Breakout Theory", amountMinor: 225_000 },
+      modeOfStudy: "online", language: "Malayalam", salespersonEmail: "sally@e2e-test.com", salespersonName: "Sally Sales",
+      declaredPaidMinor: 225_000, declaredPaymentMethod: "cash", receipt: receipt(`${externalId}-cash`),
+      ...over,
+    });
+  r = await sendTo(orgId, "stu-0007", { academy: "dubai", customer: { name: "imran pasha", email: "imran@e2e-test.com", phone: "+919632671361" } });
+  const dubaiId = idOf(r);
+  const dubaiNumber = (await invoice(dubaiId))?.invoiceNumber;
+  r = await sendTo(blrId, "stu-0007", { academy: "bangalore", currency: "INR", course: { name: "Course 1 - Market Breakout Theory", amountMinor: 5_000_000 }, declaredPaidMinor: 5_000_000, customer: { name: "imran pasha", email: "imran@e2e-test.com", phone: "+919632671361" } });
+  check("while it waits for approval in Dubai's books, it can't move: refused, saying where it is",
+    r.status === 409 && new RegExp(`already ${dubaiNumber} in the Dubai academy's books`).test(r.body?.error?.message ?? ""), show(r));
+  check("…and nothing was made in Bangalore's", (await Invoice.countDocuments({ organizationId: blr._id })) === 0);
+  await sendBack(dubaiId, "change the location");
+  r = await sendTo(blrId, "stu-0007", { academy: "bangalore", currency: "INR", course: { name: "Course 1 - Market Breakout Theory", amountMinor: 5_000_000 }, declaredPaidMinor: 5_000_000, customer: { name: "imran pasha", email: "imran@e2e-test.com", phone: "+919632671361" } });
+  const moved = await invoice(idOf(r));
+  check("sent back, then corrected for Bangalore: a new invoice in Bangalore's books, waiting for approval",
+    r.status < 300 && r.body?.data?.duplicate === false && String(moved?.organizationId) === blrId && moved?.enrolment?.academy === "bangalore"
+      && moved?.approval?.state === "pending" && moved?.totalMinor === 5_000_000, show(r));
+  doc = await invoice(dubaiId);
+  check("…the Dubai one voided, saying where it went", doc?.status === "void" && doc?.enrolment?.movedTo?.invoiceNumber === moved?.invoiceNumber
+    && String(doc?.enrolment?.movedTo?.organizationId) === blrId && doc?.enrolment?.movedTo?.academy === "bangalore"
+    && new RegExp(`change the location — moved to the Bangalore academy as ${moved?.invoiceNumber}`).test(doc?.approval?.returnedReason ?? ""),
+    JSON.stringify({ status: doc?.status, movedTo: doc?.enrolment?.movedTo, reason: doc?.approval?.returnedReason }));
+  r = await request("GET", "/approvals/list?status=all&pageSize=100", undefined, tApprover);
+  check("…and gone from Dubai's approvals", r.status === 200 && !(r.body?.data ?? []).some((x: any) => x.id === dubaiId), show(r));
+  r = await sendTo(blrId, "stu-0007", { academy: "bangalore", currency: "INR", course: { name: "Course 1 - Market Breakout Theory", amountMinor: 5_000_000 }, declaredPaidMinor: 5_000_000, customer: { name: "imran pasha", email: "imran@e2e-test.com", phone: "+919632671361" } });
+  check("sent again to Bangalore: the same one, a duplicate", r.body?.data?.duplicate === true && idOf(r) === String(moved?._id), show(r));
+  // Sent back in Bangalore's books (the approver signs in to Dubai's, so set as a return there would leave it).
+  await Invoice.updateOne({ _id: moved?._id }, { $set: { "approval.state": "returned", "approval.returnedReason": "back to Dubai after all" } });
+  r = await sendTo(orgId, "stu-0007", { academy: "dubai", customer: { name: "imran pasha", email: "imran@e2e-test.com", phone: "+919632671361" } });
+  doc = await invoice(dubaiId);
+  check("and back to Dubai: the first Dubai invoice again — its number, waiting for approval, no longer void",
+    r.status < 300 && idOf(r) === dubaiId && doc?.invoiceNumber === dubaiNumber && doc?.status !== "void" && doc?.approval?.state === "pending" && !doc?.enrolment?.movedTo,
+    `${r.status} ${idOf(r)} ${doc?.status} ${doc?.approval?.state} ${JSON.stringify(doc?.enrolment?.movedTo)}`);
+  const blrDoc = await invoice(String(moved?._id));
+  check("…the Bangalore one voided in its turn, pointing back", blrDoc?.status === "void" && blrDoc?.enrolment?.movedTo?.invoiceNumber === dubaiNumber
+    && /back to Dubai after all — moved to the Dubai academy as/.test(blrDoc?.approval?.returnedReason ?? ""), JSON.stringify({ s: blrDoc?.status, m: blrDoc?.enrolment?.movedTo, r: blrDoc?.approval?.returnedReason }));
+  check("…one invoice per organization still", (await Invoice.countDocuments({ "external.externalId": "stu-0007", organizationId: org._id })) === 1
+    && (await Invoice.countDocuments({ "external.externalId": "stu-0007", organizationId: blr._id })) === 1);
+
   await mongoose.disconnect();
   console.log(`\n${checks - failures}/${checks} checks passed`);
   process.exit(failures ? 1 : 0);

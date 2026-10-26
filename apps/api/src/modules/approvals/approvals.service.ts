@@ -552,7 +552,8 @@ const LIST_KINDS: ListKind[] = [
       const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["returned"] });
       const { docs, total } = await newest(
         Invoice,
-        narrowed({ organizationId: ctx.org, "approval.state": { $in: states } }, ctx, "invoice"),
+        // One moved to the other academy (2026-10-26) is voided here and lives in the other organization's list.
+        narrowed({ organizationId: ctx.org, "approval.state": { $in: states }, "enrolment.movedTo": { $exists: false } }, ctx, "invoice"),
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },

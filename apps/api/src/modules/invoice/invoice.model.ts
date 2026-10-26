@@ -191,6 +191,23 @@ const invoiceSchema = new Schema(
               for the client — and when it last changed in the CRM. */
           salesNote: { type: String, trim: true, maxlength: 2000 },
           salesNoteUpdatedAt: { type: Date },
+          /** Sent back, then corrected for the other academy (2026-10-26): it moved to that academy's organization as
+              this invoice, and this one was voided. */
+          movedTo: {
+            type: new Schema(
+              {
+                organizationId: { type: Schema.Types.ObjectId, ref: "Organization" },
+                invoiceId: { type: Schema.Types.ObjectId },
+                invoiceNumber: { type: String },
+                academy: { type: String },
+                at: { type: Date },
+                /** What it was before it was voided, for moving back. */
+                fromStatus: { type: String },
+              },
+              { _id: false },
+            ),
+            default: undefined,
+          },
           /** Each payment taken at the close, with its own method and receipt —
               adding up to declaredPaidMinor. Absent before the CRMs sent them
               one by one. Recorded against the invoice on approval. */

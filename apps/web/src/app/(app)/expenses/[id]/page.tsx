@@ -38,6 +38,7 @@ import {
   useDeleteExpense,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
+import { StatementDateField } from "@/features/expenses/StatementDateField";
 import { useCan } from "@/lib/use-can";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOrganization } from "@/features/organization/api";
@@ -420,20 +421,8 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-sm font-medium mt-0.5">{expense.expenseDate}</p>
             </div>
 
-            {/* The day the bank statement shows it — entered only when the account is reconciled (2026-10-23). */}
-            {expense.statementState && expense.statementState !== "none" && (
-              <div>
-                <p className="text-xs text-foreground-muted">Statement Date</p>
-                {expense.statementDate ? (
-                  <p className="text-sm font-medium mt-0.5">{expense.statementDate}</p>
-                ) : (
-                  <>
-                    <p className="text-sm font-medium mt-0.5 text-warning">Pending</p>
-                    <p className="text-xs text-foreground-muted mt-0.5">Set when {expense.paymentAccount || "its bank account"} is reconciled</p>
-                  </>
-                )}
-              </div>
-            )}
+            {/* The day the bank statement shows it — from reconciling, or typed in here (2026-10-26). */}
+            <StatementDateField expense={expense} canChange={can("expense:update") && !["voided", "rejected"].includes(expense.status)} />
 
             {expense.paymentMethod && (
               <div>

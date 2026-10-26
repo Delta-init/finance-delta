@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
 import { useCurrency } from "@/lib/currency-context";
+import { useOpenBreakdown } from "@/features/dashboard/DashboardBreakdown";
 
 export function ExpenseChart() {
   const { data, isLoading } = useDashboardStats();
@@ -21,8 +22,14 @@ export function ExpenseChart() {
   const breakdown = data?.expenseBreakdown ?? [];
   const chartData = breakdown.map((e) => ({
     category: e.category,
+    categoryKey: e.categoryKey,
     amount: e.totalMinor,
   }));
+  const open = useOpenBreakdown();
+  // A category's expenses over the chart's three months (2026-10-26) — needs the API's categoryKey.
+  const openCategory = (row?: { category: string; categoryKey?: string }) => {
+    if (row?.categoryKey) open({ label: `${row.category} — last 3 months`, parts: [{ kind: "category", category: row.categoryKey }] });
+  };
 
   const fmtAmount = (v: number) =>
     `${(convert(v) / 100000).toFixed(0)}k`;
@@ -31,7 +38,7 @@ export function ExpenseChart() {
     <Card>
       <CardHeader>
         <CardTitle>Expenses by Category</CardTitle>
-        <CardDescription>Breakdown of recorded expenses</CardDescription>
+        <CardDescription>Last 3 months — click a category to see its expenses</CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -85,6 +92,8 @@ export function ExpenseChart() {
                   dataKey="amount"
                   fill="var(--primary)"
                   radius={[0, 4, 4, 0]}
+                  className="cursor-pointer"
+                  onClick={(d) => openCategory((d as { payload?: { category: string; categoryKey?: string } }).payload)}
                 />
               </BarChart>
             </ResponsiveContainer>

@@ -367,7 +367,7 @@ const DAILY_GROUPS: Record<DailyBreakdownKind, Array<{ key: string; label: strin
 };
 
 /** Which CRM an invoice came from — or typed in finance. */
-function crmOf(inv: any): string {
+export function crmOf(inv: any): string {
   const crm = enrolmentCrm(inv.enrolment?.crm, inv.external?.source);
   if (crm) return ENROLMENT_CRM_LABELS[crm];
   if (inv.external?.source === OLD_BOOKS_SOURCE) return "Old books";

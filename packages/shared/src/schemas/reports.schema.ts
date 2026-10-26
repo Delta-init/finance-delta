@@ -122,6 +122,37 @@ export type DailyBreakdown = {
   records: DailyBreakdownRecord[];
 };
 
+// ── Dashboard breakdowns (the user, 2026-10-26) ──────────────────────────────
+
+/**
+ * Where a dashboard figure came from ("breakdown of the stat and graph and all"): the records behind it, by the
+ * dashboard's own rules so they add up to the figure clicked, and their totals grouped.
+ *   revenue, expenses, cash_in, cash_out — one month (`month` YYYY-MM, Dubai);
+ *   receivables, overdue, payables — as of today; aging — one band of receivables (`band`);
+ *   category — an expense category's last three months (`category`, its slug); customer — a client's last six
+ *   months of invoices (`customer`, the name).
+ */
+export const DASHBOARD_BREAKDOWN_KINDS = ["revenue", "expenses", "cash_in", "cash_out", "receivables", "overdue", "aging", "payables", "category", "customer"] as const;
+export type DashboardBreakdownKind = (typeof DASHBOARD_BREAKDOWN_KINDS)[number];
+
+/** How far past its due date a receivable is, as the dashboard's aging bands. */
+export const AGING_BANDS = ["current", "1-30", "31-60", "61-90", "90+"] as const;
+export type AgingBand = (typeof AGING_BANDS)[number];
+export const AGING_BAND_LABELS: Record<AgingBand, string> = {
+  current: "Not due yet", "1-30": "1–30 days late", "31-60": "31–60 days late", "61-90": "61–90 days late", "90+": "Over 90 days late",
+};
+
+export type DashboardBreakdown = {
+  kind: DashboardBreakdownKind;
+  title: string;
+  /** What it covers, in words: "October 2026", "as of 26 Oct 2026", "Aug – Oct 2026". */
+  scope: string;
+  totalMinor: number;
+  count: number;
+  groups: DailyBreakdownGroup[];
+  records: DailyBreakdownRecord[];
+};
+
 // ── Expense and Revenue reports (the user, 2026-10-24) ───────────────────────
 
 /*

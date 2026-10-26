@@ -334,3 +334,12 @@ export const markExpensePaidSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 export type MarkExpensePaidInput = z.infer<typeof markExpensePaidSchema>;
+
+/**
+ * Its bank statement date typed in by hand on the expense (the user, 2026-10-26), or null to take it off again. A
+ * reconciliation that ticks its bank line still writes over it.
+ */
+export const setExpenseStatementDateSchema = z.object({
+  statementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date").nullable(),
+});
+export type SetExpenseStatementDateInput = z.infer<typeof setExpenseStatementDateSchema>;

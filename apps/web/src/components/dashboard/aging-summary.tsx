@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
 import { useCurrency } from "@/lib/currency-context";
+import { useOpenBreakdown } from "@/features/dashboard/DashboardBreakdown";
+import type { AgingBand } from "@delta/shared";
 
 interface Band {
   label: string;
@@ -17,20 +19,23 @@ interface Band {
   };
   barColor: string;
   textColor: string;
+  /** The band the breakdown asks for (2026-10-26). */
+  band: AgingBand;
 }
 
 const BANDS: Band[] = [
-  { label: "Current", key: "current", barColor: "bg-success", textColor: "text-success" },
-  { label: "1–30 days", key: "band1to30", barColor: "bg-warning", textColor: "text-warning" },
-  { label: "31–60 days", key: "band31to60", barColor: "bg-orange-500", textColor: "text-orange-500" },
-  { label: "61–90 days", key: "band61to90", barColor: "bg-orange-700", textColor: "text-orange-700" },
-  { label: "90+ days", key: "band90plus", barColor: "bg-danger", textColor: "text-danger" },
+  { label: "Current", key: "current", band: "current", barColor: "bg-success", textColor: "text-success" },
+  { label: "1–30 days", key: "band1to30", band: "1-30", barColor: "bg-warning", textColor: "text-warning" },
+  { label: "31–60 days", key: "band31to60", band: "31-60", barColor: "bg-orange-500", textColor: "text-orange-500" },
+  { label: "61–90 days", key: "band61to90", band: "61-90", barColor: "bg-orange-700", textColor: "text-orange-700" },
+  { label: "90+ days", key: "band90plus", band: "90+", barColor: "bg-danger", textColor: "text-danger" },
 ];
 
 export function AgingSummary() {
   const { data, isLoading } = useDashboardStats();
 
   const { currency, convert } = useCurrency();
+  const open = useOpenBreakdown();
   const aging = data?.aging;
   const total = aging?.total ?? 0;
 
@@ -62,7 +67,13 @@ export function AgingSummary() {
                 const value = aging[band.key] as number;
                 const pct = total > 0 ? (value / total) * 100 : 0;
                 return (
-                  <div key={band.key} className="space-y-1.5">
+                  <button
+                    key={band.key}
+                    type="button"
+                    onClick={() => open({ label: `Receivables — ${band.label}`, parts: [{ kind: "aging", band: band.band }] })}
+                    className="block w-full space-y-1.5 rounded-md text-left hover:bg-surface-muted/60"
+                    title="See these invoices"
+                  >
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-foreground-muted">{band.label}</span>
                       <span className={`font-numeric font-medium text-xs ${band.textColor}`}>
@@ -75,13 +86,17 @@ export function AgingSummary() {
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                  </div>
+                  </button>
                 );
               })}
-              <div className="border-t border-border pt-3 flex items-center justify-between text-sm font-semibold">
+              <button
+                type="button"
+                onClick={() => open({ label: "Outstanding receivables", parts: [{ kind: "receivables" }] })}
+                className="flex w-full items-center justify-between border-t border-border pt-3 text-sm font-semibold hover:text-primary"
+              >
                 <span>Total</span>
                 <span className="font-numeric">{fmtAmount(total)}</span>
-              </div>
+              </button>
             </>
           )
           : (

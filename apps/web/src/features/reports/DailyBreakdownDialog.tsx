@@ -70,7 +70,8 @@ function KindBreakdown({ kind, pick, money, showTitle }: { kind: DailyBreakdownK
   return <Breakdown data={data} money={money} title={showTitle ? KIND_TITLE[kind] : undefined} />;
 }
 
-function Breakdown({ data, money, title }: { data: DailyBreakdown; money: (m: number) => string; title?: string }) {
+/** A figure's total, its groups and its records — also the dashboard's breakdowns (2026-10-26). */
+export function Breakdown({ data, money, title }: { data: Pick<DailyBreakdown, "totalMinor" | "count" | "groups" | "records">; money: (m: number) => string; title?: string }) {
   const [groupKey, setGroupKey] = useState(data.groups[0]?.key ?? "");
   const group = data.groups.find((g) => g.key === groupKey) ?? data.groups[0];
   const [open, setOpen] = useState<string | null>(null);

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema, markExpensePaidSchema } from "@delta/shared";
+import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema, markExpensePaidSchema, setExpenseStatementDateSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requireAnyPermission, requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -42,6 +42,7 @@ router.delete("/:id", requirePermission("expense:delete"), c.remove);
 // whether it is owed, whoever pays it records that it went.
 router.post("/:id/mark-paid", requirePermission("expense:update"), validateBody(markExpensePaidSchema), c.markPaid);
 router.post("/:id/mark-unpaid", requirePermission("expense:update"), c.markUnpaid);
+router.post("/:id/statement-date", requirePermission("expense:update"), validateBody(setExpenseStatementDateSchema), c.setStatementDate);
 // Recurring template controls
 router.post("/:id/recurrence/pause", requirePermission("expense:update"), c.pauseRecurrence);
 router.post("/:id/recurrence/resume", requirePermission("expense:update"), c.resumeRecurrence);

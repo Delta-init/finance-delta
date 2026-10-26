@@ -14,17 +14,32 @@ import { Card, CardContent, CardHeader, CardDescription, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboardStats } from "@/features/dashboard/api";
 import { useCurrency } from "@/lib/currency-context";
+import { monthTitle, useOpenBreakdown } from "@/features/dashboard/DashboardBreakdown";
+
+const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10" for a point — its key, or from its label ("Oct 2026") on an API older than 2026-10-26. */
+function keyOf(p: { month: string; key?: string }): string {
+  if (p.key) return p.key;
+  const [mon, y] = p.month.split(" ");
+  return `${y}-${String(SHORT.indexOf(mon ?? "") + 1).padStart(2, "0")}`;
+}
 
 export function CashflowChart() {
   const { data, isLoading } = useDashboardStats();
   const { currency, convert } = useCurrency();
   const fmt = (v: number) => `${(convert(v) / 100000).toFixed(0)}k`;
+  const open = useOpenBreakdown();
+  // A month's money in and money out, side by side (2026-10-26).
+  const openMonth = (p: { month: string; key?: string }) => {
+    const key = keyOf(p);
+    open({ label: `Cash flow — ${monthTitle(key)}`, parts: [{ kind: "cash_in", month: key }, { kind: "cash_out", month: key }] });
+  };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Cash Flow</CardTitle>
-        <CardDescription>Money in vs. money out by month</CardDescription>
+        <CardDescription>Money in vs. money out by month — click a month to see where it came from</CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -39,6 +54,11 @@ export function CashflowChart() {
               <AreaChart
                 data={data.cashflow}
                 margin={{ left: -12, right: 8, top: 4 }}
+                className="cursor-pointer"
+                onClick={(s) => {
+                  const p = (s as { activePayload?: { payload?: { month: string; key?: string } }[] } | null)?.activePayload?.[0]?.payload;
+                  if (p) openMonth(p);
+                }}
               >
                 <defs>
                   <linearGradient id="cf-inflow" x1="0" y1="0" x2="0" y2="1">
@@ -101,6 +121,20 @@ export function CashflowChart() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        )}
+        {data && data.cashflow.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {data.cashflow.map((p) => (
+              <button
+                key={p.month}
+                type="button"
+                onClick={() => openMonth(p)}
+                className="rounded-md bg-surface-muted px-2 py-1 text-xs text-foreground-muted hover:bg-primary/10 hover:text-primary"
+              >
+                {p.month}
+              </button>
+            ))}
           </div>
         )}
       </CardContent>

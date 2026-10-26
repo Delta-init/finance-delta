@@ -10,6 +10,7 @@ import type {
   RejectExpenseInput,
   ExpensePaymentStatus,
   MarkExpensePaidInput,
+  SetExpenseStatementDateInput,
   ExpenseAttachmentInput,
   UploadedExpenseFile,
 } from "@delta/shared";
@@ -849,6 +850,20 @@ export async function markExpenseUnpaid(orgId: string, id: string): Promise<Expe
   await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
   return syncedDTO(orgId, doc._id);
+}
+
+/**
+ * Its statement date typed in, changed or taken off by hand (the user, 2026-10-26: "we can edit the statement date of
+ * the expense"). Only the expense: its bank line and any reconciliation stay as they are, and reconciling that line
+ * later writes over this. A voided or rejected expense was never paid, so it has none.
+ */
+export async function setExpenseStatementDate(orgId: string, id: string, input: SetExpenseStatementDateInput): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).select("status").lean<{ _id: Types.ObjectId; status: string }>();
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  if (["voided", "rejected"].includes(doc.status)) throw new AppError("CONFLICT", "A voided or rejected expense has no statement date");
+  await Expense.updateOne({ _id: doc._id }, { $set: { statementDate: input.statementDate ? new Date(input.statementDate) : null } });
+  const fresh = await Expense.findOne({ _id: doc._id, organizationId: orgId }).populate("departmentId", "name");
+  return toDTO(fresh as unknown as ExpenseDoc);
 }
 
 export async function setRecurrenceActive(

@@ -10,6 +10,7 @@ import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
 import { ApprovalsModal } from "@/components/dashboard/approvals-modal";
+import { DashboardBreakdownProvider } from "@/features/dashboard/DashboardBreakdown";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -57,6 +58,8 @@ export default async function DashboardPage() {
       <InvoiceApprovals />
       <PendingApprovals />
 
+      {/* Every card, chart and list below opens where its figure came from (2026-10-26). */}
+      <DashboardBreakdownProvider>
       <SectionCards />
 
       <div className="grid gap-6 lg:grid-cols-7">
@@ -77,6 +80,7 @@ export default async function DashboardPage() {
           <ExpenseChart />
         </div>
       </div>
+      </DashboardBreakdownProvider>
     </div>
   );
 }

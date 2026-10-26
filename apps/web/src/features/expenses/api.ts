@@ -141,3 +141,16 @@ export function useRemoveExpenseAttachment(id: string) {
     },
   });
 }
+
+/** Its statement date typed in by hand, or null to take it off (2026-10-26). */
+export function useSetExpenseStatementDate(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (statementDate: string | null) => api.post<Expense>(`expenses/${id}/statement-date`, { statementDate }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: [...KEY, id] });
+    },
+  });
+}

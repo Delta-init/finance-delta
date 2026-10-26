@@ -14,4 +14,6 @@ router.use(authenticate);
 // report:read would take it away from them. What it excludes is somebody whose
 // only access is to their own records.
 router.get("/", requireAnyPermission("report:read", "invoice:read"), c.getStats);
+// The records behind a figure (2026-10-26); expense figures need more — see the controller.
+router.get("/breakdown", requireAnyPermission("report:read", "invoice:read"), c.getBreakdown);
 export default router;

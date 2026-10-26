@@ -103,8 +103,9 @@ const expenseSchema = new Schema(
     bankTransactionId: { type: Schema.Types.ObjectId, default: null },
     bankNote: { type: String, default: "" },
     /**
-     * The day the bank's statement shows it (the user, 2026-10-23) — written only when its bank line is reconciled
-     * (banking.service.ts writeStatementDates), never from the expense form. Cleared when its line is replaced.
+     * The day the bank's statement shows it (the user, 2026-10-23) — written when its bank line is reconciled
+     * (banking.service.ts writeStatementDates), or typed in by hand on the expense (2026-10-26,
+     * setExpenseStatementDate); never from the expense form. Cleared when its line is replaced.
      */
     statementDate: { type: Date, default: null },
     /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */

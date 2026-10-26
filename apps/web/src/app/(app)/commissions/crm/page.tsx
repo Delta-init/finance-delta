@@ -88,6 +88,7 @@ export default function CrmCommissionPage() {
                   <p className="mt-1 text-xs text-foreground-muted">
                     payable of {money(c.earnedTotalMinor, c.currency)} earned · {c.people.length} {c.people.length === 1 ? "person" : "people"}
                   </p>
+                  <p className="text-xs text-foreground-muted">collected <span className="font-medium text-foreground">{money(c.collectedTotalMinor ?? 0, c.currency)}</span> on the month's sales</p>
                   <p className="text-xs text-foreground-muted">approved {money(approved, c.currency)} · paid {money(paid, c.currency)}</p>
                 </Card>
               );
@@ -126,7 +127,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
         <h2 className="font-semibold">{crm.name}</h2>
         <p className="text-xs text-foreground-muted">
-          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned
+          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned · {money(crm.collectedTotalMinor ?? 0, crm.currency)} collected
           {crm.pending.progress + crm.pending.waiting > 0 && ` · ${crm.pending.progress + crm.pending.waiting} sale${crm.pending.progress + crm.pending.waiting === 1 ? "" : "s"} still finishing their steps`}
         </p>
       </div>
@@ -146,6 +147,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
               <tr>
                 <th className="px-4 py-2 font-medium">Person</th>
                 <th className="px-4 py-2 text-right font-medium">Sales</th>
+                <th className="px-4 py-2 text-right font-medium" title="What their sales' invoices have collected — each sale once">Collected</th>
                 <th className="px-4 py-2 text-right font-medium" title="My Pay's commission payable: earned × the slab level's %">Payable</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 text-right font-medium" />
@@ -167,6 +169,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                         </button>
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">{p.sales}</td>
+                      <td className="px-4 py-2.5 text-right font-numeric">{money(p.collectedMinor ?? 0, crm.currency)}</td>
                       <td className="px-4 py-2.5 text-right font-numeric font-semibold">
                         {p.payout ? money(p.payout.amountMinor, crm.currency) : p.payableKnown ? money(p.amountMinor, crm.currency) : "—"}
                         <span className="block text-xs font-normal text-foreground-muted">
@@ -200,13 +203,13 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-border bg-surface-muted/30">
-                        <td colSpan={5} className="px-4 py-2">
+                        <td colSpan={6} className="px-4 py-2">
                           {!p.lines.length ? (
                             <p className="py-2 text-xs text-foreground-muted">No sales counted for {p.name} now.</p>
                           ) : (
                             <table className="w-full text-xs">
                               <thead className="text-left text-foreground-muted">
-                                <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
+                                <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 text-right font-medium" title="Collected of the invoice's total">Collected</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
                               </thead>
                               <tbody>
                                 {p.lines.map((l, i) => (
@@ -215,6 +218,10 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                     <td className="py-1">{l.student || "—"}</td>
                                     <td className="py-1">{l.course || "—"}</td>
                                     <td className="py-1">{l.invoiceNumber || "—"}</td>
+                                    <td className="py-1 text-right font-numeric">
+                                      {l.collectedMinor == null ? <span className="text-foreground-muted">—</span> : money(l.collectedMinor, crm.currency)}
+                                      {l.feeMinor != null && l.collectedMinor != null && l.collectedMinor < l.feeMinor && <span className="block text-[10px] text-foreground-muted">of {money(l.feeMinor, crm.currency)}</span>}
+                                    </td>
                                     <td className="py-1">{ROLE[l.role] ?? l.role}</td>
                                     <td className="py-1 text-right font-numeric">{money(Math.round(l.amount * 100), crm.currency)}</td>
                                   </tr>

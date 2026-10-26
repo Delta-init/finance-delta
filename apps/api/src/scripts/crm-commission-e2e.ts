@@ -103,6 +103,15 @@ const pay = (who: string, o = ORG, extra: Record<string, unknown> = {}) => svc.p
   receipt: { name: "receipt.pdf", key: receiptKey(o), size: 1234, mimeType: "application/pdf" }, ...extra,
 }));
 
+// The sales' invoices here (2026-10-26, the collected amount): S1 part paid; S2 in full; another organization's S1,
+// sold by another CRM, which isn't Ria's; S3 voided.
+await mongoose.connection.db!.collection("invoices").insertMany([
+  { organizationId: org._id, invoiceNumber: "IN-S1", status: "partially_paid", totalMinor: 300000, amountPaidMinor: 200000, enrolment: { crm: "delta" } },
+  { organizationId: other._id, invoiceNumber: "IN-S1", status: "paid", totalMinor: 999900, amountPaidMinor: 999900, enrolment: { crm: "remote" } },
+  { organizationId: org._id, invoiceNumber: "IN-S2", status: "paid", totalMinor: 150000, amountPaidMinor: 150000, enrolment: { crm: "delta" } },
+  { organizationId: org._id, invoiceNumber: "IN-S3", status: "voided", totalMinor: 50000, amountPaidMinor: 50000, enrolment: { crm: "delta" } },
+]);
+
 /* ── 1 ── */
 step("1. The month, per CRM and person");
 let view = await svc.crmCommissionMonth(ORG, ASHA, ["commission:read", "commission:write"], false, M);
@@ -111,6 +120,12 @@ check("each CRM, its people: My Pay's payable (minor units) with the earned figu
   delta.people.map((p) => [p.name, p.amountMinor, p.earnedMinor, p.percent, p.level, p.state]).join("|") === "Ria,60000,120000,50,Level 2,earned|Abrar,12000,12000,100,Level 1,earned|Lena,0,30000,0,Base,earned"
   && delta.totalMinor === 72000 && delta.earnedTotalMinor === 132000 && delta.payError === null, j(delta.people));
 check("…with the sales behind them and what is still on its way", delta.people[0]!.lines.length === 2 && delta.pending.progress === 1);
+const riaNow = delta.people.find((p) => p.name === "Ria")!;
+check("collected: each sale's invoice here, the one this CRM sold — Ria 2,000 of 3,000 + 1,500", riaNow.collectedMinor === 350000
+  && riaNow.lines.map((l) => [l.invoiceNumber, l.collectedMinor, l.feeMinor].join(":")).join("|") === "IN-S1:200000:300000|IN-S2:150000:150000", j(riaNow.lines));
+check("…a voided invoice collects nothing; the CRM's total counts each sale once (Abrar's S1 / S2 are Ria's)",
+  delta.people.find((p) => p.name === "Lena")!.collectedMinor === 0 && delta.people.find((p) => p.name === "Lena")!.lines[0]!.collectedMinor === null
+  && delta.collectedTotalMinor === 350000, j({ total: delta.collectedTotalMinor }));
 check("a CRM that can't be read says so", view.crms.find((c) => c.code === "banglore")?.error === "No database URI configured");
 check("asked of Root with finance's secret and the month", root.hits.at(-1)?.signed === true && root.hits.at(-1)?.month === M, j(root.hits.at(-1)));
 check("Asha: pays, doesn't approve; Mona: approves", !view.me.canApprove && view.me.canPay && (await svc.crmCommissionMonth(ORG, MONA, ["commission:read"], false, M)).me.canApprove);

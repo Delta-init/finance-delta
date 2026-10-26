@@ -16,6 +16,8 @@ import { nextNumber } from "../sequence/sequence.service";
 import { isManager } from "../late-entry/late-entry.service";
 import type { ParsedFile } from "../../middleware/upload";
 import { CrmCommissionPayout } from "./crm-commission-payout.model";
+import { Invoice } from "../invoice/invoice.model";
+import { enrolmentCrm } from "@delta/shared";
 
 /*
  * The sales CRMs' commission in finance (the user, 2026-10-21) — see crm-commission.schema.ts. The CRMs' counted
@@ -100,16 +102,45 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     };
   };
 
+  // What each sale collected (the user, 2026-10-26: "show the collected amount also"): its invoice here — by its
+  // number, the one this CRM sold when several organizations have that number — paid so far, and its total.
+  const numbers = [...new Set(crms.flatMap((c) => (c.people ?? []).flatMap((p) => (p.lines ?? []).map((l) => l.invoiceNumber))).filter(Boolean))];
+  const invoices = numbers.length
+    ? await Invoice.find({ invoiceNumber: { $in: numbers }, status: { $ne: "voided" } })
+      .select("invoiceNumber amountPaidMinor totalMinor enrolment.crm external.source").lean<any[]>()
+    : [];
+  const invoiceOf = (crm: string, number: string) => {
+    const same = invoices.filter((i) => i.invoiceNumber === number);
+    if (same.length <= 1) return same[0] ?? null;
+    return same.find((i) => enrolmentCrm(i.enrolment?.crm, i.external?.source) === crm.toLowerCase()) ?? null;
+  };
+  const collectedOf = (crm: string, lines: CrmCommissionLine[]) => {
+    const seen = new Set<string>();
+    let sum = 0;
+    for (const l of lines) {
+      if (seen.has(l.saleId)) continue;
+      seen.add(l.saleId);
+      sum += Number(invoiceOf(crm, l.invoiceNumber)?.amountPaidMinor) || 0;
+    }
+    return sum;
+  };
+  const withMoney = (crm: string, lines: CrmCommissionLine[]) => lines.map((l) => {
+    const inv = l.invoiceNumber ? invoiceOf(crm, l.invoiceNumber) : null;
+    return { ...l, collectedMinor: inv ? Number(inv.amountPaidMinor) || 0 : null, feeMinor: inv ? Number(inv.totalMinor) || 0 : null };
+  });
+
   const out: CrmCommissionCrm[] = crms.map((c) => ({
     code: c.code, name: c.name, currency: c.currency || "AED", error: c.error, totalMinor: minor(c.payableTotal ?? 0),
     earnedTotalMinor: minor(c.total), payError: c.payError ?? (c.payableTotal === undefined ? "The Root portal needs updating to give My Pay's figures." : null),
     pending: c.pending ?? { progress: 0, waiting: 0 },
+    collectedTotalMinor: collectedOf(c.code, (c.people ?? []).flatMap((p) => p.lines ?? [])),
     people: (c.people ?? []).map((p) => {
       const payout = byKey.get(keyOf(c.code, month, p.userId));
       const payable = typeof p.payable === "number" ? minor(p.payable) : null;
       return {
         userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor: payable ?? 0, payableKnown: payable !== null,
-        earnedMinor: minor(p.amount), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0, lines: p.lines ?? [],
+        earnedMinor: minor(p.amount), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0,
+        collectedMinor: collectedOf(c.code, p.lines ?? []), lines: withMoney(c.code, p.lines ?? []),
         state: payout ? payout.state : "earned",
         payout: payout ? view(payout) : null,
         changed: !!payout && payable !== null && payout.amountMinor !== payable,
@@ -122,7 +153,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
     crm.people.push({
       userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, percent: null, level: null,
-      sales: 0, lines: [], state: p.state, payout: view(p), changed: true,
+      sales: 0, collectedMinor: 0, lines: [], state: p.state, payout: view(p), changed: true,
     });
   }
 

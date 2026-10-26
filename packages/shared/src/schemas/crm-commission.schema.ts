@@ -53,6 +53,9 @@ export type CrmCommissionState = "earned" | "approved" | "paid";
 
 export interface CrmCommissionLine {
   saleId: string; saleDate: string; student: string; course: string; invoiceNumber: string; role: string; amount: number;
+  /** What the sale's invoice here has collected, and its total — minor units, null when no invoice here matches (2026-10-26). */
+  collectedMinor?: number | null;
+  feeMinor?: number | null;
 }
 
 export interface CrmCommissionPayoutView {
@@ -80,6 +83,8 @@ export interface CrmCommissionPerson {
   percent: number | null;
   level: string | null;
   sales: number;
+  /** What their sales' invoices have collected (each sale once), minor units (2026-10-26). */
+  collectedMinor: number;
   lines: CrmCommissionLine[];
   state: CrmCommissionState;
   payout: CrmCommissionPayoutView | null;
@@ -92,6 +97,8 @@ export interface CrmCommissionCrm {
   /** Payable this month (My Pay's figures); the commission earned it comes from. */
   totalMinor: number;
   earnedTotalMinor: number;
+  /** What the month's counted sales collected (each sale once, their invoices here), minor units (2026-10-26). */
+  collectedTotalMinor: number;
   /** Why My Pay's figures are missing for this CRM, when they are — nothing can be approved then. */
   payError: string | null;
   pending: { progress: number; waiting: number };

@@ -106,10 +106,11 @@ const pay = (who: string, o = ORG, extra: Record<string, unknown> = {}) => svc.p
 // The sales' invoices here (2026-10-26, the collected amount): S1 part paid; S2 in full; another organization's S1,
 // sold by another CRM, which isn't Ria's; S3 voided.
 await mongoose.connection.db!.collection("invoices").insertMany([
-  { organizationId: org._id, invoiceNumber: "IN-S1", status: "partially_paid", totalMinor: 300000, amountPaidMinor: 200000, enrolment: { crm: "delta" } },
+  { organizationId: org._id, invoiceNumber: "IN-S1", status: "partial", totalMinor: 300000, amountPaidMinor: 200000, enrolment: { crm: "delta" } },
   { organizationId: other._id, invoiceNumber: "IN-S1", status: "paid", totalMinor: 999900, amountPaidMinor: 999900, enrolment: { crm: "remote" } },
   { organizationId: org._id, invoiceNumber: "IN-S2", status: "paid", totalMinor: 150000, amountPaidMinor: 150000, enrolment: { crm: "delta" } },
-  { organizationId: org._id, invoiceNumber: "IN-S3", status: "voided", totalMinor: 50000, amountPaidMinor: 50000, enrolment: { crm: "delta" } },
+  // "void" — finance's own word for a cancelled invoice (the first version looked for "voided" and counted these).
+  { organizationId: org._id, invoiceNumber: "IN-S3", status: "void", totalMinor: 50000, amountPaidMinor: 50000, enrolment: { crm: "delta" } },
 ]);
 
 /* ── 1 ── */

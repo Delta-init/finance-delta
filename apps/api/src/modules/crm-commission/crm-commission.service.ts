@@ -106,7 +106,8 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   // number, the one this CRM sold when several organizations have that number — paid so far, and its total.
   const numbers = [...new Set(crms.flatMap((c) => (c.people ?? []).flatMap((p) => (p.lines ?? []).map((l) => l.invoiceNumber))).filter(Boolean))];
   const invoices = numbers.length
-    ? await Invoice.find({ invoiceNumber: { $in: numbers }, status: { $ne: "voided" } })
+    // Finance's cancelled invoices are "void" (a moved enrolment's old invoice among them): they collect nothing.
+    ? await Invoice.find({ invoiceNumber: { $in: numbers }, status: { $ne: "void" } })
       .select("invoiceNumber amountPaidMinor totalMinor enrolment.crm external.source").lean<any[]>()
     : [];
   const invoiceOf = (crm: string, number: string) => {

@@ -74,7 +74,7 @@ export default function CrmCommissionPage() {
         <>
           {month === thisMonth() && (
             <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-foreground-muted">
-              {monthLabel(month)} is still running — sales finishing their steps add to it. An approval freezes the amount; anything counted later shows as changed.
+              {monthLabel(month)} is still running — sales finance approves add to it. An approval freezes the amount; anything counted later shows as changed.
             </p>
           )}
           <div className="grid gap-4 sm:grid-cols-3">
@@ -128,7 +128,9 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
         <h2 className="font-semibold">{crm.name}</h2>
         <p className="text-xs text-foreground-muted">
           {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned · {money(crm.collectedTotalMinor ?? 0, crm.currency)} collected
-          {crm.pending.progress + crm.pending.waiting > 0 && ` · ${crm.pending.progress + crm.pending.waiting} sale${crm.pending.progress + crm.pending.waiting === 1 ? "" : "s"} still finishing their steps`}
+          {/* Counted at finance's approval since 2026-10-26: "progress" is waiting for it; "waiting" is on hold in the CRM (its team). */}
+          {crm.pending.progress > 0 && ` · ${crm.pending.progress} sale${crm.pending.progress === 1 ? "" : "s"} waiting for finance's approval`}
+          {crm.pending.waiting > 0 && ` · ${crm.pending.waiting} on hold in the CRM`}
         </p>
       </div>
       {!crm.error && crm.payError && (

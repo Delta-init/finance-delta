@@ -7,6 +7,7 @@ import type {
   Expense,
   ExpenseSummary,
   RejectExpenseInput,
+  RecordProcurementPaymentInput,
 } from "@delta/shared";
 import { api, qs, type QueryParams } from "@/lib/api";
 
@@ -151,6 +152,19 @@ export function useSetExpenseStatementDate(id: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: [...KEY, id] });
+    },
+  });
+}
+
+/** An approved purchase request paid, its receipt already attached (2026-10-26). */
+export function useRecordProcurementPayment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: RecordProcurementPaymentInput) => api.post<Expense>(`expenses/${id}/record-payment`, input),
+    onSuccess: (data) => {
+      qc.setQueryData([...KEY, id], data);
+      qc.invalidateQueries({ queryKey: KEY });
     },
   });
 }

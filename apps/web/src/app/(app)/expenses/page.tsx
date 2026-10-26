@@ -66,7 +66,7 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
   { header: "Statement date", value: (e) => e.statementDate ?? (e.statementState === "pending" ? "Pending" : "") },
   { header: "Submitted By", value: (e) => e.submittedByName },
   { header: "Salesperson", value: (e) => e.salesperson?.name ?? "" },
-  { header: "Status", value: (e) => STATUS_LABELS[e.status] ?? e.status },
+  { header: "Status", value: (e) => (e.awaitingPayment ? "Waiting for payment" : STATUS_LABELS[e.status] ?? e.status) },
   { header: "Paid by", value: (e) => paymentMethodLabel(e.paymentMethod) },
   { header: "Bank", value: (e) => e.paymentAccount ?? "" },
   { header: "Bill", value: (e) => e.bill?.number ?? "" },
@@ -268,9 +268,10 @@ export default function ExpensesPage() {
       header: "Status",
       sortable: true,
       cell: (e) => (
-        <Badge tone={STATUS_TONE[e.status] ?? "neutral"}>
-          {STATUS_LABELS[e.status] ?? e.status}
-        </Badge>
+        // An approved purchase request not paid yet is a draft that waits for its payment, not an approver (2026-10-26).
+        e.awaitingPayment
+          ? <Badge tone="warning">Waiting for payment</Badge>
+          : <Badge tone={STATUS_TONE[e.status] ?? "neutral"}>{STATUS_LABELS[e.status] ?? e.status}</Badge>
       ),
     },
     {

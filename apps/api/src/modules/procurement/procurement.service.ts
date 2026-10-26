@@ -19,8 +19,10 @@ import { forgetProcurementRequests } from "../approvals/approvals.service";
  * same way payroll batches are — a local copy would be one more thing to keep
  * in step, and the only question finance actually answers is yes or no.
  *
- * A yes is recorded as an expense, approved and unpaid: the company has
- * agreed to spend the money, and "Mark paid" says when it went. It used to
+ * A yes is recorded as an expense — a draft since 2026-10-26 ("first approve
+ * time the expense will be marked as draft, then after it is paid it will be
+ * updated, with the receipt, as paid"): counted nowhere until "Record payment",
+ * with its receipt, makes it approved and paid. It used to
  * raise a purchase order, which meant choosing a vendor from the vendor list
  * for every chair and toner cartridge — nobody ever did, and nothing was ever
  * approved. The expense is finance's own record; the request stays HRMS's.
@@ -94,7 +96,8 @@ export const PROCUREMENT_HISTORY_STATUSES = ["requested", "hr_approved", "approv
 export interface ProcurementHistoryRow extends HrmsProcurementRecord {
   hrmsOrgId: string;
   /** The expense finance recorded when it approved it — any round of it. */
-  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null } | null;
+  /** awaitingPayment: approved here, not paid yet (a draft, 2026-10-26); paidOn: the day it was. */
+  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null; awaitingPayment: boolean; paidOn: string | null } | null;
 }
 
 /**
@@ -118,7 +121,7 @@ export async function listHistory(orgId: string, status: HrmsProcurementHistoryS
     ? await Expense.find({
         organizationId: new Types.ObjectId(orgId),
         "source.key": { $in: rows.flatMap((r) => Array.from({ length: (r.resubmitCount ?? 0) + 1 }, (_, i) => `hrms:${r.hrmsOrgId}:${r._id}:${i}`)) },
-      }).select("expenseNumber status source totalMinor createdAt").sort({ createdAt: 1 }).lean()
+      }).select("expenseNumber status source totalMinor paidOn createdAt").sort({ createdAt: 1 }).lean()
     : [];
   const madeFor = new Map<string, (typeof made)[number]>();
   for (const e of made) madeFor.set(String(e.source?.key).split(":").slice(0, 3).join(":"), e);
@@ -127,7 +130,10 @@ export async function listHistory(orgId: string, status: HrmsProcurementHistoryS
       const e = madeFor.get(`hrms:${r.hrmsOrgId}:${r._id}`);
       return {
         ...r,
-        expense: e ? { id: String(e._id), expenseNumber: String(e.expenseNumber), status: String(e.status), totalMinor: typeof e.totalMinor === "number" ? e.totalMinor : null } : null,
+        expense: e ? {
+          id: String(e._id), expenseNumber: String(e.expenseNumber), status: String(e.status), totalMinor: typeof e.totalMinor === "number" ? e.totalMinor : null,
+          awaitingPayment: e.status === "draft", paidOn: e.paidOn ? new Date(e.paidOn).toISOString().slice(0, 10) : null,
+        } : null,
       };
     })
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -216,8 +222,9 @@ async function makeExpense(
       dueDate: row.neededBy ? new Date(row.neededBy) : undefined,
       submittedById: new Types.ObjectId(userId),
       submittedByName: user.name,
-      // The approval on this page is the approval: it is not sent round again.
-      status: "approved",
+      // The approval on this page is the approval: it is not sent round again. A draft until it is paid, with its
+      // receipt (expense.service recordProcurementPayment) — who approved it and when are kept from now.
+      status: "draft",
       approvedById: new Types.ObjectId(userId),
       approvedByName: user.name,
       approvedAt: now,

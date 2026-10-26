@@ -76,6 +76,10 @@ export const markUnpaid = asyncHandler(async (req, res) => {
   ok(res, await svc.markExpenseUnpaid(org(req), req.params.id!));
 });
 
+export const recordPayment = asyncHandler(async (req, res) => {
+  ok(res, await svc.recordProcurementPayment(org(req), req.params.id!, req.body, req.auth!.userId));
+});
+
 export const setStatementDate = asyncHandler(async (req, res) => {
   ok(res, await svc.setExpenseStatementDate(org(req), req.params.id!, req.body));
 });

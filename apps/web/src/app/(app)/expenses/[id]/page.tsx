@@ -36,6 +36,8 @@ import {
   useResumeRecurrence,
   useStopRecurrence,
   useDeleteExpense,
+  useRecordProcurementPayment,
+  useAddExpenseAttachment,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
 import { StatementDateField } from "@/features/expenses/StatementDateField";
@@ -98,7 +100,14 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const { data: accountList } = useBankAccounts({ isActive: "true", pageSize: 100 });
   const accounts = accountList?.data ?? [];
   const [payAccount, setPayAccount] = useState("__none__");
+  // Paying an approved purchase request (2026-10-26): its receipt, and what it actually cost.
+  const recordPayment = useRecordProcurementPayment(id);
+  const addReceipt = useAddExpenseAttachment(id);
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [paidAmount, setPaidAmount] = useState("");
   function openPay() {
+    setReceipt(null);
+    setPaidAmount(expense ? (expense.totalMinor / 100).toFixed(2) : "");
     const id = expense?.bankAccountId || (expense?.paymentMethod ? org?.paymentAccounts?.[expense.paymentMethod] ?? "" : "");
     setPayAccount(accounts.some((a) => a.id === id) ? id : "__none__");
     setPayOpen(true);
@@ -130,7 +139,9 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   if (isLoading) return <div className="flex h-64 items-center justify-center text-foreground-muted">Loading…</div>;
   if (!expense) return <div className="flex h-64 items-center justify-center text-foreground-muted">Expense not found.</div>;
 
-  const canSubmit = expense.status === "draft" || expense.status === "rejected";
+  // An approved purchase request waits for its payment, not for an approver (2026-10-26).
+  const awaitingPayment = expense.awaitingPayment === true;
+  const canSubmit = (expense.status === "draft" || expense.status === "rejected") && !awaitingPayment;
   // A claimant may edit until it goes to an approver; after that the amount
   // has been agreed against what was attached at the time. Somebody with the
   // broader permission is an approver and may still correct it. The server
@@ -170,9 +181,13 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
             {/* Beside the approval badge, not instead of it: whether a claim
                 was agreed to and whether it has been paid are two questions,
                 and the second is the one nobody could answer before. */}
-            <Badge tone={PAYMENT_TONE[expense.paymentStatus] ?? "neutral"}>
-              {EXPENSE_PAYMENT_STATUS_LABELS[expense.paymentStatus] ?? expense.paymentStatus}
-            </Badge>
+            {awaitingPayment ? (
+              <Badge tone="warning">Waiting for payment</Badge>
+            ) : (
+              <Badge tone={PAYMENT_TONE[expense.paymentStatus] ?? "neutral"}>
+                {EXPENSE_PAYMENT_STATUS_LABELS[expense.paymentStatus] ?? expense.paymentStatus}
+              </Badge>
+            )}
             {expense.isRecurring && (
               <Badge tone="primary">
                 <RefreshCw className="h-3 w-3 mr-1" /> Recurring
@@ -270,12 +285,22 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               </Button>
             ) : (
               <Button size="sm" onClick={openPay}>
-                <BadgeCheck className="h-4 w-4" /> Mark as paid
+                <BadgeCheck className="h-4 w-4" /> {awaitingPayment ? "Record payment" : "Mark as paid"}
               </Button>
             )
           )}
         </div>
       </div>
+
+      {awaitingPayment && (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm">
+          <p className="font-medium">Approved purchase — waiting for payment</p>
+          <p className="mt-0.5 text-foreground-muted">
+            Approved on the Procurement page{expense.approvedByName ? ` by ${expense.approvedByName}` : ""}. It counts nowhere yet — not in expenses,
+            payables or the budget. When it is paid, press Record payment and attach the receipt.
+          </p>
+        </div>
+      )}
 
       {/* Entered late: waiting for a manager, or what one decided (2026-10-17). */}
       {expense.lateEntry && expense.lateEntry.state !== "withdrawn" && (
@@ -517,11 +542,25 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Mark as paid</DialogTitle>
+            <DialogTitle>{awaitingPayment ? "Record payment" : "Mark as paid"}</DialogTitle>
             <DialogDescription>
-              {formatMoney(expense.totalMinor, expense.currency)} to {expense.submittedByName}.
+              {awaitingPayment
+                ? `Approved for ${formatMoney(expense.totalMinor, expense.currency)}. Attach the receipt; it becomes approved and paid.`
+                : `${formatMoney(expense.totalMinor, expense.currency)} to ${expense.submittedByName}.`}
             </DialogDescription>
           </DialogHeader>
+          {awaitingPayment && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="pay-receipt">Receipt{expense.attachments.length ? " (optional — one is attached)" : " *"}</Label>
+                <Input id="pay-receipt" type="file" accept="image/*,application/pdf" onChange={(e) => setReceipt(e.target.files?.[0] ?? null)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pay-amount">What it cost ({expense.currency})</Label>
+                <Input id="pay-amount" type="number" min="0" step="0.01" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
+              </div>
+            </>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="paid-on">Paid on</Label>
             <Input
@@ -546,16 +585,39 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPayOpen(false)}>Cancel</Button>
-            <Button
-              loading={markPaid.isPending}
-              disabled={!paidOn}
-              onClick={async () => {
-                await handleAction(() => markPaid.mutateAsync({ paidOn, bankAccountId: payAccount === "__none__" ? "" : payAccount }), "Marked as paid");
-                setPayOpen(false);
-              }}
-            >
-              Mark as paid
-            </Button>
+            {awaitingPayment ? (
+              <Button
+                loading={recordPayment.isPending || addReceipt.isPending}
+                disabled={!paidOn || (!receipt && !expense.attachments.length) || !(Number(paidAmount) > 0)}
+                onClick={async () => {
+                  try {
+                    if (receipt) await addReceipt.mutateAsync(receipt);
+                    await recordPayment.mutateAsync({
+                      paidOn,
+                      bankAccountId: payAccount === "__none__" ? "" : payAccount,
+                      amountMinor: Math.round(Number(paidAmount) * 100),
+                    });
+                    toast.success(`${expense.expenseNumber} paid`);
+                    setPayOpen(false);
+                  } catch (e) {
+                    toast.error(e instanceof ApiError ? e.message : "Could not record the payment");
+                  }
+                }}
+              >
+                Record payment
+              </Button>
+            ) : (
+              <Button
+                loading={markPaid.isPending}
+                disabled={!paidOn}
+                onClick={async () => {
+                  await handleAction(() => markPaid.mutateAsync({ paidOn, bankAccountId: payAccount === "__none__" ? "" : payAccount }), "Marked as paid");
+                  setPayOpen(false);
+                }}
+              >
+                Mark as paid
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

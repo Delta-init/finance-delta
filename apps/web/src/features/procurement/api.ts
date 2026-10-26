@@ -46,7 +46,8 @@ export interface ProcurementRecord extends Omit<ProcurementRequest, "suggestedDe
   notes?: string;
   reportUrl?: string;
   /** The expense finance recorded when it approved it. */
-  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null } | null;
+  /** awaitingPayment / paidOn: from an API of 2026-10-26 on — approved here and not paid yet, or the day it was. */
+  expense: { id: string; expenseNumber: string; status: string; totalMinor: number | null; awaitingPayment?: boolean; paidOn?: string | null } | null;
 }
 
 export interface ProcurementApproval {

@@ -221,6 +221,8 @@ export const expenseSchema = z.object({
      in no account in finance. */
   statementDate: z.string().optional(),
   statementState: z.enum(["entered", "pending", "none"]).optional(),
+  /** A purchase request finance approved, not paid yet (2026-10-26): a draft until "Record payment" with its receipt. */
+  awaitingPayment: z.boolean().optional(),
   /** Typed in late: waiting for a manager, or what one decided. */
   lateEntry: recordLateEntrySchema.optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
@@ -334,6 +336,15 @@ export const markExpensePaidSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 export type MarkExpensePaidInput = z.infer<typeof markExpensePaidSchema>;
+
+/**
+ * Paying an approved purchase request (the user, 2026-10-26: approving makes a draft; once paid, with its receipt, it
+ * is paid). How it was paid, as Mark paid asks — and what it actually cost, when that is not the approved amount.
+ */
+export const recordProcurementPaymentSchema = markExpensePaidSchema.extend({
+  amountMinor: z.number().int().positive("Enter what it cost").optional(),
+});
+export type RecordProcurementPaymentInput = z.infer<typeof recordProcurementPaymentSchema>;
 
 /**
  * Its bank statement date typed in by hand on the expense (the user, 2026-10-26), or null to take it off again. A

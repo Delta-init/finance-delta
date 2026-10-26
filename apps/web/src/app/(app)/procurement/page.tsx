@@ -28,12 +28,12 @@ const NO_DEPARTMENT = "__none__";
 /**
  * What HR has approved and finance has not yet decided.
  *
- * Approving records an expense — approved, unpaid — so what is asked for is
+ * Approving records an expense — a draft, waiting for payment (2026-10-26) — so what is asked for is
  * what an expense needs and HR could not know: the amount being agreed to (HR's
  * is an estimate, and sometimes blank), the expense category, and the
  * department it counts against. The vendor is not asked: most of these are
- * bought before anybody picks one, and "Mark paid" on the expense records how
- * it was actually paid.
+ * bought before anybody picks one, and "Record payment" on the expense, with the
+ * receipt, records how it was actually paid — only then does it count.
  */
 type Tab = "waiting" | "all";
 
@@ -61,7 +61,7 @@ export default function ProcurementPage() {
       <PageHeader
         icon={ClipboardList}
         title="Procurement"
-        description="Every purchase request from HRMS. Waiting: HR has approved them and they need the money decision — approving one records it as an expense. All: every request, whatever became of it."
+        description="Every purchase request from HRMS. Waiting: HR has approved them and they need the money decision — approving one records it as an expense waiting for payment, which counts once it is paid with its receipt. All: every request, whatever became of it."
         action={rows.length > 0 ? <Badge tone="warning">{rows.length} waiting</Badge> : undefined}
       />
 
@@ -281,7 +281,14 @@ function RecordRow({ r }: { r: ProcurementRecord }) {
           {r.financeReviewedAt && <span>{financeRefused ? "Refused" : "Decided"} by finance on <span className="text-foreground">{day(r.financeReviewedAt)}</span></span>}
           {r.financeNote && <span>Finance&apos;s note: <span className="text-foreground">{r.financeNote}</span></span>}
           {expense ? (
-            <span>Expense <Link href={`/expenses/${expense.id}`} className="font-medium text-primary hover:underline">{expense.expenseNumber}</Link> ({expense.status})</span>
+            <span>
+              Expense <Link href={`/expenses/${expense.id}`} className="font-medium text-primary hover:underline">{expense.expenseNumber}</Link>{" "}
+              {expense.awaitingPayment
+                ? <Badge tone="warning">Waiting for payment</Badge>
+                : expense.paidOn
+                ? <Badge tone="success">Paid {day(expense.paidOn)}</Badge>
+                : <>({expense.status})</>}
+            </span>
           ) : r.purchaseOrderRef ? <span>Reference <span className="text-foreground">{r.purchaseOrderRef}</span></span> : null}
         </div>
       </div>
@@ -341,7 +348,7 @@ function RequestCard({ request: r }: { request: ProcurementRequest }) {
         departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment,
       }),
     });
-    toast.success(`Approved — ${res.expense.expenseNumber} recorded, and HR has been told`);
+    toast.success(`Approved — ${res.expense.expenseNumber} is waiting for payment, and HR has been told`);
   };
 
   const onReject = async () => {

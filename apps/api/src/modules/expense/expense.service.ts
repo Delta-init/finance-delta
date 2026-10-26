@@ -10,6 +10,7 @@ import type {
   RejectExpenseInput,
   ExpensePaymentStatus,
   MarkExpensePaidInput,
+  RecordProcurementPaymentInput,
   SetExpenseStatementDateInput,
   ExpenseAttachmentInput,
   UploadedExpenseFile,
@@ -177,6 +178,7 @@ function toDTO(doc: ExpenseDoc): ExpenseDTO {
     costCentre: (doc.costCentre as string) ?? "",
     notes: (doc.notes as string) ?? "",
     ...sourceView(doc),
+    awaitingPayment: awaitingPayment(doc),
     createdAt: doc.createdAt.toISOString(),
   };
 }
@@ -189,6 +191,18 @@ function sourceView(doc: unknown): Pick<ExpenseDTO, "source" | "bill"> {
     source: kind === "bill" ? "bill" : kind === "import" ? "import" : kind.startsWith("hrms_") ? "hrms" : "typed",
     ...(bill ? { bill: { id: bill.billId, number: bill.billNumber } } : {}),
   };
+}
+
+/*
+ * A purchase request finance approved (the user, 2026-10-26: "first approve time the expense will be marked as draft,
+ * then after it is paid it will be updated, with the receipt, as paid"). Approving makes it a draft — counted nowhere,
+ * not in totals, payables or budgets — and "Record payment", with the receipt attached, makes it approved and paid.
+ * It is not sent for approval again (the approval was finance's, on the Procurement page), and it is not marked paid
+ * without its receipt.
+ */
+const isProcurement = (doc: unknown) => (doc as { source?: { kind?: string } }).source?.kind === "hrms_procurement";
+function awaitingPayment(doc: unknown): boolean {
+  return isProcurement(doc) && (doc as { status?: string }).status === "draft";
 }
 
 /** A bill's own expense (2026-10-23) follows its bill: it is changed, paid, approved and removed there. */
@@ -679,6 +693,9 @@ export async function submitExpense(orgId: string, id: string, scope: Scope): Pr
   assertOwned(scope, doc.submittedById, "Expense");
   if (!["draft", "rejected"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Only draft or rejected expenses can be submitted");
+  if (awaitingPayment(doc)) {
+    throw new AppError("CONFLICT", `${doc.expenseNumber} is a purchase finance already approved — record its payment, with the receipt, instead`);
+  }
   // Not "enter it again": that made a second expense for the same money (2026-10-22). Its date changed to one that is
   // not late, the rejection no longer stands (lateForDate) and it can be sent.
   if ((doc as unknown as { lateEntry?: { state?: string } }).lateEntry?.state === "rejected") {
@@ -819,8 +836,17 @@ export async function markExpensePaid(
   const status = doc.status as string;
   if (status === "voided") throw new AppError("CONFLICT", "A voided expense cannot be marked paid");
   if (status === "rejected") throw new AppError("CONFLICT", "A rejected expense cannot be marked paid");
+  if (awaitingPayment(doc)) {
+    throw new AppError("CONFLICT", `${doc.expenseNumber} is an approved purchase — record its payment with the receipt`);
+  }
   assertNotWaiting(doc, "marked paid");
+  await applyPayment(orgId, doc, input);
+  await doc.save();
+  return syncedDTO(orgId, doc._id);
+}
 
+/** How and when it was paid, onto the expense — Mark paid's and Record payment's one way of doing it. Not saved. */
+async function applyPayment(orgId: string, doc: { isModified(paths: string[]): boolean }, input: MarkExpensePaidInput): Promise<void> {
   const d = doc as unknown as Record<string, unknown>;
   d.paidOn = new Date(input.paidOn);
   if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
@@ -828,6 +854,34 @@ export async function markExpensePaid(
   await applyExpenseAccount(orgId, d, input.bankAccountId);
   if (input.reference !== undefined) d.reference = input.reference;
   if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
+}
+
+/**
+ * An approved purchase request paid (2026-10-26): its receipt must be on it first; it becomes approved and paid — in
+ * the totals, payables, budgets and its bank account's cash book from now — at what it actually cost, when that is
+ * given and differs from what was approved (noted on it).
+ */
+export async function recordProcurementPayment(orgId: string, id: string, input: RecordProcurementPaymentInput, userId: string): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  if (!awaitingPayment(doc)) {
+    throw new AppError("CONFLICT", isProcurement(doc) ? `${doc.expenseNumber} is not waiting for payment` : "Only an approved purchase request is paid this way — use Mark paid");
+  }
+  if (!((doc as unknown as { attachments?: unknown[] }).attachments ?? []).length) {
+    throw new AppError("VALIDATION_ERROR", "Attach the receipt first");
+  }
+  assertNotWaiting(doc, "marked paid");
+  const d = doc as unknown as Record<string, unknown>;
+  if (input.amountMinor && input.amountMinor !== d.totalMinor) {
+    const approved = Number(d.totalMinor) || 0;
+    const { netMinor, taxMinor, totalMinor } = computeExpenseTax(input.amountMinor, Number(d.taxPct) || 0, Boolean(d.taxInclusive));
+    Object.assign(d, { amountMinor: netMinor, taxMinor, totalMinor });
+    const cur = String(d.currency ?? "AED");
+    const by = (await User.findById(userId).select("name").lean<{ name?: string }>())?.name || "finance";
+    d.notes = [String(d.notes ?? ""), `Paid ${cur} ${(totalMinor / 100).toFixed(2)} — approved ${cur} ${(approved / 100).toFixed(2)} (${by}).`].filter(Boolean).join("\n");
+  }
+  doc.status = "approved";
+  await applyPayment(orgId, doc, input);
   await doc.save();
   return syncedDTO(orgId, doc._id);
 }
@@ -847,6 +901,8 @@ export async function markExpenseUnpaid(orgId: string, id: string): Promise<Expe
     throw new AppError("CONFLICT", "This expense is not marked paid");
   }
   (doc as unknown as Record<string, unknown>).paidOn = undefined;
+  // An approved purchase not paid after all waits for its payment again (2026-10-26) — its receipts stay on it.
+  if (isProcurement(doc) && doc.status === "approved") doc.status = "draft";
   await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
   return syncedDTO(orgId, doc._id);

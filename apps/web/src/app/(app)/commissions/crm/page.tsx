@@ -209,7 +209,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                           ) : (
                             <table className="w-full text-xs">
                               <thead className="text-left text-foreground-muted">
-                                <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 text-right font-medium" title="Collected of the invoice's total">Collected</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
+                                <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 pr-6 text-right font-medium" title="Collected of the invoice's total">Collected</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
                               </thead>
                               <tbody>
                                 {p.lines.map((l, i) => (
@@ -218,7 +218,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                     <td className="py-1">{l.student || "—"}</td>
                                     <td className="py-1">{l.course || "—"}</td>
                                     <td className="py-1">{l.invoiceNumber || "—"}</td>
-                                    <td className="py-1 text-right font-numeric">
+                                    <td className="py-1 pr-6 text-right font-numeric">
                                       {l.collectedMinor == null ? <span className="text-foreground-muted">—</span> : money(l.collectedMinor, crm.currency)}
                                       {l.feeMinor != null && l.collectedMinor != null && l.collectedMinor < l.feeMinor && <span className="block text-[10px] text-foreground-muted">of {money(l.feeMinor, crm.currency)}</span>}
                                     </td>
@@ -227,6 +227,29 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                   </tr>
                                 ))}
                               </tbody>
+                              {/* Their total (the user, 2026-10-26: "show the total collected also"): each sale once — a sale
+                                  counted under two roles is one invoice — with its fees when not all of it is in; and the
+                                  commission earned, every line. */}
+                              {(() => {
+                                const sales = new Map(p.lines.map((l) => [l.saleId, l]));
+                                const known = [...sales.values()].filter((l) => l.collectedMinor != null);
+                                const collected = known.reduce((t, l) => t + (l.collectedMinor ?? 0), 0);
+                                const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
+                                const earned = p.lines.reduce((t, l) => t + Math.round(l.amount * 100), 0);
+                                return (
+                                  <tfoot>
+                                    <tr className="border-t-2 border-border font-semibold">
+                                      <td className="py-1.5" colSpan={4}>Total · {sales.size} sale{sales.size === 1 ? "" : "s"}{known.length < sales.size ? ` (${sales.size - known.length} with no invoice here)` : ""}</td>
+                                      <td className="py-1.5 pr-6 text-right font-numeric">
+                                        {money(collected, crm.currency)}
+                                        {fees > collected && <span className="block text-[10px] font-normal text-foreground-muted">of {money(fees, crm.currency)}</span>}
+                                      </td>
+                                      <td />
+                                      <td className="py-1.5 text-right font-numeric">{money(earned, crm.currency)}</td>
+                                    </tr>
+                                  </tfoot>
+                                );
+                              })()}
                             </table>
                           )}
                         </td>

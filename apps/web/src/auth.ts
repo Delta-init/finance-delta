@@ -1,4 +1,5 @@
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthConfig } from "next-auth";
+import type { JWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
 import { loginSchema, type AuthSuccess, type OrgChoiceResult } from "@delta/shared";
 import { authConfig } from "@/auth.config";
@@ -8,15 +9,28 @@ const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000/api/v1";
 
-function getJwtExpiryMs(token: string): number {
+function jwtPayload(token: string): Record<string, unknown> {
   try {
-    const payload = JSON.parse(
-      Buffer.from(token.split(".")[1] ?? "", "base64").toString("utf8"),
-    );
-    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
+    return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64").toString("utf8"));
   } catch {
-    return 0;
+    return {};
   }
+}
+
+function getJwtExpiryMs(token: string): number {
+  const exp = jwtPayload(token).exp;
+  return typeof exp === "number" ? exp * 1000 : 0;
+}
+
+/**
+ * What the person may do, read from the API's access token, which carries it (`perms`).
+ *
+ * Not kept in the session cookie as well: with the list in it twice, the Accountant role's cookie went past the
+ * browser's 4 KB once it had every accounts page (2026-10-26), and accountants could not sign in.
+ */
+function permissionsIn(accessToken: string | undefined): string[] {
+  const perms = accessToken ? jwtPayload(accessToken).perms : undefined;
+  return Array.isArray(perms) ? perms.filter((p): p is string => typeof p === "string") : [];
 }
 
 async function refreshTokens(refreshToken: string): Promise<AuthSuccess | null> {
@@ -227,86 +241,11 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user, trigger, session: updateData }) {
-      // Session update triggered by unstable_update() (e.g. after org switch).
-      if (trigger === "update" && updateData) {
-        const patch = updateData as Partial<typeof token>;
-        return { ...token, ...patch, needsOrgChoice: false };
-      }
-
-      // Initial sign-in.
-      if (user) {
-        const u = user as typeof token & {
-          accessToken: string;
-          isSuperAdmin: boolean;
-          needsOrgChoice?: boolean;
-        };
-
-        if (u.needsOrgChoice) {
-          return {
-            ...token,
-            id: u.id ?? "",
-            needsOrgChoice: true,
-            orgs: u.orgs,
-            pendingToken: u.pendingToken,
-            organizationId: "",
-            orgName: "",
-            isSuperAdmin: false,
-            roleKey: "",
-            roleName: "",
-            permissions: [],
-            accessToken: "",
-            refreshToken: "",
-            accessTokenExpires: 0,
-            signedInAt: Date.now(),
-          };
-        }
-
-        return {
-          ...token,
-          id: u.id,
-          organizationId: u.organizationId,
-          orgName: u.orgName ?? "",
-          roleKey: u.roleKey,
-          roleName: u.roleName,
-          permissions: u.permissions,
-          isSuperAdmin: u.isSuperAdmin,
-          accessToken: u.accessToken,
-          refreshToken: u.refreshToken,
-          accessTokenExpires: getJwtExpiryMs(u.accessToken),
-          needsOrgChoice: false,
-          baseCurrency: (u as Record<string, unknown>).baseCurrency as string ?? "AED",
-          // When this sign-in happened. Carried unchanged through refreshes and
-          // the org choice, so "signed in again" is a new value and nothing else is.
-          signedInAt: Date.now(),
-        };
-      }
-
-      // Pending org choice — don't refresh, just return as-is.
-      if (token.needsOrgChoice) return token;
-
-      // Proactively refresh before expiry.
-      const expires = (token.accessTokenExpires as number) ?? 0;
-      if (Date.now() < expires - 60_000) return token;
-
-      const refreshed = await refreshTokens(token.refreshToken as string);
-      if (!refreshed) {
-        return { ...token, error: "RefreshTokenError" };
-      }
-      return {
-        ...token,
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        permissions: refreshed.user.permissions,
-        roleKey: refreshed.user.roleKey,
-        roleName: refreshed.user.roleName,
-        organizationId: refreshed.user.organizationId,
-        orgName: refreshed.user.orgName ?? "",
-        isSuperAdmin: refreshed.user.isSuperAdmin ?? false,
-        accessTokenExpires: getJwtExpiryMs(refreshed.accessToken),
-        baseCurrency: refreshed.user.baseCurrency ?? (token.baseCurrency as string) ?? "AED",
-        error: undefined,
-      };
+    async jwt(params) {
+      // The permissions travel inside accessToken (see permissionsIn); dropped here on every pass, so a cookie from
+      // before this change shrinks the next time it is read.
+      const { permissions: _inAccessToken, ...rest } = await nextToken(params);
+      return rest as JWT;
     },
 
     async session({ session, token }) {
@@ -315,7 +254,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
       session.user.orgName = (token.orgName as string) ?? "";
       session.user.roleKey = (token.roleKey as string) ?? "";
       session.user.roleName = (token.roleName as string) ?? "";
-      session.user.permissions = (token.permissions as string[]) ?? [];
+      session.user.permissions = permissionsIn(token.accessToken as string | undefined);
       session.user.isSuperAdmin = (token.isSuperAdmin as boolean) ?? false;
       session.user.needsOrgChoice = (token.needsOrgChoice as boolean) ?? false;
       session.user.orgs = token.orgs as typeof session.user.orgs;
@@ -327,3 +266,82 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
     },
   },
 });
+
+async function nextToken({ token, user, trigger, session: updateData }: Parameters<NonNullable<NonNullable<NextAuthConfig["callbacks"]>["jwt"]>>[0]): Promise<JWT> {
+  // Session update triggered by unstable_update() (e.g. after org switch).
+  if (trigger === "update" && updateData) {
+    const patch = updateData as Partial<typeof token>;
+    return { ...token, ...patch, needsOrgChoice: false };
+  }
+
+  // Initial sign-in.
+  if (user) {
+    const u = user as typeof token & {
+      accessToken: string;
+      isSuperAdmin: boolean;
+      needsOrgChoice?: boolean;
+    };
+
+    if (u.needsOrgChoice) {
+      return {
+        ...token,
+        id: u.id ?? "",
+        needsOrgChoice: true,
+        orgs: u.orgs,
+        pendingToken: u.pendingToken,
+        organizationId: "",
+        orgName: "",
+        isSuperAdmin: false,
+        roleKey: "",
+        roleName: "",
+        accessToken: "",
+        refreshToken: "",
+        accessTokenExpires: 0,
+        signedInAt: Date.now(),
+      };
+    }
+
+    return {
+      ...token,
+      id: u.id,
+      organizationId: u.organizationId,
+      orgName: u.orgName ?? "",
+      roleKey: u.roleKey,
+      roleName: u.roleName,
+      isSuperAdmin: u.isSuperAdmin,
+      accessToken: u.accessToken,
+      refreshToken: u.refreshToken,
+      accessTokenExpires: getJwtExpiryMs(u.accessToken),
+      needsOrgChoice: false,
+      baseCurrency: (u as Record<string, unknown>).baseCurrency as string ?? "AED",
+      // When this sign-in happened. Carried unchanged through refreshes and
+      // the org choice, so "signed in again" is a new value and nothing else is.
+      signedInAt: Date.now(),
+    };
+  }
+
+  // Pending org choice — don't refresh, just return as-is.
+  if (token.needsOrgChoice) return token;
+
+  // Proactively refresh before expiry.
+  const expires = (token.accessTokenExpires as number) ?? 0;
+  if (Date.now() < expires - 60_000) return token;
+
+  const refreshed = await refreshTokens(token.refreshToken as string);
+  if (!refreshed) {
+    return { ...token, error: "RefreshTokenError" };
+  }
+  return {
+    ...token,
+    accessToken: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
+    roleKey: refreshed.user.roleKey,
+    roleName: refreshed.user.roleName,
+    organizationId: refreshed.user.organizationId,
+    orgName: refreshed.user.orgName ?? "",
+    isSuperAdmin: refreshed.user.isSuperAdmin ?? false,
+    accessTokenExpires: getJwtExpiryMs(refreshed.accessToken),
+    baseCurrency: refreshed.user.baseCurrency ?? (token.baseCurrency as string) ?? "AED",
+    error: undefined,
+  };
+}

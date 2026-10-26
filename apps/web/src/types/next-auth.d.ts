@@ -44,7 +44,8 @@ declare module "next-auth/jwt" {
     orgName: string;
     roleKey: string;
     roleName: string;
-    permissions: string[];
+    /** Not stored (it is in accessToken — see permissionsIn in auth.ts); only ever present on a token being written. */
+    permissions?: string[];
     isSuperAdmin: boolean;
     accessToken: string;
     refreshToken: string;

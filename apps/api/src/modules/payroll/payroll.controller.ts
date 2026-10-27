@@ -79,7 +79,7 @@ export const reconciliation = asyncHandler(async (req: Request, res: Response) =
 
 export const peopleReport_ = asyncHandler(async (req: Request, res: Response) => {
   const query = parseQuery(peopleReportQuerySchema, req.query);
-  ok(res, await peopleReport.peopleReport(orgId(req), query));
+  ok(res, await peopleReport.peopleReport(orgId(req), query, { withLogins: true }));
 });
 
 export const personDetail = asyncHandler(async (req: Request, res: Response) => {

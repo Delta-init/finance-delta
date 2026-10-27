@@ -7,8 +7,17 @@ import { Expense } from "../expense/expense.model";
 import { pnlExpenseFilter } from "../expense-category/expense-category.service";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { PayrollRun } from "./payroll-run.model";
+import { User } from "../user/user.model";
 
 const oid = (id: string) => new Types.ObjectId(id);
+
+/**
+ * A row's id for somebody named on invoices whose login is on nobody's payroll record (2026-10-27: Super Admin,
+ * Fayis, imported old-books names — AED 229k of October's invoicing had no row, and Delta Banglore has no payroll at
+ * all). Payroll people keep their employee id.
+ */
+const LOGIN_PREFIX = "login-";
+const loginRowId = (userId: string) => `${LOGIN_PREFIX}${userId}`;
 
 /**
  * What each person earned the business, and what they cost it.
@@ -28,7 +37,10 @@ const oid = (id: string) => new Types.ObjectId(id);
  */
 
 export interface PersonRow {
+  /** The payroll employee's id — or `login-<userId>` for someone on invoices who is not on the payroll. */
   employeeId: string;
+  /** False for those `login-` rows: no payroll record, so no payroll cost. */
+  onPayroll: boolean;
   employeeCode: string;
   name: string;
   designation: string;
@@ -67,24 +79,49 @@ interface Query {
   search?: string;
 }
 
-export async function peopleReport(orgId: string, query: Query) {
+interface Options {
+  /** Add a row for each login named on invoices (or owed commission) in the range that is on nobody's payroll record. */
+  withLogins?: boolean;
+}
+
+export async function peopleReport(orgId: string, query: Query, opts: Options = {}) {
   const org = oid(orgId);
   const from = new Date(query.from);
   const to = new Date(`${query.to}T23:59:59.999Z`);
+  const rx = query.search ? new RegExp(query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
 
   const filter: Record<string, unknown> = { organizationId: org };
   if (query.departmentId) filter.departmentId = oid(query.departmentId);
-  if (query.search) {
-    const rx = new RegExp(query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    filter.$or = [{ name: rx }, { employeeCode: rx }, { email: rx }];
-  }
+  if (rx) filter.$or = [{ name: rx }, { employeeCode: rx }, { email: rx }];
 
   const employees = await Employee.find(filter).populate("departmentId", "name").sort({ name: 1 }).lean();
-  if (!employees.length) {
+
+  // Logins on invoices that no payroll record (whatever the search) carries — a department filter
+  // asks about payroll people, so it leaves them out.
+  let logins: { _id: Types.ObjectId; name?: string; email?: string; status?: string }[] = [];
+  if (opts.withLogins && !query.departmentId) {
+    const [onPayroll, invoiced, owing] = await Promise.all([
+      Employee.distinct("userId", { organizationId: org, userId: { $type: "objectId" } }),
+      Invoice.distinct("salespersonId", { organizationId: org, issueDate: { $gte: from, $lte: to }, status: { $nin: ["void", "draft"] } }),
+      CommissionRecord.distinct("salespersonId", { organizationId: org, status: "earned" }),
+    ]);
+    const linked = new Set(onPayroll.map(String));
+    const ids = [...new Set([...invoiced, ...owing].filter(Boolean).map(String))].filter((id) => !linked.has(id));
+    if (ids.length) {
+      const userFilter: Record<string, unknown> = { _id: { $in: ids.map(oid) } };
+      if (rx) userFilter.$or = [{ name: rx }, { email: rx }];
+      logins = await User.find(userFilter).select("name email status").sort({ name: 1 }).lean();
+    }
+  }
+
+  if (!employees.length && !logins.length) {
     return { rows: [], totals: emptyTotals(), currency: "AED" };
   }
 
-  const userIds = employees.filter((e) => e.userId).map((e) => e.userId as Types.ObjectId);
+  const userIds = [
+    ...employees.filter((e) => e.userId).map((e) => e.userId as Types.ObjectId),
+    ...logins.map((u) => u._id),
+  ];
   const employeeIds = employees.map((e) => e._id);
 
   // ── What they brought in ────────────────────────────────────────────────
@@ -177,6 +214,7 @@ export async function peopleReport(orgId: string, query: Query) {
 
     return {
       employeeId: String(e._id),
+      onPayroll: true,
       employeeCode: e.employeeCode,
       name: e.name,
       designation: e.designation ?? "",
@@ -199,6 +237,34 @@ export async function peopleReport(orgId: string, query: Query) {
       commissionOutstandingMinor: owed.get(uid) ?? 0,
     };
   });
+
+  // Not on the payroll: what they invoiced and claimed; no payroll cost.
+  for (const u of logins) {
+    const uid = String(u._id);
+    const inv = invoices.get(uid);
+    const exp = expenses.get(uid) ?? 0;
+    rows.push({
+      employeeId: loginRowId(uid),
+      onPayroll: false,
+      employeeCode: "",
+      name: String(u.name || u.email || "Unnamed login"),
+      designation: "",
+      departmentId: null,
+      departmentName: "",
+      userId: uid,
+      status: u.status === "active" ? "active" : "inactive",
+      invoiceCount: inv?.count ?? 0,
+      invoicedMinor: inv?.total ?? 0,
+      invoicePaidMinor: inv?.paid ?? 0,
+      invoiceOutstandingMinor: inv?.outstanding ?? 0,
+      payrollPaidMinor: 0,
+      expensesMinor: exp,
+      totalCostMinor: exp,
+      commissionInPayrollMinor: 0,
+      commissionOutstandingMinor: owed.get(uid) ?? 0,
+    });
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name));
 
   void employeeIds;
   return {
@@ -237,15 +303,34 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
   const from = new Date(query.from);
   const to = new Date(`${query.to}T23:59:59.999Z`);
 
-  const employee = await Employee.findOne({ _id: oid(employeeId), organizationId: org })
-    .populate("departmentId", "name")
-    .lean();
-  if (!employee) throw new AppError("NOT_FOUND", "Person not found");
+  // A `login-` row: someone on invoices with no payroll record of their own (2026-10-27). Should their login have been
+  // put on a payroll record since, that record answers.
+  let login: { _id: Types.ObjectId; name?: string; email?: string; status?: string; memberships?: { organizationId: Types.ObjectId }[] } | null = null;
+  let employee;
+  if (employeeId.startsWith(LOGIN_PREFIX)) {
+    const userId = employeeId.slice(LOGIN_PREFIX.length);
+    if (!Types.ObjectId.isValid(userId)) throw new AppError("NOT_FOUND", "Person not found");
+    employee = await Employee.findOne({ userId: oid(userId), organizationId: org }).populate("departmentId", "name").lean();
+    if (!employee) {
+      login = await User.findById(userId).select("name email status memberships.organizationId").lean();
+      // Someone of this organization, or named on its invoices — never just any login.
+      const ofOrg = login && (login.memberships?.some((m) => String(m.organizationId) === orgId)
+        || await Invoice.exists({ organizationId: org, salespersonId: login._id }));
+      if (!login || !ofOrg) throw new AppError("NOT_FOUND", "Person not found");
+    }
+  } else {
+    if (!Types.ObjectId.isValid(employeeId)) throw new AppError("NOT_FOUND", "Person not found");
+    employee = await Employee.findOne({ _id: oid(employeeId), organizationId: org })
+      .populate("departmentId", "name")
+      .lean();
+    if (!employee) throw new AppError("NOT_FOUND", "Person not found");
+  }
+  const rowId = employee ? String(employee._id) : loginRowId(String(login!._id));
 
-  const summary = await peopleReport(orgId, { from: query.from, to: query.to });
-  const row = summary.rows.find((r) => r.employeeId === employeeId);
+  const summary = await peopleReport(orgId, { from: query.from, to: query.to }, { withLogins: !employee });
+  const row = summary.rows.find((r) => r.employeeId === rowId);
 
-  const uid = employee.userId;
+  const uid = employee ? employee.userId : login!._id;
 
   const pnl = await pnlExpenseFilter(orgId);
   const [invoices, expenses, commissions] = await Promise.all([
@@ -279,16 +364,18 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
   ]);
 
   // Their payroll lines, month by month, so the salary figure can be opened up.
-  const runs = await PayrollRun.find({
-    organizationId: org,
-    period: periodRange(query.from, query.to),
-    status: { $ne: "voided" },
-    "lines.employeeId": employee._id,
-  }).lean();
+  const runs = employee
+    ? await PayrollRun.find({
+        organizationId: org,
+        period: periodRange(query.from, query.to),
+        status: { $ne: "voided" },
+        "lines.employeeId": employee._id,
+      }).lean()
+    : [];
 
   const payslips = runs.flatMap((run) =>
     run.lines
-      .filter((l) => String(l.employeeId) === String(employee._id))
+      .filter((l) => String(l.employeeId) === String(employee!._id))
       .map((l) => ({
         runId: String(run._id),
         runNumber: run.runNumber,
@@ -306,17 +393,31 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
   );
 
   return {
-    person: {
-      employeeId: String(employee._id),
-      employeeCode: employee.employeeCode,
-      name: employee.name,
-      email: employee.email ?? "",
-      designation: employee.designation ?? "",
-      departmentId: employee.departmentId ? String((employee.departmentId as unknown as { _id: Types.ObjectId })._id) : null,
-      departmentName: employee.departmentId ? (employee.departmentId as unknown as { name: string }).name : "",
-      status: employee.status,
-      hasLogin: Boolean(uid),
-    },
+    person: employee
+      ? {
+          employeeId: String(employee._id),
+          onPayroll: true,
+          employeeCode: employee.employeeCode,
+          name: employee.name,
+          email: employee.email ?? "",
+          designation: employee.designation ?? "",
+          departmentId: employee.departmentId ? String((employee.departmentId as unknown as { _id: Types.ObjectId })._id) : null,
+          departmentName: employee.departmentId ? (employee.departmentId as unknown as { name: string }).name : "",
+          status: employee.status,
+          hasLogin: Boolean(uid),
+        }
+      : {
+          employeeId: rowId,
+          onPayroll: false,
+          employeeCode: "",
+          name: String(login!.name || login!.email || "Unnamed login"),
+          email: login!.email ?? "",
+          designation: "",
+          departmentId: null,
+          departmentName: "",
+          status: login!.status === "active" ? "active" : "inactive",
+          hasLogin: true,
+        },
     summary: row ?? null,
     payslips,
     invoices: invoices.map((i) => ({

@@ -224,7 +224,10 @@ export interface Reconciliation {
  * payroll run, so counting it separately would double every commission payment.
  */
 export interface PersonRow {
+  /** The payroll employee's id — or `login-<userId>` for someone on invoices who is not on the payroll. */
   employeeId: string;
+  /** False for someone named on invoices with no payroll record (2026-10-27). Absent from an older API: on it. */
+  onPayroll?: boolean;
   employeeCode: string;
   name: string;
   designation: string;
@@ -278,7 +281,7 @@ export interface PersonDetail {
   person: {
     employeeId: string; employeeCode: string; name: string; email: string;
     designation: string; departmentId: string | null; departmentName: string;
-    status: string; hasLogin: boolean;
+    status: string; hasLogin: boolean; onPayroll?: boolean;
   };
   summary: PersonRow | null;
   payslips: Array<{

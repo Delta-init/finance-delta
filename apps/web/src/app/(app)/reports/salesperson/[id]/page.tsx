@@ -40,7 +40,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="space-y-6 p-6">
-      <Link href="/reports/salesperson" className="inline-flex items-center gap-1.5 text-sm text-foreground-muted hover:text-foreground">
+      <Link href={`/reports/salesperson?from=${from}&to=${to}`} className="inline-flex items-center gap-1.5 text-sm text-foreground-muted hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />All people
       </Link>
 
@@ -50,7 +50,12 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         description={[person.employeeCode, person.designation, person.departmentName || "No department", person.email]
           .filter(Boolean)
           .join(" · ")}
-        action={<Badge tone={person.status === "active" ? "success" : "neutral"}>{person.status}</Badge>}
+        action={
+          <div className="flex gap-1.5">
+            {person.onPayroll === false && <Badge tone="primary">Not on payroll</Badge>}
+            <Badge tone={person.status === "active" ? "success" : "neutral"}>{person.status}</Badge>
+          </div>
+        }
       />
 
       <Card className="flex flex-wrap items-end gap-3 p-3">
@@ -63,6 +68,16 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           <Input id="p-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-[150px]" />
         </div>
       </Card>
+
+      {person.onPayroll === false && (
+        <Card className="flex items-start gap-2 border-primary/20 bg-primary-50 p-4 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <span>
+            Named on invoices, but this login is on nobody&apos;s payroll record — so no salary or payroll cost here.
+            If they are on the payroll, link their login under Payroll Mapping.
+          </span>
+        </Card>
+      )}
 
       {!person.hasLogin && (
         <Card className="flex items-start gap-2 border-warning/20 bg-warning/5 p-4 text-sm">

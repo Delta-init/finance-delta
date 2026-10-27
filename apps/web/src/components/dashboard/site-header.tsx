@@ -150,7 +150,8 @@ const SEGMENT_LABELS: Record<string, string> = {
   edit: "Edit",
 };
 
-const OBJECT_ID_RE = /^[0-9a-f]{24}$/i;
+// A record's id — or a salesperson page's `login-<id>` (someone on invoices who is not on the payroll).
+const OBJECT_ID_RE = /^(login-)?[0-9a-f]{24}$/i;
 
 function useBreadcrumbs() {
   const pathname = usePathname();

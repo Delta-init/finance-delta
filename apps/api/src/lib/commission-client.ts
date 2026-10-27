@@ -238,7 +238,8 @@ export interface CommissionFeeUpdate {
   status: "partial" | "paid" | "void" | "deleted";
   /** The next instalment's due date, "YYYY-MM-DD"; null when nothing is owed. */
   nextDueOn: string | null;
-  payments: { amountMinor: number; paidOn: string; method: string }[];
+  /** Each recorded payment, with its receipt when it has one (2026-10-27). */
+  payments: { amountMinor: number; paidOn: string; method: string; receipt?: { url: string; name: string } | null }[];
   updatedAt: string;
   /** The close as the counsellor declared it — Tetra Commission's "Collected by counsellor" and the salesperson's receipts. */
   declaredPaidMinor?: number;

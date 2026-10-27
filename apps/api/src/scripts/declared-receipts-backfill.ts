@@ -25,6 +25,10 @@
  *
  * Safe to run again: each run queues the invoice's current picture, and Tetra
  * Commission keeps only the newest.
+ *
+ * Since 2026-10-27 that picture carries each recorded payment's receipt too (a
+ * second payment's never reached Tetra Commission) — run it again once both
+ * servers are on that version, and they arrive for the payments before it.
  */
 import mongoose, { Types } from "mongoose";
 import { formatMoney } from "@delta/shared";
@@ -65,7 +69,11 @@ export async function backfillDeclaredReceipts(opts: { write: boolean; invoices?
       invoiceNumber: invoice.invoiceNumber ?? "",
       customerName: invoice.customerName ?? "",
       collected: d.declaredPaidMinor ? `${formatMoney(d.declaredPaidMinor, invoice.currency ?? "AED")}${d.declaredPaymentMethod ? ` · ${d.declaredPaymentMethod}` : ""}` : "nothing declared",
-      receipts: d.declaredPayments.filter((p) => p.receipt).length + (d.receipt ? 1 : 0),
+      // Each file once: the close's receipt is often the declared payment's and the recorded payment's too.
+      receipts: new Set([
+        ...d.declaredPayments.map((p) => p.receipt?.url ?? ""), d.receipt?.url ?? "",
+        ...(invoice.payments ?? []).map((p: { proofUrl?: string }) => String(p.proofUrl ?? "")),
+      ].filter((u) => /^https?:\/\//i.test(u))).size,
     };
     if (opts.write) row.queued = await queueFeeUpdate(invoice._id, "collected by counsellor and receipts backfill", { evenIfNotSent: !sentIds.has(String(invoice._id)) });
     out.push(row);

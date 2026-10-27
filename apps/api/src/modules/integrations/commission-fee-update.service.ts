@@ -43,7 +43,7 @@ type InvoiceLike = {
     declaredPayments?: ReadonlyArray<{ method?: string | null; amountMinor?: number | null; paidOn?: string | null; receipt?: { url?: string | null; name?: string | null } | null }> | null;
   } | null;
   attachments?: ReadonlyArray<{ name?: string | null; url?: string | null; key?: string | null }> | null;
-  payments?: ReadonlyArray<{ amountMinor?: number | null; paidOn?: Date | string | null; method?: string | null }> | null;
+  payments?: ReadonlyArray<{ amountMinor?: number | null; paidOn?: Date | string | null; method?: string | null; proofUrl?: string | null; receiptNumber?: string | null }> | null;
 };
 
 
@@ -84,11 +84,17 @@ export function buildFeeUpdate(
     nextDueOn: status === "partial" && invoice.dueDate ? isoDay(new Date(invoice.dueDate)) : null,
     payments: (invoice.payments ?? [])
       .filter((p) => p && p.paidOn)
-      .map((p) => ({
-        amountMinor: p.amountMinor ?? 0,
-        paidOn: isoDay(new Date(p.paidOn as Date)),
-        method: paymentMethodLabel(p.method ?? "") || String(p.method ?? ""),
-      }))
+      .map((p) => {
+        const method = paymentMethodLabel(p.method ?? "") || String(p.method ?? "");
+        return {
+          amountMinor: p.amountMinor ?? 0,
+          paidOn: isoDay(new Date(p.paidOn as Date)),
+          method,
+          // Each recorded payment's own receipt (the user, 2026-10-27: a second payment's receipt never reached
+          // Tetra Commission — only the close's showed). Only a link a browser can open.
+          receipt: /^https?:\/\//i.test(String(p.proofUrl ?? "")) ? { url: String(p.proofUrl), name: p.receiptNumber || `${method || "Payment"} receipt` } : null,
+        };
+      })
       .sort((a, b) => a.paidOn.localeCompare(b.paidOn)),
     updatedAt: (opts.at ?? new Date()).toISOString(),
     ...declaredSide(invoice),

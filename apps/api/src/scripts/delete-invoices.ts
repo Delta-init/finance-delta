@@ -99,7 +99,8 @@ export async function planDelete(numbers: string[], orgId?: string): Promise<Del
       CreditNote.exists({ invoiceId: id }),
       Quotation.exists({ $or: [{ "convertedTo.invoiceId": id }, { "convertedTo.invoiceIds": id }] }),
       BalancePaymentModel.exists({ invoiceId: id }),
-      TetraDepositModel.exists({ $or: [{ "courseInvoice.invoiceId": id }, { "enrolmentPayment.invoiceId": id }] }),
+      // A deleted deposit (Tetra Deposits → Delete) no longer holds its invoice.
+      TetraDepositModel.exists({ status: { $ne: "deleted" }, $or: [{ "courseInvoice.invoiceId": id }, { "enrolmentPayment.invoiceId": id }] }),
     ]);
     if (credited) mine.push("a credit note refers to it");
     if (quoted) mine.push("a quotation was converted into it");

@@ -83,10 +83,10 @@ const lmsProvisionSchema = new Schema(
     },
 
     /**
-     * The student, sent on to Tetra Commission once the LMS has them — Forex
+     * The student, sent on to CS Portal once the LMS has them — Forex
      * students only.
      *
-     * Only set when the LMS takes the enrolment while Tetra Commission is
+     * Only set when the LMS takes the enrolment while CS Portal is
      * configured, so enrolments from before — and from any time it was
      * switched off — are never sent: new students only. A course that is not
      * FOREX Trading is `skipped`, with the `reason`; a Forex course among the
@@ -116,7 +116,7 @@ lmsProvisionSchema.index({ "commission.state": 1, "commission.nextAttemptAt": 1 
 lmsProvisionSchema.index({ status: 1, "extraCourses.status": 1, "extraCourses.nextAttemptAt": 1 });
 
 /**
- * FOREX Trading's programme as the LMS names it. Tetra Commission is the
+ * FOREX Trading's programme as the LMS names it. CS Portal is the
  * trading side's, so only these students go there (jobs/lms-provision.worker).
  */
 export const FOREX_PROGRAMME = "4x-trading";
@@ -124,7 +124,7 @@ export const FOREX_PROGRAMME = "4x-trading";
 /**
  * Whether the enrolment on this row is a Forex one: the LMS named its course
  * 4x-trading, or a Forex course on the invoice put the student on their way to
- * Tetra Commission (which is only ever done for Forex). The rule the partial
+ * CS Portal (which is only ever done for Forex). The rule the partial
  * payment reminders go by.
  */
 export function isForexEnrolment(row: { lmsCourseProgram?: string | null; commission?: { state?: string | null } | null } | null | undefined): boolean {

@@ -101,9 +101,9 @@ const paymentSubSchema = new Schema(
     proofUrl: { type: String, default: "" },
     proofKey: { type: String, default: "" },
     /** Where the payment was recorded from, when not here: "tetra:<request id>" for one a CS
-        recorded in Tetra Commission and accounts approved — what stops it being recorded twice. */
+        recorded in CS Portal and accounts approved — what stops it being recorded twice. */
     externalRef: { type: String },
-    /** The receipt issued for it (RCT-00001) — a course payment from Tetra Commission (the user, 2026-10-12). */
+    /** The receipt issued for it (RCT-00001) — a course payment from CS Portal (the user, 2026-10-12). */
     receiptNumber: { type: String },
     /** The Banking account it went into (payment-bank.ts, 2026-10-16), its line there, and what landed in the
         account's currency — or why it is not in (bankNote). */
@@ -156,7 +156,7 @@ const invoiceSchema = new Schema(
           meetingBy: { type: String, default: "" },
           /** The sales CRM's rep who closed it, by their email there — as the CRM
               said, whether or not they have an account here. Who closed the
-              student, for Tetra Commission. Absent before the CRMs' was kept. */
+              student, for CS Portal. Absent before the CRMs' was kept. */
           meetingByEmail: { type: String, trim: true, lowercase: true },
           /** Which LMS course, as the system that raised the enrolment named
               it. What provisioning falls back to when no catalogue item on the

@@ -98,7 +98,7 @@ export const approvalLmsSchema = z.object({
 });
 export type ApprovalLms = z.infer<typeof approvalLmsSchema>;
 
-/** The same student on Tetra Commission's portal — Forex students only. */
+/** The same student on CS Portal's portal — Forex students only. */
 export const approvalCommissionSchema = z.object({
   state: z.enum(["waiting", "created", "existing", "skipped", "failed", "not_sent"]),
   detail: z.string().optional(),
@@ -131,7 +131,7 @@ export const approvalRowSchema = z.object({
   decideHere: z.boolean().optional(),
   /** The reader's own request: somebody else decides it. */
   own: z.boolean().optional(),
-  /** A Tetra Commission bonus — one that can be sent back to its CS to correct (2026-10-13). */
+  /** A CS Portal bonus — one that can be sent back to its CS to correct (2026-10-13). */
   bonus: z.boolean().optional(),
   /** An enrolment invoice: the sales CRM that sold it. Absent for one typed in finance. */
   crm: z.enum(ENROLMENT_CRMS).optional(),
@@ -143,7 +143,7 @@ export const approvalRowSchema = z.object({
    * that already belongs to another client. Absent when nothing was.
    */
   flags: z.array(z.string()).optional(),
-  /** A decided Tetra deposit: whether Tetra Commission has the decision yet. */
+  /** A decided Tetra deposit: whether CS Portal has the decision yet. */
   delivery: z.object({ state: z.string(), error: z.string().optional() }).optional(),
   lms: approvalLmsSchema.optional(),
   commission: approvalCommissionSchema.optional(),

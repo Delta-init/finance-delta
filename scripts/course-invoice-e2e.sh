@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# End-to-end test of course payments from Tetra Commission becoming invoices
+# End-to-end test of course payments from CS Portal becoming invoices
 # with receipts (apps/api/src/scripts/course-invoice-e2e.ts).
 #
-# A throwaway mongod and a throwaway Tetra Commission (the commission portal's
+# A throwaway mongod and a throwaway CS Portal (the CS Portal's
 # real backend): finance's services run in the test itself, decide the course
 # payments, and send the decisions — with the invoice — to that Tetra
 # Commission, which keeps them. Nothing reads a .env; nothing touches a
@@ -40,7 +40,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ ! -f "$COMMISSION_BACKEND/src/finance/funding.ts" ] || [ ! -d "$COMMISSION_BACKEND/node_modules" ]; then
-  echo "Tetra Commission (with its dependencies) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
+  echo "CS Portal (with its dependencies) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
   exit 1
 fi
 for port in "$MONGO_PORT" "$COMMISSION_PORT"; do
@@ -73,7 +73,7 @@ export NODE_ENV=development RUN_SCHEDULERS=false
 
 cd "$REPO/apps/api"
 if ! bun --no-env-file src/scripts/course-invoice-e2e.ts; then
-  echo "--- last 30 lines of the Tetra Commission log ---" >&2
+  echo "--- last 30 lines of the CS Portal log ---" >&2
   tail -30 "$WORK/log/commission.log" >&2
   exit 1
 fi

@@ -8,7 +8,7 @@ import { z } from "zod";
  * `lateEntryDays` or more days back (1 unless set — anything dated before today, yesterday included, the user
  * 2026-10-21; it was "more than 7" until then; 0 turns it off) needs a reason, and waits for a manager — somebody tagged Manager
  * in this organization, or a super admin — who approves it or rejects it with a reason of their own. Nobody decides
- * their own. Entries other parts of finance make (approvals, HRMS, payroll, Tetra Commission) are not asked.
+ * their own. Entries other parts of finance make (approvals, HRMS, payroll, CS Portal) are not asked.
  */
 
 export const LATE_ENTRY_KINDS = ["expense", "bill", "bill_payment", "invoice_payment", "bank_line"] as const;

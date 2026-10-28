@@ -2,21 +2,21 @@ import { z } from "zod";
 import { listQuerySchema } from "./query.schema";
 
 /**
- * Deposit and bonus requests from Tetra Commission, approved here.
+ * Deposit and bonus requests from CS Portal, approved here.
  *
- * A mentor there raises a deposit for a student; Tetra Commission hands it
+ * A mentor there raises a deposit for a student; CS Portal hands it
  * over through the signed integration API the moment it is raised. An
  * accountant approves it — at the amount that actually arrived, with the
  * transaction ID it arrived under — or rejects it with a reason, and the
- * decision goes straight back to Tetra Commission, where the request changes
+ * decision goes straight back to CS Portal, where the request changes
  * and the mentors' commission is credited. Nothing is posted to the books here.
  *
- * Money in cents of the request's currency, which is USD: Tetra Commission
+ * Money in cents of the request's currency, which is USD: CS Portal
  * keeps its deposits in dollars.
  *
  * A BONUS is a course payment (the user, 2026-10-04): the money in, and what it
  * earns the student in MT5 — `coursePayment`. Approving one here confirms the
- * payment; a broker admin in Tetra Commission then credits the bonus and
+ * payment; a broker admin in CS Portal then credits the bonus and
  * approves it there, which is the second of its two approvals.
  */
 
@@ -26,20 +26,20 @@ const optionalAmount = z.number().finite().nullable().optional().default(null);
 /**
  * DEPOSIT and BONUS are funding requests. COURSE_UPGRADE (2026-10-07) is one
  * payment towards a student's CSE course upgrade, in AED, with its receipt:
- * approving it confirms the money; Tetra Commission then counts it towards the
+ * approving it confirms the money; CS Portal then counts it towards the
  * course and raises the MT5 bonus it earns.
  */
 /*
  * ENROLMENT_PAYMENT (2026-10-11) is the next payment of a partial enrolment's
- * balance, recorded by the student's CS in Tetra Commission with its receipt:
+ * balance, recorded by the student's CS in CS Portal with its receipt:
  * approving it records the payment on that invoice here (as recordPayment
- * does), which sets the next due date and sends Tetra Commission the new
+ * does), which sets the next due date and sends CS Portal the new
  * figures.
  */
 export const tetraDepositTypeSchema = z.enum(["DEPOSIT", "BONUS", "COURSE_UPGRADE", "ENROLMENT_PAYMENT"]);
 export type TetraDepositType = z.infer<typeof tetraDepositTypeSchema>;
 
-/** A bonus's course payment, as Tetra Commission worked it out at the request (amounts in AED, the bonus in USD). */
+/** A bonus's course payment, as CS Portal worked it out at the request (amounts in AED, the bonus in USD). */
 export const tetraCoursePaymentSchema = z.object({
   product: optionalText(160),
   /** "full" or "partial" payment of the course; "" when it did not say. */
@@ -52,13 +52,13 @@ export const tetraCoursePaymentSchema = z.object({
   paidBeforeAed: optionalAmount,
   price: optionalAmount,
   priceCurrency: optionalText(3),
-  /** A course upgrade's id in Tetra Commission — every payment of one upgrade goes on one invoice here (the user, 2026-10-12). */
+  /** A course upgrade's id in CS Portal — every payment of one upgrade goes on one invoice here (the user, 2026-10-12). */
   upgradeId: optionalText(40),
-  /** The day the money was paid (YYYY-MM-DD), where Tetra Commission has it — the payment's date here. */
+  /** The day the money was paid (YYYY-MM-DD), where CS Portal has it — the payment's date here. */
   paidOn: optionalText(10),
   /**
    * A Bangalore team's bonus, in rupees (the user, 2026-10-15): the rupees one AED of the figures above stands for, at
-   * Tetra Commission's rate — what its course invoice here, in rupees, turns the balance into.
+   * CS Portal's rate — what its course invoice here, in rupees, turns the balance into.
    */
   inrPerAed: optionalAmount,
 });
@@ -67,7 +67,7 @@ export type TetraCoursePayment = z.infer<typeof tetraCoursePaymentSchema>;
 /**
  * One payment of a request paid more than one way (the user, 2026-10-06): part
  * by card and part in cash, each with its own method, amount and receipt — as
- * Tetra Commission takes them, the way the sales CRMs do at a close. In cents
+ * CS Portal takes them, the way the sales CRMs do at a close. In cents
  * of the currency the mentor typed (AED, USD or INR); together they come to
  * the amount as typed. `paymentMethod` and `screenshotUrl` are the first one's.
  */
@@ -84,7 +84,7 @@ const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}/, "Must be a date (Y
 
 /**
  * A balance payment's own facts (type ENROLMENT_PAYMENT): the invoice it pays
- * towards — finance's id, which Tetra Commission was given with the student —
+ * towards — finance's id, which CS Portal was given with the student —
  * how and when the client paid, the receipt, and the CS who recorded it.
  */
 export const tetraEnrolmentPaymentSchema = z.object({
@@ -99,7 +99,7 @@ export const tetraEnrolmentPaymentSchema = z.object({
 export type TetraEnrolmentPayment = z.infer<typeof tetraEnrolmentPaymentSchema>;
 
 /**
- * Tetra Commission may send a balance payment's facts flat beside the rest
+ * CS Portal may send a balance payment's facts flat beside the rest
  * (invoiceId, method, paidOn, receiptUrl, csName / csEmail or cs) rather than
  * under `enrolmentPayment`: gathered into it here, so either shape is taken.
  */
@@ -122,10 +122,10 @@ function gatherEnrolmentPayment(raw: unknown): unknown {
   };
 }
 
-/** Idempotent on Tetra Commission's own id, so a retry after a timeout is the same request. */
+/** Idempotent on CS Portal's own id, so a retry after a timeout is the same request. */
 const inboundTetraDepositObject = z.object({
   externalId: z.string().trim().min(1).max(64),
-  /** Absent from a Tetra Commission from before bonuses came here: a deposit. */
+  /** Absent from a CS Portal from before bonuses came here: a deposit. */
   type: tetraDepositTypeSchema.optional().default("DEPOSIT"),
   amountMinor: z.number().int().positive().max(9_000_000_000_000),
   currency: z.string().length(3).default("USD").transform((v) => v.toUpperCase()),
@@ -152,14 +152,14 @@ const inboundTetraDepositObject = z.object({
   /** The proof of payment the mentor uploaded — a link, opened from the approval. */
   screenshotUrl: optionalText(1000).refine((v) => !v || /^https?:\/\//i.test(v), "Must be a web address"),
   /**
-   * Paid more than one way: each payment with its receipt. Absent from a Tetra
-   * Commission from before, and for one payment. A list that cannot be read is
+   * Paid more than one way: each payment with its receipt. Absent from a CS
+   * Portal from before, and for one payment. A list that cannot be read is
    * dropped — never the deposit with it (the notes say every payment too).
    */
   payments: z.array(tetraDepositPaymentSchema).max(10).optional().default([]).catch([]),
   notes: optionalText(2000),
   /**
-   * A request corrected and sent again in Tetra Commission after it was sent
+   * A request corrected and sent again in CS Portal after it was sent
    * back (or rejected) here (the user, 2026-10-13): its earlier request's id
    * there, and the reason it was given.
    */
@@ -185,19 +185,19 @@ export type InboundTetraDeposit = z.infer<typeof inboundTetraDepositObject>;
 
 /**
  * pending   waiting for an accountant
- * approved  / rejected — decided here, and sent back to Tetra Commission
- * closed    nothing left to decide: gone from Tetra Commission, or decided there
+ * approved  / rejected — decided here, and sent back to CS Portal
+ * closed    nothing left to decide: gone from CS Portal, or decided there
  */
 /** "deleted": taken off the list by hand (2026-10-28) — kept, with who, when, why and what it was, and can be restored. */
 export const tetraDepositStatusSchema = z.enum(["pending", "approved", "rejected", "closed", "deleted"]);
 export type TetraDepositStatus = z.infer<typeof tetraDepositStatusSchema>;
 
 /**
- * Getting the decision back to Tetra Commission.
+ * Getting the decision back to CS Portal.
  *
  * sending    being sent right now
  * queued     not reached yet — tried again on its own
- * delivered  Tetra Commission has it
+ * delivered  CS Portal has it
  * failed     refused, for a reason that will not change by trying again: on Approvals → "Didn't go through",
  *            to send again or reopen and decide again
  */
@@ -220,7 +220,7 @@ export const decideTetraDepositSchema = z.discriminatedUnion("decision", [
     reason: z.string().trim().min(5, "Give a reason of at least 5 characters").max(1000),
     /**
      * Sent back to correct, like an invoice (the user, 2026-10-13): a bonus the
-     * CS fixes in Tetra Commission and sends again — rather than refused.
+     * CS fixes in CS Portal and sends again — rather than refused.
      */
     sentBack: z.boolean().optional(),
   }),
@@ -318,7 +318,7 @@ export const tetraDepositSchema = z.object({
 export type TetraDeposit = z.infer<typeof tetraDepositSchema>;
 
 /**
- * The Tetra Commission deposits page: every request, whatever became of it.
+ * The CS Portal deposits page: every request, whatever became of it.
  *
  * `from` and `to` are instants, not dates: the page turns the days somebody
  * picks into the start of the first and the start of the day after the last,
@@ -343,7 +343,7 @@ export type TetraDepositCounts = Record<TetraDepositListStatus, number>;
 export const deleteTetraDepositSchema = z.object({ reason: z.string().trim().min(3, "Say why it is deleted").max(300) });
 export type DeleteTetraDepositInput = z.infer<typeof deleteTetraDepositSchema>;
 
-/** What deciding one answers: the deposit, and whether Tetra Commission has the decision yet. */
+/** What deciding one answers: the deposit, and whether CS Portal has the decision yet. */
 export const tetraDepositDecisionResultSchema = z.object({
   deposit: tetraDepositSchema,
   delivered: z.boolean(),

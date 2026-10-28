@@ -1,17 +1,17 @@
 /**
- * Students the LMS took before Tetra Commission was switched on.
+ * Students the LMS took before CS Portal was switched on.
  *
- * A student goes on to Tetra Commission at the moment the LMS takes them, and
+ * A student goes on to CS Portal at the moment the LMS takes them, and
  * nowhere else (jobs/lms-provision.worker.ts drainLmsProvisions). One the LMS
  * took while COMMISSION_API_URL / COMMISSION_S2S_SECRET were unset — or before
  * the step existed — has no commission state at all, and nothing ever comes
- * back for them: the approvals screen says "Not sent to Tetra Commission" for
+ * back for them: the approvals screen says "Not sent to CS Portal" for
  * ever (the user, 2026-10-09, e.g. IN-00086).
  *
  * This lists them, and with --apply marks each one "pending", exactly as the
- * worker would have: its next run sends them, Tetra Commission gives each to the
+ * worker would have: its next run sends them, CS Portal gives each to the
  * next team in turn, and the approvals screen follows. Only rows the worker
- * itself would have sent — a source that goes to Tetra Commission, never a CRM
+ * itself would have sent — a source that goes to CS Portal, never a CRM
  * in NO_COMMISSION_CRMS (none since 2026-10-10), and a Forex course.
  *
  * Forex is known for a row the LMS named the programme on (lmsCourseProgram).
@@ -20,7 +20,7 @@
  * a non-Forex student given a CS is a mistake somebody has to undo by hand.
  *
  * READ THIS BEFORE --apply. Each student sent is given to a team and a CS in
- * Tetra Commission, and their CS is told. Run it without --apply first, read
+ * CS Portal, and their CS is told. Run it without --apply first, read
  * the list, and cut it down with --invoice or --since.
  *
  * Run it from apps/api (Bun reads the .env there):
@@ -60,7 +60,7 @@ async function run() {
   }
   await connectDb();
   // Said first: marked rows wait for the worker, and an unconfigured one never sends them.
-  console.log(`Tetra Commission link: ${commissionConfigured() ? "configured" : "NOT CONFIGURED — set COMMISSION_API_URL and COMMISSION_S2S_SECRET, or nothing marked here is ever sent"}`);
+  console.log(`CS Portal link: ${commissionConfigured() ? "configured" : "NOT CONFIGURED — set COMMISSION_API_URL and COMMISSION_S2S_SECRET, or nothing marked here is ever sent"}`);
 
   const query: Record<string, unknown> = {
     status: "sent",
@@ -83,7 +83,7 @@ async function run() {
   const unknown = inScope.filter((r) => !r.lmsCourseProgram && !forex(r));
 
   const line = (r: Row) => `  ${String(r.invoiceNumber || "—").padEnd(10)} ${String(r.payload?.name ?? "").padEnd(28).slice(0, 28)} ${String(r.payload?.email ?? "").padEnd(32).slice(0, 32)} ${String(r.lmsCourseTitle ?? "").slice(0, 40)}  (LMS ${r.sentAt ? r.sentAt.toISOString().slice(0, 10) : "?"})`;
-  console.log(`\nIn the LMS, never sent to Tetra Commission${SINCE ? ` (since ${sinceArg})` : ""}${INVOICES.size ? ` (invoices ${[...INVOICES].join(", ")})` : ""}: ${inScope.length}`);
+  console.log(`\nIn the LMS, never sent to CS Portal${SINCE ? ` (since ${sinceArg})` : ""}${INVOICES.size ? ` (invoices ${[...INVOICES].join(", ")})` : ""}: ${inScope.length}`);
   console.log(`\nForex — ${APPLY ? "marked to send" : "would be sent"}: ${toSend.length}`);
   toSend.forEach((r) => console.log(line(r)));
   if (notForex.length) {

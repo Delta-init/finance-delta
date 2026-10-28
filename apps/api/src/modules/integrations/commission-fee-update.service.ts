@@ -12,7 +12,7 @@ import { LmsProvision } from "./lms-provision.model";
 import { CommissionFeeUpdateModel } from "./commission-fee-update.model";
 
 /**
- * Tells Tetra Commission when an enrolment's money changes (the user,
+ * Tells CS Portal when an enrolment's money changes (the user,
  * 2026-10-11): after approval, a payment recorded, edited or deleted, the
  * invoice voided, restored or deleted, a credit note applied, or its due date
  * changed — for invoices whose student went there (the commission state the
@@ -53,7 +53,7 @@ type ProvisionLike = {
   payload?: unknown;
 };
 
-/** The whole picture of an invoice's money, as Tetra Commission is told it. */
+/** The whole picture of an invoice's money, as CS Portal is told it. */
 export function buildFeeUpdate(
   invoice: InvoiceLike,
   provision: ProvisionLike | null,
@@ -91,7 +91,7 @@ export function buildFeeUpdate(
           paidOn: isoDay(new Date(p.paidOn as Date)),
           method,
           // Each recorded payment's own receipt (the user, 2026-10-27: a second payment's receipt never reached
-          // Tetra Commission — only the close's showed). Only a link a browser can open.
+          // CS Portal — only the close's showed). Only a link a browser can open.
           receipt: /^https?:\/\//i.test(String(p.proofUrl ?? "")) ? { url: String(p.proofUrl), name: p.receiptNumber || `${method || "Payment"} receipt` } : null,
         };
       })
@@ -108,9 +108,9 @@ export function onFeeUpdateQueued(fn: () => void): void {
 }
 
 /**
- * Queue the invoice's money for Tetra Commission, if its student went there.
+ * Queue the invoice's money for CS Portal, if its student went there.
  * Pass the document for a deletion — it is gone from the database by the time
- * anybody could read it. Never throws, never waits on Tetra Commission.
+ * anybody could read it. Never throws, never waits on CS Portal.
  */
 export async function queueFeeUpdate(
   invoiceOrId: InvoiceLike | string | Types.ObjectId,
@@ -124,7 +124,7 @@ export async function queueFeeUpdate(
     const provision = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(id), "commission.state": "sent" })
       .select("organizationId commission lmsCourseTitle payload.email")
       .lean<ProvisionLike & { organizationId: unknown }>();
-    // evenIfNotSent (the receipts backfill, 2026-10-12): an enrolment Tetra Commission has from before finance sent
+    // evenIfNotSent (the receipts backfill, 2026-10-12): an enrolment CS Portal has from before finance sent
     // students — it knows the invoice, and answers UNKNOWN_INVOICE (stopped, harmless) when it doesn't.
     if (!provision && !opts.evenIfNotSent) return false;
 
@@ -158,7 +158,7 @@ export async function queueFeeUpdate(
     kick?.();
     return true;
   } catch (err) {
-    logger.error({ err, reason }, "Could not queue a fee update for Tetra Commission");
+    logger.error({ err, reason }, "Could not queue a fee update for CS Portal");
     return false;
   }
 }
@@ -199,9 +199,9 @@ export async function drainFeeUpdates(now = new Date()): Promise<number> {
         $unset: { claimedAt: 1, lastError: 1 },
       });
       delivered++;
-      logger.info({ invoice: row.invoiceNumber, applied: result.applied }, "Fee update delivered to Tetra Commission");
+      logger.info({ invoice: row.invoiceNumber, applied: result.applied }, "Fee update delivered to CS Portal");
     } catch (err) {
-      const message = ((err as Error).message || "Tetra Commission could not be reached").slice(0, 500);
+      const message = ((err as Error).message || "CS Portal could not be reached").slice(0, 500);
       if (err instanceof CommissionRefusedError) {
         const stopped = err.code === "UNKNOWN_INVOICE";
         await CommissionFeeUpdateModel.updateOne(same, {
@@ -209,8 +209,8 @@ export async function drainFeeUpdates(now = new Date()): Promise<number> {
           $unset: { claimedAt: 1 },
         });
         logger.warn({ invoice: row.invoiceNumber, code: err.code, reason: message }, stopped
-          ? "Tetra Commission has no course fee for this invoice — fee update stopped"
-          : "Tetra Commission refused a fee update");
+          ? "CS Portal has no course fee for this invoice — fee update stopped"
+          : "CS Portal refused a fee update");
         continue;
       }
       await CommissionFeeUpdateModel.updateOne(same, {

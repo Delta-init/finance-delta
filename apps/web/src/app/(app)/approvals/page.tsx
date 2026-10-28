@@ -34,20 +34,20 @@ import { formatWhen } from "@/features/tetra-deposits/status";
  * approved, rejected or sent back — every kind the reader may decide, newest
  * first, filtered by status, kind and date.
  *
- * Fund requests and Tetra Commission's deposits are still decided right here,
+ * Fund requests and CS Portal's deposits are still decided right here,
  * with the dialogs they always had. Every other kind opens its own page, where
  * what a decision needs — the receipt, the figures — is.
  *
  * An approved enrolment also says what became of the student afterwards:
  * whether the LMS made their account (or added the course to the one they
- * had), and whether Tetra Commission's portal did — Forex students only.
+ * had), and whether CS Portal's portal did — Forex students only.
  */
 
 const STATUSES: { key: ApprovalListStatus; label: string }[] = [
   { key: "pending", label: "Pending" },
   { key: "approved", label: "Approved" },
   { key: "rejected", label: "Rejected" },
-  // Decided here, turned down by Tetra Commission (2026-10-25): kept apart, to send again or reopen.
+  // Decided here, turned down by CS Portal (2026-10-25): kept apart, to send again or reopen.
   { key: "failed", label: "Didn't go through" },
   { key: "all", label: "All" },
 ];
@@ -134,7 +134,7 @@ function OutcomeLine({ system, label, tone, detail, code }: { system: string; la
   );
 }
 
-/** A decided Tetra deposit that Tetra Commission turned down: sent to it again as it was (2026-10-25). */
+/** A decided Tetra deposit that CS Portal turned down: sent to it again as it was (2026-10-25). */
 function SendAgainButton({ id }: { id: string }) {
   const resend = useResendTetraDeposit();
   return (
@@ -145,8 +145,8 @@ function SendAgainButton({ id }: { id: string }) {
         e.stopPropagation();
         try {
           const r = await resend.mutateAsync(id);
-          if (r.delivered) toast.success(r.message || "Sent — Tetra Commission has it");
-          else toast.error(`Tetra Commission did not accept it: ${r.message}`);
+          if (r.delivered) toast.success(r.message || "Sent — CS Portal has it");
+          else toast.error(`CS Portal did not accept it: ${r.message}`);
         } catch (err) {
           toast.error(err instanceof ApiError ? err.message : "Could not send it again");
         }
@@ -157,7 +157,7 @@ function SendAgainButton({ id }: { id: string }) {
   );
 }
 
-/** A decided Tetra deposit that Tetra Commission turned down: sent back to be decided again. */
+/** A decided Tetra deposit that CS Portal turned down: sent back to be decided again. */
 function ReopenButton({ id }: { id: string }) {
   const reopen = useReopenTetraDeposit();
   return (
@@ -268,10 +268,10 @@ export default function ApprovalsPage() {
   const hasFilters = status !== "pending" || type !== "all" || !!dateFrom || !!dateTo || !!search || filtered;
   // Searched or filtered, the Pending count is what matches; otherwise everything waiting.
   const pendingCount = filtered && status === "pending" ? list.data?.meta.total ?? 0 : summary?.total ?? 0;
-  // Turned down by Tetra Commission, whatever tab is open (2026-10-25).
+  // Turned down by CS Portal, whatever tab is open (2026-10-25).
   const failedCount = list.data?.meta.failed ?? 0;
   const procurementVisible = kinds.some((k) => k.type === "procurement");
-  // Review a fund request or deposit here; reopen a deposit Tetra Commission turned down.
+  // Review a fund request or deposit here; reopen a deposit CS Portal turned down.
   const canDecide = (r: ApprovalRow) => r.status === "pending" && !!r.decideHere && !r.own;
   const canReopen = (r: ApprovalRow) => r.type === "tetra_deposit" && r.delivery?.state === "failed";
   const hasActions = rows.some((r) => canDecide(r) || canReopen(r));
@@ -331,8 +331,8 @@ export default function ApprovalsPage() {
         const badge = STATUS_BADGE[r.status];
         const notWithTetra = r.delivery
           ? r.delivery.state === "failed"
-            ? `Tetra Commission did not accept it: ${r.delivery.error ?? "no reason given"}`
-            : "Not with Tetra Commission yet — sending on its own"
+            ? `CS Portal did not accept it: ${r.delivery.error ?? "no reason given"}`
+            : "Not with CS Portal yet — sending on its own"
           : "";
         return (
           <div className="min-w-[120px] max-w-[220px]">
@@ -406,7 +406,7 @@ export default function ApprovalsPage() {
       <PageHeader
         icon={ClipboardCheck}
         title="Approvals"
-        description="Everything you decide, in one table — waiting, approved and rejected, newest first. An approved enrolment shows whether the student's LMS and commission portal accounts were made."
+        description="Everything you decide, in one table — waiting, approved and rejected, newest first. An approved enrolment shows whether the student's LMS and CS Portal accounts were made."
         action={apiTooOld ? undefined : (
           <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(type, dateFrom, dateTo, crm, academy, raisedBy)} />
         )}

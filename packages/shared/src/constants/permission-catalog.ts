@@ -26,7 +26,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   ledger: "Ledger",
   payroll: "Payroll",
   commission: "Commissions",
-  tetra_deposit: "Tetra Commission deposits",
+  tetra_deposit: "CS Portal deposits",
   loan: "Loans & credit",
   report: "Reports",
   user: "Users",

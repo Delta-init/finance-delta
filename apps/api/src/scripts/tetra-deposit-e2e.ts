@@ -1,23 +1,23 @@
 /**
- * Tetra Commission deposit requests approved here, both ways over real HTTP,
- * against a real Tetra Commission process and a real finance API.
+ * CS Portal deposit requests approved here, both ways over real HTTP,
+ * against a real CS Portal process and a real finance API.
  *
- *   1. A deposit a mentor raises in Tetra Commission reaches the accountants'
+ *   1. A deposit a mentor raises in CS Portal reaches the accountants'
  *      queue within seconds, counted in their approvals, once however often
  *      it is handed over; nobody without the permission sees it.
  *   2. Approved here — at the amount that arrived, under its transaction ID —
  *      it is approved there at once, commission credited and the student
  *      moved to Level 2. Rejected here, it is rejected there with the reason.
- *   3. A transaction ID Tetra Commission already has is refused in front of
+ *   3. A transaction ID CS Portal already has is refused in front of
  *      the accountant, and the request stays pending to correct.
- *   4. Tetra Commission down mid-approval: the decision is kept and delivered
+ *   4. CS Portal down mid-approval: the decision is kept and delivered
  *      once it is back. Turned down in the background: shown, and reopened.
- *   5. A request gone from Tetra Commission is closed, not left waiting.
+ *   5. A request gone from CS Portal is closed, not left waiting.
  *   6. The deposits page lists every one — by status, searched, paged, dated
  *      — with each status's count, and one deposit with its history.
  *   7. A bonus — a course payment — comes here too, said to be one, with its
- *      course payment, MT5 login and receipt; approved here, it waits in Tetra
- *      Commission for a broker admin, nobody's commission credited yet.
+ *      course payment, MT5 login and receipt; approved here, it waits in CS
+ *      Portal for a broker admin, nobody's commission credited yet.
  *   8. Paid more than one way — part by card, part by a payment link — each
  *      payment comes here with its own method, amount and receipt, listed for
  *      the accountant; one paid one way has no list; a list that cannot be
@@ -77,12 +77,12 @@ async function until(fn: () => Promise<boolean>, ms = 8000): Promise<boolean> {
   return false;
 }
 
-/* ── The gate finance reaches Tetra Commission through: passes everything on, or plays dead. ── */
+/* ── The gate finance reaches CS Portal through: passes everything on, or plays dead. ── */
 let commissionDown = false;
 const gate = Bun.serve({
   port: Number(process.env.E2E_GATE_PORT),
   async fetch(req) {
-    if (commissionDown) return Response.json({ success: false, error: { code: "DOWN", message: "Tetra Commission is down" } }, { status: 503 });
+    if (commissionDown) return Response.json({ success: false, error: { code: "DOWN", message: "CS Portal is down" } }, { status: 503 });
     const url = new URL(req.url);
     const r = await fetch(`${COMMISSION}${url.pathname}${url.search}`, { method: req.method, headers: req.headers, body: await req.text() });
     return new Response(await r.text(), { status: r.status, headers: { "content-type": "application/json" } });
@@ -97,7 +97,7 @@ for (const c of await mongoose.connection.db!.listCollections().toArray()) await
 for (const c of await tc.db!.listCollections().toArray()) await tc.db!.collection(c.name).deleteMany({});
 const txs = tc.db!.collection("funding_transactions");
 
-step("Setting up Delta HQ in finance, and a mentor and student in Tetra Commission");
+step("Setting up Delta HQ in finance, and a mentor and student in CS Portal");
 const org = await Organization.create({ _id: new Types.ObjectId(ORG_ID), name: "Delta HQ E2E", baseCurrency: "AED" });
 for (const def of SYSTEM_ROLES) {
   await Role.create({ organizationId: org._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });
@@ -123,7 +123,7 @@ const plan = { _id: new Types.ObjectId(), name: "E2E Plan", active: true, deposi
 await tc.db!.collection("commission_plans").insertOne(plan);
 const mentor = {
   _id: new Types.ObjectId(), email: "meera@e2e-deposit.test", full_name: "Mentor Meera", app_role: "junior_mentor",
-  // bcrypt, which is what Tetra Commission checks passwords with.
+  // bcrypt, which is what CS Portal checks passwords with.
   password_hash: await Bun.password.hash(PASSWORD, { algorithm: "bcrypt", cost: 10 }), commission_plan_id: String(plan._id), created_date: now,
 };
 await tc.db!.collection("users").insertOne(mentor);
@@ -137,7 +137,7 @@ await tc.db!.collection("mt5_accounts").insertOne({ student_id: String(student._
 await txs.insertOne({ type: "DEPOSIT", status: "APPROVED", student_id: "someone-else", student_name: "Earlier Client", amount_usd: 100, transaction_id: "TXN-DUP", created_date: now });
 const meera = { authorization: `Bearer ${(await http(`${COMMISSION}/api/auth/login`, "POST", { email: mentor.email, password: PASSWORD })).body?.token}` };
 
-/** A deposit as a mentor raises it in Tetra Commission. */
+/** A deposit as a mentor raises it in CS Portal. */
 async function raise(amount_usd: number): Promise<string> {
   const r = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
     type: "DEPOSIT", status: "PENDING", student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
@@ -157,7 +157,7 @@ const decide = async (financeId: string, body: unknown) => http(`${API}/tetra-de
 const approve = (financeId: string, over: Record<string, unknown> = {}) =>
   decide(financeId, { decision: "approved", amountMinor: 95000, transactionId: "TXN-2001", paymentMethod: "USDT", mt5Login: "7770001", note: "On the statement", ...over });
 
-step("A deposit raised in Tetra Commission reaches the accountants");
+step("A deposit raised in CS Portal reaches the accountants");
 const d1 = await raise(1000);
 check("within seconds", await reachesFinance(d1));
 let row = await inFinance(d1);
@@ -165,7 +165,7 @@ check("as raised: the student, the amount in cents of USD, the proof, the MT5 ac
   row?.student?.name === "Student Sam" && row.student.code === "STU-0200" && row.student.level === "LEVEL_1" && row.amountMinor === 100000
     && row.currency === "USD" && row.screenshotUrl === "https://files.e2e-deposit.test/proof.png" && row.mt5Accounts?.[0]?.login === "7770001"
     && row.requestedBy === "Mentor Meera" && row.status === "pending", JSON.stringify(row).slice(0, 400));
-check("Tetra Commission knows finance has it", await until(async () => (await txOf(d1))?.finance_approval?.state === "sent")
+check("CS Portal knows finance has it", await until(async () => (await txOf(d1))?.finance_approval?.state === "sent")
   && (await txOf(d1))?.finance_approval?.request_id === String(row._id));
 let r = await waiting();
 check("in the accountant's queue", r.status === 200 && r.body?.data?.some((d: any) => d.externalId === d1), show(r));
@@ -198,9 +198,9 @@ r = await signed({ externalId: d1, amountMinor: 100000, currency: "USD", student
 check("the same id back, and still one row", r.status === 200 && r.body?.data?.id === String(row._id)
   && (await TetraDepositModel.countDocuments({ externalId: d1 })) === 1, show(r));
 r = await signed({ externalId: "bad", amountMinor: 0, student: { name: "" } });
-check("a malformed one is refused as such (Tetra Commission hands it back)", r.status === 422, show(r));
+check("a malformed one is refused as such (CS Portal hands it back)", r.status === 422, show(r));
 
-step("A transaction ID Tetra Commission already has is refused in front of the accountant");
+step("A transaction ID CS Portal already has is refused in front of the accountant");
 r = await approve(String(row._id), { transactionId: "" });
 check("approving needs a transaction ID", r.status === 422, show(r));
 r = await approve(String(row._id), { transactionId: "TXN-DUP" });
@@ -209,7 +209,7 @@ row = await inFinance(d1);
 check("still pending here, to correct", row.status === "pending" && !row.decision?.decidedAt && !row.delivery?.state, JSON.stringify({ s: row.status, d: row.decision, v: row.delivery }));
 check("and still pending there", (await txOf(d1))?.status === "PENDING");
 
-step("Approved here: approved in Tetra Commission at once");
+step("Approved here: approved in CS Portal at once");
 r = await approve(String(row._id));
 check("delivered while the accountant waits", r.status === 200 && r.body?.data?.delivered === true && r.body.data.deposit?.status === "approved", show(r));
 let t = await txOf(d1);
@@ -232,11 +232,11 @@ await reachesFinance(d2);
 r = await decide(String((await inFinance(d2))._id), { decision: "rejected", reason: "Nothing arrived on the statement" });
 t = await txOf(d2);
 check("delivered", r.status === 200 && r.body?.data?.delivered === true, show(r));
-check("rejected in Tetra Commission with the accountant's reason", t.status === "REJECTED" && t.rejection_reason === "Nothing arrived on the statement", `${t.status} ${t.rejection_reason}`);
+check("rejected in CS Portal with the accountant's reason", t.status === "REJECTED" && t.rejection_reason === "Nothing arrived on the statement", `${t.status} ${t.rejection_reason}`);
 r = await decide(String((await inFinance(d2))._id), { decision: "rejected", reason: "abc" });
 check("a reason is at least five characters", r.status === 422 || r.status === 409, show(r));
 
-step("Tetra Commission down mid-approval: kept, and delivered once it is back");
+step("CS Portal down mid-approval: kept, and delivered once it is back");
 const d3 = await raise(400);
 await reachesFinance(d3);
 commissionDown = true;
@@ -244,7 +244,7 @@ r = await approve(String((await inFinance(d3))._id), { amountMinor: 40000, trans
 check("the accountant is told it is saved and will follow", r.status === 200 && r.body?.data?.delivered === false && /automatically/.test(r.body.data.message), show(r));
 row = await inFinance(d3);
 check("approved here, waiting to be delivered", row.status === "approved" && row.delivery?.state === "queued" && row.delivery.attempts === 1, JSON.stringify(row.delivery));
-check("listed as not yet in Tetra Commission", (await http(`${API}/tetra-deposits?view=attention`, "GET", undefined, asha)).body?.data?.some((d: any) => d.externalId === d3));
+check("listed as not yet in CS Portal", (await http(`${API}/tetra-deposits?view=attention`, "GET", undefined, asha)).body?.data?.some((d: any) => d.externalId === d3));
 check("still pending there meanwhile", (await txOf(d3))?.status === "PENDING");
 commissionDown = false;
 await Bun.sleep(2100);
@@ -258,12 +258,12 @@ await reachesFinance(d4);
 const f4 = String((await inFinance(d4))._id);
 commissionDown = true;
 r = await approve(f4, { amountMinor: 30000, transactionId: "TXN-DUP" });
-check("saved while Tetra Commission is down", r.status === 200 && r.body?.data?.delivered === false, show(r));
+check("saved while CS Portal is down", r.status === 200 && r.body?.data?.delivered === false, show(r));
 commissionDown = false;
 await Bun.sleep(2100);
 await drainTetraDepositDecisions();
 row = await inFinance(d4);
-check("Tetra Commission turned it down: the reason is kept", row.delivery?.state === "failed" && /TXN-DUP/.test(row.delivery.lastError ?? ""), JSON.stringify(row.delivery));
+check("CS Portal turned it down: the reason is kept", row.delivery?.state === "failed" && /TXN-DUP/.test(row.delivery.lastError ?? ""), JSON.stringify(row.delivery));
 r = await http(`${API}/tetra-deposits/${f4}/reopen`, "POST", {}, asha);
 check("reopened: pending again", r.status === 200 && r.body?.data?.status === "pending", show(r));
 r = await approve(f4, { amountMinor: 30000, transactionId: "TXN-2004" });
@@ -271,7 +271,7 @@ check("and approved under the right ID", r.status === 200 && r.body?.data?.deliv
 r = await http(`${API}/tetra-deposits/${f4}/reopen`, "POST", {}, asha);
 check("a delivered decision cannot be reopened", r.status === 409, show(r));
 
-step("A request gone from Tetra Commission is closed, not left waiting");
+step("A request gone from CS Portal is closed, not left waiting");
 const d5 = await raise(250);
 await reachesFinance(d5);
 await txs.deleteOne({ _id: new Types.ObjectId(d5) }); // as if removed there by hand
@@ -310,7 +310,7 @@ const kinds = (r.body?.data?.events ?? []).map((e: any) => e.kind);
 check("one deposit, with its history: approved, turned down, reopened, approved again, delivered",
   r.status === 200 && JSON.stringify(kinds) === JSON.stringify(["received", "approved", "failed", "reopened", "approved", "delivered"]), JSON.stringify(kinds));
 
-step("A bonus — a course payment — approved here first, then by a broker admin in Tetra Commission");
+step("A bonus — a course payment — approved here first, then by a broker admin in CS Portal");
 const br = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
   type: "BONUS", status: "PENDING", tags: ["Course"], student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
   amount_usd: 544.96, amount_original: 2000, amount_currency: "AED", payment_method: "AED TRANSFER", mt5_login: "7770001",
@@ -321,7 +321,7 @@ const br = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
   initiating_mentor_id: String(mentor._id), initiating_mentor_name: mentor.full_name,
 }, meera);
 const b1 = String(br.body?.id ?? "");
-check("raised in Tetra Commission, with the accountants within seconds", br.status === 200 && (await reachesFinance(b1)), show(br));
+check("raised in CS Portal, with the accountants within seconds", br.status === 200 && (await reachesFinance(b1)), show(br));
 const brow = await inFinance(b1);
 check("as a bonus: the amount as typed, its course payment, the MT5 login and the receipt",
   brow?.type === "BONUS" && brow.amountMinor === 54496 && brow.amountOriginal === 2000 && brow.amountCurrency === "AED"
@@ -339,13 +339,13 @@ check("there: still pending — a broker admin's to approve — with the payment
     && !tb.approved_by_name, JSON.stringify({ status: tb?.status, fa: tb?.finance_approval, tx: tb?.transaction_id }));
 check("and nobody's commission credited yet", (await tc.db!.collection("commission_credits").countDocuments({ transaction_id: b1 })) === 0);
 r = await http(`${API}/tetra-deposits/${String(brow._id)}`, "GET", undefined, asha);
-check("its history here says it is a bonus", r.status === 200 && r.body?.data?.type === "BONUS" && r.body.data.events?.[0]?.text === "Bonus raised in Tetra Commission", show(r));
+check("its history here says it is a bonus", r.status === 200 && r.body?.data?.type === "BONUS" && r.body.data.events?.[0]?.text === "Bonus raised in CS Portal", show(r));
 
 step("Paid more than one way: each payment reaches the accountants with its own receipt");
 const pr = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
   type: "DEPOSIT", status: "PENDING", student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
   amount_usd: 544.96, amount_aed: 2000, amount_original: 2000, amount_currency: "AED", mt5_login: "7770001",
-  // The first payment's method and receipt, as Tetra Commission keeps them for whatever reads only one.
+  // The first payment's method and receipt, as CS Portal keeps them for whatever reads only one.
   payment_method: "CARD PAYMENT", screenshot_url: "https://files.e2e-deposit.test/card.png",
   payments: [
     { method: "CARD PAYMENT", amount: 1500, currency: "AED", receipt_url: "https://files.e2e-deposit.test/card.png", receipt_name: "card.png" },
@@ -356,7 +356,7 @@ const pr = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
   initiating_mentor_id: String(mentor._id), initiating_mentor_name: mentor.full_name,
 }, meera);
 const p1 = String(pr.body?.id ?? "");
-check("raised in Tetra Commission, with the accountants within seconds", pr.status === 200 && (await reachesFinance(p1)), show(pr));
+check("raised in CS Portal, with the accountants within seconds", pr.status === 200 && (await reachesFinance(p1)), show(pr));
 const prow = await inFinance(p1);
 const [card, link] = prow?.payments ?? [];
 check("each payment kept: its method, its amount in cents of AED, its receipt",
@@ -390,7 +390,7 @@ r = await signed({
 const unreadable = await TetraDepositModel.findOne({ externalId: "e2e-unreadable-payments" }).lean() as any;
 check("a list it cannot read is dropped — never the deposit with it", r.status === 200 && !!unreadable && (unreadable.payments ?? []).length === 0, show(r));
 
-step("A course upgrade payment recorded in Tetra Commission: approved here in AED, counted there");
+step("A course upgrade payment recorded in CS Portal: approved here in AED, counted there");
 const tcFn = (name: string, body: unknown) => http(`${COMMISSION}/api/functions/${name}`, "POST", body, meera);
 await tcFn("setStudentCourses", { studentId: String(student._id), courses: [{ code: "MBT", paidAed: 2250 }, { code: "DWT", paidAed: 3250 }] });
 r = await tcFn("startCourseUpgrade", { studentId: String(student._id), course: "MSNR", plan: "installments" });

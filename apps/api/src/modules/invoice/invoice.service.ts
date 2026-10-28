@@ -45,7 +45,7 @@ import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 
 /**
- * Tell Tetra Commission the enrolment's money changed, if its student went
+ * Tell CS Portal the enrolment's money changed, if its student went
  * there (modules/integrations/commission-fee-update.service). Queued, never
  * awaited by the caller's answer, never throws.
  */
@@ -922,7 +922,7 @@ export async function updateInvoice(
   if (input.lineItems && before !== "draft") {
     void _reconcileInventory(orgId, doc, linesBefore);
   }
-  // A new total or a due date set by hand: Tetra Commission's figures follow.
+  // A new total or a due date set by hand: CS Portal's figures follow.
   if (input.lineItems || input.dueDate) feeUpdate(doc._id, "edit");
 
   await doc.populate("tagIds", "name color");
@@ -1001,7 +1001,7 @@ export function lmsPaymentStatus(doc: InvoiceDoc): "paid" | "partial" | "unpaid"
 }
 
 /**
- * An enrolment's money as the LMS and Tetra Commission are told it: the fee,
+ * An enrolment's money as the LMS and CS Portal are told it: the fee,
  * what is paid, the balance, the bonus and the receipt the counsellor took.
  *
  * A snapshot taken at approval, for information — the people teaching and
@@ -1052,7 +1052,7 @@ export function enrolmentFeeSummary(doc: InvoiceDoc): {
       ? { url: receipt.url!, name: receipt.name ?? "Receipt", ...(receipt.mimeType ? { mimeType: receipt.mimeType } : {}) }
       // From a CRM that sends a receipt with each payment: the first one's (2026-10-12).
       : declared.declaredPayments.find((p) => p.receipt)?.receipt ?? null,
-    // The close as the counsellor declared it, and what accounts recorded — Tetra Commission shows both (2026-10-12).
+    // The close as the counsellor declared it, and what accounts recorded — CS Portal shows both (2026-10-12).
     declaredPaidMinor: declared.declaredPaidMinor,
     declaredPaymentMethod: declared.declaredPaymentMethod,
     recordedPaidMinor: d.amountPaidMinor ?? 0,
@@ -1217,7 +1217,7 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         currency: doc.currency ?? "AED",
         // Paid opens every module, partial the first half, unpaid none.
         paymentStatus: lmsPaymentStatus(doc),
-        // What the enrolment was at approval, shown in the LMS and in Tetra Commission.
+        // What the enrolment was at approval, shown in the LMS and in CS Portal.
         feeSummary: enrolmentFeeSummary(doc),
         // The sales CRM that sold it, as a tag on the enrolment there too.
         ...(saleCrm ? { crm: saleCrm } : {}),
@@ -1231,7 +1231,7 @@ export async function queueLmsProvision(orgId: string, doc: InvoiceDoc): Promise
         : {}),
     });
 
-    // Into the LMS — and on to Tetra Commission — now, rather than on the next
+    // Into the LMS — and on to CS Portal — now, rather than on the next
     // tick. The approval does not wait for it; the timer retries if it cannot.
     const { kickLmsProvisioning } = await import("../../jobs/lms-provision.worker");
     kickLmsProvisioning();
@@ -1354,11 +1354,11 @@ export async function removeAttachment(
  * until each is deleted (each takes its bank line and receipt with it), so a
  * delete is always a deliberate two steps. And it goes only when nothing else
  * depends on it — a credit note, a commission, a quotation converted into it,
- * a balance payment or a Tetra Commission course payment made from it — since
+ * a balance payment or a CS Portal course payment made from it — since
  * each of those would be left referring to an invoice that no longer exists.
  *
  * A sales CRM's enrolment can go too. What it already set going stays — the
- * student's LMS access and their Tetra Commission account are removed by hand —
+ * student's LMS access and their CS Portal account are removed by hand —
  * but anything still queued for it is stopped: an LMS provisioning not yet
  * done, and the instalment reminders.
  */
@@ -1398,9 +1398,9 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   if (commissioned) throw new AppError("CONFLICT", "A commission was calculated from this invoice, so it cannot be deleted");
   if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
   if (balance) throw new AppError("CONFLICT", "A balance payment from a sales CRM refers to this invoice, so it cannot be deleted");
-  if (deposit) throw new AppError("CONFLICT", "A Tetra Commission payment refers to this invoice, so it cannot be deleted");
+  if (deposit) throw new AppError("CONFLICT", "A CS Portal payment refers to this invoice, so it cannot be deleted");
 
-  // Gone from the database once deleted, so Tetra Commission is told from what it was.
+  // Gone from the database once deleted, so CS Portal is told from what it was.
   const gone = doc.toObject();
   await doc.deleteOne();
   feeUpdate(gone as never, "delete", { deleted: true });
@@ -2099,7 +2099,7 @@ export async function recordPayment(
   input: RecordPaymentInput,
   file?: { buffer: Buffer; mimeType: string; originalName: string },
   /**
-   * A payment recorded from elsewhere — one a CS took in Tetra Commission and
+   * A payment recorded from elsewhere — one a CS took in CS Portal and
    * accounts approved: its receipt where it already lives, and the reference
    * that makes recording it again a no-op.
    */

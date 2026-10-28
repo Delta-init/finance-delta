@@ -9,13 +9,13 @@ import { APPROVALS_KEY } from "@/features/approvals/api";
 
 const KEY = ["tetra-deposits"] as const;
 
-/** Tetra Commission's deposit requests — waiting, needing attention, or recently decided. */
+/** CS Portal's deposit requests — waiting, needing attention, or recently decided. */
 export function useTetraDeposits(view: TetraDepositView, enabled = true) {
   return useQuery({
     queryKey: [...KEY, view],
     queryFn: () => api.getList<TetraDeposit>("tetra-deposits", { view }),
     enabled,
-    // A request raised in Tetra Commission should turn up without a reload.
+    // A request raised in CS Portal should turn up without a reload.
     refetchInterval: 60_000,
   });
 }
@@ -56,7 +56,7 @@ export function useDecideTetraDeposit(id: string) {
   });
 }
 
-/** A decision Tetra Commission turned down, sent to it again as it was (2026-10-25). */
+/** A decision CS Portal turned down, sent to it again as it was (2026-10-25). */
 export function useResendTetraDeposit() {
   const qc = useQueryClient();
   return useMutation({

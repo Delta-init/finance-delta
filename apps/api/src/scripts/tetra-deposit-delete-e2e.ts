@@ -1,11 +1,11 @@
 /**
- * Deleting a Tetra Commission deposit by hand, and restoring it (the user, 2026-10-28: "a delete option in Tetra
+ * Deleting a CS Portal deposit by hand, and restoring it (the user, 2026-10-28: "a delete option in Tetra
  * deposits"), through the API:
  *
  *   - Who: the people who decide them; a reason is needed.
  *   - An approved one: kept as "deleted", with who, why and what it was; off the list and its counts; under Deleted;
  *     its invoice no longer held by it. Restored: as it was.
- *   - Refused: one waiting for a decision (reject it), one still on its way to Tetra Commission, one whose payment is
+ *   - Refused: one waiting for a decision (reject it), one still on its way to CS Portal, one whose payment is
  *     still on an invoice (named) — allowed once that invoice is void.
  *
  * The rows are put with finance directly (as they stand once decided). Run through scripts/tetra-deposit-delete-e2e.sh.
@@ -111,7 +111,7 @@ step("Refused");
 r = await del(pending._id, { reason: "Not wanted" });
 check("waiting for a decision: refused — reject it instead", r.status === 409 && /reject it instead/.test(r.body?.error?.message ?? ""), show(r));
 r = await del(sending._id, { reason: "Wrong" });
-check("its decision still on its way to Tetra Commission: refused", r.status === 409 && /on its way/.test(r.body?.error?.message ?? ""), show(r));
+check("its decision still on its way to CS Portal: refused", r.status === 409 && /on its way/.test(r.body?.error?.message ?? ""), show(r));
 r = await del(holding._id, { reason: "Wrong course" });
 check("its payment still on an invoice: refused, naming the receipt and invoice", r.status === 409 && /RCT-00900 is still on invoice IN-00900/.test(r.body?.error?.message ?? ""), show(r));
 check("…nothing changed", (await TetraDepositModel.findById(holding._id).lean() as any).status === "approved");

@@ -74,7 +74,7 @@ export function nextInstalmentDue(invoice: InstalmentInvoice): Date | null {
 
 /**
  * Sets the due date by the rule on a document about to be saved. True when it
- * changed — which is a money change Tetra Commission is told about.
+ * changed — which is a money change CS Portal is told about.
  */
 export function applyInstalmentDue(doc: InstalmentInvoice & { dueDate?: Date | null; set?: (path: string, value: unknown) => unknown }): boolean {
   const due = nextInstalmentDue(doc);

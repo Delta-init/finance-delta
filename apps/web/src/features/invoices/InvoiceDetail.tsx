@@ -246,7 +246,7 @@ export function InvoiceDetail({ id }: { id: string }) {
             <DialogDescription>
               It is removed for good and leaves a gap in the numbering — void it instead to keep it on the record as cancelled.
               {invoice.enrolment
-                ? " This is an enrolment: the LMS access and Tetra Commission account it already gave the student stay, and must be removed by hand. Anything still queued for it stops."
+                ? " This is an enrolment: the LMS access and CS Portal account it already gave the student stay, and must be removed by hand. Anything still queued for it stops."
                 : ""}
               {" "}This cannot be undone.
             </DialogDescription>

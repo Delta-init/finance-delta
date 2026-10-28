@@ -19,7 +19,7 @@
  *     invoice sent back among the rejected, a purchase request's expense as
  *     the purchase request;
  *   - an approved enrolment says whether the LMS made the student's account
- *     and whether Tetra Commission's portal did, or why not;
+ *     and whether CS Portal's portal did, or why not;
  *   - an enrolment's amount is what was collected — at the close, or recorded
  *     since when that is more — with its course fee beside it (summary too);
  *   - filtered by type and by date, paged, newest first, never another
@@ -365,7 +365,7 @@ async function main() {
 
   const approvedList = await listOf(tAdmin, { status: "approved", pageSize: 100 });
   const a5 = rowOf(approvedList, "invoice", "Client IN-5");
-  check("Approved: an enrolment the LMS made an account for, and the commission portal too — with the code, and who approved it",
+  check("Approved: an enrolment the LMS made an account for, and the CS Portal too — with the code, and who approved it",
     a5?.lms?.state === "created" && a5?.commission?.state === "created" && a5?.commission?.code === "STU-9001" && a5?.decidedBy === "Approver A", show(a5));
   const a6 = rowOf(approvedList, "invoice", "Client IN-6");
   check("…a student who already had an LMS account, on a course that is not Forex, so not sent to the portal",
@@ -400,10 +400,10 @@ async function main() {
     rowOf(approvedList, "procurement", "2 × Chairs")?.decidedBy === "Admin" && !approvedList.rows.some((r) => r.type === "expense" && r.title === "2 × Chairs"));
   check("a paid payroll run counts as approved, with who approved it", rowOf(approvedList, "payroll", "PR-4 · August 2026")?.decidedBy === "Admin",
     show(rowOf(approvedList, "payroll", "PR-4 · August 2026")));
-  // Since 2026-10-25 one Tetra Commission did not take is under "Didn't go through", not Approved.
+  // Since 2026-10-25 one CS Portal did not take is under "Didn't go through", not Approved.
   const failedList = await listOf(tAdmin, { status: "failed", pageSize: 100 });
   const d2 = rowOf(failedList, "tetra_deposit", "Student D2");
-  check("an approved deposit Tetra Commission did not take is under Didn't go through, at the amount approved, and not under Approved",
+  check("an approved deposit CS Portal did not take is under Didn't go through, at the amount approved, and not under Approved",
     d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00 && !rowOf(approvedList, "tetra_deposit", "Student D2"), show(d2 ?? null));
   check("…only what can be turned down is there, and it is counted",
     failedList.rows.every((r) => r.type === "tetra_deposit") && (failedList as { meta?: { failed?: number } }).meta?.failed === failedList.rows.length, show((failedList as { meta?: unknown }).meta ?? null));

@@ -119,7 +119,7 @@ export const PERMISSIONS = [
   "commission:approve",
 
   /**
-   * Deciding the deposit requests Tetra Commission sends for approval, and
+   * Deciding the deposit requests CS Portal sends for approval, and
    * reading them. One permission for both: the queue is only ever read in
    * order to decide it.
    */

@@ -21,7 +21,7 @@ import { queueFeeUpdate } from "../modules/integrations/commission-fee-update.se
  * for months.
  *
  * Sent straight after an approval or a payment (kickLmsProvisioning), in the
- * background, so the student is in the LMS and in Tetra Commission within
+ * background, so the student is in the LMS and in CS Portal within
  * seconds; the timer is the safety net that retries whatever that could not
  * deliver.
  */
@@ -30,7 +30,7 @@ const EVERY_MS = 60_000;
 const BATCH = 20;
 
 /**
- * Whose students go on to Tetra Commission: the sales CRMs' — Delta's, the
+ * Whose students go on to CS Portal: the sales CRMs' — Delta's, the
  * Remote CRM's and the Banglore CRM's ("crm"; the Banglore CRM's since
  * 2026-10-10, to the Bangalore teams) and, since 2026-10-03, Draw's
  * ("draw-crm"), whose students join the same round of teams and get a CS like
@@ -47,12 +47,12 @@ const sendsToCommission = (source: unknown) => COMMISSION_SOURCES.has(String(sou
  * the payload carries — and, for safety, the tag on the invoice again right
  * before anything is sent.
  */
-const NOT_FOR_COMMISSION_REASON = "Sold through a sales CRM whose students are not sent to Tetra Commission";
+const NOT_FOR_COMMISSION_REASON = "Sold through a sales CRM whose students are not sent to CS Portal";
 const payloadCrm = (payload: unknown) => (payload as { crm?: string } | undefined)?.crm;
 const excludedCrm = (crm: unknown) => typeof crm === "string" && NO_COMMISSION_CRMS.has(crm);
 
 /**
- * And only Forex students: Tetra Commission is the trading side's. The LMS
+ * And only Forex students: CS Portal is the trading side's. The LMS
  * names each course's programme when it takes the enrolment, and FOREX Trading
  * is `4x-trading` there. Any other programme — Digital Marketing, AI, JURA — or
  * none, and the student is not sent. An LMS too old to name it counts as none,
@@ -94,7 +94,7 @@ export async function drainLmsProvisions(): Promise<number> {
         sentAt: new Date(),
         lastError: undefined,
         ...(sentStatus ? { "access.sent": sentStatus } : {}),
-        // On to Tetra Commission, if it is switched on now and the course is
+        // On to CS Portal, if it is switched on now and the course is
         // Forex. New students only: one the LMS took before this, or while it
         // was off, is never sent. One on another programme is marked, with why.
         ...(commissionConfigured() && !row.commission?.state && sendsToCommission(row.source)
@@ -189,7 +189,7 @@ export async function drainLmsExtraCourses(): Promise<number> {
         }, at);
         // A Forex course after a first that was not: a Forex student after all,
         // sent under this course. Only one passed over for its programme —
-        // never one from before Tetra Commission was switched on.
+        // never one from before CS Portal was switched on.
         if (commissionConfigured() && isForex(result.courseProgram) && !excludedCrm(payloadCrm(row.payload))) {
           await LmsProvision.updateOne(
             { _id: row._id, "commission.state": "skipped", "payload.crm": { $nin: [...NO_COMMISSION_CRMS] } },
@@ -280,11 +280,11 @@ export async function drainLmsAccessUpdates(): Promise<number> {
 }
 
 /**
- * Sends each new Forex student the LMS took on to Tetra Commission, where the
+ * Sends each new Forex student the LMS took on to CS Portal, where the
  * next team in turn is given them (team 1, 2, 3, 4, then team 1 again).
  *
  * Only rows the LMS has taken, oldest first, so the teams take turns in the
- * order the students arrived. Tetra Commission is idempotent on the invoice
+ * order the students arrived. CS Portal is idempotent on the invoice
  * and leaves an email it already has alone, so a retry is always safe. Kept
  * apart from the LMS step: this failing never holds up or repeats that one.
  */
@@ -355,10 +355,10 @@ export async function drainCommissionStudents(): Promise<number> {
       sent++;
       // What is owed and when the next instalment is due, as it is now — the
       // student carried the fee as it was at approval (2026-10-11).
-      void queueFeeUpdate(row.invoiceId, "sent to Tetra Commission");
+      void queueFeeUpdate(row.invoiceId, "sent to CS Portal");
       logger.info(
         { invoice: row.invoiceNumber, student: result.studentCode, mentor: result.mentorName, existing: result.existing },
-        result.existing === "email" ? "Student already in Tetra Commission — left as they are" : "Student sent to Tetra Commission",
+        result.existing === "email" ? "Student already in CS Portal — left as they are" : "Student sent to CS Portal",
       );
     } catch (err) {
       const permanent = err instanceof CommissionPermanentError;
@@ -379,7 +379,7 @@ export async function drainCommissionStudents(): Promise<number> {
           },
         },
       );
-      logger.warn({ invoice: row.invoiceNumber, attempts, permanent, notReady, err: message }, "Could not send a student to Tetra Commission");
+      logger.warn({ invoice: row.invoiceNumber, attempts, permanent, notReady, err: message }, "Could not send a student to CS Portal");
     }
   }
   return sent;
@@ -440,7 +440,7 @@ async function enrolmentCloser(invoiceId: unknown, crm: EnrolmentCrm | null): Pr
 
 /*
  * One pass at a time in this process, whether the timer or a kick started it:
- * a slow LMS or Tetra Commission must not let a second pass start on the same
+ * a slow LMS or CS Portal must not let a second pass start on the same
  * rows while one is still sending them. A kick that lands mid-pass asks for
  * one more, so what it was kicked for goes out now, not on the next tick.
  */

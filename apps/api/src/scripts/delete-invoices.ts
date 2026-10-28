@@ -3,16 +3,16 @@
  * IN-00081, IN-00014 — their payment history also").
  *
  * Done the way the invoice page does it, one step at a time, so nothing is left behind: each payment is deleted with
- * finance's own deletePayment (its bank / cash line goes and the account's balance is worked out again; Tetra
- * Commission is told the fee moved), the invoice's commission records go (not one already paid out), then the
- * invoice itself with deleteInvoice (its pending LMS provisioning and instalment reminders go; Tetra Commission is
- * told). What another system has already done stays done — a student's LMS access and Tetra Commission account are
+ * finance's own deletePayment (its bank / cash line goes and the account's balance is worked out again; CS
+ * Portal is told the fee moved), the invoice's commission records go (not one already paid out), then the
+ * invoice itself with deleteInvoice (its pending LMS provisioning and instalment reminders go; CS Portal is
+ * told). What another system has already done stays done — a student's LMS access and CS Portal account are
  * removed by hand. The emails log keeps its lines.
  *
  * Refused, and nothing written, when any of them has something that must be dealt with first: a credit note, a
- * balance payment from a sales CRM, a Tetra Commission payment, a quotation converted into it, a commission already
+ * balance payment from a sales CRM, a CS Portal payment, a quotation converted into it, a commission already
  * paid out, a payment whose bank line was reconciled to a statement, or a payment on a voided invoice — and one
- * Tetra Commission has, run where Tetra Commission is not set up (it could not be told: run it on the server).
+ * CS Portal has, run where CS Portal is not set up (it could not be told: run it on the server).
  *
  * Reads and prints only, unless --write. Run it from apps/api on the server (Bun reads MONGODB_URI from the .env):
  *
@@ -24,7 +24,7 @@
  *
  * Before deleting, everything it removes is saved to backups/delete-invoices-<time>.json beside apps/api; --undo puts
  * it back — the invoices with their payments, their bank lines (balances worked out again), commission records,
- * LMS provisioning and reminders. Tetra Commission is not told again on an undo.
+ * LMS provisioning and reminders. CS Portal is not told again on an undo.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -105,11 +105,11 @@ export async function planDelete(numbers: string[], orgId?: string): Promise<Del
     if (credited) mine.push("a credit note refers to it");
     if (quoted) mine.push("a quotation was converted into it");
     if (balance) mine.push("a balance payment from a sales CRM refers to it");
-    if (deposit) mine.push("a Tetra Commission payment refers to it");
+    if (deposit) mine.push("a CS Portal payment refers to it");
 
     const lms = await LmsProvision.findOne({ invoiceId: id }).select("status commission.state").lean<any>();
     const inTetra = lms?.commission?.state === "sent";
-    if (inTetra && !commissionConfigured()) mine.push("Tetra Commission has this enrolment, and it cannot be told from here (no COMMISSION_API_URL) — run this on the server");
+    if (inTetra && !commissionConfigured()) mine.push("CS Portal has this enrolment, and it cannot be told from here (no COMMISSION_API_URL) — run this on the server");
     const reminders = await InstalmentReminder.countDocuments({ invoiceId: id });
     for (const m of mine) problems.push(`${number}: ${m}`);
     invoices.push({
@@ -118,7 +118,7 @@ export async function planDelete(numbers: string[], orgId?: string): Promise<Del
       crm: inv.enrolment?.crm ? `from the ${inv.enrolment.crm} CRM` : "typed in finance",
       payments, commissions: commissions.map((c) => `${c.salespersonName} ${formatMoney(c.commissionMinor ?? 0, cur)} (${c.status})`),
       lms: (!lms ? "none" : lms.status === "sent" ? "sent — the student's LMS access stays; remove it in the LMS" : `${lms.status} — removed`)
-        + (inTetra ? "; Tetra Commission has it — it is told the invoice is gone (the student's account there stays)" : ""),
+        + (inTetra ? "; CS Portal has it — it is told the invoice is gone (the student's account there stays)" : ""),
       reminders, problems: mine,
     });
   }
@@ -185,7 +185,7 @@ export async function undoDelete(file: string, write: boolean): Promise<string[]
   const { recalculateRunningBalances } = await import("../modules/banking/banking.service");
   const accounts = new Map(lines.map((l) => [String(l.accountId), { org: String(l.organizationId), id: l.accountId as Types.ObjectId }]));
   for (const a of accounts.values()) await recalculateRunningBalances(a.org, a.id);
-  out.push(`Put back. ${accounts.size} account balance(s) worked out again. Tetra Commission was not told — the invoices there may need re-sending.`);
+  out.push(`Put back. ${accounts.size} account balance(s) worked out again. CS Portal was not told — the invoices there may need re-sending.`);
   return out;
 }
 

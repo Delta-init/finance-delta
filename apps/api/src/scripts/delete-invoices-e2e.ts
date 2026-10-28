@@ -103,8 +103,8 @@ check("a commission already paid out: refused — and nothing deleted, not even 
 
 await LmsProvision.collection.insertOne({ organizationId: org._id, invoiceId: new Types.ObjectId(c.id), invoiceNumber: cNumber, payload: {}, status: "sent", commission: { state: "sent" }, createdAt: new Date(), updatedAt: new Date() });
 plan = await del.planDelete([cNumber], ORG);
-check("one Tetra Commission has, where it cannot be told (no COMMISSION_API_URL here): refused, saying run it on the server",
-  plan.problems.some((p) => /Tetra Commission has this enrolment.*run this on the server/.test(p)) && /LMS access stays/.test(plan.invoices[0]!.lms), j(plan));
+check("one CS Portal has, where it cannot be told (no COMMISSION_API_URL here): refused, saying run it on the server",
+  plan.problems.some((p) => /CS Portal has this enrolment.*run this on the server/.test(p)) && /LMS access stays/.test(plan.invoices[0]!.lms), j(plan));
 
 /* ── 3 ── */
 step("3. Deleted, payments first");

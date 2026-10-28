@@ -1,7 +1,7 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
 
 /**
- * The queue of fee updates waiting to reach Tetra Commission — one row per
+ * The queue of fee updates waiting to reach CS Portal — one row per
  * invoice whose student went there (the user, 2026-10-11).
  *
  * One row, not one per change: each change replaces the payload with the
@@ -12,8 +12,8 @@ import { Schema, model, Types, type InferSchemaType } from "mongoose";
  *
  * pending    waiting (nextAttemptAt says when)
  * sending    being sent right now (claimedAt says since when)
- * delivered  Tetra Commission has the latest
- * stopped    Tetra Commission has no student or course fee for this invoice
+ * delivered  CS Portal has the latest
+ * stopped    CS Portal has no student or course fee for this invoice
  *            (404 UNKNOWN_INVOICE) — not tried again until the next change
  * failed     refused as malformed — not tried again until the next change
  */

@@ -26,7 +26,7 @@ import { LateEntryModel, type RecordLate } from "./late-entry.model";
  *     date, only given one that is not late — which clears it.
  * A manager is somebody tagged Manager in this organization; a super admin decides too, so nothing is stuck when
  * nobody is tagged. Nobody decides their own. Only the screens people type into ask (their controllers pass who is
- * typing): approvals, HRMS, payroll and Tetra Commission make entries that are not asked.
+ * typing): approvals, HRMS, payroll and CS Portal make entries that are not asked.
  */
 
 const oid = (v: unknown) => new Types.ObjectId(String(v));

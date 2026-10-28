@@ -1,9 +1,9 @@
 /**
- * A Tetra Commission deposit deleted by hand, as Tetra Deposits → Delete does it (the user, 2026-10-28: "delete fawas
+ * A CS Portal deposit deleted by hand, as Tetra Deposits → Delete does it (the user, 2026-10-28: "delete fawas
  * that approved deposit and the invoice also") — with finance's own deleteTetraDeposit, so the same refusals hold: not
- * one waiting for a decision, not one still on its way to Tetra Commission, not an approval whose payment is still on
- * an invoice. It is kept as "deleted" (who, when, why, what it was) and Restore on the page puts it back. Tetra
- * Commission is not told. The invoice it went on is deleted separately, with delete-invoices.ts.
+ * one waiting for a decision, not one still on its way to CS Portal, not an approval whose payment is still on
+ * an invoice. It is kept as "deleted" (who, when, why, what it was) and Restore on the page puts it back. CS
+ * Portal is not told. The invoice it went on is deleted separately, with delete-invoices.ts.
  *
  * Reads and prints only, unless --write. From apps/api (Bun reads MONGODB_URI from the .env):
  *
@@ -35,7 +35,7 @@ if (!user) { console.error(`No finance user ${by}`); process.exit(1); }
 
 const amount = formatMoney(row.decision?.approvedAmountMinor ?? row.amountMinor, row.currency ?? "USD");
 console.log(`${row.student?.name} (${row.student?.code}) · ${row.type} · ${amount} · ${row.status} · raised ${row.requestedAt?.toISOString?.() ?? ""} by ${row.requestedBy}`);
-if (row.decision?.decidedAt) console.log(`  decided ${row.decision.decidedAt.toISOString()} by ${row.decision.decidedByName}, transaction ${row.decision.transactionId ?? "—"}; Tetra Commission: ${row.delivery?.state ?? "—"}`);
+if (row.decision?.decidedAt) console.log(`  decided ${row.decision.decidedAt.toISOString()} by ${row.decision.decidedByName}, transaction ${row.decision.transactionId ?? "—"}; CS Portal: ${row.delivery?.state ?? "—"}`);
 if (row.coursePayment) console.log(`  course ${row.coursePayment.product} (${row.coursePayment.kind}), MT5 bonus USD ${row.coursePayment.bonusUsd}`);
 if (row.courseInvoice?.invoiceNumber) console.log(`  its payment: ${row.courseInvoice.receiptNumber} on invoice ${row.courseInvoice.invoiceNumber}`);
 console.log(`  to be deleted for ${user.name} <${user.email}>: "${reason}"`);

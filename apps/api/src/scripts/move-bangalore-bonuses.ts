@@ -1,20 +1,20 @@
 /**
  * Bangalore teams' bonuses that came to Delta HQ, moved to the Bangalore organization in rupees (the user, 2026-10-15:
- * "first move the current approved Tetra Commission approvals to the Bangalore org").
+ * "first move the current approved CS Portal approvals to the Bangalore org").
  *
- * Since 2026-10-15 Tetra Commission sends a Bangalore team's bonus to the Bangalore organization, in rupees
+ * Since 2026-10-15 CS Portal sends a Bangalore team's bonus to the Bangalore organization, in rupees
  * (modules/tetra-deposit). Before, they came to Delta HQ in dollars, and an approved one went on an AED invoice there
  * with an AED receipt. For each such bonus (type BONUS, not in the Bangalore organization) — those named with --ids
- * (Tetra Commission's request ids or finance's), else those whose team reads Bangalore/Banglore:
+ * (CS Portal's request ids or finance's), else those whose team reads Bangalore/Banglore:
  *
  *   pending   moved to the Bangalore organization, in rupees, to be decided there;
  *   approved  its payment taken off the Delta HQ invoice — that invoice voided when the moved payments were all it
- *             had and Tetra Commission made it (its number stays, as a void record); then moved, in rupees, recorded
+ *             had and CS Portal made it (its number stays, as a void record); then moved, in rupees, recorded
  *             on a rupee invoice in the Bangalore organization with a new receipt, the client emailed it (--no-email
- *             not to), and the decision sent to Tetra Commission again so it shows the new invoice;
+ *             not to), and the decision sent to CS Portal again so it shows the new invoice;
  *   rejected / closed — left alone, as is one whose payment sits on a sales CRM's invoice (listed, to do by hand).
  *
- * The rupees: as typed in Tetra Commission when typed in rupees, else the dollars at its fixed 100 INR = $1; the
+ * The rupees: as typed in CS Portal when typed in rupees, else the dollars at its fixed 100 INR = $1; the
  * course's AED figures at its ₹27.248 per AED. The new invoice's salesperson is whoever approved it, if they are in
  * the Bangalore organization, else --salesperson <email> (someone who is).
  *
@@ -30,7 +30,7 @@ import { formatMoney } from "@delta/shared";
 import { TetraDepositModel } from "../modules/tetra-deposit/tetra-deposit.model";
 import { COURSE_INVOICE_SOURCE, recordCoursePayment } from "../modules/tetra-deposit/course-invoice";
 
-/** Tetra Commission's fixed rates: 1 USD = 3.67 AED, 1 INR = 0.010 USD. */
+/** CS Portal's fixed rates: 1 USD = 3.67 AED, 1 INR = 0.010 USD. */
 const INR_PER_USD = 100;
 const INR_PER_AED = Math.round((1 / (3.67 * 0.01)) * 1e6) / 1e6;
 const BANGALORE = /bangal|banglo|bengal/i;
@@ -130,7 +130,7 @@ export async function moveBangaloreBonuses(opts: {
     const asRecorded = approverInBlr ? moved : { ...moved, decision: { ...moved.decision, decidedById: fallback._id } };
     const done = await recordCoursePayment(asRecorded, { email: opts.email !== false });
     if (!done.ok) { out.push({ ...base, outcome: `moved, but NOT recorded in Bangalore: ${done.message} — record it by hand` }); continue; }
-    // 4. Sent to Tetra Commission again by the worker, carrying the new invoice.
+    // 4. Sent to CS Portal again by the worker, carrying the new invoice.
     await TetraDepositModel.updateOne({ _id: row._id }, {
       $set: { "delivery.state": "queued", "delivery.attempts": 0, "delivery.nextAttemptAt": new Date() },
       $unset: { "delivery.claimedAt": "", "delivery.lastError": "" },

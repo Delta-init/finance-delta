@@ -5,8 +5,8 @@
  * that predates a new system role never gets it. This backfills them.
  *
  * Adds missing roles, and the standard permissions added since — budget ones
- * to the built-in manager, accountant and employee roles, approving Tetra
- * Commission deposits to the accountant — to roles that predate them.
+ * to the built-in manager, accountant and employee roles, approving CS
+ * Portal deposits to the accountant — to roles that predate them.
  * Existing grants are kept; nothing is taken away. (The administrator role
  * holds everything already.)
  *

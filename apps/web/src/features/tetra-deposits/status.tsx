@@ -1,7 +1,7 @@
 import type { TetraDeposit } from "@delta/shared";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 
-/** Where a Tetra Commission deposit stands, in the words the accounts team uses. */
+/** Where a CS Portal deposit stands, in the words the accounts team uses. */
 
 export const STATUS_LABELS: Record<TetraDeposit["status"], string> = {
   pending: "Pending",
@@ -26,7 +26,7 @@ export function TetraDepositStatusBadge({ status, sentBack }: { status: TetraDep
 }
 
 /**
- * Whether Tetra Commission has the decision — empty while there is none to
+ * Whether CS Portal has the decision — empty while there is none to
  * send. Closed ones say why instead: there was nothing left to decide there.
  */
 export function deliveryText(d: TetraDeposit): string {
@@ -35,11 +35,11 @@ export function deliveryText(d: TetraDeposit): string {
   if (d.status === "pending" || !d.delivery) return "";
   switch (d.delivery.state) {
     case "delivered":
-      return "In Tetra Commission";
+      return "In CS Portal";
     case "failed":
-      return `Tetra Commission did not accept it${d.delivery.lastError ? `: ${d.delivery.lastError}` : ""}`;
+      return `CS Portal did not accept it${d.delivery.lastError ? `: ${d.delivery.lastError}` : ""}`;
     default:
-      return `On its way to Tetra Commission${d.delivery.lastError ? ` — not reached yet (${d.delivery.lastError})` : ""}`;
+      return `On its way to CS Portal${d.delivery.lastError ? ` — not reached yet (${d.delivery.lastError})` : ""}`;
   }
 }
 

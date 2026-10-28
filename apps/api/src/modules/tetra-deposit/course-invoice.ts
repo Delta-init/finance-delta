@@ -6,7 +6,7 @@ import { sendNotice } from "../../lib/email";
 import { TetraDepositModel } from "./tetra-deposit.model";
 
 /*
- * Course payments from Tetra Commission become invoices (the user, 2026-10-12).
+ * Course payments from CS Portal become invoices (the user, 2026-10-12).
  *
  * Two kinds of request carry money paid for a course: a course upgrade's
  * payment (COURSE_UPGRADE, in AED) and a bonus's course payment (BONUS with a
@@ -19,23 +19,23 @@ import { TetraDepositModel } from "./tetra-deposit.model";
  *   - a bonus's course payment goes on the student's open invoice for that
  *     course — one made here by an earlier payment, or a sales CRM's enrolment
  *     for the same course with a balance — and on a new one when there is none,
- *     for what was paid now plus the balance Tetra Commission says is left.
+ *     for what was paid now plus the balance CS Portal says is left.
  *
  * A Bangalore team's bonus (the user, 2026-10-15) arrives in the Bangalore
  * organization in rupees — `currency` INR, with `coursePayment.inrPerAed`, the
- * rate Tetra Commission's AED figures were worked out at: its invoice is in
+ * rate CS Portal's AED figures were worked out at: its invoice is in
  * rupees, the rupees paid recorded as they are and the balance turned into
  * rupees at that rate.
  *
  * Made invoices are external.source "tetra-course", need no approval (an
  * accountant approved the payment that made them) and carry no enrolment, so
- * the LMS and Tetra Commission's student flows leave them alone. Idempotent:
+ * the LMS and CS Portal's student flows leave them alone. Idempotent:
  * the payment's externalRef is the request's, and the request remembers what
  * it became (`courseInvoice`).
  */
 
 export const COURSE_INVOICE_SOURCE = "tetra-course";
-/** What Tetra Commission converts at — a bonus's course payment arrives in USD, its course priced in AED. */
+/** What CS Portal converts at — a bonus's course payment arrives in USD, its course priced in AED. */
 export const AED_PER_USD = 3.67;
 /** Its fixed rupee rate, 1 INR = 0.010 USD — so AED 1 = ₹27.25 — when a Bangalore request does not say its own. */
 const FIXED_INR_PER_AED = 1 / (AED_PER_USD * 0.01);
@@ -43,7 +43,7 @@ const FIXED_INR_PER_AED = 1 / (AED_PER_USD * 0.01);
 /** The currency the course's invoice is in: rupees for a Bangalore team's bonus, else AED. */
 export const courseCurrencyOf = (row: Row): "AED" | "INR" => (String(row?.currency ?? "").toUpperCase() === "INR" ? "INR" : "AED");
 const inrPerAedOf = (row: Row) => (Number(row?.coursePayment?.inrPerAed) > 0 ? Number(row.coursePayment.inrPerAed) : FIXED_INR_PER_AED);
-/** One of Tetra Commission's AED figures (the balance, paid before), in minor units of the course's currency. */
+/** One of CS Portal's AED figures (the balance, paid before), in minor units of the course's currency. */
 export const courseFigureMinor = (row: Row, aed: unknown): number =>
   Math.round((Number(aed) || 0) * (courseCurrencyOf(row) === "INR" ? inrPerAedOf(row) : 1) * 100);
 
@@ -59,7 +59,7 @@ const minorAed = (aed: unknown) => Math.round((Number(aed) || 0) * 100);
 
 /**
  * What it records, in minor units of the course's currency (courseCurrencyOf). An upgrade's is the
- * approved amount (AED). A bonus's is the AED Tetra Commission says was paid — unless the accountant
+ * approved amount (AED). A bonus's is the AED CS Portal says was paid — unless the accountant
  * approved a different amount than was asked, which is then converted at 3.67. A request in AED, or
  * a Bangalore one in rupees, is taken as it is.
  */
@@ -95,7 +95,7 @@ export function courseKey(row: Row): string {
 
 /*
  * A sales CRM's enrolment for the same course. The CRMs sell MBT and DWT (and
- * bundles of them, never matched); Tetra Commission's codes otherwise. Strict
+ * bundles of them, never matched); CS Portal's codes otherwise. Strict
  * on purpose: a wrong match records money on somebody's other course.
  */
 const COURSE_WORDS: Record<string, RegExp> = {
@@ -183,10 +183,10 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
     currency: courseCurrencyOf(row),
     reference: `tetra:${upgrade ? "upgrade" : "course"}:${row.externalId}`,
     notes: [
-      upgrade ? `${product} course upgrade, from Tetra Commission` : `${product} course, paid through Tetra Commission`,
+      upgrade ? `${product} course upgrade, from CS Portal` : `${product} course, paid through CS Portal`,
       row.student?.code ? `Student ${row.student.code}` : "",
       !upgrade && Number(cp.paidBeforeAed) > 0 ? `${formatMoney(courseFigureMinor(row, cp.paidBeforeAed), courseCurrencyOf(row))} paid before, not on this invoice` : "",
-      courseCurrencyOf(row) === "INR" ? `Bangalore — rupees at ${inrPerAedOf(row).toFixed(4)} per AED, Tetra Commission's rate` : "",
+      courseCurrencyOf(row) === "INR" ? `Bangalore — rupees at ${inrPerAedOf(row).toFixed(4)} per AED, CS Portal's rate` : "",
     ].filter(Boolean).join(" · "),
     taxInclusive: true,
     lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
@@ -305,7 +305,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
   const amountMinor = coursePaymentAedMinor(row);
   if (!(amountMinor > 0)) return { ok: false, message: "No amount to record" };
   const email = String(row.student?.email ?? "").trim().toLowerCase();
-  if (!email) return { ok: false, message: `${row.student?.name || "The student"} has no email in Tetra Commission, so there is no client to invoice` };
+  if (!email) return { ok: false, message: `${row.student?.name || "The student"} has no email in CS Portal, so there is no client to invoice` };
   const salespersonId = String(d.decidedById ?? "");
   if (!Types.ObjectId.isValid(salespersonId)) return { ok: false, message: "Who approved it is not known" };
   try {
@@ -342,7 +342,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       paidOn,
       reference: String(d.transactionId ?? ""),
       notes: [
-        row.type === "COURSE_UPGRADE" ? "Course upgrade payment from Tetra Commission" : "Course payment from Tetra Commission",
+        row.type === "COURSE_UPGRADE" ? "Course upgrade payment from CS Portal" : "Course payment from CS Portal",
         row.requestedBy ? `recorded by ${row.requestedBy}` : "",
         `approved by ${d.decidedByName || "accounts"}`,
         row.currency === "USD" ? `${formatMoney(Number(d.approvedAmountMinor ?? row.amountMinor) || 0, "USD")} as asked` : "",
@@ -386,7 +386,7 @@ export async function planCoursePayment(row: Row): Promise<{
 }> {
   const amountMinor = coursePaymentAedMinor(row);
   const email = String(row.student?.email ?? "").trim().toLowerCase();
-  if (!email) return { amountMinor, onto: "", totalMinor: 0, handTyped: [], refusal: "no email in Tetra Commission" };
+  if (!email) return { amountMinor, onto: "", totalMinor: 0, handTyped: [], refusal: "no email in CS Portal" };
   const orgId = new Types.ObjectId(String(row.organizationId));
   const { Customer } = await import("../customer/customer.model");
   const { Invoice } = await import("../invoice/invoice.model");
@@ -405,7 +405,7 @@ export async function planCoursePayment(row: Row): Promise<{
   return { amountMinor, onto: "", totalMinor: coursePriceAedMinor(row, amountMinor), handTyped };
 }
 
-/** What Tetra Commission is told with the decision: the invoice and the receipt. */
+/** What CS Portal is told with the decision: the invoice and the receipt. */
 export async function courseInvoiceForDecision(row: Row) {
   const ci = row?.courseInvoice;
   if (!ci?.paymentId || !ci?.invoiceId) return undefined;

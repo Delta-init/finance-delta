@@ -2,11 +2,11 @@
 #
 # End-to-end test of partial enrolments' next instalment (the user, 2026-10-11):
 # the 29-day due date at approval and after every payment change, the client's
-# reminders 3, 2 and 1 day before, the fee updates Tetra Commission is sent,
+# reminders 3, 2 and 1 day before, the fee updates CS Portal is sent,
 # and a balance payment a CS records there (ENROLMENT_PAYMENT) approved here.
 #
 # Stands up a throwaway mongod (random port, never 27017) and a throwaway
-# finance API, neither reading a .env (bun --no-env-file). Tetra Commission and
+# finance API, neither reading a .env (bun --no-env-file). CS Portal and
 # the mail server are stand-ins inside the driver: nothing leaves this machine.
 # The API's own timers are off; the driver runs the workers, and passes "now"
 # to the reminders to travel in time.

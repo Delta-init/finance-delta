@@ -15,8 +15,8 @@ import { TetraDepositFacts, TetraTypeTag } from "./review-dialog";
 import { TetraDepositStatusBadge, deliveryText, formatWhen } from "./status";
 
 /**
- * Everything about one Tetra Commission deposit: what was asked, what was
- * decided and by whom, whether Tetra Commission has it, and each step of it
+ * Everything about one CS Portal deposit: what was asked, what was
+ * decided and by whom, whether CS Portal has it, and each step of it
  * here. Read-only — deciding is done on the Approvals page, and the link to it
  * is offered while there is something to do there.
  */
@@ -25,7 +25,7 @@ const EVENT_LABELS: Record<string, string> = {
   received: "Received",
   approved: "Approved",
   rejected: "Rejected",
-  delivered: "Tetra Commission updated",
+  delivered: "CS Portal updated",
   returned: "Back to pending",
   failed: "Not accepted",
   reopened: "Reopened",
@@ -54,7 +54,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
             {deposit && <TetraDepositStatusBadge status={deposit.status} sentBack={deposit.decision?.sentBack} />}
             {deposit && <TetraTypeTag deposit={deposit} />}
           </DialogTitle>
-          <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from Tetra Commission." : deposit?.type === "COURSE_UPGRADE" ? "A course upgrade payment from Tetra Commission." : deposit?.type === "ENROLMENT_PAYMENT" ? "A balance payment a CS recorded in Tetra Commission." : "A deposit request from Tetra Commission."}</DialogDescription>
+          <DialogDescription>{deposit?.type === "BONUS" ? "A bonus request (course payment) from CS Portal." : deposit?.type === "COURSE_UPGRADE" ? "A course upgrade payment from CS Portal." : deposit?.type === "ENROLMENT_PAYMENT" ? "A balance payment a CS recorded in CS Portal." : "A deposit request from CS Portal."}</DialogDescription>
         </DialogHeader>
 
         {isLoading || !deposit ? (

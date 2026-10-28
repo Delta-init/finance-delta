@@ -1,15 +1,15 @@
 /**
  * Approvals → "Didn't go through", Send again, and an optional transaction ID (the user, 2026-10-25), end to end:
- * finance and the real Tetra Commission, through a gate that can play dead or turn a decision down.
+ * finance and the real CS Portal, through a gate that can play dead or turn a decision down.
  *
  *   1. The transaction ID is optional: approved here and there without one.
- *   2. One Tetra Commission already has is accepted there, with a note of which request shares it.
+ *   2. One CS Portal already has is accepted there, with a note of which request shares it.
  *   3. Turned down while the accountant waits: put back in front of them, as before.
  *   4. Turned down in the background: under "Didn't go through" (counted on every tab), out of Approved; Send again
  *      delivers it and moves it to Approved; a delivered one can't be sent again; Reopen still works.
  *
  * Deposits stopped going to finance on their own on 2026-10-10 (only bonuses do), so each request is put with finance
- * here directly and handed over the way Tetra Commission hands one over (signed). Run through
+ * here directly and handed over the way CS Portal hands one over (signed). Run through
  * scripts/approvals-failed-e2e.sh. Scratch databases only.
  */
 import crypto from "node:crypto";
@@ -64,13 +64,13 @@ async function until(fn: () => Promise<boolean>, ms = 8000): Promise<boolean> {
   return false;
 }
 
-/* ── The gate finance reaches Tetra Commission through: passes everything on, plays dead, or turns a decision down. ── */
+/* ── The gate finance reaches CS Portal through: passes everything on, plays dead, or turns a decision down. ── */
 let commissionDown = false;
 let commissionRefuses = false;
 const gate = Bun.serve({
   port: Number(process.env.E2E_GATE_PORT),
   async fetch(req) {
-    if (commissionDown) return Response.json({ success: false, error: { code: "DOWN", message: "Tetra Commission is down" } }, { status: 503 });
+    if (commissionDown) return Response.json({ success: false, error: { code: "DOWN", message: "CS Portal is down" } }, { status: 503 });
     if (commissionRefuses) return Response.json({ success: false, error: { code: "CONFLICT", message: "Refused for the test" } }, { status: 409 });
     const url = new URL(req.url);
     const r = await fetch(`${COMMISSION}${url.pathname}${url.search}`, { method: req.method, headers: req.headers, body: await req.text() });
@@ -86,7 +86,7 @@ for (const c of await mongoose.connection.db!.listCollections().toArray()) await
 for (const c of await tc.db!.listCollections().toArray()) await tc.db!.collection(c.name).deleteMany({});
 const txs = tc.db!.collection("funding_transactions");
 
-step("Setting up Delta HQ in finance, and a mentor and student in Tetra Commission");
+step("Setting up Delta HQ in finance, and a mentor and student in CS Portal");
 const org = await Organization.create({ _id: new Types.ObjectId(ORG_ID), name: "Delta HQ E2E", baseCurrency: "AED" });
 for (const def of SYSTEM_ROLES) {
   await Role.create({ organizationId: org._id, key: def.key, name: def.name, description: def.description, permissions: def.permissions, isSystem: true });
@@ -112,7 +112,7 @@ const plan = { _id: new Types.ObjectId(), name: "E2E Plan", active: true, deposi
 await tc.db!.collection("commission_plans").insertOne(plan);
 const mentor = {
   _id: new Types.ObjectId(), email: "meera@e2e-deposit.test", full_name: "Mentor Meera", app_role: "junior_mentor",
-  // bcrypt, which is what Tetra Commission checks passwords with.
+  // bcrypt, which is what CS Portal checks passwords with.
   password_hash: await Bun.password.hash(PASSWORD, { algorithm: "bcrypt", cost: 10 }), commission_plan_id: String(plan._id), created_date: now,
 };
 await tc.db!.collection("users").insertOne(mentor);
@@ -126,7 +126,7 @@ await tc.db!.collection("mt5_accounts").insertOne({ student_id: String(student._
 await txs.insertOne({ type: "DEPOSIT", status: "APPROVED", student_id: "someone-else", student_name: "Earlier Client", amount_usd: 100, transaction_id: "TXN-DUP", created_date: now });
 const meera = { authorization: `Bearer ${(await http(`${COMMISSION}/api/auth/login`, "POST", { email: mentor.email, password: PASSWORD })).body?.token}` };
 
-/** A deposit as a mentor raises it in Tetra Commission. */
+/** A deposit as a mentor raises it in CS Portal. */
 async function raise(amount_usd: number): Promise<string> {
   const r = await http(`${COMMISSION}/api/entities/FundingTransaction`, "POST", {
     type: "DEPOSIT", status: "PENDING", student_id: String(student._id), student_name: student.full_name, student_code: student.student_code,
@@ -163,7 +163,7 @@ const signed = async (payload: unknown) => {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 };
 
-/** A deposit with finance, as one sent before 2026-10-10 is: raised in Tetra Commission, handed to finance. */
+/** A deposit with finance, as one sent before 2026-10-10 is: raised in CS Portal, handed to finance. */
 async function withFinance(amount_usd: number): Promise<{ fundingId: string; financeId: string }> {
   const fundingId = await raise(amount_usd);
   await txs.updateOne({ _id: new Types.ObjectId(fundingId) }, { $set: { finance_approval: { state: "sent", queued_at: now, sent_at: now, attempts: 1 } } });
@@ -183,7 +183,7 @@ check("approved without one, here and there", r.status === 200 && r.body?.data?.
 check("…no transaction ID made up on either side", !t?.transaction_id && !(await inFinance(a.fundingId))?.decision?.transactionId);
 check("…its history doesn't name one", (await inFinance(a.fundingId))?.events?.some((e: any) => e.kind === "approved" && !/transaction/.test(e.text)));
 
-step("2. A transaction ID Tetra Commission already has: approved there, with a note");
+step("2. A transaction ID CS Portal already has: approved there, with a note");
 const b = await withFinance(220);
 r = await approve(b.financeId, { amountMinor: 22000, transactionId: "TXN-DUP" });
 t = await txOf(b.fundingId);
@@ -204,7 +204,7 @@ const d = await withFinance(240);
 commissionDown = true;
 r = await approve(d.financeId, { amountMinor: 24000, transactionId: "TXN-4004" });
 commissionDown = false;
-check("saved while Tetra Commission is down", r.status === 200 && r.body?.data?.delivered === false, show(r));
+check("saved while CS Portal is down", r.status === 200 && r.body?.data?.delivered === false, show(r));
 commissionRefuses = true;
 await Bun.sleep(2100);
 await drainTetraDepositDecisions();

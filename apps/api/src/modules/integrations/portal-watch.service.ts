@@ -22,8 +22,8 @@ import { LateEntryModel } from "../late-entry/late-entry.model";
  *              least a day before the day it was entered (Gulf days): invoice
  *              and bill payments, expenses, bills, invoices, bank and cash
  *              lines typed in. Each says how it got in — typed here, recorded
- *              when an approval went through (the date the CRM or Tetra
- *              Commission gave), or brought from HRMS — and who entered it
+ *              when an approval went through (the date the CRM or CS
+ *              Portal gave), or brought from HRMS — and who entered it
  *              where that is kept (an expense's submitter, a late entry's
  *              enterer) — and, past the late-entry limit (Settings → Late
  *              entries, 2026-10-17), the reason given and what a manager made
@@ -46,7 +46,7 @@ const UAE_MS = 4 * 3_600_000;
 const KIND_LABEL: Record<ApprovalType, string> = {
   invoice: "Enrolment invoices",
   fund_request: "Fund requests",
-  tetra_deposit: "Tetra Commission deposits",
+  tetra_deposit: "CS Portal deposits",
   balance_payment: "Balance payments",
   expense: "Expense claims",
   bill: "Bills",

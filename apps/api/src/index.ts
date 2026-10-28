@@ -162,7 +162,7 @@ async function bootstrap() {
     void startProcurementWaitingWorker();
     startLmsProvisionWorker();
     startTetraDepositWorker();
-    // Partial enrolments (2026-10-11): money changes to Tetra Commission, and
+    // Partial enrolments (2026-10-11): money changes to CS Portal, and
     // the client's instalment reminders at 10:00 UAE.
     startCommissionFeeUpdateWorker();
     startInstalmentReminderWorker();

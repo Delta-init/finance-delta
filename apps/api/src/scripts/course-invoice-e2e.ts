@@ -1,7 +1,7 @@
 /**
- * Course payments from Tetra Commission become invoices with receipts (the
- * user, 2026-10-12) — finance's services in this process, a real Tetra
- * Commission taking the decisions:
+ * Course payments from CS Portal become invoices with receipts (the
+ * user, 2026-10-12) — finance's services in this process, a real CS
+ * Portal taking the decisions:
  *
  *   1. An upgrade's first approved payment makes its invoice — the upgrade's
  *      price, AED, issued on the day paid — and records the payment with a
@@ -14,10 +14,10 @@
  *      takes it; a bundle ("MBT + DWT") never does.
  *   4. A bonus with no course money makes no invoice; a student with no email
  *      is refused and stays pending.
- *   5. Tetra Commission keeps the invoice and receipt on the payment or bonus.
+ *   5. CS Portal keeps the invoice and receipt on the payment or bonus.
  *   6. Recorded once, however often it is retried.
  *   7. The backfill: an old approved one is listed, recorded, sent again —
- *      Tetra Commission keeps the invoice from the repeat — and one with an
+ *      CS Portal keeps the invoice from the repeat — and one with an
  *      invoice typed by hand since is left alone.
  *
  * Run through scripts/course-invoice-e2e.sh. Scratch databases only.
@@ -69,7 +69,7 @@ const auth = { userId: String(asha._id), organizationId: ORG, role: "accountant"
 
 let n = 0;
 const student = (code: string, email = `${code.toLowerCase()}@e2e-course.test`) => ({ id: new Types.ObjectId().toString(), code, name: `Student ${code}`, email, level: "1", phone: "+971500000000" });
-/** A request as Tetra Commission sends it, received here; its twin in Tetra Commission so the decision lands. */
+/** A request as CS Portal sends it, received here; its twin in CS Portal so the decision lands. */
 async function arrive(over: Record<string, unknown>) {
   const externalId = new Types.ObjectId();
   const input = inboundTetraDepositSchema.parse({ externalId: String(externalId), requestedBy: "Cara CS", paymentMethod: "Card", screenshotUrl: "https://files.e2e.test/r.png", ...over });
@@ -95,7 +95,7 @@ const a1 = await approve(p1.id, 500_000);
 const i1 = await invoiceOf(p1.id);
 check("the first payment makes the invoice: the upgrade's AED 20,000, issued the day it was paid",
   i1?.totalMinor === 2_000_000 && i1?.currency === "AED" && i1?.issueDate?.toISOString().slice(0, 10) === "2026-10-10" && i1?.external?.source === "tetra-course", j(i1 && { t: i1.totalMinor, c: i1.currency, d: i1.issueDate, e: i1.external }));
-check("…for the student as the client, found by email (made, with the phone Tetra Commission sent)",
+check("…for the student as the client, found by email (made, with the phone CS Portal sent)",
   String(i1?.customerId) === String((await Customer.findOne({ email: s1.email }).lean<any>())?._id) && (await Customer.findOne({ email: s1.email }).lean<any>())?.phone === "+971500000000");
 check("…needs no approval of its own, and the payment is on it: AED 5,000 paid, 15,000 left, part paid",
   i1?.approval?.state === "not_required" && i1?.amountPaidMinor === 500_000 && i1?.balanceMinor === 1_500_000 && i1?.status === "partial", j(i1 && { a: i1.approval, p: i1.amountPaidMinor, b: i1.balanceMinor, s: i1.status }));
@@ -103,7 +103,7 @@ const pay1 = i1?.payments?.[0];
 check("…with a receipt number, the day paid, the method and the transaction ID", pay1?.receiptNumber === "RCT-00001" && pay1?.paidOn?.toISOString().slice(0, 10) === "2026-10-10" && pay1?.method === "card" && pay1?.reference === "TX-1", j(pay1));
 check("the accountant is told: invoice made, receipt emailed", /invoice made IN-\d+, receipt RCT-00001/.test(a1.message ?? ""), a1.message);
 const tp1 = await tcPayments.findOne({ _id: new Types.ObjectId(p1.externalId) });
-check("Tetra Commission keeps the invoice and receipt on the payment", tp1?.status === "approved" && tp1?.course_invoice?.invoice_number === i1?.invoiceNumber
+check("CS Portal keeps the invoice and receipt on the payment", tp1?.status === "approved" && tp1?.course_invoice?.invoice_number === i1?.invoiceNumber
   && tp1?.course_invoice?.receipt_number === "RCT-00001" && tp1?.course_invoice?.balance_minor === 1_500_000, j(tp1?.course_invoice));
 
 const { EmailLog } = await import("../modules/email-log/email-log.model");
@@ -133,7 +133,7 @@ check("…and still one invoice for the upgrade", (await Invoice.countDocuments(
 const p3 = await arrive({ type: "COURSE_UPGRADE", amountMinor: 10_000, currency: "AED", student: s1, coursePayment: upgradeCp(up1, 20_000, { paidTodayAed: 100 }) });
 const r3 = await tryApprove(p3.id, 10_000);
 check("more than is left is refused, in front of the accountant, and stays pending", !r3.ok && /already fully paid/i.test(r3.ok ? "" : r3.message) && (await row(p3.id))?.status === "pending", j(r3));
-check("…and Tetra Commission was not told it was approved", (await tcPayments.findOne({ _id: new Types.ObjectId(p3.externalId) }))?.status === "pending");
+check("…and CS Portal was not told it was approved", (await tcPayments.findOne({ _id: new Types.ObjectId(p3.externalId) }))?.status === "pending");
 
 const up2 = new Types.ObjectId().toString();
 const p4 = await arrive({ type: "COURSE_UPGRADE", amountMinor: 1_000_000, currency: "AED", student: s1, coursePayment: upgradeCp(up2, 48_000, { product: "DQMP" }) });
@@ -151,7 +151,7 @@ const ib1 = await invoiceOf(b1.id);
 check("it makes an invoice for what was paid plus the balance: AED 20,000, 2,000 paid", ib1?.totalMinor === 2_000_000 && ib1?.amountPaidMinor === 200_000 && ib1?.payments?.[0]?.receiptNumber === "RCT-00004", j(ib1 && { t: ib1.totalMinor, p: ib1.amountPaidMinor, r: ib1.payments?.[0]?.receiptNumber }));
 check("…the payment notes the dollars asked", /\$544\.96|USD 544\.96/.test(ib1?.payments?.[0]?.notes ?? ""), ib1?.payments?.[0]?.notes);
 const tb1 = await tcTxs.findOne({ _id: new Types.ObjectId(b1.externalId) });
-check("Tetra Commission keeps the invoice on the bonus — which waits for a broker admin as before", tb1?.status === "PENDING" && tb1?.finance_approval?.decision === "approved" && tb1?.course_invoice?.invoice_number === ib1?.invoiceNumber, j({ s: tb1?.status, ci: tb1?.course_invoice }));
+check("CS Portal keeps the invoice on the bonus — which waits for a broker admin as before", tb1?.status === "PENDING" && tb1?.finance_approval?.decision === "approved" && tb1?.course_invoice?.invoice_number === ib1?.invoiceNumber, j({ s: tb1?.status, ci: tb1?.course_invoice }));
 check("the accountant is told about the invoice", /invoice made IN-/.test(ab1.message ?? ""), ab1.message);
 
 const b2 = await arrive({ type: "BONUS", amountMinor: 100_000, currency: "USD", student: s2, coursePayment: bonusCp({ paidTodayAed: 3670, balanceAed: 14330, paidBeforeAed: 2000 }) });
@@ -236,7 +236,7 @@ check("--write records the other: invoice made, receipt, queued to send again", 
 check("…the hand-typed one still left alone", !(await row(o2.d.id))?.courseInvoice && /left alone/.test(wrote.find((r) => r.id === o2.d.id)?.outcome ?? ""));
 await svc.drainTetraDepositDecisions();
 const to1 = await tcTxs.findOne({ _id: new Types.ObjectId(o1.d.externalId) });
-check("sent again, Tetra Commission keeps the invoice from the repeat (and changes nothing else)", to1?.course_invoice?.invoice_number === ro1?.courseInvoice?.invoiceNumber && to1?.status === "PENDING" && (await row(o1.d.id))?.delivery?.state === "delivered", j({ ci: to1?.course_invoice, s: to1?.status, del: (await row(o1.d.id))?.delivery }));
+check("sent again, CS Portal keeps the invoice from the repeat (and changes nothing else)", to1?.course_invoice?.invoice_number === ro1?.courseInvoice?.invoiceNumber && to1?.status === "PENDING" && (await row(o1.d.id))?.delivery?.state === "delivered", j({ ci: to1?.course_invoice, s: to1?.status, del: (await row(o1.d.id))?.delivery }));
 const again = await backfillCourseInvoices({ write: true });
 check("run again: nothing more to do (the hand-typed one is still listed)", again.length === 1 && again[0]!.id === o2.d.id);
 await backfillCourseInvoices({ write: true, include: [o2.d.id] });
@@ -253,7 +253,7 @@ step("8. Send back: a bonus back to its CS to correct, and sent again");
   check("…the accountant is told it went back to the CS", /Sent back — the CS sees why/.test(sent.message ?? ""), sent.message);
   check("…its history says so", (row1?.events ?? []).some((e: any) => e.text === `Sent back to correct: ${why}`), j(row1?.events));
   const tsb = await tcTxs.findOne({ _id: new Types.ObjectId(sb.externalId) });
-  check("Tetra Commission has it rejected, marked sent back, with the reason", tsb?.status === "REJECTED" && tsb?.finance_approval?.sent_back === true && tsb?.rejection_reason === why, j({ s: tsb?.status, fa: tsb?.finance_approval }));
+  check("CS Portal has it rejected, marked sent back, with the reason", tsb?.status === "REJECTED" && tsb?.finance_approval?.sent_back === true && tsb?.rejection_reason === why, j({ s: tsb?.status, fa: tsb?.finance_approval }));
   const { approvalList } = await import("../modules/approvals/approvals.service");
   const page = await approvalList({ ...auth } as never, { status: "all", type: "tetra_deposit", page: 1, pageSize: 100 } as never);
   const ar = page.rows.find((x) => x.id === sb.id);
@@ -261,7 +261,7 @@ step("8. Send back: a bonus back to its CS to correct, and sent again");
   const up = await arrive({ type: "COURSE_UPGRADE", amountMinor: 10_000, currency: "AED", student: student("STU-SB2"), coursePayment: upgradeCp(new Types.ObjectId().toString(), 20_000) });
   const refused = await svc.decideTetraDeposit(auth as never, up.id, { decision: "rejected", reason: "Not a bonus at all", sentBack: true } as never).then(() => "decided", (e: Error) => e.message);
   check("only a bonus can be sent back — anything else is refused, and stays pending", /Only a bonus can be sent back/.test(refused) && (await row(up.id))?.status === "pending", refused);
-  // The CS corrects it in Tetra Commission and sends it again: a new request, naming the one sent back.
+  // The CS corrects it in CS Portal and sends it again: a new request, naming the one sent back.
   const again = await arrive({ type: "BONUS", amountMinor: 30_000, currency: "USD", student: student("STU-SB"), resubmitOf: sb.externalId, resubmitReason: why });
   const dto = (await svc.listTetraDeposits(ORG, "waiting")).find((d: any) => d.id === again.id) as any;
   check("sent again: waiting for a decision, saying it was corrected after being sent back, and which request it replaces",
@@ -277,7 +277,7 @@ step("9. A Bangalore team's bonus: the Bangalore organization's, in rupees");
   // Bangalore's accountant approves it there, a member of that organization.
   await User.updateOne({ _id: asha._id }, { $push: { memberships: { organizationId: blr._id, roleId: new Types.ObjectId(), status: "active" } } });
   const sv = student("STU-5000");
-  /** J Vijay's: INR 150,000 by bank transfer, MSNR part payment, $1,000 bonus, at Tetra Commission's ₹27.248 per AED. */
+  /** J Vijay's: INR 150,000 by bank transfer, MSNR part payment, $1,000 bonus, at CS Portal's ₹27.248 per AED. */
   const cpOf = (extra: Record<string, unknown> = {}) => ({ product: "MSNR", kind: "partial", withBonus: true, bonusUsd: 1000, paidTodayAed: 5505, holdAed: 1505, balanceAed: 6495, paidBeforeAed: 0, inrPerAed: 27.247956, paidOn: "2026-10-14", ...extra });
   const arriveBlr = async (amountMinor: number, cp: Record<string, unknown>, usd: number) => {
     const externalId = new Types.ObjectId();
@@ -297,10 +297,10 @@ step("9. A Bangalore team's bonus: the Bangalore organization's, in rupees");
     inv?.totalMinor === 32_697_547 && inv?.amountPaidMinor === 15_000_000 && inv?.balanceMinor === 17_697_547, j({ t: inv?.totalMinor, p: inv?.amountPaidMinor, b: inv?.balanceMinor }));
   const pay = (inv?.payments ?? [])[0];
   check("the payment is INR 150,000 with a receipt number, paid on the day collected", pay?.amountMinor === 15_000_000 && /^RCT-\d+/.test(pay?.receiptNumber ?? "") && new Date(pay?.paidOn).toISOString().slice(0, 10) === "2026-10-14", j(pay));
-  check("the note says it is Bangalore's, in rupees at Tetra Commission's rate", /Bangalore — rupees at 27\.2480 per AED/.test(String(inv?.notes ?? "")), String(inv?.notes));
+  check("the note says it is Bangalore's, in rupees at CS Portal's rate", /Bangalore — rupees at 27\.2480 per AED/.test(String(inv?.notes ?? "")), String(inv?.notes));
   check("the accountant is told", /invoice made/.test(done.message ?? ""), done.message);
   const t1 = await tcTxs.findOne({ _id: new Types.ObjectId(v1.externalId) });
-  check("Tetra Commission: still $1,500 paid (the rupees came back the same), the invoice in rupees, waiting for its broker admin",
+  check("CS Portal: still $1,500 paid (the rupees came back the same), the invoice in rupees, waiting for its broker admin",
     t1?.amount_usd === 1500 && t1?.requested_amount_usd === undefined && t1?.course_invoice?.currency === "INR" && t1?.course_invoice?.balance_minor === 17_697_547 && t1?.status === "PENDING" && t1?.finance_approval?.decision === "approved",
     j({ usd: t1?.amount_usd, ci: t1?.course_invoice, s: t1?.status }));
   // The next payment for the course goes on the same rupee invoice.
@@ -308,12 +308,12 @@ step("9. A Bangalore team's bonus: the Bangalore organization's, in rupees");
   await svc.decideTetraDeposit(authBlr as never, v2.id, { decision: "approved", amountMinor: 5_000_000, transactionId: "Y2M-E2E-2", paymentMethod: "", mt5Login: "", note: "" } as never);
   const inv2 = await invoiceOf(v2.id);
   check("the next payment goes on the same invoice: ₹200,000 paid, ₹126,975.47 left", String(inv2?._id) === String(inv?._id) && inv2?.amountPaidMinor === 20_000_000 && inv2?.balanceMinor === 12_697_547, j({ same: String(inv2?._id) === String(inv?._id), p: inv2?.amountPaidMinor, b: inv2?.balanceMinor }));
-  // An accountant who corrects the rupees: Tetra Commission turns them back into dollars at its rate.
+  // An accountant who corrects the rupees: CS Portal turns them back into dollars at its rate.
   const v3 = await arriveBlr(1_000_000, cpOf({ paidTodayAed: 367, paidBeforeAed: 7340, holdAed: 0, balanceAed: 4293, bonusUsd: 0, paidOn: "2026-10-15" }), 100);
   await svc.decideTetraDeposit(authBlr as never, v3.id, { decision: "approved", amountMinor: 900_000, transactionId: "Y2M-E2E-3", paymentMethod: "", mt5Login: "", note: "" } as never);
   const t3 = await tcTxs.findOne({ _id: new Types.ObjectId(v3.externalId) });
   const inv3 = await invoiceOf(v3.id);
-  check("corrected to ₹9,000: ₹9,000 on the invoice, and Tetra Commission has $90 (the $100 asked kept)",
+  check("corrected to ₹9,000: ₹9,000 on the invoice, and CS Portal has $90 (the $100 asked kept)",
     (inv3?.payments ?? []).some((p: any) => p.amountMinor === 900_000) && t3?.amount_usd === 90 && t3?.requested_amount_usd === 100, j({ usd: t3?.amount_usd, req: t3?.requested_amount_usd }));
 }
 
@@ -353,10 +353,10 @@ step("10. The move: Bangalore bonuses approved in Delta HQ go to Bangalore, in r
   const pmoved = await row(pend.id);
   check("the pending one waits in Bangalore, ₹50,000", String(pmoved?.organizationId) === BLR && pmoved?.status === "pending" && pmoved?.amountMinor === 5_000_000 && (await svc.listTetraDeposits(BLR, "waiting")).some((d) => d.id === pend.id));
   check("the Dubai team's is untouched", String((await row(dubai.id))?.organizationId) === ORG);
-  // Tetra Commission hears again, with the new invoice — the worker's pass.
+  // CS Portal hears again, with the new invoice — the worker's pass.
   await svc.drainTetraDepositDecisions();
   const tj = await tcTxs.findOne({ _id: new Types.ObjectId(old.externalId) });
-  check("Tetra Commission shows the new rupee invoice", tj?.course_invoice?.currency === "INR" && tj?.course_invoice?.invoice_number === blrInv?.invoiceNumber, j(tj?.course_invoice));
+  check("CS Portal shows the new rupee invoice", tj?.course_invoice?.currency === "INR" && tj?.course_invoice?.invoice_number === blrInv?.invoiceNumber, j(tj?.course_invoice));
   const again = await moveBangaloreBonuses({ write: true, bangaloreOrgId: BLR, email: false });
   check("run again: nothing left to move", again.rows.length === 0, j(again.rows));
 }

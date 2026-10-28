@@ -253,7 +253,7 @@ async function main() {
     check("…its bonus, sent with no currency, is recorded in USD — not INR", d?.enrolment?.bonus?.currency === "USD" && d?.enrolment?.bonus?.amountMinor === 30_000, JSON.stringify(d?.enrolment?.bonus));
     const { enrolmentFeeSummary } = await import("../modules/invoice/invoice.service");
     const sumB = enrolmentFeeSummary(d as never);
-    check("…and the LMS and Tetra Commission are told $300 beside an INR fee", sumB.bonus?.currency === "USD" && sumB.currency === "INR", JSON.stringify(sumB.bonus));
+    check("…and the LMS and CS Portal are told $300 beside an INR fee", sumB.bonus?.currency === "USD" && sumB.currency === "INR", JSON.stringify(sumB.bonus));
     check("…tagged the Banglore CRM", d?.enrolment?.crm === "banglore", d?.enrolment?.crm);
     check("…its academy, unsaid, recorded as Bangalore", d?.enrolment?.academy === "bangalore", d?.enrolment?.academy);
     check("…its payments carry no conversion", (d?.enrolment?.declaredPayments ?? []).every((p: any) => p.original === undefined), JSON.stringify(d?.enrolment?.declaredPayments));

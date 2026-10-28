@@ -521,7 +521,7 @@ export function InvoiceManager() {
             <DialogTitle>Delete {rowDeleting?.invoiceNumber}?</DialogTitle>
             <DialogDescription>
               {rowDeleting?.customerName} — removed for good, leaving a gap in the numbering; void it instead to keep it on the record as
-              cancelled. An enrolment from a sales CRM keeps the LMS access and Tetra Commission account it already gave — remove those by
+              cancelled. An enrolment from a sales CRM keeps the LMS access and CS Portal account it already gave — remove those by
               hand. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -558,7 +558,7 @@ export function InvoiceManager() {
                 ? `${undeletable} of the ${selectedIds.length} selected cannot be deleted and will be left alone. `
                 : ""}
               Each leaves a gap in the numbering where it was. An enrolment from a sales CRM keeps the LMS access and
-              Tetra Commission account it already gave — remove those by hand. This cannot be undone.
+              CS Portal account it already gave — remove those by hand. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">

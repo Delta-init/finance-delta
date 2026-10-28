@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# End-to-end test of Tetra Commission deposit requests approved here.
+# End-to-end test of CS Portal deposit requests approved here.
 #
-# Stands up a throwaway mongod, a throwaway Tetra Commission (the commission
+# Stands up a throwaway mongod, a throwaway CS Portal (the commission
 # portal's real backend) and a throwaway finance API, pointed at each other the
-# way production is: Tetra Commission sends each new deposit to finance's
+# way production is: CS Portal sends each new deposit to finance's
 # signed intake, and finance sends the accountant's decision back. The test
-# drives both over HTTP, and sits a gate in front of Tetra Commission so it can
+# drives both over HTTP, and sits a gate in front of CS Portal so it can
 # take it down mid-approval.
 #
 # Nothing here touches a configured database: one mongod on its own port and
@@ -15,7 +15,7 @@
 #
 #   ./scripts/tetra-deposit-e2e.sh
 #
-# Tetra Commission is expected beside this repository at "../commission portal /backend"
+# CS Portal is expected beside this repository at "../commission portal /backend"
 # (the folder name ends in a space), with its dependencies installed; point
 # COMMISSION_BACKEND somewhere else to use another copy.
 #
@@ -57,11 +57,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ ! -f "$COMMISSION_BACKEND/src/finance/funding.ts" ]; then
-  echo "Tetra Commission (with its deposit approvals) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
+  echo "CS Portal (with its deposit approvals) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
   exit 1
 fi
 if [ ! -d "$COMMISSION_BACKEND/node_modules" ]; then
-  echo "Tetra Commission's dependencies are not installed at $COMMISSION_BACKEND (npm ci there)," >&2
+  echo "CS Portal's dependencies are not installed at $COMMISSION_BACKEND (npm ci there)," >&2
   echo "or point COMMISSION_BACKEND at a copy that has them." >&2
   exit 1
 fi
@@ -77,7 +77,7 @@ mkdir -p "$WORK/db" "$WORK/log"
 echo "Starting a throwaway mongod on :$MONGO_PORT"
 mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --bind_ip 127.0.0.1 --fork --logpath "$WORK/log/mongo.log" >/dev/null
 
-echo "Starting Tetra Commission on :$COMMISSION_PORT"
+echo "Starting CS Portal on :$COMMISSION_PORT"
 (
   cd "$COMMISSION_BACKEND"
   PORT="$COMMISSION_PORT" \
@@ -96,7 +96,7 @@ echo "Starting Tetra Commission on :$COMMISSION_PORT"
 )
 
 # One environment for the finance API and the driver, so they agree about
-# which database and which Tetra Commission they mean. Finance reaches Tetra
+# which database and which CS Portal they mean. Finance reaches Tetra
 # Commission through the test's gate, which can play dead.
 export MONGODB_URI="mongodb://127.0.0.1:$MONGO_PORT/finance-tetra-deposit-e2e"
 export COMMISSION_MONGO_URI="mongodb://127.0.0.1:$MONGO_PORT"
@@ -136,7 +136,7 @@ done
 echo "Driving deposits both ways"
 if ! bun --no-env-file src/scripts/tetra-deposit-e2e.ts; then
   echo
-  echo "--- last 30 lines of the Tetra Commission log ---" >&2
+  echo "--- last 30 lines of the CS Portal log ---" >&2
   tail -30 "$WORK/log/commission.log" >&2
   echo "--- last 30 lines of the finance API log ---" >&2
   tail -30 "$WORK/log/api.log" >&2

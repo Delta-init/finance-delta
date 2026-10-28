@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# End-to-end test of a new LMS student going on to Tetra Commission.
+# End-to-end test of a new LMS student going on to CS Portal.
 #
-# Stands up a throwaway mongod and a throwaway Tetra Commission process (the
-# commission portal's real backend), then drives finance's own provisioning
+# Stands up a throwaway mongod and a throwaway CS Portal process (the
+# CS Portal's real backend), then drives finance's own provisioning
 # worker against them. The LMS is a stand-in served by the test itself — its
 # half is scripts/lms-provision-e2e.sh — because this is about what happens
 # once the LMS has, or has not, taken the student.
@@ -14,7 +14,7 @@
 #
 #   ./scripts/commission-student-e2e.sh
 #
-# Tetra Commission is expected beside this repository at "../commission portal /backend"
+# CS Portal is expected beside this repository at "../commission portal /backend"
 # (the folder name ends in a space), with its dependencies installed; point
 # COMMISSION_BACKEND somewhere else to use another copy.
 #
@@ -52,11 +52,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ ! -f "$COMMISSION_BACKEND/src/finance/students.ts" ]; then
-  echo "Tetra Commission (with its finance route) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
+  echo "CS Portal (with its finance route) is not at $COMMISSION_BACKEND. Set COMMISSION_BACKEND." >&2
   exit 1
 fi
 if [ ! -d "$COMMISSION_BACKEND/node_modules" ]; then
-  echo "Tetra Commission's dependencies are not installed at $COMMISSION_BACKEND (npm ci there)," >&2
+  echo "CS Portal's dependencies are not installed at $COMMISSION_BACKEND (npm ci there)," >&2
   echo "or point COMMISSION_BACKEND at a copy that has them." >&2
   exit 1
 fi
@@ -72,7 +72,7 @@ mkdir -p "$WORK/db" "$WORK/log"
 echo "Starting a throwaway mongod on :$MONGO_PORT"
 mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --bind_ip 127.0.0.1 --fork --logpath "$WORK/log/mongo.log" >/dev/null
 
-echo "Starting Tetra Commission on :$COMMISSION_PORT"
+echo "Starting CS Portal on :$COMMISSION_PORT"
 (
   cd "$COMMISSION_BACKEND"
   PORT="$COMMISSION_PORT" \
@@ -90,7 +90,7 @@ for _ in $(seq 1 80); do
   sleep 0.25
 done
 curl -sf "http://127.0.0.1:$COMMISSION_PORT/health" >/dev/null || {
-  echo "Tetra Commission did not start:" >&2
+  echo "CS Portal did not start:" >&2
   tail -30 "$WORK/log/commission.log" >&2
   exit 1
 }
@@ -113,7 +113,7 @@ echo "Sending students"
 cd "$REPO/apps/api"
 if ! bun --no-env-file src/scripts/commission-student-e2e.ts; then
   echo
-  echo "--- last 30 lines of the Tetra Commission log ---" >&2
+  echo "--- last 30 lines of the CS Portal log ---" >&2
   tail -30 "$WORK/log/commission.log" >&2
   exit 1
 fi

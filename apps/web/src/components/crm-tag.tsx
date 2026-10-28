@@ -10,7 +10,7 @@ const CRM_STYLES: Record<EnrolmentCrm, string> = {
 
 /**
  * Which sales CRM sold an enrolment — Sales CRM, Remote CRM, Draw or the Banglore CRM — as the
- * same small tag the LMS and Tetra Commission show. Nothing for an enrolment
+ * same small tag the LMS and CS Portal show. Nothing for an enrolment
  * typed in finance: no CRM sold it.
  */
 export function CrmTag({ crm, className }: { crm?: EnrolmentCrm | null; className?: string }) {

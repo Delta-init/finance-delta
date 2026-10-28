@@ -231,7 +231,7 @@ check("a new one rejected: removed, the invoice owed again", !ivNow.payments.som
 step("7. Not asked");
 const before = await LateEntryModel.countDocuments({});
 await inv.recordPayment(ORG, iv.id, { method: "tabby", amountMinor: 10_000, paidOn: OLDER, reference: "", notes: "", accountName: "", chargesMinor: 0 } as never);
-check("finance recording a payment itself (an approval, Tetra Commission): nothing asked", (await LateEntryModel.countDocuments({})) === before);
+check("finance recording a payment itself (an approval, CS Portal): nothing asked", (await LateEntryModel.countDocuments({})) === before);
 await updateOrganization(ORG, { lateEntryDays: 0 });
 const off = await expense(OLDER);
 check("days 0: nothing is asked", !off.lateEntry && (await LateEntryModel.countDocuments({})) === before);

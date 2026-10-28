@@ -4,7 +4,7 @@ import { PAYMENT_METHODS, storedReceiptSchema } from "./invoice.schema";
 /*
  * The next payment of a part-paid enrolment, recorded in the sales CRM that
  * closed it (the user, 2026-10-13): every part-paid course a sales CRM closed
- * is followed up there, by its salesperson, not in Tetra Commission. Each
+ * is followed up there, by its salesperson, not in CS Portal. Each
  * payment comes with its receipt and waits for accounts here; approved, it is
  * recorded on the invoice; the CRM shows it pending, approved or rejected.
  */

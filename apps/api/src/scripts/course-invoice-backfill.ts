@@ -1,12 +1,12 @@
 /**
  * Course payments approved before they became invoices (the user, 2026-10-12).
  *
- * Since 2026-10-12 an approved course payment from Tetra Commission — a course
+ * Since 2026-10-12 an approved course payment from CS Portal — a course
  * upgrade's payment, or a bonus's course payment — is recorded on an invoice
  * with a receipt (modules/tetra-deposit/course-invoice.ts). This does the same
  * for the ones approved before: each goes on the student's open invoice for the
  * course, or on a new one, gets its receipt number, and the decision is sent to
- * Tetra Commission again so it shows the invoice (it answers a repeat as
+ * CS Portal again so it shows the invoice (it answers a repeat as
  * "already", changing nothing else).
  *
  * One that might be invoiced by hand already — the client has an invoice typed

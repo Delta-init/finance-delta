@@ -113,7 +113,7 @@ await db.collection("invoices").insertMany([
   invoice({ email: "student.one@example.com", day: "2026-10-01", source: "draw-crm", course: "Draw Basics", closedBy: "Karthika", approval: { state: "approved", at: new Date() } }),
   invoice({ email: "student.one@example.com", day: "2026-10-05", source: "crm", crm: "remote", course: "Forex Pro", closedBy: "Nusra", approval: { state: "returned", returnedReason: "Receipt is unreadable" } }),
   invoice({ email: "student.one@example.com", day: "2026-10-10", crm: "delta", course: "Forex Mastery", closedBy: "  Abrar  " }),
-  // ...and what is not a request: typed in finance, voided, from Tetra Commission, no enrolment.
+  // ...and what is not a request: typed in finance, voided, from CS Portal, no enrolment.
   invoice({ email: "student.one@example.com", day: "2026-10-11", source: null, course: "Typed here" }),
   invoice({ email: "student.one@example.com", day: "2026-10-12", course: "Voided", status: "void" }),
   invoice({ email: "student.one@example.com", day: "2026-10-12", source: "tetra-commission", course: "Upgrade" }),
@@ -145,7 +145,7 @@ step("B. Requests a sales CRM sent");
   const s = r.body?.data?.results?.["student.one@example.com"];
   check("200, keyed by the email trimmed and lowercased", r.status === 200 && !!s, j(r));
   check("...in finance", s?.inFinance === true, j(s));
-  check("...only its three CRM requests (typed, void, Tetra Commission and plain invoices left out)", s?.requests?.length === 3, j(s?.requests));
+  check("...only its three CRM requests (typed, void, CS Portal and plain invoices left out)", s?.requests?.length === 3, j(s?.requests));
   const [newest, middle, oldest] = s?.requests ?? [];
   check("newest first", j((s?.requests ?? []).map((q: any) => q.course)) === j(["Forex Mastery", "Forex Pro", "Draw Basics"]), j(s?.requests));
   check("pending: crm delta, closed by Abrar (trimmed), the course", newest?.approval === "pending" && newest?.crm === "delta" && newest?.closedBy === "Abrar" && newest?.course === "Forex Mastery" && newest?.returnedReason === "", j(newest));

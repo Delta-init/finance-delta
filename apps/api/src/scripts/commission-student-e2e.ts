@@ -1,6 +1,6 @@
 /**
- * A new LMS student going on to Tetra Commission, over real HTTP against a
- * real Tetra Commission process. The LMS is a stand-in here — its half is
+ * A new LMS student going on to CS Portal, over real HTTP against a
+ * real CS Portal process. The LMS is a stand-in here — its half is
  * proven by lms-provision-e2e — because what matters is what finance does
  * once the LMS has, or has not, taken the student.
  *
@@ -8,7 +8,7 @@
  *      it was switched off, is ever sent.
  *   2. Only once the LMS has them, and never holding up the LMS step.
  *   3. The teams take turns in the order the LMS took the students.
- *   4. An email Tetra Commission already has is left alone and uses no turn.
+ *   4. An email CS Portal already has is left alone and uses no turn.
  *   5. Down, not deployed yet, or refusing: retried, waited for, or stopped —
  *      and a retry never makes a second student.
  *   6. Forex students only: a close on another programme's course, or one
@@ -50,7 +50,7 @@ const lms = Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path !== "/api/v1/integrations/finance/enrolment" || req.headers.get("x-finance-secret") !== env.LMS_S2S_SECRET) {
-      // What a server without the route says — Tetra Commission's old code answers exactly this.
+      // What a server without the route says — CS Portal's old code answers exactly this.
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     lmsCalls++;
@@ -76,7 +76,7 @@ await mongoose.connect(uri);
 await mongoose.connection.dropDatabase();
 const tc = await mongoose.createConnection(commissionUri, { dbName: commissionDb }).asPromise();
 if (tc.host !== "127.0.0.1" || mongoose.connection.host !== "127.0.0.1") { console.error("Refusing: not 127.0.0.1"); process.exit(1); }
-// Emptied, not dropped: Tetra Commission made its indexes when it started.
+// Emptied, not dropped: CS Portal made its indexes when it started.
 for (const c of await tc.db!.listCollections().toArray()) await tc.db!.collection(c.name).deleteMany({});
 const students = tc.db!.collection("students");
 
@@ -134,7 +134,7 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
   });
   return LmsProvision.create({
     organizationId: orgId, invoiceId, invoiceNumber: `INV-${String(n).padStart(4, "0")}`,
-    // Whose enrolment it is, as the approval records it: which decides whether Tetra Commission gets the student.
+    // Whose enrolment it is, as the approval records it: which decides whether CS Portal gets the student.
     ...(opts.source ? { source: opts.source } : {}),
     payload: {
       email: email ?? `student${n}@e2e-test.com`, name: `Student ${n}`, phone: `+9199000${String(n).padStart(5, "0")}`,
@@ -142,7 +142,7 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
       amount: 4500, paymentStatus: "partial",
       // The CRM tag, as the approval snapshots it into what is sent.
       ...(opts.crm ? { crm: opts.crm } : {}),
-      // The money at approval, as Tetra Commission is told it — with the bonus the close promised.
+      // The money at approval, as CS Portal is told it — with the bonus the close promised.
       ...(opts.bonus ? { feeSummary: { currency: "AED", feeMinor: 450_000, paidMinor: 200_000, balanceMinor: 250_000, bonus: opts.bonus, receipt: null } } : {}),
     },
     ...(opts.extra ? { extraCourses: opts.extra.map((slug) => ({ slug, status: "pending", nextAttemptAt: new Date() })) } : {}),
@@ -150,17 +150,17 @@ async function enrol(email?: string, opts: { courseSlug?: string; extra?: string
 }
 const row = async (id: unknown) => (await LmsProvision.findById(id).lean()) as any;
 const studentFor = async (id: unknown) => students.findOne({ finance_invoice_id: String((await row(id)).invoiceId) }) as any;
-check("four teams in Tetra Commission, and a student a mentor added by hand", true);
+check("four teams in CS Portal, and a student a mentor added by hand", true);
 
 step("New students only");
-// Taken by the LMS before this existed: sent, and nothing about Tetra Commission on it.
+// Taken by the LMS before this existed: sent, and nothing about CS Portal on it.
 const before = await enrol();
 await LmsProvision.updateOne({ _id: before._id }, { $set: { status: "sent", sentAt: new Date(Date.now() - 86_400_000), lmsUserId: "old" } });
 env.COMMISSION_API_URL = "";
 env.LMS_API_URL = LMS_URL;
 const whileOff = await enrol();
 await drainLmsProvisions();
-check("while Tetra Commission is switched off, the LMS still gets the student", (await row(whileOff._id)).status === "sent");
+check("while CS Portal is switched off, the LMS still gets the student", (await row(whileOff._id)).status === "sent");
 env.COMMISSION_API_URL = COMMISSION_URL;
 await drainCommissionStudents();
 check("...but neither that student nor one from before is sent once it is switched on",
@@ -173,7 +173,7 @@ const lmsBefore = lmsCalls;
 await drainLmsProvisions();
 check("the LMS got all five first", lmsCalls - lmsBefore === 5 && (await Promise.all(five.map((r) => row(r._id)))).every((r) => r.status === "sent"));
 const marked = await Promise.all(five.map((r) => row(r._id)));
-check("...and each is marked for Tetra Commission", marked.every((r) => r.commission?.state === "pending"), JSON.stringify(marked.map((r) => r.commission)));
+check("...and each is marked for CS Portal", marked.every((r) => r.commission?.state === "pending"), JSON.stringify(marked.map((r) => r.commission)));
 const sent = await drainCommissionStudents();
 const after = await Promise.all(five.map((r) => row(r._id)));
 check("all five sent", sent === 5 && after.every((r) => r.commission?.state === "sent" && r.commission?.alreadyThere === false), JSON.stringify(after.map((r) => r.commission)));
@@ -189,7 +189,7 @@ check("the student there is who finance sent",
 check("...with the course the LMS named and the invoice", s?.notes === "From Delta LMS — Delta Wave Theory Trading Programme, invoice INV-0003" &&
   s?.lms_user_id === after[0].lmsUserId, s?.notes);
 
-step("An email Tetra Commission already has");
+step("An email CS Portal already has");
 const again = await enrol("already@e2e-test.com");
 await drainLmsProvisions();
 await drainCommissionStudents();
@@ -211,7 +211,7 @@ check("sent again, the same student comes back — still finance's own, not some
   retried.commission?.studentCode === "STU-0043" && retried.commission?.alreadyThere === false && retried.commission?.team === "Chief One" &&
   (await students.countDocuments({ finance_invoice_id: String(five[0]!.invoiceId) })) === 1, JSON.stringify(retried.commission));
 
-step("Tetra Commission down, not deployed, or refusing");
+step("CS Portal down, not deployed, or refusing");
 env.COMMISSION_API_URL = "http://127.0.0.1:1";
 const down = await enrol();
 await drainLmsProvisions();
@@ -258,7 +258,7 @@ const lmsDown = await enrol("lmsdown@e2e-test.com");
 await drainLmsProvisions();
 await drainCommissionStudents();
 const g = await row(lmsDown._id);
-check("the LMS refusing: nothing goes to Tetra Commission", g.status === "pending" && !g.commission?.state && !(await students.findOne({ email: "lmsdown@e2e-test.com" })));
+check("the LMS refusing: nothing goes to CS Portal", g.status === "pending" && !g.commission?.state && !(await students.findOne({ email: "lmsdown@e2e-test.com" })));
 await LmsProvision.updateOne({ _id: lmsDown._id }, { $set: { attempts: 12, nextAttemptAt: new Date() } });
 await drainLmsProvisions();
 const g2 = await row(lmsDown._id);
@@ -339,7 +339,7 @@ step("Forex students only");
   await drainLmsProvisions();
   await drainCommissionStudents();
   const dmRow = await row(dmClose._id), oldRow = await row(oldLms._id);
-  check("a Digital Marketing close: in the LMS, not in Tetra Commission — passed over, and says why",
+  check("a Digital Marketing close: in the LMS, not in CS Portal — passed over, and says why",
     dmRow.status === "sent" && dmRow.commission?.state === "skipped" && dmRow.commission?.reason === "Not a Forex course (digital-marketing)" &&
     dmRow.lmsCourseProgram === "digital-marketing" && !(await students.findOne({ email: "dm@e2e-test.com" })), JSON.stringify(dmRow.commission));
   check("an LMS that names no programme: not sent either, and said so",
@@ -403,10 +403,10 @@ step("Which sales CRM sold it");
   check("Case 2 — one from a CRM that said nothing arrives as the Sales CRM's, by its source", o?.sales_crm === "delta", JSON.stringify(o?.sales_crm));
 }
 
-step("The Banglore CRM's students go to Tetra Commission now (2026-10-10), as Bangalore students");
+step("The Banglore CRM's students go to CS Portal now (2026-10-10), as Bangalore students");
 {
   env.COMMISSION_API_URL = COMMISSION_URL;
-  // The academy as Tetra Commission keeps it on the student: `academy`, or `location` on a Tetra Commission from before the name.
+  // The academy as CS Portal keeps it on the student: `academy`, or `location` on a CS Portal from before the name.
   const academyOf = (st: any) => st?.academy ?? st?.location;
   // Sharing Delta's "crm" source, on a Forex course, with nothing recorded about an academy.
   const blr = await enrol("banglore.forex@e2e-test.com", { crm: "banglore", source: "crm" });
@@ -414,7 +414,7 @@ step("The Banglore CRM's students go to Tetra Commission now (2026-10-10), as Ba
   await drainCommissionStudents();
   const b = await row(blr._id);
   const bs = await students.findOne({ email: "banglore.forex@e2e-test.com" }) as any;
-  check("Case 1 — a Banglore Forex close: in the LMS, and sent on to Tetra Commission",
+  check("Case 1 — a Banglore Forex close: in the LMS, and sent on to CS Portal",
     b.status === "sent" && b.lmsCourseProgram === "4x-trading" && b.commission?.state === "sent" && !!bs, JSON.stringify(b.commission));
   check("...tagged the Banglore CRM, a Bangalore student there", bs?.sales_crm === "banglore" && academyOf(bs) === "bangalore", JSON.stringify({ crm: bs?.sales_crm, academy: academyOf(bs) }));
   check("...with no Bangalore team, to Open Students — never a Dubai team", b.commission?.team === undefined && bs?.assignment_status === "open_pool",
@@ -428,7 +428,7 @@ step("The Banglore CRM's students go to Tetra Commission now (2026-10-10), as Ba
   check("Case 2 — a Forex course second on a Banglore close sends them too",
     bb.commission?.state === "sent" && academyOf(await students.findOne({ email: "banglore.bundle@e2e-test.com" })) === "bangalore", JSON.stringify(bb.commission));
 
-  // Queued without the tag in what is sent (the invoice tagged since), already waiting for Tetra Commission.
+  // Queued without the tag in what is sent (the invoice tagged since), already waiting for CS Portal.
   const late = await enrol("banglore.late@e2e-test.com", { source: "crm" });
   await mongoose.connection.db!.collection("invoices").updateOne({ _id: late.invoiceId }, { $set: { "enrolment.crm": "banglore" } });
   await LmsProvision.updateOne({ _id: late._id }, { $set: { status: "sent", sentAt: new Date(), lmsUserId: "x", "commission.state": "pending", "commission.attempts": 0, "commission.nextAttemptAt": new Date() } });
@@ -438,7 +438,7 @@ step("The Banglore CRM's students go to Tetra Commission now (2026-10-10), as Ba
     lr.commission?.state === "sent" && academyOf(await students.findOne({ email: "banglore.late@e2e-test.com" })) === "bangalore", JSON.stringify(lr.commission));
 }
 
-step("The academy picked at the close (2026-10-10), passed on to Tetra Commission");
+step("The academy picked at the close (2026-10-10), passed on to CS Portal");
 {
   env.COMMISSION_API_URL = COMMISSION_URL;
   const academyOf = (st: any) => st?.academy ?? st?.location;
@@ -482,7 +482,7 @@ step("What a sales CRM's My Enrolments sees — the LMS, and who looks after the
   await drainLmsProvisions();
   await drainCommissionStudents();
   const there = await students.findOne({ email: "draw.buyer@e2e-test.com" }) as any;
-  check("Case 1 — Draw's Forex student goes on to Tetra Commission now, like Delta's",
+  check("Case 1 — Draw's Forex student goes on to CS Portal now, like Delta's",
     (await row(drawSale._id)).commission?.state === "sent" && there?.student_code === (await row(drawSale._id)).commission?.studentCode,
     JSON.stringify((await row(drawSale._id)).commission));
   const st = await ask("draw-enrol-1");
@@ -491,7 +491,7 @@ step("What a sales CRM's My Enrolments sees — the LMS, and who looks after the
   // Given to a CS there, as the round or a CS Manager would — whatever the teams above made of it.
   await students.updateOne({ _id: there._id }, { $set: { assignment_status: "assigned", primary_mentor_name: "Asha CS", team_name: "Team Asha" } });
   const assigned = await ask("draw-enrol-1");
-  check("...their code, CS and CS team, as Tetra Commission has them now",
+  check("...their code, CS and CS team, as CS Portal has them now",
     assigned?.commission?.state === "sent" && assigned.commission.code === there?.student_code && assigned.commission.cs === "Asha CS"
       && assigned.commission.team === "Team Asha" && assigned.commission.live === true, JSON.stringify(assigned?.commission));
   await students.updateOne({ _id: there._id }, { $set: { primary_mentor_name: "Another CS", team_name: "Another Team" } });
@@ -506,21 +506,21 @@ step("What a sales CRM's My Enrolments sees — the LMS, and who looks after the
   const offline = await ask("draw-enrol-1");
   env.COMMISSION_API_URL = COMMISSION_URL;
   const told = (await row(drawSale._id)).commission;
-  check("Case 2 — Tetra Commission not answering: what finance was told when it sent them, marked so",
+  check("Case 2 — CS Portal not answering: what finance was told when it sent them, marked so",
     offline?.commission?.live === false && offline.commission.cs === (told?.mentorName ?? "") && offline.commission.team === (told?.team ?? "")
       && offline.commission.code === there?.student_code, JSON.stringify(offline?.commission));
   await students.deleteOne({ _id: there._id });
   const gone = await ask("draw-enrol-1");
-  check("Case 3 — taken out of Tetra Commission since: said so, with no CS", gone?.commission?.live === true && gone.commission.cs === ""
+  check("Case 3 — taken out of CS Portal since: said so, with no CS", gone?.commission?.live === true && gone.commission.cs === ""
     && /no longer/i.test(gone.commission.detail ?? ""), JSON.stringify(gone?.commission));
   await mongoose.connection.db!.collection("invoices").insertOne({ organizationId: orgId, invoiceNumber: "INV-WAIT", external: { source: "draw-crm", externalId: "draw-enrol-2" } });
   const waiting = await ask("draw-enrol-2");
-  check("Case 2 — not approved yet: nothing asked of the LMS or Tetra Commission", !!waiting && waiting.lms === null && waiting.commission === null,
+  check("Case 2 — not approved yet: nothing asked of the LMS or CS Portal", !!waiting && waiting.lms === null && waiting.commission === null,
     JSON.stringify(waiting));
   const marketing = await enrol("draw.marketing@e2e-test.com", { courseSlug: "digital-marketing", crm: "draw", source: "draw-crm", externalId: "draw-enrol-3" });
   await drainLmsProvisions();
   const dm = await ask("draw-enrol-3");
-  check("Case 2 — not a Forex course: in the LMS, and Tetra Commission says why not",
+  check("Case 2 — not a Forex course: in the LMS, and CS Portal says why not",
     dm?.lms?.state === "created" && dm.commission?.state === "skipped" && /forex/i.test(dm.commission.detail ?? ""), JSON.stringify(dm));
   await LmsProvision.updateOne({ _id: marketing._id }, { $set: { status: "unmapped", lastError: "No LMS course" } });
   const unmapped = await ask("draw-enrol-3");
@@ -542,7 +542,7 @@ step("Onboarded, and the MT5 bonus — the last steps before a sales CRM counts 
   const s1 = await students.findOne({ email: "bonus.buyer@e2e-test.com" }) as any;
   const s2 = await students.findOne({ email: "plain.buyer@e2e-test.com" }) as any;
   let st = await ask("draw-bonus-1");
-  check("Case 1 — in Tetra Commission, not welcomed yet: not onboarded", st?.commission?.onboarded?.done === false, JSON.stringify(st?.commission));
+  check("Case 1 — in CS Portal, not welcomed yet: not onboarded", st?.commission?.onboarded?.done === false, JSON.stringify(st?.commission));
   check("Case 1 — the $500 promised at the close: not raised there yet", st?.commission?.bonus?.state === "not_requested" && st.commission.bonus.amount === 500,
     JSON.stringify(st?.commission?.bonus));
   await students.updateMany({ _id: { $in: [s1._id, s2._id] } }, { $set: { onboarded: true, onboarded_at: new Date().toISOString(), onboarded_by_name: "Asha CS" } });
@@ -569,12 +569,12 @@ step("Onboarded, and the MT5 bonus — the last steps before a sales CRM counts 
   env.COMMISSION_API_URL = "http://127.0.0.1:1";
   const offline = await ask("draw-bonus-1");
   env.COMMISSION_API_URL = COMMISSION_URL;
-  check("Case 2 — Tetra Commission not answering: onboarding and the bonus left unsaid, not guessed",
+  check("Case 2 — CS Portal not answering: onboarding and the bonus left unsaid, not guessed",
     offline?.commission?.live === false && offline.commission.onboarded === undefined && offline.commission.bonus === undefined, JSON.stringify(offline?.commission));
   void noBonus;
 }
 
-step("Collected by counsellor and each payment's receipt, to Tetra Commission (2026-10-12)");
+step("Collected by counsellor and each payment's receipt, to CS Portal (2026-10-12)");
 {
   env.COMMISSION_API_URL = COMMISSION_URL;
   const { Invoice } = await import("../modules/invoice/invoice.model");
@@ -598,12 +598,12 @@ step("Collected by counsellor and each payment's receipt, to Tetra Commission (2
   for (let i = 0; i < 30 && (await drainFeeUpdates(new Date(Date.now() + 1000))) > 0; i++);
   const s = await students.findOne({ email: "declared@e2e-test.com" }) as any;
   const f = s?.course_fees?.[0];
-  check("--write: Tetra Commission has collected by counsellor, how, what was recorded, and the salesperson's receipt",
+  check("--write: CS Portal has collected by counsellor, how, what was recorded, and the salesperson's receipt",
     queued[0]?.queued === true && f?.collected_minor === 225_000 && /tabby/i.test(f?.collected_method ?? "") && f?.recorded_minor === 225_000
       && f?.declared_payments?.[0]?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
   check("...and the receipt where it had none", f?.receipt_url === "https://files.example.com/enrolment-receipts/lead-9/tabby.jpg", JSON.stringify(f));
 
-  // An older student: Tetra Commission has their course fee for an invoice finance never sent (no provision here).
+  // An older student: CS Portal has their course fee for an invoice finance never sent (no provision here).
   const oldInvoice = await Invoice.create({
     organizationId: new Types.ObjectId(), invoiceNumber: "IN-OLD-1", customerName: "Rajesh Old", status: "partial", currency: "AED",
     totalMinor: 2_000_000, amountPaidMinor: 367_000, balanceMinor: 1_633_000, issueDate: new Date(), dueDate: new Date(),
@@ -623,7 +623,7 @@ step("Collected by counsellor and each payment's receipt, to Tetra Commission (2
   const old = await backfillDeclaredReceipts({ write: true, invoices: ["IN-OLD-1"], notSent: true });
   for (let i = 0; i < 30 && (await drainFeeUpdates(new Date(Date.now() + 1000))) > 0; i++);
   const of: any = ((await students.findOne({ email: "rajesh.old@e2e-test.com" })) as any)?.course_fees?.[0];
-  check("--not-sent: the older student's receipt and collection reach Tetra Commission by the invoice",
+  check("--not-sent: the older student's receipt and collection reach CS Portal by the invoice",
     old[0]?.notSent === true && old[0]?.queued === true && of?.collected_minor === 367_000 && of?.declared_payments?.[0]?.receipt_url === "https://files.example.com/enrolment-receipts/old/old.jpg"
       && of?.receipt_url === "https://files.example.com/enrolment-receipts/old/old.jpg" && of?.bonus_minor === 775_000, JSON.stringify(of));
   void queueFeeUpdate;
@@ -644,7 +644,7 @@ startLmsProvisionWorker();
 const t0 = Date.now();
 kickLmsProvisioning();
 const both = await until(async () => { const r = await row(quiet._id); return r.status === "sent" && r.commission?.state === "sent"; });
-check("in the process that runs it, a kick alone takes it into the LMS and Tetra Commission within seconds",
+check("in the process that runs it, a kick alone takes it into the LMS and CS Portal within seconds",
   both && Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
 const another = await enrol();
 const t1 = Date.now();

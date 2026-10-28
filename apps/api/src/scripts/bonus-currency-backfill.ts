@@ -14,9 +14,9 @@
  * LMS provisioning record's snapshot (payload.feeSummary.bonus.currency) of
  * those invoices is relabelled too, so a retry passes on USD.
  *
- * What Tetra Commission and the LMS were already told is not re-sent — finance
+ * What CS Portal and the LMS were already told is not re-sent — finance
  * has no message that carries the bonus after approval. Their own scripts fix
- * it there (commission portal backend/src/scripts/bonus-currency-backfill.ts,
+ * it there (CS Portal backend/src/scripts/bonus-currency-backfill.ts,
  * LMS backend/src/scripts/bonus-currency-backfill.ts), from the list this
  * writes: every sales-CRM invoice whose bonus is USD.
  *
@@ -33,7 +33,7 @@
  *   --amount IN-00098=500   also correct that bonus's amount, in US dollars (repeatable): a close
  *                 whose salesperson typed the AED equivalent (the user, 2026-10-12: IN-00098's
  *                 1,836.50 was $500). Only one being labelled here; the list carries it to the
- *                 Tetra Commission and LMS scripts, which correct it there too.
+ *                 CS Portal and LMS scripts, which correct it there too.
  *   --uri <uri>   the database, instead of MONGODB_URI
  */
 import fs from "node:fs";
@@ -69,13 +69,13 @@ export interface BackfillRow {
   newAmountMinor?: number;
   /** What finance showed it as: the invoice's currency. */
   shownAs: string;
-  /** The LMS provisioning record: its state, whether the student went to Tetra Commission, and its snapshot's label. */
+  /** The LMS provisioning record: its state, whether the student went to CS Portal, and its snapshot's label. */
   provision: string;
 }
 
 export interface BackfillResult {
   rows: BackfillRow[];
-  /** Every sales-CRM invoice with a bonus given that is (or now will be) USD — for the Tetra Commission and LMS scripts. */
+  /** Every sales-CRM invoice with a bonus given that is (or now will be) USD — for the CS Portal and LMS scripts. */
   usdInvoices: { invoiceId: string; invoiceNumber: string; crm: string; amountMinor?: number }[];
   provisionsToFix: { _id: string; invoiceId: string; before: unknown; amountBefore?: unknown; newAmountMinor?: number }[];
   /** Bonuses typed in finance with no currency: left alone. */
@@ -267,7 +267,7 @@ if (import.meta.main) {
       fs.mkdirSync(outDir, { recursive: true });
       const listPath = path.join(outDir, `crm-usd-bonus-invoices-${stamp}.json`);
       fs.writeFileSync(listPath, JSON.stringify({ kind: "crm-usd-bonus-invoices", at: new Date().toISOString(), invoices: plan.usdInvoices }, null, 2));
-      console.log(`\nInvoice list for the Tetra Commission and LMS scripts: ${listPath}`);
+      console.log(`\nInvoice list for the CS Portal and LMS scripts: ${listPath}`);
 
       if (write) {
         if (plan.rows.length || plan.provisionsToFix.length) {

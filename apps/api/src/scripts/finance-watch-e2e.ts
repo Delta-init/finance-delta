@@ -155,7 +155,7 @@ const latePay = entry("RCT-9", "payment");
 check("a payment typed 9 days back, with its late-entry reason, enterer and manager", !!latePay && latePay.daysBack === 9 && latePay.enteredBy === "Abe Accountant"
   && latePay.late?.state === "approved" && latePay.late?.reason === "Bank statement came late" && latePay.late?.decidedBy === "Mo Manager", JSON.stringify(latePay));
 const tetraPay = (bd.rows ?? []).find((x: any) => x.kind === "payment" && x.title?.includes("IN-PAY") && x.daysBack === 2);
-check("Tetra Commission's payment: recorded by its approval", tetraPay?.origin === "approval", JSON.stringify(tetraPay));
+check("CS Portal's payment: recorded by its approval", tetraPay?.origin === "approval", JSON.stringify(tetraPay));
 const exp = entry("EXP-2D", "expense");
 check("an expense 2 days back, its submitter, its late entry waiting", !!exp && exp.daysBack === 2 && exp.enteredBy === "Sara Submitter" && exp.late?.state === "pending"
   && exp.title === "Travel · Fuel", JSON.stringify(exp));

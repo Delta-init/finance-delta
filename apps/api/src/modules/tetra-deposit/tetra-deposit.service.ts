@@ -20,17 +20,17 @@ import { TetraDepositModel } from "./tetra-deposit.model";
 import { courseInvoiceForDecision, isCoursePayment, recordCoursePayment } from "./course-invoice";
 
 /**
- * Deposit requests from Tetra Commission, decided here and sent back there.
+ * Deposit requests from CS Portal, decided here and sent back there.
  *
- * In: Tetra Commission hands each new deposit over (integrations/tetra-deposits,
+ * In: CS Portal hands each new deposit over (integrations/tetra-deposits,
  * signed), once however many times it retries, and the accountants are told.
  *
  * Decided: an accountant approves — at the amount that arrived, with its
  * transaction ID — or rejects with a reason, from the Approvals page. The
  * decision is sent back straight away, in the same request, so they learn at
- * once whether Tetra Commission took it. Refused because the transaction ID is
+ * once whether CS Portal took it. Refused because the transaction ID is
  * already used there, it is put back to pending for them to correct; gone from
- * Tetra Commission or decided there already, it is closed; unreachable, it is
+ * CS Portal or decided there already, it is closed; unreachable, it is
  * kept and the worker (jobs/tetra-deposit.worker.ts) keeps sending it.
  */
 
@@ -182,7 +182,7 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
       : [];
     const to = await withAccountants(orgId, approvers.map((u) => u.email as string).filter(Boolean));
     if (to.length === 0) {
-      logger.warn({ organizationId, depositId: d.id }, "Tetra Commission deposit received but nobody here can approve it");
+      logger.warn({ organizationId, depositId: d.id }, "CS Portal deposit received but nobody here can approve it");
       return;
     }
     const by = d.requestedBy || d.initiatingMentor;
@@ -194,40 +194,40 @@ async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Pr
       log: { organizationId: organizationId, kind: "tetra_deposit_notice" },
       to,
       subject: `${balancePayment ? "Balance payment" : upgrade ? "Course payment" : bonus ? "Bonus" : "Deposit"} to approve: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
-      title: `A Tetra Commission ${what} is waiting for approval`,
+      title: `A CS Portal ${what} is waiting for approval`,
       lines: [
-        `${by ? `${by} raised` : "Tetra Commission sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
+        `${by ? `${by} raised` : "CS Portal sent"} a ${what} of ${money(d.amountMinor, d.currency)} for ${d.student.name}${d.student.code ? ` (${d.student.code})` : ""}.`,
         [d.coursePayment?.product, d.enrolmentPayment && `Invoice ${d.enrolmentPayment.invoiceNumber}`, d.enrolmentPayment?.paidOn && `Paid on ${d.enrolmentPayment.paidOn}`,
           paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
         balancePayment
-          ? "Approving it records the payment on the student's invoice, which sets their next due date and updates Tetra Commission. Check it against the receipt first."
+          ? "Approving it records the payment on the student's invoice, which sets their next due date and updates CS Portal. Check it against the receipt first."
           : upgrade
-          ? "Approving it records the payment on the upgrade's invoice (made with its first payment) and emails the client a receipt; Tetra Commission then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
+          ? "Approving it records the payment on the upgrade's invoice (made with its first payment) and emails the client a receipt; CS Portal then counts it and raises the MT5 bonus it earns. Check it against the receipt first."
           : bonus
-          ? `Approving it confirms the payment${Number(d.coursePayment?.paidTodayAed) > 0 ? ", records it on the student's invoice for the course (made when there is none) and emails the client a receipt" : ""}; a broker admin in Tetra Commission then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first.`
-          : "Approving it records it in Tetra Commission and credits the mentors' commission, so check it against the statement first.",
+          ? `Approving it confirms the payment${Number(d.coursePayment?.paidTodayAed) > 0 ? ", records it on the student's invoice for the course (made when there is none) and emails the client a receipt" : ""}; a broker admin in CS Portal then credits the bonus in MT5 and approves it there. Check it against the statement and the receipt first.`
+          : "Approving it records it in CS Portal and credits the mentors' commission, so check it against the statement first.",
       ].filter(Boolean),
       actionLabel: "Review it",
       actionUrl: `${env.WEB_ORIGIN}/approvals`,
     });
   } catch (err) {
-    logger.error({ err, depositId: d.id }, "Could not notify Tetra Commission deposit approvers");
+    logger.error({ err, depositId: d.id }, "Could not notify CS Portal deposit approvers");
   }
 }
 
 export async function intakeTetraDeposit(organizationId: string, input: InboundTetraDeposit): Promise<TetraDeposit> {
-  // Without the way back, a decision here would never reach Tetra Commission.
-  // Refused as unavailable, which Tetra Commission waits out rather than
+  // Without the way back, a decision here would never reach CS Portal.
+  // Refused as unavailable, which CS Portal waits out rather than
   // taking as a final no.
   if (!commissionConfigured()) {
-    throw new AppError("UNAVAILABLE", "Tetra Commission is not connected on this finance server, so its deposits cannot be decided here yet");
+    throw new AppError("UNAVAILABLE", "CS Portal is not connected on this finance server, so its deposits cannot be decided here yet");
   }
-  // The unique key on Tetra Commission's id is what makes a retry safe; wait
+  // The unique key on CS Portal's id is what makes a retry safe; wait
   // for it to be built (a no-op once it is).
   await TetraDepositModel.init();
   // A balance payment is decided by the organization its invoice is in — a
-  // Bangalore enrolment's by Bangalore's accounts — whichever one Tetra
-  // Commission's link names.
+  // Bangalore enrolment's by Bangalore's accounts — whichever one CS
+  // Portal's link names.
   if (input.type === "ENROLMENT_PAYMENT") {
     // A retry finds what it made, wherever that is — before the invoice is
     // checked again, since an approved one has changed the balance.
@@ -280,10 +280,10 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
         : {}),
       events: [{
         at: new Date(), kind: "received", byName: input.requestedBy || input.initiatingMentor,
-        text: input.type === "BONUS" ? "Bonus raised in Tetra Commission"
-          : input.type === "COURSE_UPGRADE" ? "Course upgrade payment from Tetra Commission"
-          : input.type === "ENROLMENT_PAYMENT" ? `Balance payment recorded in Tetra Commission${balance?.enrolmentPayment.cs.name ? ` by ${balance.enrolmentPayment.cs.name}` : ""}`
-          : "Raised in Tetra Commission",
+        text: input.type === "BONUS" ? "Bonus raised in CS Portal"
+          : input.type === "COURSE_UPGRADE" ? "Course upgrade payment from CS Portal"
+          : input.type === "ENROLMENT_PAYMENT" ? `Balance payment recorded in CS Portal${balance?.enrolmentPayment.cs.name ? ` by ${balance.enrolmentPayment.cs.name}` : ""}`
+          : "Raised in CS Portal",
       }],
     });
   } catch (error) {
@@ -296,7 +296,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
   }
 
   const dto = tetraDepositDTO(row.toObject());
-  logger.info({ depositId: dto.id, externalId: dto.externalId, student: dto.student.name }, "Tetra Commission deposit received for approval");
+  logger.info({ depositId: dto.id, externalId: dto.externalId, student: dto.student.name }, "CS Portal deposit received for approval");
   void notifyDepositWaiting(organizationId, dto);
   return dto;
 }
@@ -304,7 +304,7 @@ export async function intakeTetraDeposit(organizationId: string, input: InboundT
 /* ── Balance payments (ENROLMENT_PAYMENT) ────────────────────────────────── */
 
 /**
- * Finance's payment method for what Tetra Commission called it. Exact slugs
+ * Finance's payment method for what CS Portal called it. Exact slugs
  * and labels first, then the words a CS uses; anything else is "other" (the
  * method as typed stays in the payment's note). An EMI's terms are not asked
  * there, so it is never recorded as one.
@@ -349,7 +349,7 @@ function balancePaymentRefusal(invoice: any, amountMinor: number, currency: stri
 
 /**
  * Checks a balance payment as it arrives: an invoice whose student went to
- * Tetra Commission, still owing at least this much in this currency. Refused
+ * CS Portal, still owing at least this much in this currency. Refused
  * with the reason otherwise — the CS sees it at once. Answers the invoice's
  * organization and what the row keeps.
  */
@@ -359,7 +359,7 @@ async function enrolmentPaymentIntake(input: InboundTetraDeposit) {
   if (!invoice) throw new AppError("NOT_FOUND", "No such invoice in finance — the payment cannot be recorded against it");
   const { LmsProvision } = await import("../integrations/lms-provision.model");
   const sentThere = await LmsProvision.exists({ invoiceId: invoice._id, "commission.state": "sent" });
-  if (!sentThere) throw new AppError("VALIDATION_ERROR", `Invoice ${invoice.invoiceNumber}'s student was not sent to Tetra Commission by finance`);
+  if (!sentThere) throw new AppError("VALIDATION_ERROR", `Invoice ${invoice.invoiceNumber}'s student was not sent to CS Portal by finance`);
   const refusal = balancePaymentRefusal(invoice, input.amountMinor, input.currency);
   if (refusal) throw new AppError("CONFLICT", refusal);
   const { isoDay } = await import("../invoice/instalments");
@@ -384,7 +384,7 @@ async function enrolmentPaymentIntake(input: InboundTetraDeposit) {
 
 /**
  * Records an approved balance payment on its invoice, through recordPayment —
- * the same path as accounts' own, so the next due date and Tetra Commission's
+ * the same path as accounts' own, so the next due date and CS Portal's
  * fee update follow. Idempotent on the request (`tetra:<id>`): a retry after
  * this got part-way records nothing twice. Answers why not, when it could not.
  */
@@ -407,7 +407,7 @@ async function recordBalancePayment(row: any): Promise<{ ok: true } | { ok: fals
       paidOn: ep.paidOn,
       reference: String(d.transactionId ?? ""),
       notes: [
-        `Recorded in Tetra Commission${ep.cs?.name ? ` by ${ep.cs.name}` : ""}${ep.method ? ` (${ep.method})` : ""}`,
+        `Recorded in CS Portal${ep.cs?.name ? ` by ${ep.cs.name}` : ""}${ep.method ? ` (${ep.method})` : ""}`,
         `approved by ${d.decidedByName || "accounts"}`,
         d.note,
       ].filter(Boolean).join(" · ").slice(0, 1000),
@@ -441,7 +441,7 @@ async function putBack(row: any, message: string): Promise<void> {
 
 /**
  * waiting    for a decision, newest first
- * attention  decided, but Tetra Commission does not have it yet — on its way,
+ * attention  decided, but CS Portal does not have it yet — on its way,
  *            or turned down (reopen it)
  * decided    the latest decisions
  */
@@ -459,7 +459,7 @@ export async function listTetraDeposits(organizationId: string, view: TetraDepos
 }
 
 /**
- * Every deposit Tetra Commission sent, for the deposits page: by status,
+ * Every deposit CS Portal sent, for the deposits page: by status,
  * searched, between two instants of being raised, sorted and paged — with how
  * many there are of each status under the same search and dates, for its tabs.
  */
@@ -509,9 +509,9 @@ export async function getTetraDeposit(organizationId: string, id: string): Promi
 
 /**
  * Takes one off the list (the user, 2026-10-28: "a delete option in Tetra deposits") — kept as "deleted", with who,
- * when, why and the status it had. Not one waiting for a decision (reject it: Tetra Commission is waiting for an
+ * when, why and the status it had. Not one waiting for a decision (reject it: CS Portal is waiting for an
  * answer), nor a decision still on its way there, nor an approval whose payment is still on an invoice (remove that
- * payment first — nothing tied to money goes quietly). Tetra Commission is not told.
+ * payment first — nothing tied to money goes quietly). CS Portal is not told.
  */
 export async function deleteTetraDeposit(auth: AuthContext, id: string, input: DeleteTetraDepositInput): Promise<TetraDeposit> {
   if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
@@ -519,9 +519,9 @@ export async function deleteTetraDeposit(auth: AuthContext, id: string, input: D
   const row = await TetraDepositModel.findOne({ _id: id, organizationId: org }).lean<any>();
   if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
   if (row.status === "deleted") throw new AppError("CONFLICT", "It is deleted already");
-  if (row.status === "pending") throw new AppError("CONFLICT", "It is waiting for a decision — reject it instead, so Tetra Commission gets an answer");
+  if (row.status === "pending") throw new AppError("CONFLICT", "It is waiting for a decision — reject it instead, so CS Portal gets an answer");
   if (["sending", "queued"].includes(String(row.delivery?.state ?? ""))) {
-    throw new AppError("CONFLICT", "Its decision is still on its way to Tetra Commission — delete it once it has arrived (or been turned down)");
+    throw new AppError("CONFLICT", "Its decision is still on its way to CS Portal — delete it once it has arrived (or been turned down)");
   }
   // A payment it put on an invoice, still there: that is money — it goes first, on the invoice.
   const { Invoice } = await import("../invoice/invoice.model");
@@ -629,44 +629,44 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
       $set: { "delivery.state": "delivered", "delivery.deliveredAt": new Date(), "delivery.attempts": attempts },
       $unset: { "delivery.nextAttemptAt": "", "delivery.claimedAt": "", "delivery.lastError": "" },
       $push: event("delivered", row.status === "approved"
-        ? `Approved in Tetra Commission${result.credited ? `; commission credited (${result.credited} line${result.credited === 1 ? "" : "s"})` : ""}${result.levelUpgraded ? "; the student moved to Level 2" : ""}`
-        : "Rejected in Tetra Commission"),
+        ? `Approved in CS Portal${result.credited ? `; commission credited (${result.credited} line${result.credited === 1 ? "" : "s"})` : ""}${result.levelUpgraded ? "; the student moved to Level 2" : ""}`
+        : "Rejected in CS Portal"),
     });
-    logger.info({ depositId: String(row._id), decision: row.status, repeat: result.already }, "Deposit decision delivered to Tetra Commission");
+    logger.info({ depositId: String(row._id), decision: row.status, repeat: result.already }, "Deposit decision delivered to CS Portal");
     return {
       kind: "delivered",
       message: row.status === "approved"
         ? row.type === "ENROLMENT_PAYMENT"
-          ? `Approved — recorded on invoice ${row.enrolmentPayment?.invoiceNumber ?? ""}, and Tetra Commission has it`
+          ? `Approved — recorded on invoice ${row.enrolmentPayment?.invoiceNumber ?? ""}, and CS Portal has it`
           : courseInvoice
-          ? `Approved — ${courseInvoice.created ? "invoice made" : "recorded on invoice"} ${courseInvoice.invoiceNumber}, receipt ${courseInvoice.receiptNumber} emailed to the client, and Tetra Commission has it`
-          : "Approved — Tetra Commission has it, and the mentors' commission is credited"
+          ? `Approved — ${courseInvoice.created ? "invoice made" : "recorded on invoice"} ${courseInvoice.invoiceNumber}, receipt ${courseInvoice.receiptNumber} emailed to the client, and CS Portal has it`
+          : "Approved — CS Portal has it, and the mentors' commission is credited"
         : row.decision?.sentBack
-        ? "Sent back — the CS sees why in Tetra Commission, corrects it and sends it again"
-        : "Rejected — Tetra Commission has it",
+        ? "Sent back — the CS sees why in CS Portal, corrects it and sends it again"
+        : "Rejected — CS Portal has it",
     };
   } catch (err) {
     if (err instanceof CommissionRefusedError) {
-      // Nothing left to decide: gone from Tetra Commission, decided there, or never finance's.
+      // Nothing left to decide: gone from CS Portal, decided there, or never finance's.
       if (err.status === 410 || err.code === "ALREADY_DECIDED" || err.code === "NOT_WITH_FINANCE") {
         await TetraDepositModel.updateOne({ _id: row._id }, {
           $set: { status: "closed", closedReason: err.message, "delivery.state": "failed", "delivery.lastError": err.message, "delivery.attempts": attempts },
           $unset: { "delivery.nextAttemptAt": "", "delivery.claimedAt": "" },
           $push: event("closed", `Closed: ${err.message}`),
         });
-        logger.warn({ depositId: String(row._id), reason: err.message }, "Deposit request closed — nothing left to decide in Tetra Commission");
+        logger.warn({ depositId: String(row._id), reason: err.message }, "Deposit request closed — nothing left to decide in CS Portal");
         return { kind: "closed", message: `Closed — ${err.message}` };
       }
       if (putBackCorrectable) return { kind: "correctable", message: err.message };
       await TetraDepositModel.updateOne({ _id: row._id }, {
         $set: { "delivery.state": "failed", "delivery.lastError": err.message, "delivery.attempts": attempts },
         $unset: { "delivery.nextAttemptAt": "", "delivery.claimedAt": "" },
-        $push: event("failed", `Tetra Commission did not accept it: ${err.message}`),
+        $push: event("failed", `CS Portal did not accept it: ${err.message}`),
       });
-      logger.warn({ depositId: String(row._id), reason: err.message }, "Tetra Commission did not accept a deposit decision");
+      logger.warn({ depositId: String(row._id), reason: err.message }, "CS Portal did not accept a deposit decision");
       return { kind: "failed", message: err.message };
     }
-    const message = (err as Error).message || "Tetra Commission could not be reached";
+    const message = (err as Error).message || "CS Portal could not be reached";
     await TetraDepositModel.updateOne({ _id: row._id }, {
       $set: {
         "delivery.state": "queued", "delivery.attempts": attempts, "delivery.lastError": message,
@@ -675,7 +675,7 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
       $unset: { "delivery.claimedAt": "" },
     });
     logger.warn({ depositId: String(row._id), attempts, err: message }, "Deposit decision not delivered yet — will retry");
-    return { kind: "queued", message: `Saved. Tetra Commission could not be reached just now (${message}) — it will be updated automatically.` };
+    return { kind: "queued", message: `Saved. CS Portal could not be reached just now (${message}) — it will be updated automatically.` };
   }
 }
 
@@ -693,7 +693,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   }
   const now = new Date();
   const decided = { decidedById: new Types.ObjectId(auth.userId), decidedByName: byName, decidedByEmail: String(me?.email ?? ""), decidedAt: now };
-  // Sent back to correct (the user, 2026-10-13): a bonus, which Tetra Commission lets its CS correct and send again.
+  // Sent back to correct (the user, 2026-10-13): a bonus, which CS Portal lets its CS correct and send again.
   const sentBack = input.decision === "rejected" && input.sentBack === true;
   if (sentBack && current?.type !== "BONUS") throw new AppError("VALIDATION_ERROR", "Only a bonus can be sent back to correct — reject this one instead");
   const decision = input.decision === "approved"
@@ -724,7 +724,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
 
   let toDeliver: any = row;
   if (row.type === "ENROLMENT_PAYMENT" && row.status === "approved") {
-    // The payment goes on the invoice first; only then does Tetra Commission hear it was approved.
+    // The payment goes on the invoice first; only then does CS Portal hear it was approved.
     const recorded = await recordBalancePayment(row);
     if (!recorded.ok) {
       await putBack(row, recorded.message);
@@ -734,7 +734,7 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
   }
   const coursePayment = isCoursePayment(row) && row.status === "approved";
   if (coursePayment) {
-    // A course payment goes on its invoice, with its receipt, before Tetra Commission hears it was approved.
+    // A course payment goes on its invoice, with its receipt, before CS Portal hears it was approved.
     const recorded = await recordCoursePayment(row);
     if (!recorded.ok) {
       await putBack(row, recorded.message);
@@ -751,16 +751,16 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
     await TetraDepositModel.updateOne({ _id: row._id }, {
       $set: { status: "pending" },
       $unset: { decision: "", delivery: "" },
-      $push: { events: { at: new Date(), kind: "returned", byName: "", text: `Tetra Commission did not accept it: ${outcome.message}` } },
+      $push: { events: { at: new Date(), kind: "returned", byName: "", text: `CS Portal did not accept it: ${outcome.message}` } },
     });
-    throw new AppError("CONFLICT", `Tetra Commission did not accept it: ${outcome.message}`);
+    throw new AppError("CONFLICT", `CS Portal did not accept it: ${outcome.message}`);
   }
   const fresh = await TetraDepositModel.findById(row._id).lean();
   return { deposit: tetraDepositDTO(fresh), delivered: outcome.kind === "delivered", message: outcome.message };
 }
 
 /**
- * A decision Tetra Commission turned down, sent to it again as it was (the user, 2026-10-25: Approvals → "Didn't go
+ * A decision CS Portal turned down, sent to it again as it was (the user, 2026-10-25: Approvals → "Didn't go
  * through" → Send again) — for when what it refused has been put right there, or it no longer refuses it (a repeated
  * transaction ID). Claimed first, so it is never sent twice at once. Turned down again, it stays where it was.
  */
@@ -772,21 +772,21 @@ export async function resendTetraDeposit(auth: AuthContext, id: string): Promise
     { _id: id, organizationId: org, status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" },
     {
       $set: { "delivery.state": "sending", "delivery.claimedAt": new Date() },
-      $push: { events: { at: new Date(), kind: "resent", byName: String(me?.name ?? ""), text: "Sent to Tetra Commission again" } },
+      $push: { events: { at: new Date(), kind: "resent", byName: String(me?.name ?? ""), text: "Sent to CS Portal again" } },
     },
     { new: true },
   ).lean();
   if (!row) {
     const other = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("_id").lean();
     if (!other) throw new AppError("NOT_FOUND", "Deposit request not found");
-    throw new AppError("CONFLICT", "Only a decision Tetra Commission turned down can be sent again");
+    throw new AppError("CONFLICT", "Only a decision CS Portal turned down can be sent again");
   }
   const outcome = await deliverDecision(row, false);
   const fresh = await TetraDepositModel.findById(row._id).lean();
   return { deposit: tetraDepositDTO(fresh), delivered: outcome.kind === "delivered", message: outcome.message };
 }
 
-/** A decision Tetra Commission turned down, back to pending to decide again. */
+/** A decision CS Portal turned down, back to pending to decide again. */
 export async function reopenTetraDeposit(auth: AuthContext, id: string): Promise<TetraDeposit> {
   if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
   const org = new Types.ObjectId(auth.organizationId);
@@ -803,7 +803,7 @@ export async function reopenTetraDeposit(auth: AuthContext, id: string): Promise
   if (!row) {
     const other = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("_id").lean();
     if (!other) throw new AppError("NOT_FOUND", "Deposit request not found");
-    throw new AppError("CONFLICT", "Only a decision Tetra Commission turned down can be reopened");
+    throw new AppError("CONFLICT", "Only a decision CS Portal turned down can be reopened");
   }
   return tetraDepositDTO(row);
 }

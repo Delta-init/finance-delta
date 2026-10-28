@@ -11,7 +11,7 @@ type DeclaredSource = {
 
 /**
  * The close as the counsellor declared it (the owner, 2026-10-12): what they collected and how, each payment with its
- * own receipt, and the close's receipt — so Tetra Commission shows "Collected by counsellor" and the salesperson's
+ * own receipt, and the close's receipt — so CS Portal shows "Collected by counsellor" and the salesperson's
  * receipts, not only what accounts recorded. Shared by the fee update and the student's fee summary.
  */
 export function declaredSide(invoice: DeclaredSource) {

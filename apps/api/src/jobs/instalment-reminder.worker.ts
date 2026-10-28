@@ -13,7 +13,7 @@ import { addDays, isoDay, REMINDER_OFFSETS, uaeDay, uaeHour } from "../modules/i
  * before it is due (the user, 2026-10-11) — and, since 2026-10-16, on the day
  * and when it is overdue (3, 7, 14 days late, then weekly to 8 weeks), for
  * every programme (not only Forex) and invoices typed here too. A Forex
- * student's CS is told in Tetra Commission, as before.
+ * student's CS is told in CS Portal, as before.
  *
  * Once a day at 10:00 UAE, on a plain timer in the process that runs the
  * schedulers — not the reminder queue, which needs Redis. Never twice: each

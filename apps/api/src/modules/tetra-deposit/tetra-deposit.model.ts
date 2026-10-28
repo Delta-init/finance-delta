@@ -1,24 +1,24 @@
 import { Schema, model, Types, type InferSchemaType } from "mongoose";
 
 /**
- * A deposit request from Tetra Commission, waiting for — or given — an
+ * A deposit request from CS Portal, waiting for — or given — an
  * accountant's decision. See @delta/shared tetra-deposit.schema for the flow.
  *
- * The decision is sent back to Tetra Commission; `delivery` is where that got
+ * The decision is sent back to CS Portal; `delivery` is where that got
  * to, and the worker in jobs/tetra-deposit.worker.ts keeps trying until it
  * arrives. `events` is the record of who did what to it here.
  */
 const tetraDepositSchema = new Schema({
   organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
-  /** The funding request's id in Tetra Commission. */
+  /** The funding request's id in CS Portal. */
   externalId: { type: String, required: true },
   status: { type: String, enum: ["pending", "approved", "rejected", "closed", "deleted"], default: "pending", index: true },
   /** A deposit, or a bonus — a course payment, whose approval here is the first of two (@delta/shared). */
   type: { type: String, enum: ["DEPOSIT", "BONUS", "COURSE_UPGRADE", "ENROLMENT_PAYMENT"], default: "DEPOSIT", index: true },
-  /** The amount as typed in Tetra Commission, when another currency (AED). */
+  /** The amount as typed in CS Portal, when another currency (AED). */
   amountOriginal: { type: Number },
   amountCurrency: { type: String, uppercase: true },
-  /** A bonus's course payment, as Tetra Commission worked it out. */
+  /** A bonus's course payment, as CS Portal worked it out. */
   coursePayment: {
     type: new Schema({
       product: { type: String, default: "" },
@@ -56,7 +56,7 @@ const tetraDepositSchema = new Schema({
   mt5Login: { type: String, default: "" },
   mt5Accounts: [{ _id: false, login: { type: String, required: true }, platform: { type: String, default: "" } }],
   screenshotUrl: { type: String, default: "" },
-  /** Paid more than one way: each payment with its receipt, as Tetra Commission took it (@delta/shared). */
+  /** Paid more than one way: each payment with its receipt, as CS Portal took it (@delta/shared). */
   payments: [{
     _id: false,
     method: { type: String, required: true },
@@ -85,7 +85,7 @@ const tetraDepositSchema = new Schema({
     decidedByEmail: { type: String },
     decidedAt: { type: Date },
   },
-  /** Sent again after its earlier request was sent back or rejected: that request's id in Tetra Commission, and the reason. */
+  /** Sent again after its earlier request was sent back or rejected: that request's id in CS Portal, and the reason. */
   resubmit: {
     type: new Schema({ of: { type: String, default: "" }, reason: { type: String, default: "" }, previousId: { type: String, default: "" } }, { _id: false }),
     default: undefined,
@@ -167,7 +167,7 @@ const tetraDepositSchema = new Schema({
   }],
 }, { timestamps: true });
 
-// One row per Tetra Commission request, however many times it is handed over.
+// One row per CS Portal request, however many times it is handed over.
 tetraDepositSchema.index({ organizationId: 1, externalId: 1 }, { unique: true });
 tetraDepositSchema.index({ "delivery.state": 1, "delivery.nextAttemptAt": 1 });
 

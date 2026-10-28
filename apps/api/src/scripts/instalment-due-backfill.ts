@@ -1,17 +1,17 @@
 /**
  * Existing partial Forex enrolments: their next due date by the 29-day rule,
- * and Tetra Commission told (the user, 2026-10-11).
+ * and CS Portal told (the user, 2026-10-11).
  *
  * From 2026-10-11 a part-paid CRM enrolment's due date is its latest payment's
  * paidOn + 29 days, set at approval and whenever a payment changes
  * (modules/invoice/instalments.ts). Enrolments approved before that still carry
  * the close date as their due date — which is why they read "overdue" the day
  * after the close. This sets theirs by the same rule and queues the fee update
- * for those whose student went to Tetra Commission, so the CS's Balance
+ * for those whose student went to CS Portal, so the CS's Balance
  * payments page shows the right date.
  *
  * Forex only — the enrolments the LMS named 4x-trading, or whose student went
- * to Tetra Commission — like the reminders.
+ * to CS Portal — like the reminders.
  *
  * Reads and prints only, unless --write. Run it from apps/api on the server
  * (Bun reads the .env there; COMMISSION_* must be set there for the updates to
@@ -92,10 +92,10 @@ if (import.meta.main) {
   const invoices = process.argv.reduce<string[]>((acc, a, i) => (a === "--invoice" && process.argv[i + 1] ? [...acc, process.argv[i + 1]!] : acc), []);
   const { connectDb } = await import("../config/db");
   await connectDb();
-  console.log(`Tetra Commission link: ${commissionConfigured() ? "configured" : "NOT CONFIGURED — due dates change, but Tetra Commission is not told"}`);
+  console.log(`CS Portal link: ${commissionConfigured() ? "configured" : "NOT CONFIGURED — due dates change, but CS Portal is not told"}`);
   const rows = await backfillInstalmentDue({ write, invoices });
   for (const r of rows) {
-    console.log(`${r.invoiceNumber.padEnd(12)} ${r.customerName.slice(0, 28).padEnd(28)} balance ${r.balance.padStart(14)}  due ${r.from || "—"} → ${r.to}${r.toCommission ? (write ? (r.queued ? "  · Tetra Commission update queued" : "  · Tetra Commission NOT queued") : "  · Tetra Commission would be told") : ""}`);
+    console.log(`${r.invoiceNumber.padEnd(12)} ${r.customerName.slice(0, 28).padEnd(28)} balance ${r.balance.padStart(14)}  due ${r.from || "—"} → ${r.to}${r.toCommission ? (write ? (r.queued ? "  · CS Portal update queued" : "  · CS Portal NOT queued") : "  · CS Portal would be told") : ""}`);
   }
   console.log(`\n${rows.length} partial Forex enrolment${rows.length === 1 ? "" : "s"} ${write ? "updated" : "would change"}${write ? "" : " — nothing written. Run again with --write to do it."}`);
   await mongoose.disconnect();

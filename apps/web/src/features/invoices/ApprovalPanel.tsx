@@ -71,7 +71,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
         )}
         <h2 className="text-sm font-semibold">{e ? "Enrolment" : "Approval"}</h2>
         <Badge tone={tone}>{label}</Badge>
-        {/* Which sales CRM sold it — the same tag the LMS and Tetra Commission show. */}
+        {/* Which sales CRM sold it — the same tag the LMS and CS Portal show. */}
         {e && <CrmTag crm={e.crm} />}
         {/* And the academy it was sold for — Dubai or Bangalore. */}
         {e && <AcademyTag academy={e.academy} />}

@@ -44,7 +44,7 @@ const iso = (value: unknown) => (value ? new Date(value as string).toISOString()
  * beside it, as `feeMinor`.
  */
 const collectedOf = (r: any): number => Math.max(r.amountPaidMinor ?? 0, r.enrolment?.declaredPaidMinor ?? 0);
-/** A Tetra Commission deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
+/** A CS Portal deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
 const depositPaidBy = (r: any): string =>
   (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
 
@@ -117,7 +117,7 @@ const KINDS: Kind[] = [
   },
   {
     type: "tetra_deposit",
-    label: "Tetra Commission deposits",
+    label: "CS Portal deposits",
     href: "/approvals",
     allowed: (can) => can("tetra_deposit:approve"),
     read: async (org) => {
@@ -507,7 +507,7 @@ function statesFor(status: ApprovalListStatus, by: { pending: string[]; approved
   return status === "all" ? [...by.pending, ...by.approved, ...by.rejected, ...(by.other ?? [])] : by[status];
 }
 
-/** A Tetra deposit decided here that Tetra Commission turned down (2026-10-25): its own tab, out of Approved and Rejected. */
+/** A Tetra deposit decided here that CS Portal turned down (2026-10-25): its own tab, out of Approved and Rejected. */
 const DEPOSIT_TURNED_DOWN = { status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" };
 
 /** The first of these fields a document has. */
@@ -643,11 +643,11 @@ const LIST_KINDS: ListKind[] = [
   },
   {
     type: "tetra_deposit",
-    label: "Tetra Commission deposits",
+    label: "CS Portal deposits",
     allowed: (can) => can("tetra_deposit:approve"),
     list: async (ctx) => {
       const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["rejected"], other: ["closed"] });
-      // "Didn't go through" holds the ones Tetra Commission turned down; Approved and Rejected only what it took.
+      // "Didn't go through" holds the ones CS Portal turned down; Approved and Rejected only what it took.
       const which = ctx.status === "failed"
         ? DEPOSIT_TURNED_DOWN
         : ctx.status === "approved" || ctx.status === "rejected"
@@ -1066,7 +1066,7 @@ const LIST_KINDS: ListKind[] = [
   },
 ];
 
-/** An approved enrolment's student, in the LMS and on Tetra Commission, from the provisioning record. */
+/** An approved enrolment's student, in the LMS and on CS Portal, from the provisioning record. */
 function lmsOf(p: any): ApprovalLms {
   switch (p.status) {
     case "sent":
@@ -1087,17 +1087,17 @@ function commissionOf(p: any): ApprovalCommission {
   if (!c?.state) {
     // Only Delta's own enrolments go on, and only once the LMS has the student.
     if (p.status !== "sent") return { state: "waiting", detail: "After the LMS" };
-    return { state: "not_sent", detail: "Not sent to Tetra Commission" };
+    return { state: "not_sent", detail: "Not sent to CS Portal" };
   }
   switch (c.state) {
     case "sent":
       return c.alreadyThere
-        ? { state: "existing", code: c.studentCode || undefined, detail: "Already had a Tetra Commission account" }
+        ? { state: "existing", code: c.studentCode || undefined, detail: "Already had a CS Portal account" }
         : { state: "created", code: c.studentCode || undefined, detail: [c.team, c.mentorName].filter(Boolean).join(" · ") || undefined };
     case "skipped":
       return { state: "skipped", detail: c.reason || "Not a Forex course" };
     case "failed":
-      return { state: "failed", detail: c.lastError || "Tetra Commission turned it down" };
+      return { state: "failed", detail: c.lastError || "CS Portal turned it down" };
     default:
       return { state: "waiting", detail: c.lastError ? `Not reached yet (${c.lastError}); trying again` : undefined };
   }

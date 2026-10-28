@@ -14,12 +14,12 @@ import { lookupCommissionStudents, type CommissionStudentLookup } from "../../li
  *   lms         did the LMS take them — a new account or one they had, on
  *               which courses — or are they waiting, refused, or on a course
  *               no LMS course is linked to;
- *   commission  did they go on to Tetra Commission, and who looks after them
+ *   commission  did they go on to CS Portal, and who looks after them
  *               there: their student code, their CS and the CS team — and, from
- *               Tetra Commission live, whether they are onboarded (their welcome
+ *               CS Portal live, whether they are onboarded (their welcome
  *               went) and where the MT5 bonus promised at this close stands with
  *               the broker admins: "none" when no bonus was promised (nothing to
- *               approve). Asked of Tetra Commission live, so a student given to
+ *               approve). Asked of CS Portal live, so a student given to
  *               another CS reads as they are now; when it cannot be asked, what
  *               finance was told when it sent them, marked `live: false`, with
  *               onboarding and the bonus left unknown.
@@ -42,19 +42,19 @@ export interface EnrolmentCommission {
   state: "sent" | "waiting" | "skipped" | "failed" | "not_sent";
   detail?: string;
   code?: string;
-  /** Their CS in Tetra Commission; "" while they wait in Delta Open Students. */
+  /** Their CS in CS Portal; "" while they wait in Delta Open Students. */
   cs?: string;
   team?: string;
-  /** Whether cs and team are Tetra Commission's answer now (true) or what finance was told when it sent them (false). */
+  /** Whether cs and team are CS Portal's answer now (true) or what finance was told when it sent them (false). */
   live?: boolean;
-  /** Their welcome went (Tetra Commission onboarded them); absent when it could not be asked. */
+  /** Their welcome went (CS Portal onboarded them); absent when it could not be asked. */
   onboarded?: { done: boolean; at?: string; by?: string };
-  /** The MT5 bonus promised at this close and its broker-admin approval; absent until they are in Tetra Commission. */
+  /** The MT5 bonus promised at this close and its broker-admin approval; absent until they are in CS Portal. */
   bonus?: EnrolmentBonus;
 }
 
 export interface EnrolmentBonus {
-  /** none: no bonus promised — nothing to approve. unknown: Tetra Commission could not say. */
+  /** none: no bonus promised — nothing to approve. unknown: CS Portal could not say. */
   state: "none" | "not_requested" | "pending" | "approved" | "rejected" | "unknown";
   amount?: number;
   currency?: string;
@@ -126,8 +126,8 @@ function lmsOf(p: Provision): EnrolmentLms {
 function commissionOf(p: Provision): EnrolmentCommission {
   const c = p.commission;
   if (!c?.state) {
-    // Students go on to Tetra Commission only once the LMS has them.
-    return p.status === "sent" ? { state: "not_sent", detail: "Not sent to Tetra Commission" } : { state: "waiting", detail: "After the LMS" };
+    // Students go on to CS Portal only once the LMS has them.
+    return p.status === "sent" ? { state: "not_sent", detail: "Not sent to CS Portal" } : { state: "waiting", detail: "After the LMS" };
   }
   switch (c.state) {
     case "sent":
@@ -137,12 +137,12 @@ function commissionOf(p: Provision): EnrolmentCommission {
         cs: c.mentorName ?? "",
         team: c.team ?? "",
         live: false,
-        ...(c.alreadyThere ? { detail: "Already had a Tetra Commission account" } : {}),
+        ...(c.alreadyThere ? { detail: "Already had a CS Portal account" } : {}),
       };
     case "skipped":
       return { state: "skipped", detail: c.reason || "Not a Forex course" };
     case "failed":
-      return { state: "failed", detail: c.lastError || "Tetra Commission turned it down" };
+      return { state: "failed", detail: c.lastError || "CS Portal turned it down" };
     default:
       return { state: "waiting", detail: c.lastError ? `Not reached yet (${c.lastError}); trying again` : undefined };
   }
@@ -161,8 +161,8 @@ export function promisedBonus(i: { enrolment?: unknown; currency?: unknown; exte
 }
 
 /**
- * Onboarding and the bonus, from Tetra Commission's answer — only when it said
- * (a Tetra Commission from before these were asked says nothing, and nothing is
+ * Onboarding and the bonus, from CS Portal's answer — only when it said
+ * (a CS Portal from before these were asked says nothing, and nothing is
  * claimed). This invoice's bonus by our invoice id; none to find, and none
  * promised at the close, is "none": nothing for a broker admin to approve.
  */
@@ -188,7 +188,7 @@ function onboardingOf(there: CommissionStudentLookup, i: { _id: unknown; enrolme
   } else if (!promised || !promised.given || promised.amountMinor <= 0) {
     bonus = { state: "none" };
   } else {
-    // Promised here, but Tetra Commission has no such bonus on record for this invoice.
+    // Promised here, but CS Portal has no such bonus on record for this invoice.
     bonus = { state: "unknown", amount: promised.amountMinor / 100, currency: promised.currency };
   }
   return { onboarded, bonus };
@@ -225,7 +225,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
       const there = now.get(commission.code.toUpperCase());
       commission = there?.found
         ? { ...commission, cs: there.cs, team: there.team, live: true, ...onboardingOf(there, i) }
-        : { ...commission, live: true, cs: "", team: "", detail: "No longer in Tetra Commission" };
+        : { ...commission, live: true, cs: "", team: "", detail: "No longer in CS Portal" };
     }
     return {
       externalId: ext?.externalId ?? "",

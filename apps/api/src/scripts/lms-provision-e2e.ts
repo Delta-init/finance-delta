@@ -159,7 +159,7 @@ async function main() {
     const row = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(inv.invoiceId) }).lean();
     check("...and records what the LMS made of it", row?.status === "sent", `status=${row?.status} err=${row?.lastError}`);
     check("...naming the student it created", Boolean(row?.lmsUserId), "no lmsUserId");
-    // What decides whether the student goes on to Tetra Commission: Forex students only.
+    // What decides whether the student goes on to CS Portal: Forex students only.
     check("...and the course's programme, as the LMS names it", row?.lmsCourseProgram === "4x-trading", `program=${row?.lmsCourseProgram}`);
 
     // The far side: a real student, really enrolled.
@@ -543,7 +543,7 @@ async function main() {
     check("an unmapped product learns its course from the enrolment", taught?.lmsCourseSlug === HADC
       && JSON.stringify(taught?.lmsCourseSlugs) === JSON.stringify([HADC]), JSON.stringify(taught));
 
-    // Tetra Commission switched on for this part: Delta's students go on to it, and since 2026-10-03 Draw's too.
+    // CS Portal switched on for this part: Delta's students go on to it, and since 2026-10-03 Draw's too.
     const saved = { url: env.COMMISSION_API_URL, secret: env.COMMISSION_S2S_SECRET };
     env.COMMISSION_API_URL = "http://127.0.0.1:1";
     env.COMMISSION_S2S_SECRET = "e2e-not-sent";
@@ -566,7 +566,7 @@ async function main() {
     env.COMMISSION_S2S_SECRET = saved.secret;
     const drawRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(draw.invoiceId) }).lean();
     const deltaRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(delta.invoiceId) }).lean();
-    check("Delta's student goes on to Tetra Commission, as before", deltaRow?.commission?.state === "pending");
+    check("Delta's student goes on to CS Portal, as before", deltaRow?.commission?.state === "pending");
     check("Case 2 — Delta's, from a CRM that said nothing, is tagged the Sales CRM's by its source",
       (deltaRow?.payload as { crm?: string })?.crm === "delta", JSON.stringify((deltaRow?.payload as { crm?: string })?.crm));
     check("...and so does Draw's, its Forex course the same as Delta's", drawRow?.status === "sent" && drawRow?.commission?.state === "pending",
@@ -617,7 +617,7 @@ async function main() {
       JSON.stringify(after?.extraCourses?.map((e) => [e.slug, e.accessSent])));
   }
 
-  step("The Banglore CRM: to the LMS as a Bangalore student, and on to Tetra Commission (since 2026-10-10)");
+  step("The Banglore CRM: to the LMS as a Bangalore student, and on to CS Portal (since 2026-10-10)");
   {
     const { intakeEnrolment } = await import("../modules/integrations/enrolment-intake.service");
     const { env } = await import("../config/env");
@@ -643,7 +643,7 @@ async function main() {
     env.COMMISSION_API_URL = saved.url;
     env.COMMISSION_S2S_SECRET = saved.secret;
     const sent = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(blr.invoiceId) }).lean();
-    check("...taken by the LMS, on its Forex course, and queued for Tetra Commission",
+    check("...taken by the LMS, on its Forex course, and queued for CS Portal",
       sent?.status === "sent" && sent?.lmsCourseProgram === "4x-trading" && sent?.commission?.state === "pending",
       JSON.stringify({ s: sent?.status, c: sent?.commission }));
     const u = await lms.db!.collection("users").findOne({ email: "kiran.blr@e2e-test.com" });
@@ -686,7 +686,7 @@ async function main() {
       String((await lmsUser("remote.dxb@e2e-test.com"))?.organizationId) === dubaiOrg && String((await lmsUser("sales.silent@e2e-test.com"))?.organizationId) === dubaiOrg,
       `${(await lmsUser("remote.dxb@e2e-test.com"))?.organizationId} ${(await lmsUser("sales.silent@e2e-test.com"))?.organizationId}`);
     const blrRow = await LmsProvision.findOne({ invoiceId: new Types.ObjectId(salesBlr) }).lean();
-    check("...and the Bangalore one queued for Tetra Commission like any Forex student", blrRow?.status === "sent" && blrRow?.commission?.state === "pending", JSON.stringify({ s: blrRow?.status, c: blrRow?.commission }));
+    check("...and the Bangalore one queued for CS Portal like any Forex student", blrRow?.status === "sent" && blrRow?.commission?.state === "pending", JSON.stringify({ s: blrRow?.status, c: blrRow?.commission }));
   }
 
   await lms.close();

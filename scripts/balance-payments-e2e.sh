@@ -6,7 +6,7 @@
 #
 # Stands up a throwaway mongod (random port, never 27017) and a throwaway
 # finance API, neither reading a .env (bun --no-env-file). Nothing leaves this
-# machine: no mail transport, no Tetra Commission, no LMS.
+# machine: no mail transport, no CS Portal, no LMS.
 #
 #   ./scripts/balance-payments-e2e.sh
 #

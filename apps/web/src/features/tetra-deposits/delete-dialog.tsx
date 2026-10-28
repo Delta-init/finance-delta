@@ -41,7 +41,7 @@ export function DeleteTetraDepositDialog({ deposit, onClose, onDeleted }: { depo
           <DialogTitle>Delete this {deposit?.type === "BONUS" ? "bonus" : "deposit"}?</DialogTitle>
           <DialogDescription>
             {deposit && <>{deposit.student.name}{deposit.student.code ? ` · ${deposit.student.code}` : ""} · <MoneyDisplay minor={deposit.decision?.approvedAmountMinor ?? deposit.amountMinor} currency={deposit.currency} /> · {deposit.status}. </>}
-            It leaves the list and every count, and is kept under the Deleted tab, where it can be restored. Tetra Commission is not told.
+            It leaves the list and every count, and is kept under the Deleted tab, where it can be restored. CS Portal is not told.
           </DialogDescription>
         </DialogHeader>
         <Textarea rows={3} maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why — e.g. wrong amount, sent again" autoFocus />

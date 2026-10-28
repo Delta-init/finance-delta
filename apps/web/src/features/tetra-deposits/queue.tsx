@@ -13,9 +13,9 @@ import { useReopenTetraDeposit, useTetraDeposits } from "./api";
 import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy } from "./review-dialog";
 
 /**
- * Tetra Commission's deposits on the Approvals page: the ones waiting for a
+ * CS Portal's deposits on the Approvals page: the ones waiting for a
  * decision, decided right here, and — underneath, only when there are any —
- * decisions Tetra Commission does not have yet: still on their way, or turned
+ * decisions CS Portal does not have yet: still on their way, or turned
  * down and waiting to be reopened.
  */
 
@@ -30,7 +30,7 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{deposit.student.name}{deposit.student.code ? <span className="font-normal text-foreground-muted"> · {deposit.student.code}</span> : null}</p>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700">Tetra Commission</span>
+          <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700">CS Portal</span>
           <TetraTypeTag deposit={deposit} />
           {paidBy(deposit) && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{paidBy(deposit)}</span>}
           {deposit.team && <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-foreground-muted">{deposit.team}</span>}
@@ -47,7 +47,7 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
       <div className="flex shrink-0 items-center justify-between gap-3 sm:flex-col sm:items-end">
         <div className="text-right">
           <MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} className="font-semibold" />
-          {/* The payment, not the bonus: that is credited in Tetra Commission (2026-10-15). */}
+          {/* The payment, not the bonus: that is credited in CS Portal (2026-10-15). */}
           {isBonus(deposit) && <p className="text-[11px] text-foreground-muted">paid{mt5BonusOf(deposit) !== null ? ` · MT5 bonus $${mt5BonusOf(deposit)!.toLocaleString("en-US")}` : ""}</p>}
         </div>
         <div className="flex gap-2">
@@ -81,8 +81,8 @@ function NotDelivered({ deposit }: { deposit: TetraDeposit }) {
         </p>
         <p className="truncate text-xs text-foreground-muted">
           {failed
-            ? `Tetra Commission did not accept it: ${deposit.delivery?.lastError ?? "no reason given"}`
-            : `On its way to Tetra Commission${deposit.delivery?.lastError ? ` — not reached yet (${deposit.delivery.lastError}); trying again on its own` : ""}`}
+            ? `CS Portal did not accept it: ${deposit.delivery?.lastError ?? "no reason given"}`
+            : `On its way to CS Portal${deposit.delivery?.lastError ? ` — not reached yet (${deposit.delivery.lastError}); trying again on its own` : ""}`}
         </p>
       </div>
       <MoneyDisplay minor={amount} currency={deposit.currency} className="shrink-0 text-sm" />
@@ -106,7 +106,7 @@ export function TetraDepositQueue() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">Tetra Commission deposits</h2>
+        <h2 className="text-sm font-semibold">CS Portal deposits</h2>
         {rows.length > 0 && <Badge tone="warning">{rows.length}</Badge>}
       </div>
       <Card className="overflow-hidden">
@@ -131,7 +131,7 @@ export function TetraDepositQueue() {
           <div className="flex items-center gap-2 border-b border-warning/20 px-5 py-3">
             <AlertTriangle className="h-4 w-4 text-warning" />
             <h3 className="text-sm font-semibold">
-              {stuck.length === 1 ? "1 decision Tetra Commission does not have yet" : `${stuck.length} decisions Tetra Commission does not have yet`}
+              {stuck.length === 1 ? "1 decision CS Portal does not have yet" : `${stuck.length} decisions CS Portal does not have yet`}
             </h3>
           </div>
           <ul className="divide-y divide-warning/20">

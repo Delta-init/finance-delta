@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import type { EnrolmentFeeSummary } from "./lms-client";
 
 /**
- * Client for Tetra Commission's student intake.
+ * Client for CS Portal's student intake.
  *
  * The other half of `backend/src/finance/students.ts` in the commission
  * portal (Delta-init/tetracapitals). The same shared-secret header as the LMS
@@ -40,7 +40,7 @@ export class CommissionPermanentError extends Error {
 }
 
 /**
- * Tetra Commission is up but not ready for this yet: its server is still on
+ * CS Portal is up but not ready for this yet: its server is still on
  * code from before the route existed (404), or its side of the secret is not
  * set (503). Both come right when somebody deploys or configures it, so the
  * student waits for that rather than being given up on — finance switched on
@@ -64,7 +64,7 @@ export async function sendStudentToCommission(input: {
   crm?: string;
   /**
    * The academy it was sold for, picked at the close: "dubai" or "bangalore".
-   * Tetra Commission gives the student only to that academy's teams.
+   * CS Portal gives the student only to that academy's teams.
    */
   academy?: "dubai" | "bangalore";
   /** Who closed it: the sales CRM's rep, by their email there — on the student there, for their Sales account. */
@@ -93,23 +93,23 @@ export async function sendStudentToCommission(input: {
     };
     if (!res.ok) {
       const message =
-        (typeof body.error === "object" ? body.error?.message : body.error) ?? `Tetra Commission refused with ${res.status}`;
+        (typeof body.error === "object" ? body.error?.message : body.error) ?? `CS Portal refused with ${res.status}`;
       if (res.status === 404 || res.status === 503) throw new CommissionNotReadyError(message);
       // Any other 4xx is ours to fix and will not fix itself; 5xx and a timeout might.
       if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new CommissionPermanentError(message);
       throw new Error(message);
     }
-    if (!body.data) throw new Error("Tetra Commission returned no result");
+    if (!body.data) throw new Error("CS Portal returned no result");
     return body.data;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/* ── Decisions on the deposit requests Tetra Commission sent for approval ── */
+/* ── Decisions on the deposit requests CS Portal sent for approval ── */
 
 export interface CommissionFundingDecision {
-  /** Tetra Commission's own id for the request. */
+  /** CS Portal's own id for the request. */
   fundingId: string;
   /** Ours. */
   financeId: string;
@@ -122,7 +122,7 @@ export interface CommissionFundingDecision {
   mt5Login?: string;
   note?: string;
   reason?: string;
-  /** Rejected to be corrected and sent again, not refused (the user, 2026-10-13): Tetra Commission says so to its CS. */
+  /** Rejected to be corrected and sent again, not refused (the user, 2026-10-13): CS Portal says so to its CS. */
   sentBack?: boolean;
   /**
    * A balance payment a CS recorded (type ENROLMENT_PAYMENT): approved, it is
@@ -166,7 +166,7 @@ export interface CommissionFundingDecisionResult {
 }
 
 /**
- * Tetra Commission will not take this decision, and sending it again will not
+ * CS Portal will not take this decision, and sending it again will not
  * change that: the request is gone (410), decided there already, not sent to
  * us, or approved under a transaction ID another request has (409), or the
  * decision is malformed (400/422). `code` says which.
@@ -178,11 +178,11 @@ export class CommissionRefusedError extends Error {
 }
 
 /**
- * Send an accountant's decision on a deposit request back to Tetra Commission
+ * Send an accountant's decision on a deposit request back to CS Portal
  * (backend/src/finance/funding.ts there), on the same secret as the students.
  *
  * Anything but a refusal is thrown as a plain Error and waited out — a
- * decision is never dropped because Tetra Commission was down, not yet
+ * decision is never dropped because CS Portal was down, not yet
  * deployed, or holding a different secret for a while.
  */
 export async function sendFundingDecisionToCommission(input: CommissionFundingDecision): Promise<CommissionFundingDecisionResult> {
@@ -203,14 +203,14 @@ export async function sendFundingDecisionToCommission(input: CommissionFundingDe
     if (!res.ok) {
       const code = typeof body.error === "object" ? body.error?.code ?? "" : "";
       const message =
-        (typeof body.error === "object" ? body.error?.message : body.error) ?? `Tetra Commission refused with ${res.status}`;
+        (typeof body.error === "object" ? body.error?.message : body.error) ?? `CS Portal refused with ${res.status}`;
       if ([400, 409, 410, 422].includes(res.status)) throw new CommissionRefusedError(message, res.status, code);
       throw new Error(message);
     }
-    if (!body.data) throw new Error("Tetra Commission returned no result");
+    if (!body.data) throw new Error("CS Portal returned no result");
     return body.data;
   } catch (err) {
-    if ((err as Error).name === "AbortError") throw new Error("Tetra Commission did not answer in time");
+    if ((err as Error).name === "AbortError") throw new Error("CS Portal did not answer in time");
     throw err;
   } finally {
     clearTimeout(timer);
@@ -220,10 +220,10 @@ export async function sendFundingDecisionToCommission(input: CommissionFundingDe
 /* ── An enrolment's money, as it changes ─────────────────────────────────── */
 
 /**
- * What Tetra Commission is told when an enrolment's money changes — a payment
+ * What CS Portal is told when an enrolment's money changes — a payment
  * recorded, edited or removed, the invoice voided or deleted, a credit note,
  * a new due date (the user, 2026-10-11). The whole picture each time, so the
- * newest one is all Tetra Commission needs; `updatedAt` lets it ignore one
+ * newest one is all CS Portal needs; `updatedAt` lets it ignore one
  * that arrives after a newer one.
  */
 export interface CommissionFeeUpdate {
@@ -241,7 +241,7 @@ export interface CommissionFeeUpdate {
   /** Each recorded payment, with its receipt when it has one (2026-10-27). */
   payments: { amountMinor: number; paidOn: string; method: string; receipt?: { url: string; name: string } | null }[];
   updatedAt: string;
-  /** The close as the counsellor declared it — Tetra Commission's "Collected by counsellor" and the salesperson's receipts. */
+  /** The close as the counsellor declared it — CS Portal's "Collected by counsellor" and the salesperson's receipts. */
   declaredPaidMinor?: number;
   declaredPaymentMethod?: string;
   declaredPayments?: { method: string; amountMinor: number; paidOn: string; receipt: { url: string; name: string } | null }[];
@@ -274,7 +274,7 @@ export async function sendFeeUpdateToCommission(input: CommissionFeeUpdate): Pro
     if (!res.ok) {
       const code = typeof body.error === "object" ? body.error?.code ?? "" : "";
       const message =
-        (typeof body.error === "object" ? body.error?.message : body.error) ?? `Tetra Commission refused with ${res.status}`;
+        (typeof body.error === "object" ? body.error?.message : body.error) ?? `CS Portal refused with ${res.status}`;
       if (res.status === 404 && code === "UNKNOWN_INVOICE") throw new CommissionRefusedError(message, 404, code);
       if (res.status === 400 || res.status === 422) throw new CommissionRefusedError(message, res.status, code);
       throw new Error(message);
@@ -282,14 +282,14 @@ export async function sendFeeUpdateToCommission(input: CommissionFeeUpdate): Pro
     return { applied: Boolean(body.data?.applied ?? body.applied) };
   } catch (err) {
     const name = (err as Error).name;
-    if (name === "AbortError" || name === "TimeoutError") throw new Error("Tetra Commission did not answer in time");
+    if (name === "AbortError" || name === "TimeoutError") throw new Error("CS Portal did not answer in time");
     throw err;
   }
 }
 
-/** Who looks after a student there now, as Tetra Commission answers it. */
+/** Who looks after a student there now, as CS Portal answers it. */
 export interface CommissionStudentLookup {
-  /** The code or email asked about, as Tetra Commission read it. */
+  /** The code or email asked about, as CS Portal read it. */
   asked: string;
   found: boolean;
   code: string;
@@ -297,7 +297,7 @@ export interface CommissionStudentLookup {
   cs: string;
   team: string;
   assignment: "assigned" | "open_pool" | "";
-  /** Their welcome went (absent from a Tetra Commission before it said). */
+  /** Their welcome went (absent from a CS Portal before it said). */
   onboarded?: boolean;
   onboarded_at?: string | null;
   onboarded_by?: string;
@@ -307,7 +307,7 @@ export interface CommissionStudentLookup {
   bonuses?: CommissionBonusCheck[];
 }
 
-/** One sales-close MT5 bonus, as Tetra Commission's broker admins decide it. */
+/** One sales-close MT5 bonus, as CS Portal's broker admins decide it. */
 export interface CommissionBonusCheck {
   invoice_id: string;
   amount: number;
@@ -322,11 +322,11 @@ export interface CommissionBonusCheck {
 const LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
- * Who looks after these students now, by their Tetra Commission code — for the
+ * Who looks after these students now, by their CS Portal code — for the
  * sales CRMs' My Enrolments. Read-only, on the same secret as the students
  * finance sends.
  *
- * Never throws: null when Tetra Commission cannot be asked (switched off, down,
+ * Never throws: null when CS Portal cannot be asked (switched off, down,
  * slow, or on code from before the route), so whoever asked can fall back on
  * what finance was told when it sent them. A page of enrolments must not wait
  * on a second system to say what finance already knows.
@@ -349,13 +349,13 @@ export async function lookupCommissionStudents(codes: string[]): Promise<Map<str
     if (!Array.isArray(list)) return null;
     return new Map(list.map((s) => [String(s.asked ?? "").toUpperCase(), s]));
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, "Tetra Commission could not be asked who looks after students");
+    logger.warn({ err: (err as Error).message }, "CS Portal could not be asked who looks after students");
     return null;
   }
 }
 
 /** Said once at boot, so a silent link is visible without digging. */
 export function logCommissionConfig(): void {
-  if (commissionConfigured()) logger.info("Tetra Commission is configured — new LMS students are sent there");
-  else logger.info("Tetra Commission is not configured — new LMS students are not sent there");
+  if (commissionConfigured()) logger.info("CS Portal is configured — new LMS students are sent there");
+  else logger.info("CS Portal is not configured — new LMS students are not sent there");
 }

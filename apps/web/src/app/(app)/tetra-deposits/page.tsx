@@ -22,7 +22,7 @@ import { TetraTypeTag, mt5BonusOf, paidBy, receiptsOf } from "@/features/tetra-d
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
 /**
- * Every deposit request Tetra Commission has sent for approval — waiting,
+ * Every deposit request CS Portal has sent for approval — waiting,
  * approved, rejected — for the accounts team to look back through, search and
  * export. Deciding is done on the Approvals page; this is the record.
  *
@@ -72,9 +72,9 @@ const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Decided by", value: (d) => d.decision?.decidedByName ?? "" },
   { header: "Decided", value: (d) => formatWhen(d.decision?.decidedAt) },
   { header: "Reason / note", value: (d) => d.decision?.reason || d.decision?.note || "" },
-  { header: "Tetra Commission", value: (d) => deliveryText(d) },
+  { header: "CS Portal", value: (d) => deliveryText(d) },
   { header: "Proof of payment", value: (d) => receiptsOf(d).join(" ") },
-  { header: "Tetra Commission id", value: (d) => d.externalId },
+  { header: "CS Portal id", value: (d) => d.externalId },
 ];
 
 /** The picked days as instants in the viewer's own timezone: the start of the first, and of the day after the last. */
@@ -108,7 +108,7 @@ export default function TetraDepositsPage() {
 
   if (!ready) return null;
   if (!allowed) {
-    return <div className="p-6 text-sm text-foreground-muted">Tetra Commission deposits are for the accounts team.</div>;
+    return <div className="p-6 text-sm text-foreground-muted">CS Portal deposits are for the accounts team.</div>;
   }
 
   const columns: Column<TetraDeposit>[] = [
@@ -149,7 +149,7 @@ export default function TetraDepositsPage() {
       header: "Paid",
       sortable: true,
       align: "right",
-      // A bonus's amount is the payment the student made; its MT5 bonus is credited in Tetra Commission (2026-10-15).
+      // A bonus's amount is the payment the student made; its MT5 bonus is credited in CS Portal (2026-10-15).
       cell: (d) => <MoneyDisplay minor={d.amountMinor} currency={d.currency} />,
     },
     {
@@ -184,7 +184,7 @@ export default function TetraDepositsPage() {
         return (
           <div className="min-w-0">
             <TetraDepositStatusBadge status={d.status} sentBack={d.decision?.sentBack} />
-            {note && note !== "In Tetra Commission" && (
+            {note && note !== "In CS Portal" && (
               <p className={cn("mt-1 max-w-[220px] truncate text-xs", d.delivery?.state === "failed" ? "text-danger" : "text-foreground-muted")} title={note}>
                 {note}
               </p>
@@ -211,7 +211,7 @@ export default function TetraDepositsPage() {
       key: "actions",
       header: "",
       align: "right",
-      // Delete (2026-10-28): not one waiting for a decision, nor one still on its way to Tetra Commission.
+      // Delete (2026-10-28): not one waiting for a decision, nor one still on its way to CS Portal.
       cell: (d) => canDelete(d) ? (
         <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-foreground-muted hover:text-danger" aria-label={`Delete ${d.student.name}'s`}
           onClick={(e) => { e.stopPropagation(); setDeleting(d); }}>
@@ -221,7 +221,7 @@ export default function TetraDepositsPage() {
     },
   ];
 
-  // Closed ones are rare — gone from Tetra Commission, or decided there — so
+  // Closed ones are rare — gone from CS Portal, or decided there — so
   // their tab appears only when there are some to show.
   const tabs = TABS.filter((tab) => !["closed", "deleted"].includes(tab.status) || (counts?.[tab.status] ?? 0) > 0 || status === tab.status);
 
@@ -229,8 +229,8 @@ export default function TetraDepositsPage() {
     <div className="space-y-4 p-4 md:p-6">
       <PageHeader
         icon={Coins}
-        title="Tetra Commission deposits"
-        description="Every deposit and bonus request Tetra Commission sent for approval — pending, approved and rejected. They are decided on the Approvals page."
+        title="CS Portal deposits"
+        description="Every deposit and bonus request CS Portal sent for approval — pending, approved and rejected. They are decided on the Approvals page."
         action={
           <div className="flex items-center gap-2">
             <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(dateFrom, dateTo)} />
@@ -239,7 +239,7 @@ export default function TetraDepositsPage() {
               params={{ ...t.baseParams, ...filters }}
               columns={EXPORT_COLUMNS}
               filename="tetra-commission-deposits"
-              title="Tetra Commission deposits"
+              title="CS Portal deposits"
               formats={["csv", "excel", "pdf"]}
               size="md"
             />

@@ -120,7 +120,7 @@ async function main() {
   const tetra = await invoice("IN-5", "sent");
   await db.collection("tetradeposits").insertOne({ organizationId: org._id, externalId: "td-1", courseInvoice: { invoiceId: new Types.ObjectId(tetra) } });
   r = await request("DELETE", `/invoices/${tetra}`, tA);
-  check("a Tetra Commission payment refers to it: refused", r.status === 409 && /Tetra Commission/.test(r.body?.error?.message ?? ""), show(r.body));
+  check("a CS Portal payment refers to it: refused", r.status === 409 && /CS Portal/.test(r.body?.error?.message ?? ""), show(r.body));
 
   const enrol = await invoice("IN-6", "sent", [], { enrolment: { course: "MBT", modeOfStudy: "online", language: "English" }, external: { source: "crm", externalId: "close-1" } });
   const done = await invoice("IN-7", "sent", [], { enrolment: { course: "MBT", modeOfStudy: "online", language: "English" }, external: { source: "crm", externalId: "close-2" } });

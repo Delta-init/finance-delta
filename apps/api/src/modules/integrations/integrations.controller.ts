@@ -73,7 +73,7 @@ export const listItems = asyncHandler(async (req: Request, res: Response) => {
  *
  * Deliberately narrow: the approval state, the status, the number and the
  * total — and, once approved, what became of the student in the LMS and in
- * Tetra Commission, with their CS and CS team there (enrolment-status.service).
+ * CS Portal, with their CS and CS team there (enrolment-status.service).
  * A calling system needs enough to show somebody where their sale got to; it
  * has no business reading the rest of the ledger.
  */
@@ -137,8 +137,8 @@ export const fundingRequestStatuses = asyncHandler(async (req: Request, res: Res
 });
 
 /**
- * A deposit request from Tetra Commission, for an accountant to approve or
- * reject. The decision goes back to Tetra Commission on its own link; see
+ * A deposit request from CS Portal, for an accountant to approve or
+ * reject. The decision goes back to CS Portal on its own link; see
  * modules/tetra-deposit.
  */
 export const takeTetraDeposit = asyncHandler(async (req: Request, res: Response) => {

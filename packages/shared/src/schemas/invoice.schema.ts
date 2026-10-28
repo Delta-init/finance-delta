@@ -166,8 +166,8 @@ export type ModeOfStudy = (typeof MODES_OF_STUDY)[number];
 /**
  * The sales CRM an enrolment was sold in, by the codes the Root portal gives
  * them: Delta's Sales CRM, the Remote CRM, Draw, and the Banglore CRM. Shown
- * as a tag on the enrolment here, and passed on with it to the LMS and Tetra
- * Commission — the Banglore CRM's too, since 2026-10-10 (see NO_COMMISSION_CRMS).
+ * as a tag on the enrolment here, and passed on with it to the LMS and CS
+ * Portal — the Banglore CRM's too, since 2026-10-10 (see NO_COMMISSION_CRMS).
  */
 export const ENROLMENT_CRMS = ["delta", "remote", "draw", "banglore"] as const;
 export type EnrolmentCrm = (typeof ENROLMENT_CRMS)[number];
@@ -179,7 +179,7 @@ export const ENROLMENT_CRM_LABELS: Record<EnrolmentCrm, string> = {
 };
 
 /**
- * Sales CRMs whose students are never sent to Tetra Commission. Empty since
+ * Sales CRMs whose students are never sent to CS Portal. Empty since
  * 2026-10-10: the Banglore CRM's students, kept out from 2026-10-09, now go
  * there too — to the Bangalore teams, by their academy (see ACADEMIES). Kept
  * as the one place to name a CRM that must not be sent; the Forex-only rule
@@ -230,7 +230,7 @@ export function bonusCurrency(
  * 2026-10-10): Dubai — what every enrolment was before — or Bangalore. The
  * Banglore CRM's are always Bangalore. Fixed per close: a correction keeps it.
  * Shown beside the CRM tag, and passed on to the LMS (the student's academy
- * there) and Tetra Commission (which academy's teams look after them).
+ * there) and CS Portal (which academy's teams look after them).
  */
 export const ACADEMIES = ["dubai", "bangalore"] as const;
 export type Academy = (typeof ACADEMIES)[number];
@@ -521,7 +521,7 @@ export const paymentSchema = z.object({
   chargesMinor: z.number().default(0),
   emi: emiDetailSchema.optional(),
   proofUrl: z.string().optional(),
-  /** The receipt's number (RCT-00001), on a payment one was issued for — a course payment from Tetra Commission. */
+  /** The receipt's number (RCT-00001), on a payment one was issued for — a course payment from CS Portal. */
   receiptNumber: z.string().optional(),
   /** The Banking account it went into, what landed there in its currency, whether its line is in, or why not. */
   bankAccountId: z.string().optional(),

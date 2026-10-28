@@ -12,7 +12,7 @@ import { Organization } from "../organization/organization.model";
  *
  * Each organization says which of its Banking accounts each payment method goes into (Settings → Where payments go,
  * `paymentAccounts`). A payment takes its method's account unless it was given one — or none — and every payment
- * finance records itself (at an enrolment's approval, a course payment or a balance payment from Tetra Commission or a
+ * finance records itself (at an enrolment's approval, a course payment or a balance payment from CS Portal or a
  * CRM) takes it the same way. Accounts change it whenever they like, after approval too.
  *
  * A payment with an account has its own line in it: a credit, matched to the invoice (as a payroll payment's debit is

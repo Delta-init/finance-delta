@@ -10,7 +10,7 @@ import {
 } from "./tetra-deposit.service";
 
 /**
- * Tetra Commission's deposit requests, for whoever decides them. Everything is
+ * CS Portal's deposit requests, for whoever decides them. Everything is
  * behind the one permission: the queue is only read in order to decide it.
  */
 const router = Router();

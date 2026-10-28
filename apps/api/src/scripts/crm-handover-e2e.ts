@@ -379,17 +379,17 @@ async function main() {
 
   const inv1 = await Invoice.findOne({ "external.externalId": "e2e-1" }).lean();
   check("an invoice was created", !!inv1);
-  // Who closed it, by their email in the CRM — what Tetra Commission is told.
+  // Who closed it, by their email in the CRM — what CS Portal is told.
   const met1 = inv1?.enrolment as { meetingBy?: string; meetingByEmail?: string } | undefined;
   check("the rep who closed it is kept: their name and their email in the CRM",
     met1?.meetingBy === "Drift One" && met1?.meetingByEmail === "driftone@e2e-test.com", JSON.stringify(met1));
   // What the CRM's My Enrolments asks: the invoice as before, and — until accounts approve it — nothing yet of the
-  // LMS or Tetra Commission (enrolment-status.service).
+  // LMS or CS Portal (enrolment-status.service).
   const status = await signedPost(orgId, "/api/v1/integrations/enrolments/status", { source: "crm", externalIds: ["e2e-1", "not-ours"] });
   const st1 = (status.body as { data?: Record<string, unknown>[] })?.data?.[0];
   check("My Enrolments: the enrolment's invoice, waiting for approval", status.status === 200 && (status.body as { data?: unknown[] })?.data?.length === 1
     && st1?.externalId === "e2e-1" && st1?.invoiceNumber === inv1?.invoiceNumber && st1?.approval === "pending", show(status));
-  check("...and no LMS or Tetra Commission yet, said as null rather than left out", st1 !== undefined && "lms" in st1 && st1.lms === null
+  check("...and no LMS or CS Portal yet, said as null rather than left out", st1 !== undefined && "lms" in st1 && st1.lms === null
     && "commission" in st1 && st1.commission === null, JSON.stringify(st1));
   const driftOne = await User.findOne({ email: "driftone@e2e-test.com" }).lean();
   check(
@@ -558,7 +558,7 @@ async function main() {
 
     // The bonus in US dollars (2026-10-09): every sales CRM sends the course
     // bonus as USD now, whatever the fee's currency — kept with its currency,
-    // shown in it, and passed on in it to the LMS and Tetra Commission.
+    // shown in it, and passed on in it to the LMS and CS Portal.
     const usd = await signedPost(orgId, "/api/v1/integrations/enrolments", {
       ...enrolment("e2e-bonus-usd", "driftone@e2e-test.com", "USD Bonus Student"),
       bonus: { given: true, amountMinor: 50_000, currency: "usd" },
@@ -575,7 +575,7 @@ async function main() {
     const { enrolmentFeeSummary } = await import("../modules/invoice/invoice.service");
     const sumUsd = enrolmentFeeSummary(invUsd as never);
     const sumOld = enrolmentFeeSummary((await Invoice.findOne({ "external.externalId": "e2e-bonus" }).lean()) as never);
-    check("...and the LMS and Tetra Commission are told USD; a CRM's bonus sent without one, USD too",
+    check("...and the LMS and CS Portal are told USD; a CRM's bonus sent without one, USD too",
       sumUsd.bonus?.currency === "USD" && sumUsd.currency === invUsd?.currency && sumOld.bonus?.currency === "USD" && sumOld.currency !== "USD",
       JSON.stringify({ usd: sumUsd.bonus, old: sumOld.bonus, cur: sumOld.currency }));
 
@@ -598,7 +598,7 @@ async function main() {
       check("Case 2c — a CRM invoice stored with no bonus currency: an approver sees $500, not AED 500",
         dtoLegacy.status === 200 && lb?.currency === "USD" && lb?.amountMinor === 50_000, show(dtoLegacy));
       const sumLegacy = enrolmentFeeSummary(legacy as never);
-      check("...the LMS and Tetra Commission are told USD, the fee staying in the invoice's currency",
+      check("...the LMS and CS Portal are told USD, the fee staying in the invoice's currency",
         sumLegacy.bonus?.currency === "USD" && sumLegacy.bonus?.amountMinor === 50_000 && sumLegacy.currency === legacy?.currency, JSON.stringify(sumLegacy));
       check("...and the CRM's status answer promises USD", promisedBonus(legacy as never)?.currency === "USD", JSON.stringify(promisedBonus(legacy as never)));
 

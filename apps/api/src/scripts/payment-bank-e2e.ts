@@ -12,7 +12,7 @@
  *   5. An INR account for an AED invoice: kept, out of the balance, saying why, until the rupees are given.
  *   6. An enrolment's approval: the close's payments go to their methods' accounts — cash to petty cash, the rupees
  *      as the client handed them over to the INR account.
- *   7. A Tetra Commission course payment ("INR TRANSFER") lands in the INR account.
+ *   7. A CS Portal course payment ("INR TRANSFER") lands in the INR account.
  *   8. A bank statement reconciled against a line: the payment's account, amount and date no longer move; a petty
  *      cash tin's still do.
  *   9. The backfill (charges-lines-backfill.ts): a payment from before, one net line, becomes the two — the balance
@@ -179,7 +179,7 @@ d = await edit(i3, cash3.id, { method: "cash", amountMinor: 500_000, paidOn: "20
 check("after approval it can still be moved — into Bank Account", d.payments.find((x: any) => x.id === cash3.id)?.bankAccountId === bank.id && (await balanceOf(petty.id)) === pettyBefore);
 
 /* ── 7 ── */
-step("7. A Tetra Commission course payment by INR TRANSFER");
+step("7. A CS Portal course payment by INR TRANSFER");
 const i4row = {
   _id: new Types.ObjectId(), organizationId: org._id, externalId: String(new Types.ObjectId()), type: "BONUS", currency: "AED",
   amountMinor: 367_000, paymentMethod: "INR TRANSFER", requestedAt: new Date("2026-10-16"),

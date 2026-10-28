@@ -162,7 +162,7 @@ const NAV: NavGroup[] = [
       { href: "/hiring", label: "Hiring Requests", icon: UserPlus, enabled: true, permission: "expense:approve", badge: "hiring" },
       // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
       { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
-      // Every deposit Tetra Commission sent — the record; they are decided on Approvals.
+      // Every deposit CS Portal sent — the record; they are decided on Approvals.
       { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
     ],
   },

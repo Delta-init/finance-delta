@@ -29,7 +29,7 @@ export interface LmsProvisionResult {
   courseTitle: string;
   /**
    * The course's programme in the LMS — `4x-trading` is FOREX Trading, the one
-   * whose students go on to Tetra Commission. Null for a course with none set;
+   * whose students go on to CS Portal. Null for a course with none set;
    * absent from an LMS older than it.
    */
   courseProgram?: string | null;
@@ -110,7 +110,7 @@ export async function provisionEnrolment(input: {
 
 export type LmsPaymentStatus = "paid" | "partial" | "unpaid";
 
-/** An enrolment's money at approval, as the LMS and Tetra Commission are told it. Minor units throughout. */
+/** An enrolment's money at approval, as the LMS and CS Portal are told it. Minor units throughout. */
 export interface EnrolmentFeeSummary {
   currency: string;
   feeMinor: number;
@@ -119,7 +119,7 @@ export interface EnrolmentFeeSummary {
   /** currency: the bonus's own (USD from the CRMs), which may not be the fee's. */
   bonus: { given: boolean; amountMinor: number; currency: string } | null;
   receipt: { url: string; name: string; mimeType?: string } | null;
-  /** The close as the counsellor declared it, and what accounts recorded (2026-10-12) — read by Tetra Commission. */
+  /** The close as the counsellor declared it, and what accounts recorded (2026-10-12) — read by CS Portal. */
   declaredPaidMinor?: number;
   declaredPaymentMethod?: string;
   recordedPaidMinor?: number;

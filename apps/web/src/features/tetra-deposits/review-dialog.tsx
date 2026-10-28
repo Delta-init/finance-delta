@@ -15,16 +15,16 @@ import { toast } from "@/lib/toast";
 import { useDecideTetraDeposit } from "./api";
 
 /**
- * Approving or rejecting a deposit Tetra Commission sent.
+ * Approving or rejecting a deposit CS Portal sent.
  *
- * Approving takes what Tetra Commission's own approval dialog took: the amount
+ * Approving takes what CS Portal's own approval dialog took: the amount
  * that actually arrived (the requested one to start with), the transaction ID
- * it arrived under — which Tetra Commission holds to one request each — and
+ * it arrived under — which CS Portal holds to one request each — and
  * the payment method and MT5 login, which may be corrected. The decision goes
- * back at once, and the answer says whether Tetra Commission took it.
+ * back at once, and the answer says whether CS Portal took it.
  */
 
-/** Tetra Commission's own list of deposit payment methods — Pay by link and the sales CRMs' too (2026-10-06). */
+/** CS Portal's own list of deposit payment methods — Pay by link and the sales CRMs' too (2026-10-06). */
 const PAYMENT_METHODS = [
   "AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Pay by link",
   "Cash", "Bank Transfer", "Cheque", "Card", "Easebuzz EMI", "Tabby", "Tamara", "BillExPro", "Other",
@@ -43,20 +43,20 @@ const amount = (v: number | null | undefined, currency: string) =>
 export const paidBy = (d: TetraDeposit) => (d.payments?.length ? [...new Set(d.payments.map((p) => p.method))].join(" + ") : d.paymentMethod);
 export const receiptsOf = (d: TetraDeposit) => (d.payments?.length ? d.payments.map((p) => p.receiptUrl) : [d.screenshotUrl]).filter(Boolean);
 
-/** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in Tetra Commission. */
+/** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in CS Portal. */
 export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
-/** One payment towards a student's CSE course upgrade, in AED: approving it confirms the money; Tetra Commission counts it. */
+/** One payment towards a student's CSE course upgrade, in AED: approving it confirms the money; CS Portal counts it. */
 export const isCourseUpgrade = (d: TetraDeposit | null | undefined) => d?.type === "COURSE_UPGRADE";
 /**
  * The next payment of a partial enrolment's balance, recorded by the student's
- * CS in Tetra Commission (2026-10-11): approving it records it on the invoice.
+ * CS in CS Portal (2026-10-11): approving it records it on the invoice.
  */
 export const isBalancePayment = (d: TetraDeposit | null | undefined) => d?.type === "ENROLMENT_PAYMENT";
 /** "deposit", "bonus", "course payment" or "balance payment" — what the request is, in a sentence. */
 export const kindWord = (d: TetraDeposit | null | undefined) =>
   (isBalancePayment(d) ? "balance payment" : isCourseUpgrade(d) ? "course payment" : isBonus(d) ? "bonus" : "deposit");
 
-/** Finance's own method for what Tetra Commission called it — the server's financeMethodFor, for the form's first choice. */
+/** Finance's own method for what CS Portal called it — the server's financeMethodFor, for the form's first choice. */
 function financeMethodFor(raw: string): string {
   const v = raw.trim().toLowerCase();
   const slug = v.replace(/[\s/-]+/g, "_");
@@ -74,7 +74,7 @@ function financeMethodFor(raw: string): string {
 const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi");
 
 /**
- * A bonus's MT5 bonus, in dollars — what the broker admin credits in Tetra Commission, never the amount here, which is
+ * A bonus's MT5 bonus, in dollars — what the broker admin credits in CS Portal, never the amount here, which is
  * the payment (the user, 2026-10-15: "USD 1,500" was read as the bonus when the bonus was $1,000). null when none.
  */
 export const mt5BonusOf = (d: TetraDeposit | null | undefined): number | null =>
@@ -84,7 +84,7 @@ export const amountWord = (d: TetraDeposit | null | undefined) => (isBonus(d) ||
 
 /**
  * One of a course payment's AED figures as the accountant reads it: a Bangalore team's bonus is in rupees (the user,
- * 2026-10-15), so in rupees at Tetra Commission's rate, the AED beside it; anything else in AED.
+ * 2026-10-15), so in rupees at CS Portal's rate, the AED beside it; anything else in AED.
  */
 export function courseFigure(d: TetraDeposit, aed: number | null | undefined): string {
   if (aed === null || aed === undefined) return "";
@@ -99,10 +99,10 @@ export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
     return <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-800" title="The next payment of a partial enrolment's balance, recorded by the CS — approving it records it on the invoice">Balance payment</span>;
   }
   if (isCourseUpgrade(deposit)) {
-    return <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-800" title="A payment towards the student's course upgrade — approving it confirms the money; Tetra Commission counts it and raises the MT5 bonus it earns">Course payment</span>;
+    return <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-800" title="A payment towards the student's course upgrade — approving it confirms the money; CS Portal counts it and raises the MT5 bonus it earns">Course payment</span>;
   }
   if (!isBonus(deposit)) return null;
-  return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title="A course payment — approving it confirms the payment; a broker admin in Tetra Commission then credits the bonus">Bonus</span>;
+  return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title="A course payment — approving it confirms the payment; a broker admin in CS Portal then credits the bonus">Bonus</span>;
 }
 
 export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
@@ -130,7 +130,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
           ["Payment", cp.kind === "full" ? "Full payment" : cp.kind === "partial" ? "Partial payment (instalment)" : ""],
           ["Paid today", courseFigure(deposit, cp.paidTodayAed)],
           ["Paid before", cp.paidBeforeAed ? courseFigure(deposit, cp.paidBeforeAed) : ""],
-          ["MT5 bonus to credit", cp.withBonus ? `${amount(cp.bonusUsd ?? 0, "USD")} — credited in Tetra Commission` : "No bonus on this course"],
+          ["MT5 bonus to credit", cp.withBonus ? `${amount(cp.bonusUsd ?? 0, "USD")} — credited in CS Portal` : "No bonus on this course"],
           ["On hold", cp.holdAed ? courseFigure(deposit, cp.holdAed) : ""],
           ["Balance", courseFigure(deposit, cp.balanceAed)],
         ] as [string, string][])
@@ -160,7 +160,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
       <p className="text-lg font-semibold"><MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} /> <span className="text-xs font-normal text-foreground-muted">{isBonus(deposit) ? "paid by the student" : amountWord(deposit)}</span></p>
       {mt5BonusOf(deposit) !== null && (
         <p className="text-xs text-foreground-muted">
-          The MT5 bonus is <span className="font-medium text-foreground">{amount(mt5BonusOf(deposit), "USD")}</span> — a broker admin credits it in Tetra Commission. Approve the payment above, not the bonus.
+          The MT5 bonus is <span className="font-medium text-foreground">{amount(mt5BonusOf(deposit), "USD")}</span> — a broker admin credits it in CS Portal. Approve the payment above, not the bonus.
         </p>
       )}
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -260,7 +260,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
       else toast.warning(result.message);
       onClose();
     } catch (e) {
-      // Refused by Tetra Commission (a transaction ID it already has): still
+      // Refused by CS Portal (a transaction ID it already has): still
       // pending, and this dialog stays open to correct it.
       toast.error(e instanceof ApiError ? e.message : "Could not record the decision");
     }
@@ -273,12 +273,12 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
           <DialogTitle>Review {kindWord(deposit)}</DialogTitle>
           <DialogDescription>
             {balancePayment
-              ? "From Tetra Commission — the next payment of this student's course fee, recorded by their CS. Approving it records the payment on the invoice (paid on the date the CS gave), which sets the next due date and updates Tetra Commission. More than the balance is refused."
+              ? "From CS Portal — the next payment of this student's course fee, recorded by their CS. Approving it records the payment on the invoice (paid on the date the CS gave), which sets the next due date and updates CS Portal. More than the balance is refused."
               : isCourseUpgrade(deposit)
-              ? "From Tetra Commission — a payment towards the student's course upgrade. Approving it records the money on the upgrade's invoice (made with its first payment) and emails the client a receipt; Tetra Commission then counts it and raises the MT5 bonus it earns."
+              ? "From CS Portal — a payment towards the student's course upgrade. Approving it records the money on the upgrade's invoice (made with its first payment) and emails the client a receipt; CS Portal then counts it and raises the MT5 bonus it earns."
               : isBonus(deposit)
-              ? "From Tetra Commission — a course payment. Approving it records the money on the student's invoice for the course (made when there is none) and emails the client a receipt; a broker admin there then credits the bonus in MT5 and approves it."
-              : <>From Tetra Commission — approving it records it there and credits the mentors&apos; commission.</>}
+              ? "From CS Portal — a course payment. Approving it records the money on the student's invoice for the course (made when there is none) and emails the client a receipt; a broker admin there then credits the bonus in MT5 and approves it."
+              : <>From CS Portal — approving it records it there and credits the mentors&apos; commission.</>}
           </DialogDescription>
         </DialogHeader>
         {deposit && <TetraDepositFacts deposit={deposit} />}
@@ -303,7 +303,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
                   <Input id="tetra-amount" type="number" inputMode="decimal" step="0.01" min="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
                   {corrected && (
                     <p className="text-xs text-warning">
-                      Requested <MoneyDisplay minor={deposit!.amountMinor} currency={deposit!.currency} /> — Tetra Commission records this amount instead.
+                      Requested <MoneyDisplay minor={deposit!.amountMinor} currency={deposit!.currency} /> — CS Portal records this amount instead.
                     </p>
                   )}
                 </div>
@@ -340,7 +340,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
               <Label htmlFor="tetra-reason">{decision === "sentBack" ? "What to correct (required)" : "Reason (required)"}</Label>
               <Textarea
                 id="tetra-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} rows={3}
-                placeholder={decision === "sentBack" ? "The CS sees this in Tetra Commission, corrects the request and sends it again" : "The mentor sees this in Tetra Commission"}
+                placeholder={decision === "sentBack" ? "The CS sees this in CS Portal, corrects the request and sends it again" : "The mentor sees this in CS Portal"}
               />
             </div>
           )}

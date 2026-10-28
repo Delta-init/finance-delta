@@ -1,11 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, RotateCcw, Trash2 } from "lucide-react";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useCan } from "@/lib/use-can";
 import { Button } from "@/components/ui/button";
 import { MoneyDisplay } from "@/components/ui/money";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useTetraDeposit } from "./api";
+import { useRestoreTetraDeposit, useTetraDeposit } from "./api";
+import { DeleteTetraDepositDialog, canDelete } from "./delete-dialog";
 import { TetraDepositFacts, TetraTypeTag } from "./review-dialog";
 import { TetraDepositStatusBadge, deliveryText, formatWhen } from "./status";
 
@@ -25,6 +30,8 @@ const EVENT_LABELS: Record<string, string> = {
   failed: "Not accepted",
   reopened: "Reopened",
   closed: "Closed",
+  deleted: "Deleted",
+  restored: "Restored",
 };
 
 export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
@@ -33,6 +40,10 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
   const decision = deposit?.decision;
   const delivery = deposit ? deliveryText(deposit) : "";
   const toDo = deposit && (deposit.status === "pending" || deposit.delivery?.state === "failed");
+  const { can } = useCan();
+  const mayDelete = can("tetra_deposit:approve");
+  const restore = useRestoreTetraDeposit();
+  const [deleting, setDeleting] = useState(false);
 
   return (
     <Dialog open={!!id} onOpenChange={(open) => !open && onClose()}>
@@ -104,13 +115,27 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
         )}
 
         <DialogFooter>
-          {toDo && (
+          {mayDelete && deposit && canDelete(deposit) && (
+            <Button type="button" variant="outline" className="mr-auto text-danger" onClick={() => setDeleting(true)}>
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </Button>
+          )}
+          {mayDelete && deposit?.status === "deleted" && (
+            <Button type="button" variant="outline" className="mr-auto" disabled={restore.isPending} onClick={async () => {
+              try { await restore.mutateAsync(deposit.id); toast.success("Restored"); }
+              catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not restore it"); }
+            }}>
+              <RotateCcw className="h-3.5 w-3.5" /> Restore
+            </Button>
+          )}
+          {toDo && deposit?.status !== "deleted" && (
             <Button type="button" variant="outline" onClick={() => router.push("/approvals")}>
               {deposit!.status === "pending" ? "Decide it on Approvals" : "Reopen it on Approvals"} <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           )}
           <Button type="button" variant="ghost" onClick={onClose}>Close</Button>
         </DialogFooter>
+        <DeleteTetraDepositDialog deposit={deleting ? deposit ?? null : null} onClose={() => setDeleting(false)} onDeleted={onClose} />
       </DialogContent>
     </Dialog>
   );

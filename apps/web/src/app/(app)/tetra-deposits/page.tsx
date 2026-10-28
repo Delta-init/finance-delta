@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Coins, Search, X } from "lucide-react";
+import { Coins, Search, Trash2, X } from "lucide-react";
 import type { TetraDeposit, TetraDepositListStatus } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { useCan } from "@/lib/use-can";
 import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
 import { TetraDepositDetailsDialog } from "@/features/tetra-deposits/details-dialog";
+import { DeleteTetraDepositDialog, canDelete } from "@/features/tetra-deposits/delete-dialog";
 import { TetraTypeTag, mt5BonusOf, paidBy, receiptsOf } from "@/features/tetra-deposits/review-dialog";
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
@@ -35,12 +36,16 @@ const TABS: { status: TetraDepositListStatus; label: string }[] = [
   { status: "approved", label: "Approved" },
   { status: "rejected", label: "Rejected" },
   { status: "closed", label: "Closed" },
+  // Taken off the list by hand (2026-10-28) — shown when there are some.
+  { status: "deleted", label: "Deleted" },
 ];
 
 const LEVELS: Record<string, string> = { LEVEL_1: "Level 1", LEVEL_2: "Level 2" };
 
-const approvedAmount = (d: TetraDeposit) =>
-  d.status === "approved" || (d.status === "closed" && d.decision?.transactionId) ? d.decision?.approvedAmountMinor : undefined;
+const approvedAmount = (d: TetraDeposit) => {
+  const status = d.status === "deleted" ? d.deleted?.previousStatus : d.status;
+  return status === "approved" || (status === "closed" && d.decision?.transactionId) ? d.decision?.approvedAmountMinor : undefined;
+};
 /** How it was paid: the method an accountant set on approving it, else every payment's ("CARD PAYMENT + Cash deposit"). */
 const methodOf = (d: TetraDeposit) =>
   d.decision?.paymentMethod && d.decision.paymentMethod !== d.paymentMethod ? d.decision.paymentMethod : paidBy(d);
@@ -90,6 +95,7 @@ export default function TetraDepositsPage() {
   const [dateTo, setDateTo] = useUrlParam("to", "");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<TetraDeposit | null>(null);
 
   const filters = {
     status,
@@ -201,11 +207,23 @@ export default function TetraDepositsPage() {
           <span className="text-foreground-muted">—</span>
         ),
     },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      // Delete (2026-10-28): not one waiting for a decision, nor one still on its way to Tetra Commission.
+      cell: (d) => canDelete(d) ? (
+        <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-foreground-muted hover:text-danger" aria-label={`Delete ${d.student.name}'s`}
+          onClick={(e) => { e.stopPropagation(); setDeleting(d); }}>
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      ) : null,
+    },
   ];
 
   // Closed ones are rare — gone from Tetra Commission, or decided there — so
   // their tab appears only when there are some to show.
-  const tabs = TABS.filter((tab) => tab.status !== "closed" || (counts?.closed ?? 0) > 0 || status === "closed");
+  const tabs = TABS.filter((tab) => !["closed", "deleted"].includes(tab.status) || (counts?.[tab.status] ?? 0) > 0 || status === tab.status);
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -300,6 +318,7 @@ export default function TetraDepositsPage() {
       />
 
       <TetraDepositDetailsDialog id={openId} onClose={() => setOpenId(null)} />
+      <DeleteTetraDepositDialog deposit={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }

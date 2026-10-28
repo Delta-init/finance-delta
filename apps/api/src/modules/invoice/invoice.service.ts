@@ -1390,7 +1390,8 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
       $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
     }),
     BalancePaymentModel.exists({ organizationId: orgId, invoiceId: objectId }),
-    TetraDepositModel.exists({ organizationId: orgId, $or: [{ "courseInvoice.invoiceId": objectId }, { "enrolmentPayment.invoiceId": objectId }] }),
+    // A deleted deposit no longer holds its invoice.
+    TetraDepositModel.exists({ organizationId: orgId, status: { $ne: "deleted" }, $or: [{ "courseInvoice.invoiceId": objectId }, { "enrolmentPayment.invoiceId": objectId }] }),
   ]);
 
   if (credited) throw new AppError("CONFLICT", "A credit note refers to this invoice, so it cannot be deleted");

@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { decideTetraDepositSchema, tetraDepositListQuerySchema, tetraDepositViewSchema } from "@delta/shared";
+import { decideTetraDepositSchema, deleteTetraDepositSchema, tetraDepositListQuerySchema, tetraDepositViewSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { parseQuery, validateBody } from "../../middleware/validate";
 import { asyncHandler, ok } from "../../lib/http";
 import {
-  decideTetraDeposit, getTetraDeposit, listTetraDepositPage, listTetraDeposits, reopenTetraDeposit, resendTetraDeposit,
+  decideTetraDeposit, deleteTetraDeposit, getTetraDeposit, listTetraDepositPage, listTetraDeposits, reopenTetraDeposit, resendTetraDeposit,
+  restoreTetraDeposit,
 } from "./tetra-deposit.service";
 
 /**
@@ -44,6 +45,15 @@ router.post("/:id/resend", asyncHandler(async (req, res) => {
 
 router.post("/:id/reopen", asyncHandler(async (req, res) => {
   ok(res, await reopenTetraDeposit(req.auth!, String(req.params.id)));
+}));
+
+// Taken off the list by hand, with why — kept as "deleted" (2026-10-28); and back again.
+router.post("/:id/delete", validateBody(deleteTetraDepositSchema), asyncHandler(async (req, res) => {
+  ok(res, await deleteTetraDeposit(req.auth!, String(req.params.id), req.body));
+}));
+
+router.post("/:id/restore", asyncHandler(async (req, res) => {
+  ok(res, await restoreTetraDeposit(req.auth!, String(req.params.id)));
 }));
 
 export default router;

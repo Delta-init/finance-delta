@@ -72,3 +72,21 @@ export function useReopenTetraDeposit() {
     onSettled: () => invalidate(qc),
   });
 }
+
+/** Taken off the list by hand, with why — kept as "deleted" (2026-10-28). */
+export function useDeleteTetraDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post<TetraDeposit>(`tetra-deposits/${id}/delete`, { reason }),
+    onSettled: () => invalidate(qc),
+  });
+}
+
+/** A deleted one back as it was. */
+export function useRestoreTetraDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<TetraDeposit>(`tetra-deposits/${id}/restore`),
+    onSettled: () => invalidate(qc),
+  });
+}

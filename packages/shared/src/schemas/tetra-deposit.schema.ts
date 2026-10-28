@@ -188,7 +188,8 @@ export type InboundTetraDeposit = z.infer<typeof inboundTetraDepositObject>;
  * approved  / rejected — decided here, and sent back to Tetra Commission
  * closed    nothing left to decide: gone from Tetra Commission, or decided there
  */
-export const tetraDepositStatusSchema = z.enum(["pending", "approved", "rejected", "closed"]);
+/** "deleted": taken off the list by hand (2026-10-28) — kept, with who, when, why and what it was, and can be restored. */
+export const tetraDepositStatusSchema = z.enum(["pending", "approved", "rejected", "closed", "deleted"]);
 export type TetraDepositStatus = z.infer<typeof tetraDepositStatusSchema>;
 
 /**
@@ -309,6 +310,8 @@ export const tetraDepositSchema = z.object({
     currency: z.string(),
     created: z.boolean(),
   }).optional(),
+  /** Deleted by hand: who, when, why, and the status it had (Restore puts it back). */
+  deleted: z.object({ at: z.string(), byName: z.string(), reason: z.string(), previousStatus: z.string() }).optional(),
   /** What happened to it here, oldest first — on a single deposit only. */
   events: z.array(z.object({ at: z.string(), kind: z.string(), byName: z.string(), text: z.string() })).optional(),
 });
@@ -322,7 +325,8 @@ export type TetraDeposit = z.infer<typeof tetraDepositSchema>;
  * in their own timezone, so "the 29th" means their 29th. Compared with when
  * the deposit was raised.
  */
-export const tetraDepositListStatusSchema = z.enum(["all", "pending", "approved", "rejected", "closed"]);
+/** "all" is every one not deleted; "deleted" the deleted ones. */
+export const tetraDepositListStatusSchema = z.enum(["all", "pending", "approved", "rejected", "closed", "deleted"]);
 export type TetraDepositListStatus = z.infer<typeof tetraDepositListStatusSchema>;
 
 export const tetraDepositListQuerySchema = listQuerySchema.extend({
@@ -334,6 +338,10 @@ export type TetraDepositListQuery = z.infer<typeof tetraDepositListQuerySchema>;
 
 /** How many there are of each, under the same search and dates — the page's tab counts. */
 export type TetraDepositCounts = Record<TetraDepositListStatus, number>;
+
+/** Deleting one by hand: why (2026-10-28). */
+export const deleteTetraDepositSchema = z.object({ reason: z.string().trim().min(3, "Say why it is deleted").max(300) });
+export type DeleteTetraDepositInput = z.infer<typeof deleteTetraDepositSchema>;
 
 /** What deciding one answers: the deposit, and whether Tetra Commission has the decision yet. */
 export const tetraDepositDecisionResultSchema = z.object({

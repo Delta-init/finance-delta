@@ -8,6 +8,7 @@ export const STATUS_LABELS: Record<TetraDeposit["status"], string> = {
   approved: "Approved",
   rejected: "Rejected",
   closed: "Closed",
+  deleted: "Deleted",
 };
 
 const STATUS_TONE: Record<TetraDeposit["status"], NonNullable<BadgeProps["tone"]>> = {
@@ -15,6 +16,7 @@ const STATUS_TONE: Record<TetraDeposit["status"], NonNullable<BadgeProps["tone"]
   approved: "success",
   rejected: "danger",
   closed: "neutral",
+  deleted: "neutral",
 };
 
 /** A bonus sent back to its CS to correct (2026-10-13) reads so, not as refused. */
@@ -29,6 +31,7 @@ export function TetraDepositStatusBadge({ status, sentBack }: { status: TetraDep
  */
 export function deliveryText(d: TetraDeposit): string {
   if (d.status === "closed") return d.closedReason ? `Closed — ${d.closedReason}` : "Closed";
+  if (d.status === "deleted") return `Deleted${d.deleted?.byName ? ` by ${d.deleted.byName}` : ""}${d.deleted?.reason ? ` — ${d.deleted.reason}` : ""}`;
   if (d.status === "pending" || !d.delivery) return "";
   switch (d.delivery.state) {
     case "delivered":

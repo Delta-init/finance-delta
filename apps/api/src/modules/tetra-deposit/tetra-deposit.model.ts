@@ -12,7 +12,7 @@ const tetraDepositSchema = new Schema({
   organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
   /** The funding request's id in Tetra Commission. */
   externalId: { type: String, required: true },
-  status: { type: String, enum: ["pending", "approved", "rejected", "closed"], default: "pending", index: true },
+  status: { type: String, enum: ["pending", "approved", "rejected", "closed", "deleted"], default: "pending", index: true },
   /** A deposit, or a bonus — a course payment, whose approval here is the first of two (@delta/shared). */
   type: { type: String, enum: ["DEPOSIT", "BONUS", "COURSE_UPGRADE", "ENROLMENT_PAYMENT"], default: "DEPOSIT", index: true },
   /** The amount as typed in Tetra Commission, when another currency (AED). */
@@ -141,6 +141,20 @@ const tetraDepositSchema = new Schema({
       created: { type: Boolean, default: false },
       at: { type: Date },
       emailedAt: { type: Date },
+    }, { _id: false }),
+    default: undefined,
+  },
+  /**
+   * Deleted by hand (2026-10-28): off every list and count — those ask for their own statuses — but kept, with who,
+   * when, why and the status it had, so Restore can put it back.
+   */
+  deleted: {
+    type: new Schema({
+      at: { type: Date, required: true },
+      byId: { type: Schema.Types.ObjectId, ref: "User" },
+      byName: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      previousStatus: { type: String, required: true },
     }, { _id: false }),
     default: undefined,
   },

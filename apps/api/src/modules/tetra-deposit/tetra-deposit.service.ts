@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import type {
-  DecideTetraDepositInput, InboundTetraDeposit, PageMeta, TetraDeposit, TetraDepositCounts, TetraDepositDecisionResult,
+  DecideTetraDepositInput, DeleteTetraDepositInput, InboundTetraDeposit, PageMeta, TetraDeposit, TetraDepositCounts, TetraDepositDecisionResult,
   TetraDepositListQuery, TetraDepositView,
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
@@ -108,6 +108,7 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
         }
       : {}),
     ...(r.closedReason ? { closedReason: r.closedReason } : {}),
+    ...(r.deleted?.at ? { deleted: { at: iso(r.deleted.at), byName: String(r.deleted.byName ?? ""), reason: String(r.deleted.reason ?? ""), previousStatus: String(r.deleted.previousStatus ?? "") } } : {}),
     ...(r.enrolmentPayment?.invoiceId
       ? {
           enrolmentPayment: {
@@ -479,7 +480,8 @@ export async function listTetraDepositPage(
   if (query.from || query.to) {
     base.requestedAt = { ...(query.from ? { $gte: new Date(query.from) } : {}), ...(query.to ? { $lt: new Date(query.to) } : {}) };
   }
-  const filter = query.status === "all" ? base : { ...base, status: query.status };
+  // "all": every one not deleted (a deleted one shows only under its own tab).
+  const filter = query.status === "all" ? { ...base, status: { $ne: "deleted" } } : { ...base, status: query.status };
   const sort = buildSort(LIST_SORTS, query.sort, query.dir, { requestedAt: -1, createdAt: -1 });
 
   const [rows, total, groups] = await Promise.all([
@@ -487,10 +489,10 @@ export async function listTetraDepositPage(
     TetraDepositModel.countDocuments(filter),
     TetraDepositModel.aggregate<{ _id: string; n: number }>([{ $match: base }, { $group: { _id: "$status", n: { $sum: 1 } } }]),
   ]);
-  const counts: TetraDepositCounts = { all: 0, pending: 0, approved: 0, rejected: 0, closed: 0 };
+  const counts: TetraDepositCounts = { all: 0, pending: 0, approved: 0, rejected: 0, closed: 0, deleted: 0 };
   for (const g of groups) {
     if (g._id in counts) counts[g._id as keyof TetraDepositCounts] = g.n;
-    counts.all += g.n;
+    if (g._id !== "deleted") counts.all += g.n;
   }
   return { data: rows.map((r) => tetraDepositDTO(r)), meta: { ...pageMeta(total, query.page, query.pageSize), counts } };
 }
@@ -501,6 +503,72 @@ export async function getTetraDeposit(organizationId: string, id: string): Promi
   const row = await TetraDepositModel.findOne({ _id: id, organizationId: new Types.ObjectId(organizationId) }).lean();
   if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
   return tetraDepositDTO(row, true);
+}
+
+/* ── Deleted by hand ─────────────────────────────────────────────────────── */
+
+/**
+ * Takes one off the list (the user, 2026-10-28: "a delete option in Tetra deposits") — kept as "deleted", with who,
+ * when, why and the status it had. Not one waiting for a decision (reject it: Tetra Commission is waiting for an
+ * answer), nor a decision still on its way there, nor an approval whose payment is still on an invoice (remove that
+ * payment first — nothing tied to money goes quietly). Tetra Commission is not told.
+ */
+export async function deleteTetraDeposit(auth: AuthContext, id: string, input: DeleteTetraDepositInput): Promise<TetraDeposit> {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
+  const org = new Types.ObjectId(auth.organizationId);
+  const row = await TetraDepositModel.findOne({ _id: id, organizationId: org }).lean<any>();
+  if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
+  if (row.status === "deleted") throw new AppError("CONFLICT", "It is deleted already");
+  if (row.status === "pending") throw new AppError("CONFLICT", "It is waiting for a decision — reject it instead, so Tetra Commission gets an answer");
+  if (["sending", "queued"].includes(String(row.delivery?.state ?? ""))) {
+    throw new AppError("CONFLICT", "Its decision is still on its way to Tetra Commission — delete it once it has arrived (or been turned down)");
+  }
+  // A payment it put on an invoice, still there: that is money — it goes first, on the invoice.
+  const { Invoice } = await import("../invoice/invoice.model");
+  for (const held of [
+    row.courseInvoice?.paymentId ? { invoiceId: row.courseInvoice.invoiceId, paymentId: String(row.courseInvoice.paymentId), receipt: row.courseInvoice.receiptNumber } : null,
+    row.enrolmentPayment?.recorded?.paymentId ? { invoiceId: row.enrolmentPayment.invoiceId, paymentId: String(row.enrolmentPayment.recorded.paymentId), receipt: "" } : null,
+  ]) {
+    if (!held?.invoiceId || !Types.ObjectId.isValid(held.paymentId)) continue;
+    const inv = await Invoice.findOne({ _id: held.invoiceId, "payments._id": new Types.ObjectId(held.paymentId) }).select("invoiceNumber status").lean<any>();
+    if (inv && inv.status !== "void") {
+      throw new AppError("CONFLICT", `Its payment${held.receipt ? ` ${held.receipt}` : ""} is still on invoice ${inv.invoiceNumber} — remove that payment first, then delete this`);
+    }
+  }
+  const me = await User.findById(auth.userId).select("name").lean();
+  const byName = String(me?.name ?? "");
+  const done = await TetraDepositModel.findOneAndUpdate(
+    { _id: row._id, status: row.status },
+    {
+      $set: { status: "deleted", deleted: { at: new Date(), byId: new Types.ObjectId(auth.userId), byName, reason: input.reason, previousStatus: row.status } },
+      $push: { events: { at: new Date(), kind: "deleted", byName, text: `Deleted (it was ${row.status}): ${input.reason}` } },
+    },
+    { new: true },
+  ).lean();
+  if (!done) throw new AppError("CONFLICT", "It changed meanwhile — open it again");
+  return tetraDepositDTO(done, true);
+}
+
+/** A deleted one back as it was. */
+export async function restoreTetraDeposit(auth: AuthContext, id: string): Promise<TetraDeposit> {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
+  const org = new Types.ObjectId(auth.organizationId);
+  const row = await TetraDepositModel.findOne({ _id: id, organizationId: org }).lean<any>();
+  if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
+  if (row.status !== "deleted") throw new AppError("CONFLICT", "Only a deleted one can be restored");
+  const me = await User.findById(auth.userId).select("name").lean();
+  const back = String(row.deleted?.previousStatus ?? "closed");
+  const done = await TetraDepositModel.findOneAndUpdate(
+    { _id: row._id, status: "deleted" },
+    {
+      $set: { status: back },
+      $unset: { deleted: "" },
+      $push: { events: { at: new Date(), kind: "restored", byName: String(me?.name ?? ""), text: `Restored (${back})` } },
+    },
+    { new: true },
+  ).lean();
+  if (!done) throw new AppError("CONFLICT", "It changed meanwhile — open it again");
+  return tetraDepositDTO(done, true);
 }
 
 /* ── Decided, and sent back ──────────────────────────────────────────────── */

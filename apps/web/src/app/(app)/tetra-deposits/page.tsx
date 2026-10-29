@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useTetraDepositList } from "@/features/tetra-deposits/api";
 import { TetraDepositDetailsDialog } from "@/features/tetra-deposits/details-dialog";
 import { DeleteTetraDepositDialog, canDelete } from "@/features/tetra-deposits/delete-dialog";
-import { TetraTypeTag, mt5BonusOf, paidBy, receiptsOf } from "@/features/tetra-deposits/review-dialog";
+import { TetraTypeTag, mt5BonusOf, paidBy, receiptsOf, typedApproved, typedPaid } from "@/features/tetra-deposits/review-dialog";
 import { STATUS_LABELS, TetraDepositStatusBadge, deliveryText, formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -63,10 +63,12 @@ const EXPORT_COLUMNS: ExportColumn<TetraDeposit>[] = [
   { header: "Primary mentor", value: (d) => d.primaryMentor },
   { header: "Payment method", value: (d) => methodOf(d) },
   { header: "MT5 login", value: (d) => d.decision?.mt5Login || d.mt5Login },
-  { header: "Currency", value: (d) => d.currency },
-  { header: "Paid / requested amount", value: (d) => d.amountMinor / 100 },
+  // As the CS typed them — AED for most — never converted (2026-10-29).
+  { header: "Currency", value: (d) => typedPaid(d).currency },
+  { header: "Paid / requested amount", value: (d) => typedPaid(d).minor / 100 },
   { header: "MT5 bonus (USD)", value: (d) => mt5BonusOf(d) ?? "" },
-  { header: "Approved amount", value: (d) => { const a = approvedAmount(d); return a === undefined ? "" : a / 100; } },
+  { header: "Approved amount", value: (d) => { const a = approvedAmount(d); return a === undefined ? "" : typedApproved(d, a).minor / 100; } },
+  { header: "Approved currency", value: (d) => { const a = approvedAmount(d); return a === undefined ? "" : typedApproved(d, a).currency; } },
   { header: "Transaction ID", value: (d) => d.decision?.transactionId ?? "" },
   { header: "Status", value: (d) => STATUS_LABELS[d.status] ?? d.status },
   { header: "Decided by", value: (d) => d.decision?.decidedByName ?? "" },
@@ -150,7 +152,8 @@ export default function TetraDepositsPage() {
       sortable: true,
       align: "right",
       // A bonus's amount is the payment the student made; its MT5 bonus is credited in CS Portal (2026-10-15).
-      cell: (d) => <MoneyDisplay minor={d.amountMinor} currency={d.currency} />,
+      // As the CS typed it — AED for most — never converted (2026-10-29).
+      cell: (d) => { const p = typedPaid(d); return <MoneyDisplay minor={p.minor} currency={p.currency} />; },
     },
     {
       key: "mt5Bonus",
@@ -167,7 +170,14 @@ export default function TetraDepositsPage() {
       align: "right",
       cell: (d) => {
         const a = approvedAmount(d);
-        return a === undefined ? <span className="text-foreground-muted">—</span> : <MoneyDisplay minor={a} currency={d.currency} className="font-medium" />;
+        if (a === undefined) return <span className="text-foreground-muted">—</span>;
+        const t = typedApproved(d, a);
+        return (
+          <div>
+            <MoneyDisplay minor={t.minor} currency={t.currency} className="font-medium" />
+            {t.changed && <p className="text-[11px] text-warning">changed at approval</p>}
+          </div>
+        );
       },
     },
     {

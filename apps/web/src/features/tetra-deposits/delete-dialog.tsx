@@ -9,6 +9,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useDeleteTetraDeposit } from "./api";
+import { typedApproved } from "./review-dialog";
 
 /**
  * Deleting a deposit from the list (2026-10-28), with why. It is kept as "deleted" — the Deleted tab shows it, and it
@@ -40,7 +41,7 @@ export function DeleteTetraDepositDialog({ deposit, onClose, onDeleted }: { depo
         <DialogHeader>
           <DialogTitle>Delete this {deposit?.type === "BONUS" ? "bonus" : "deposit"}?</DialogTitle>
           <DialogDescription>
-            {deposit && <>{deposit.student.name}{deposit.student.code ? ` · ${deposit.student.code}` : ""} · <MoneyDisplay minor={deposit.decision?.approvedAmountMinor ?? deposit.amountMinor} currency={deposit.currency} /> · {deposit.status}. </>}
+            {deposit && <>{deposit.student.name}{deposit.student.code ? ` · ${deposit.student.code}` : ""} · <MoneyDisplay minor={typedApproved(deposit, deposit.decision?.approvedAmountMinor).minor} currency={typedApproved(deposit, deposit.decision?.approvedAmountMinor).currency} /> · {deposit.status}. </>}
             It leaves the list and every count, and is kept under the Deleted tab, where it can be restored. CS Portal is not told.
           </DialogDescription>
         </DialogHeader>

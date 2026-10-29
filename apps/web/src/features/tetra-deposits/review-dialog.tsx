@@ -79,6 +79,15 @@ const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi
  */
 export const mt5BonusOf = (d: TetraDeposit | null | undefined): number | null =>
   isBonus(d) && d?.coursePayment?.withBonus && Number(d.coursePayment.bonusUsd) > 0 ? Number(d.coursePayment.bonusUsd) : null;
+/**
+ * What was paid, as the CS typed it — AED for most — never converted (the user, 2026-10-29: "show the actual AED amount,
+ * not USD"). The stored amount when nothing else was typed: a request in dollars, or one from before CS Portal sent it.
+ */
+export const typedPaid = (d: TetraDeposit): { minor: number; currency: string } =>
+  d.amountOriginal && d.amountCurrency ? { minor: Math.round(d.amountOriginal * 100), currency: d.amountCurrency } : { minor: d.amountMinor, currency: d.currency };
+/** An approved amount as typed: the typed figure when approved as asked; one changed at approval as it was entered (`changed`). */
+export const typedApproved = (d: TetraDeposit, approvedMinor: number | undefined): { minor: number; currency: string; changed: boolean } =>
+  approvedMinor === undefined || approvedMinor === d.amountMinor ? { ...typedPaid(d), changed: false } : { minor: approvedMinor, currency: d.currency, changed: true };
 /** What the amount is: a bonus's is the payment the student made. */
 export const amountWord = (d: TetraDeposit | null | undefined) => (isBonus(d) || isCourseUpgrade(d) || isBalancePayment(d) ? "paid" : "requested");
 

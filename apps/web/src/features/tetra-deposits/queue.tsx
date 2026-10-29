@@ -10,7 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useReopenTetraDeposit, useTetraDeposits } from "./api";
-import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy } from "./review-dialog";
+import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy, typedApproved, typedPaid } from "./review-dialog";
 
 /**
  * CS Portal's deposits on the Approvals page: the ones waiting for a
@@ -46,7 +46,7 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 sm:flex-col sm:items-end">
         <div className="text-right">
-          <MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} className="font-semibold" />
+          <MoneyDisplay minor={typedPaid(deposit).minor} currency={typedPaid(deposit).currency} className="font-semibold" />
           {/* The payment, not the bonus: that is credited in CS Portal (2026-10-15). */}
           {isBonus(deposit) && <p className="text-[11px] text-foreground-muted">paid{mt5BonusOf(deposit) !== null ? ` · MT5 bonus $${mt5BonusOf(deposit)!.toLocaleString("en-US")}` : ""}</p>}
         </div>
@@ -63,7 +63,7 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
 function NotDelivered({ deposit }: { deposit: TetraDeposit }) {
   const reopen = useReopenTetraDeposit();
   const failed = deposit.delivery?.state === "failed";
-  const amount = deposit.decision?.approvedAmountMinor ?? deposit.amountMinor;
+  const amount = typedApproved(deposit, deposit.decision?.approvedAmountMinor);
   const doReopen = async () => {
     try {
       await reopen.mutateAsync(deposit.id);
@@ -85,7 +85,7 @@ function NotDelivered({ deposit }: { deposit: TetraDeposit }) {
             : `On its way to CS Portal${deposit.delivery?.lastError ? ` — not reached yet (${deposit.delivery.lastError}); trying again on its own` : ""}`}
         </p>
       </div>
-      <MoneyDisplay minor={amount} currency={deposit.currency} className="shrink-0 text-sm" />
+      <MoneyDisplay minor={amount.minor} currency={amount.currency} className="shrink-0 text-sm" />
       {failed && (
         <Button size="sm" variant="outline" onClick={doReopen} loading={reopen.isPending}>
           <RefreshCw className="h-3.5 w-3.5" /> Reopen

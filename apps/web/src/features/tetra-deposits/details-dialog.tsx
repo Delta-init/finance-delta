@@ -11,7 +11,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useRestoreTetraDeposit, useTetraDeposit } from "./api";
 import { DeleteTetraDepositDialog, canDelete } from "./delete-dialog";
-import { TetraDepositFacts, TetraTypeTag } from "./review-dialog";
+import { TetraDepositFacts, TetraTypeTag, typedApproved } from "./review-dialog";
 import { TetraDepositStatusBadge, deliveryText, formatWhen } from "./status";
 
 /**
@@ -69,7 +69,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
                   <p className="font-medium">{decision.sentBack ? "Sent back to correct" : "Rejected"}{decision.reason ? `: ${decision.reason}` : ""}</p>
                 ) : (
                   <p className="font-medium">
-                    Approved at <MoneyDisplay minor={decision.approvedAmountMinor ?? deposit.amountMinor} currency={deposit.currency} />
+                    Approved at <MoneyDisplay minor={typedApproved(deposit, decision.approvedAmountMinor).minor} currency={typedApproved(deposit, decision.approvedAmountMinor).currency} />
                     {decision.approvedAmountMinor !== undefined && decision.approvedAmountMinor !== deposit.amountMinor && (
                       <span className="ml-1 text-xs font-normal text-warning">(corrected from the requested amount)</span>
                     )}

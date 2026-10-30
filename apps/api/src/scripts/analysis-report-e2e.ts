@@ -145,6 +145,14 @@ same("by CRM, as finance names them", await rv("crm"), [["Draw", 100_000], ["Sal
 same("by academy", await rv("academy"), [["Bangalore", 100_000], ["Dubai", 90_000], ["Not said", 31_700]]);
 same("by status", await rv("status"), [["Paid", 136_700], ["Part paid", 90_000], ["Not paid", -5_000]]);
 same("filtered to Asha", (await getRevenueAnalysis(org, { ...OCT, basis: "invoiced", groupBy: "course", filters: { salesperson: String(asha) } })).records.map((x) => x.number).sort(), ["CN-1", "CN-2", "INV-001"]);
+// The user, 2026-10-30: a part-paid invoice showed only its whole total — collected and still owed beside it.
+const r1 = v.records.find((x) => x.number === "INV-001");
+same("a part-paid invoice: 1,000.00 invoiced, 600.00 collected, 400.00 still owed", [r1?.amountMinor, r1?.collectedMinor, r1?.owedMinor], [100_000, 60_000, 40_000]);
+same("…the USD one in AED: 367.00 collected, nothing owed", [v.records.find((x) => x.number === "INV-003")?.collectedMinor, v.records.find((x) => x.number === "INV-003")?.owedMinor], [36_700, 0]);
+same("…a credit note has none", v.records.filter((x) => x.id.startsWith("cn:")).map((x) => [x.collectedMinor, x.owedMinor]), [[undefined, undefined], [undefined, undefined]]);
+same("each salesperson: invoiced, collected, still owed", v.groups.map((g) => [g.name, g.amountMinor, g.collectedMinor, g.owedMinor]),
+  [["Bilal", 100_000, 100_000, 0], ["Asha", 85_000, 60_000, 40_000], ["Clerk", 36_700, 36_700, 0]]);
+same("…and under Collected, no such columns (every record is a payment)", (await getRevenueAnalysis(org, { ...OCT, basis: "collected", groupBy: "salesperson", filters: {} })).groups.map((g) => g.collectedMinor), [undefined, undefined, undefined]);
 
 step("6. Revenue: collected");
 v = await getRevenueAnalysis(org, { ...OCT, basis: "collected", groupBy: "method", filters: {} });

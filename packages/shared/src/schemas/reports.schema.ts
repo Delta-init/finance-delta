@@ -180,6 +180,9 @@ export type AnalysisRecord = {
   detail: string;
   /** In the organization's currency; a credit note is negative. */
   amountMinor: number;
+  /** Revenue under Invoiced: paid on this invoice so far, and still owed on it (2026-10-30: a part-paid invoice showed only its total). */
+  collectedMinor?: number;
+  owedMinor?: number;
   href: string;
   /** Its key in each dimension; the names are in the report's options. */
   dims: Record<string, string>;
@@ -192,6 +195,9 @@ export type AnalysisGroup = {
   name: string;
   count: number;
   amountMinor: number;
+  /** Its records' collected and still owed, when they carry them (revenue under Invoiced). */
+  collectedMinor?: number;
+  owedMinor?: number;
   /** A category's subcategories, when grouped by category. */
   sub?: AnalysisGroup[];
 };

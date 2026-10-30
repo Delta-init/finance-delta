@@ -83,6 +83,9 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
 
   const chart = (data?.groups ?? []).slice(0, 12).map((g) => ({ name: g.name.length > 28 ? `${g.name.slice(0, 27)}…` : g.name, amount: g.amountMinor / 100 }));
   const total = data?.totals.amountMinor ?? 0;
+  // Revenue under Invoiced: collected and still owed beside each invoiced amount.
+  const cash = !!data?.groups.some((g) => g.collectedMinor !== undefined);
+  const cols = cash ? 6 : 4;
 
   return (
     <div className="space-y-5 p-6">
@@ -183,14 +186,16 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                 <table className="w-full text-sm">
                   <thead className="border-y border-border bg-surface-muted text-xs text-foreground-muted">
                     <tr><th className="px-4 py-2 text-left font-medium">{label(groupBy)}</th><th className="px-3 py-2 text-right font-medium">Count</th>
-                      <th className="px-3 py-2 text-right font-medium">Amount</th><th className="px-4 py-2 text-right font-medium">Share</th></tr>
+                      <th className="px-3 py-2 text-right font-medium">{cash ? "Invoiced" : "Amount"}</th>
+                      {cash && <><th className="px-3 py-2 text-right font-medium">Collected</th><th className="px-3 py-2 text-right font-medium">Still owed</th></>}
+                      <th className="px-4 py-2 text-right font-medium">Share</th></tr>
                   </thead>
                   <tbody>
-                    {isLoading && <tr><td colSpan={4} className="px-4 py-8"><Skeleton className="h-24 w-full" /></td></tr>}
-                    {!isLoading && !data?.groups.length && <tr><td colSpan={4} className="px-4 py-10 text-center text-foreground-muted">Nothing in this period with these filters.</td></tr>}
+                    {isLoading && <tr><td colSpan={cols} className="px-4 py-8"><Skeleton className="h-24 w-full" /></td></tr>}
+                    {!isLoading && !data?.groups.length && <tr><td colSpan={cols} className="px-4 py-10 text-center text-foreground-muted">Nothing in this period with these filters.</td></tr>}
                     {data?.groups.map((g) => (
                       <Fragment key={g.key}>
-                        <GroupRow g={g} total={total} currency={currency} onOpen={() => setOpen({ g, dim: groupBy })}
+                        <GroupRow g={g} total={total} currency={currency} cash={cash} onOpen={() => setOpen({ g, dim: groupBy })}
                           expander={g.sub?.length ? (
                             <button type="button" onClick={(e) => { e.stopPropagation(); setExpanded(expanded === g.key ? null : g.key); }}
                               className="text-foreground-subtle hover:text-foreground" aria-label="Subcategories">
@@ -265,7 +270,11 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
           <DialogContent className="max-w-4xl">
             <DialogHeader>
               <DialogTitle>{open.g.name}</DialogTitle>
-              <DialogDescription>{open.g.count} record{open.g.count === 1 ? "" : "s"} · <MoneyDisplay minor={open.g.amountMinor} currency={currency} /></DialogDescription>
+              <DialogDescription>
+                {open.g.count} record{open.g.count === 1 ? "" : "s"} · <MoneyDisplay minor={open.g.amountMinor} currency={currency} />
+                {open.g.collectedMinor !== undefined && <> invoiced · <MoneyDisplay minor={open.g.collectedMinor} currency={currency} className="text-success" /> collected
+                  {(open.g.owedMinor ?? 0) > 0 && <> · <MoneyDisplay minor={open.g.owedMinor ?? 0} currency={currency} className="text-warning" /> still owed</>}</>}
+              </DialogDescription>
             </DialogHeader>
             <Records records={data.records.filter((r) => (r.dims[open.dim] ?? "__none") === open.g.key)}
               currency={currency} capped={data.capped} onOpen={(r) => router.push(r.href)} compact />
@@ -276,7 +285,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   );
 }
 
-function GroupRow({ g, total, currency, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
+function GroupRow({ g, total, currency, cash, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; cash?: boolean; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
   const share = total ? Math.round((g.amountMinor / total) * 1000) / 10 : 0;
   return (
     <tr className={cn("cursor-pointer border-t border-border hover:bg-surface-muted", nested && "bg-surface-muted/50 text-[13px]")} onClick={onOpen}>
@@ -285,6 +294,10 @@ function GroupRow({ g, total, currency, onOpen, expander, nested }: { g: Analysi
       </td>
       <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{g.count}</td>
       <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={g.amountMinor} currency={currency} className={cn(g.amountMinor < 0 && "text-danger")} /></td>
+      {cash && <>
+        <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={g.collectedMinor ?? 0} currency={currency} className="text-success" /></td>
+        <td className="whitespace-nowrap px-3 py-2 text-right">{(g.owedMinor ?? 0) > 0 ? <MoneyDisplay minor={g.owedMinor ?? 0} currency={currency} className="text-warning" /> : <span className="text-foreground-subtle">—</span>}</td>
+      </>}
       <td className="px-4 py-2">
         <div className="flex items-center justify-end gap-2">
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-muted"><span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, share))}%` }} /></span>
@@ -306,7 +319,9 @@ function Records({ title, records, currency, capped, onOpen, isLoading, isFetchi
     { key: "number", header: "Number", cell: (r) => <span className="font-medium">{r.number}</span> },
     { key: "title", header: "For", cell: (r) => <span className="block max-w-[220px] truncate" title={r.title}>{r.title}</span> },
     { key: "detail", header: "Details", cell: (r) => <span className="block max-w-[280px] truncate text-xs text-foreground-muted" title={r.detail}>{r.detail || "—"}</span> },
-    { key: "amount", header: "Amount", align: "right", cell: (r) => <MoneyDisplay minor={r.amountMinor} currency={currency} className={cn("font-medium", r.amountMinor < 0 && "text-danger")} /> },
+    ...(records.some((r) => r.collectedMinor !== undefined) ? cashColumns(currency) : [
+      { key: "amount", header: "Amount", align: "right", cell: (r) => <MoneyDisplay minor={r.amountMinor} currency={currency} className={cn("font-medium", r.amountMinor < 0 && "text-danger")} /> },
+    ] as Column<AnalysisRecord>[]),
   ];
   const table = (
     <DataTable columns={columns} data={rows} getRowId={(r) => r.id} total={records.length} page={page} pageSize={size}
@@ -324,6 +339,26 @@ function Records({ title, records, currency, capped, onOpen, isLoading, isFetchi
   ) : <div className="max-h-[65vh] overflow-y-auto">{table}</div>;
 }
 
+/**
+ * Revenue under Invoiced (the user, 2026-10-30: a part-paid invoice showed its whole total): what has come in on each
+ * invoice, "of" its total when part-paid, and what is still owed. A credit note has no payments: its amount, as before.
+ */
+function cashColumns(currency: string): Column<AnalysisRecord>[] {
+  return [
+    { key: "collected", header: "Collected", align: "right", cell: (r) => r.collectedMinor === undefined
+      ? <MoneyDisplay minor={r.amountMinor} currency={currency} className={cn("font-medium", r.amountMinor < 0 && "text-danger")} />
+      : (
+        <div className="whitespace-nowrap text-right">
+          <MoneyDisplay minor={r.collectedMinor} currency={currency} className="font-medium" />
+          {r.collectedMinor !== r.amountMinor && <div className="text-[11px] text-foreground-muted">of <MoneyDisplay minor={r.amountMinor} currency={currency} /></div>}
+        </div>
+      ) },
+    { key: "owed", header: "Still owed", align: "right", cell: (r) => (r.owedMinor ?? 0) > 0
+      ? <MoneyDisplay minor={r.owedMinor ?? 0} currency={currency} className="text-warning" />
+      : <span className="text-foreground-subtle">—</span> },
+  ];
+}
+
 /** The export: the records on screen, with a column for every dimension. */
 function exportColumns(config: AnalysisConfig, data: AnalysisReport, hidden: string[]) {
   const name = (dim: string, key: string | undefined) => data.options[dim]?.find((o) => o.key === key)?.name ?? key ?? "";
@@ -335,5 +370,9 @@ function exportColumns(config: AnalysisConfig, data: AnalysisReport, hidden: str
     ...[...config.groupBys, ...config.filters].filter((d, i, all) => all.indexOf(d) === i && d !== "month" && !hidden.includes(d))
       .map((dim) => ({ header: label(dim), value: (r: AnalysisRecord) => name(dim, r.dims[dim]) })),
     { header: `Amount (${data.currency})`, value: (r: AnalysisRecord) => r.amountMinor / 100 },
+    ...(data.records.some((r) => r.collectedMinor !== undefined) ? [
+      { header: `Collected (${data.currency})`, value: (r: AnalysisRecord) => (r.collectedMinor === undefined ? "" : r.collectedMinor / 100) },
+      { header: `Still owed (${data.currency})`, value: (r: AnalysisRecord) => (r.owedMinor === undefined ? "" : r.owedMinor / 100) },
+    ] : []),
   ];
 }

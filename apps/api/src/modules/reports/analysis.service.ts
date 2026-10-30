@@ -109,6 +109,8 @@ function finish(
       const g = by.get(key) ?? { key, name: names.name(dim, key), count: 0, amountMinor: 0 };
       g.count++;
       g.amountMinor += r.amountMinor;
+      if (r.collectedMinor !== undefined) g.collectedMinor = (g.collectedMinor ?? 0) + r.collectedMinor;
+      if (r.owedMinor !== undefined) g.owedMinor = (g.owedMinor ?? 0) + r.owedMinor;
       by.set(key, g);
     }
     return [...by.values()].sort((a, b) => (dim === "month" ? b.key.localeCompare(a.key) : b.amountMinor - a.amountMinor || a.name.localeCompare(b.name)));
@@ -265,8 +267,11 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
       if (!inRange(inv.issueDate) && ranged) continue;
       const date = dayOf(inv.issueDate);
       const amount = inv.baseTotalMinor || Math.round((inv.totalMinor ?? 0) * rate(inv));
+      // What has come in on it so far, and what is still owed — a part-paid invoice is not all cash.
+      const collected = (inv.payments ?? []).reduce((s: number, p: any) => s + Math.round((p.amountMinor ?? 0) * rate(inv)), 0);
       records.push({
         id: String(inv._id), date, number: inv.invoiceNumber, title: inv.customerName ?? "", detail: inv.salespersonName ?? "", amountMinor: amount,
+        collectedMinor: collected, owedMinor: Math.round((inv.balanceMinor ?? 0) * rate(inv)),
         href: `/invoices/${inv._id}`,
         dims: { ...invoiceDims(inv, date), method: names.set("method", NONE, "—"), bank: names.set("bank", NONE, "—") },
       });

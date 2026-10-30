@@ -10,7 +10,8 @@
  *     account (so not a salesperson), matching a finance account not linked yet, blocked and why, gone from HRMS;
  *     people who have left are counted, not listed, unless asked;
  *   - the mapping (previewSync) takes a resignation as leaving, as it does a termination (2026-10-30): somebody who
- *     resigned in HRMS and is still active here is offered deactivation, one already inactive needs nothing.
+ *     resigned in HRMS and is still active here is offered deactivation, one already inactive needs nothing;
+ *   - scripts/deactivate-leavers.ts lists exactly those, switches them off (--write) and back on (--undo).
  *
  * Run through scripts/people-pickers-e2e.sh (throwaway mongod, stand-in HRMS, no .env anywhere).
  */
@@ -122,6 +123,18 @@ const row = (id: string) => preview.employees.find((e) => e.hrmsEmployeeId === i
 check("resigned, still active here: offered active → inactive", j(row("E10")?.changes.find((c) => c.field === "status")) === j({ field: "status", from: "active", to: "inactive" }), j(row("E10")));
 check("resigned, already inactive here: no status change", !row("E11")?.changes.some((c) => c.field === "status"), j(row("E11")));
 check("still employed: no status change", !row("E1")?.changes.some((c) => c.field === "status"), j(row("E1")));
+
+/* ── 4 ── */
+step("4. deactivate-leavers: switch off those who left");
+const { activeLeavers, deactivate, undo } = await import("./deactivate-leavers");
+const [g] = await activeLeavers(ORG);
+check("lists only the resigned one still active here (Rhea), not Tom (already off) nor current staff", j(g?.leavers.map((l) => [l.name, l.hrmsStatus])) === j([["Rhea", "resigned"]]), j(g?.leavers));
+const before = await Employee.countDocuments({ organizationId: org._id, status: "active" });
+check("--write switches her off, and only her", (await deactivate(g!.leavers)) === 1
+  && (await Employee.findOne({ hrmsEmployeeId: "E10" }).lean())?.status === "inactive"
+  && (await Employee.countDocuments({ organizationId: org._id, status: "active" })) === before - 1);
+check("a second run finds nobody", (await activeLeavers(ORG))[0]?.leavers.length === 0);
+check("--undo puts her back", (await undo(g!.leavers)) === 1 && (await Employee.findOne({ hrmsEmployeeId: "E10" }).lean())?.status === "active");
 
 server.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} passed\x1b[0m`);

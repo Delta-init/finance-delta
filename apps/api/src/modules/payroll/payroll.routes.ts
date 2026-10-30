@@ -3,7 +3,7 @@ import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import {
-  addAdjustmentsSchema, importRunSchema, payRunSchema, returnRunSchema, reversePaymentSchema,
+  addAdjustmentsSchema, holdLineSchema, importRunSchema, payRunSchema, returnRunSchema, reversePaymentSchema,
 } from "./payroll.schemas";
 import * as c from "./payroll.controller";
 
@@ -36,6 +36,8 @@ router.delete("/runs/:id/adjustments/:externalId", requirePermission("payroll:wr
 // moves the money unless somebody deliberately decided so.
 router.post("/runs/:id/approve", requirePermission("payroll:approve"), c.approveRun);
 router.post("/runs/:id/return", requirePermission("payroll:approve"), validateBody(returnRunSchema), c.returnRun);
+// Hold one person back from payment, or release them (somebody who has left; 2026-10-30).
+router.post("/runs/:id/lines/:lineId/hold", requirePermission("payroll:write"), validateBody(holdLineSchema), c.holdLine);
 router.post("/runs/:id/pay", requirePermission("payroll:pay"), validateBody(payRunSchema), c.payRun);
 // Retrying a lost acknowledgement moves no money, so it sits with write.
 router.post("/runs/:id/payments/:paymentId/retry-sync", requirePermission("payroll:write"), c.retrySync);

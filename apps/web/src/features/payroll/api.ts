@@ -119,6 +119,16 @@ export function useReturnRun(runId: string) {
   });
 }
 
+/** Hold one person back from payment, or release them (2026-10-30). */
+export function useHoldLine(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lineId, hold, reason }: { lineId: string; hold: boolean; reason?: string }) =>
+      api.post<{ status: string; message: string }>(`payroll/runs/${runId}/lines/${lineId}/hold`, { hold, reason }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function usePayRun(runId: string) {
   const qc = useQueryClient();
   return useMutation({

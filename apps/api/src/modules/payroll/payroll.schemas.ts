@@ -40,6 +40,11 @@ export const payRunSchema = z.object({
   reference: z.string().trim().max(120).optional(),
 });
 
+export const holdLineSchema = z.object({
+  hold: z.boolean(),
+  reason: z.string().trim().max(200).optional(),
+});
+
 export const returnRunSchema = z.object({
   reason: z.string().trim().min(1, "Tell HR what needs fixing").max(300),
 });

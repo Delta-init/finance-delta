@@ -176,6 +176,8 @@ async function main() {
   check("unbanked person warned about", importPreview.unpayable.length === 1,
     importPreview.unpayable.map((u) => u.name).join(", "));
 
+  // Marcus has left (inactive here) by the time the month comes over: he must start held (2026-10-30).
+  await Employee.updateOne({ organizationId: org._id, employeeCode: "E2E002" }, { $set: { status: "inactive" } });
   const imported = await payroll.importRun(orgId, seed.orgId, seed.month, actor);
   check("run created", Boolean(imported.runNumber), imported.runNumber);
   check("import raised no sync warning", imported.warnings.filter((w) => w.includes("could not be told")).length === 0);
@@ -185,6 +187,22 @@ async function main() {
 
   const runId = imported.id;
   let run = await payroll.getRun(orgId, runId);
+  const leaver = run.lines.find((l) => l.employeeCode === "E2E002")!;
+  check("somebody who has left imported on hold, and why", leaver.status === "on_hold" && leaver.holdReason === payroll.LEFT_HOLD_REASON, leaver.holdReason);
+  check("…and marked as left; nobody else is", leaver.left && run.lines.filter((l) => l.left).length === 1);
+  const refused = async (p: Promise<unknown>, re: RegExp) => { try { await p; return false; } catch (e) { return re.test((e as Error).message); } };
+  const e2e003 = run.lines.find((l) => l.employeeCode === "E2E003")!;
+  check("the unbanked hold cannot be released here", await refused(payments.setLineHold(orgId, runId, e2e003.id, { hold: false }, actor), /no bank details/));
+  check("a held person cannot be held again", await refused(payments.setLineHold(orgId, runId, leaver.id, { hold: true }, actor), /only somebody not paid yet/));
+  const released = await payments.setLineHold(orgId, runId, leaver.id, { hold: false }, actor);
+  check("accounts release him: his final salary is owed", released.status === "pending" && released.holdReason === "");
+  const aishaLine = run.lines.find((l) => l.employeeCode === "E2E001")!;
+  const held = await payments.setLineHold(orgId, runId, aishaLine.id, { hold: true, reason: "Checking her bank" }, actor);
+  check("anybody not paid yet can be held, with the reason and by whom", held.status === "on_hold" && /^Checking her bank \(held by /.test(held.holdReason), held.holdReason);
+  check("…and released again", (await payments.setLineHold(orgId, runId, aishaLine.id, { hold: false }, actor)).status === "pending");
+  await Employee.updateOne({ organizationId: org._id, employeeCode: "E2E002" }, { $set: { status: "active" } });
+  run = await payroll.getRun(orgId, runId);
+  check("the left mark follows finance now: back on, not left", !run.lines.some((l) => l.left));
   check("unbanked person imported on hold", run.totals.heldCount === 1);
   check("held person is the one with no bank details",
     run.lines.find((l) => l.status === "on_hold")?.employeeCode === "E2E003");

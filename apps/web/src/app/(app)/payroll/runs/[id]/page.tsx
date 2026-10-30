@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
 import {
   usePayrollRun, useAddAdjustments, usePullCommissions, useRemoveAdjustment,
-  useApproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment,
+  useApproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
 import { PayDialog } from "@/features/payroll/pay-dialog";
@@ -46,6 +46,8 @@ const LINE_LABEL: Record<LineStatus, string> = {
  * (one-time payments, reimbursements, overtime) and any other deduction is
  * "other".
  */
+/** Where the people paid in each currency are: dirhams Dubai, rupees India. */
+const PLACE: Record<string, string> = { AED: "Dubai", INR: "India" };
 const ATTENDANCE_DEDUCTION = /^(Loss of Pay|Late Penalty|Early-Out Penalty)\b/;
 const LOAN_DEDUCTION = /^(Loan repayment|Salary advance)\b/;
 function splitLines(l: RunLine) {
@@ -67,6 +69,13 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const [expanded, setExpanded] = useState<string | null>(null);
   // Every row's lines at once, rather than one row at a time.
   const [allOpen, setAllOpen] = useState(false);
+  // Dubai or India: who is paid in dirhams, who in rupees (the user, 2026-10-30). "" is everybody.
+  const [currency, setCurrency] = useState("");
+  // Only the people who have left (2026-10-30: they were on the month as "To pay").
+  const [onlyLeft, setOnlyLeft] = useState(false);
+  // Who the hold dialog is about.
+  const [holding, setHolding] = useState<RunLine | null>(null);
+  const holdLine = useHoldLine(id);
   // Who the adjust dialog is about. One line is the per-person case; several
   // is a bulk apply. Empty means closed.
   const [adjusting, setAdjusting] = useState<RunLine[]>([]);
@@ -91,11 +100,17 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const lines = useMemo(() => {
     if (!run) return [];
     const q = search.trim().toLowerCase();
-    if (!q) return run.lines;
     return run.lines.filter(
-      (l) => l.name.toLowerCase().includes(q) || l.employeeCode.toLowerCase().includes(q),
+      (l) => (!currency || (l.currency || run.currency) === currency) && (!onlyLeft || l.left)
+        && (!q || l.name.toLowerCase().includes(q) || l.employeeCode.toLowerCase().includes(q)),
     );
-  }, [run, search]);
+  }, [run, search, currency, onlyLeft]);
+  // How many are paid in each currency, for the Dubai / India buttons.
+  const perCurrency = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of run?.lines ?? []) m.set(l.currency || run!.currency, (m.get(l.currency || run!.currency) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]);
+  }, [run]);
 
   if (isLoading) return <p className="text-sm text-foreground-muted">Loading…</p>;
   if (!run) return <p className="text-sm text-danger">Payroll run not found.</p>;
@@ -104,6 +119,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // changing a payslip underneath it would put the payslip and the transfer out
   // of step — which is the whole thing this handover exists to prevent.
   const openForAdjustment = run.status === "imported" || run.status === "additions";
+  // Somebody can be held or released until the run is paid.
+  const holdable = openForAdjustment || run.status === "approved" || run.status === "partially_paid";
   const canApprove = openForAdjustment && run.lines.length > 0;
   const canPay = run.status === "approved" || run.status === "partially_paid";
   // Rows are tickable in both stages, for two different jobs: choosing who to
@@ -431,6 +448,20 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-64"
           />
+          {perCurrency.length > 1 && (
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Where they are paid">
+              {[["", "All", run.lines.length] as const, ...perCurrency.map(([c, n]) => [c, PLACE[c] ? `${PLACE[c]} (${c})` : c, n] as const)].map(([c, label, n]) => (
+                <Button key={c || "all"} size="sm" variant={currency === c ? "secondary" : "ghost"} onClick={() => { setCurrency(c); setSelected(new Set()); }}>
+                  {label} <span className="ml-1 tabular-nums text-foreground-muted">{n}</span>
+                </Button>
+              ))}
+            </div>
+          )}
+          {run.lines.some((l) => l.left) && (
+            <Button size="sm" variant={onlyLeft ? "secondary" : "ghost"} className="text-danger" onClick={() => { setOnlyLeft(!onlyLeft); setSelected(new Set()); }}>
+              Left the company <span className="ml-1 tabular-nums">{run.lines.filter((l) => l.left).length}</span>
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setAllOpen(!allOpen)}>
             {allOpen ? "Hide the lines" : "Show every line"}
           </Button>
@@ -521,7 +552,10 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                       </td>
                     )}
                     <td className="px-5 py-3">
-                      <div className="font-medium">{l.name}</div>
+                      <div className="font-medium">
+                        {l.name}
+                        {l.left && <Badge tone="danger" className="ml-2">Left the company</Badge>}
+                      </div>
                       <div className="text-xs text-foreground-muted">
                         {l.employeeCode}{l.designation ? ` · ${l.designation}` : ""}
                       </div>
@@ -591,6 +625,20 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                           </div>
                         )}
 
+                        {/* Hold back, or let through, somebody not paid yet — before their money goes. */}
+                        {holdable && l.status === "pending" && (
+                          <Button variant="ghost" size="sm" className="mr-2 mt-4 text-danger" onClick={(e) => { e.stopPropagation(); setHolding(l); }}>
+                            <PauseCircle className="mr-1.5 h-3.5 w-3.5" />Hold
+                          </Button>
+                        )}
+                        {holdable && l.status === "on_hold" && l.payable && (
+                          <Button
+                            variant="ghost" size="sm" className="mr-2 mt-4" loading={holdLine.isPending}
+                            onClick={(e) => { e.stopPropagation(); holdLine.mutate({ lineId: l.id, hold: false }); }}
+                          >
+                            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Release — they are owed this
+                          </Button>
+                        )}
                         {openForAdjustment && (
                           <Button
                             variant="secondary"
@@ -621,6 +669,21 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           </table>
         </div>
       </Card>
+
+      <ReasonDialog
+        open={Boolean(holding)}
+        onOpenChange={(o) => { if (!o) setHolding(null); }}
+        title={holding ? `Hold ${holding.name}?` : "Hold?"}
+        description="They are left out of payment — a bulk transfer skips them — until somebody releases the hold. Their payslip in HRMS is not changed."
+        label="Why?"
+        placeholder="Left the company — not owed for October"
+        confirmLabel="Hold"
+        destructive
+        pending={holdLine.isPending}
+        onConfirm={(reason) =>
+          holding && holdLine.mutate({ lineId: holding.id, hold: true, reason }, { onSuccess: () => setHolding(null) })
+        }
+      />
 
       <ReasonDialog
         open={sendingBack}

@@ -108,6 +108,8 @@ export interface RunLine {
   status: LineStatus;
   holdReason: string;
   payable: boolean;
+  /** Inactive in finance now — has left (resigned or terminated). Older APIs don't send it. */
+  left?: boolean;
   bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string };
 }
 

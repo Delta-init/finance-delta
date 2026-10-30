@@ -31,6 +31,42 @@ async function loadRun(orgId: string, runId: string) {
   return run;
 }
 
+/**
+ * Hold one person back from payment, or let them be paid again (2026-10-30:
+ * somebody who has left, still on the month HRMS handed over). Only before
+ * their money has gone: an unpaid line can be held, a held one released — not
+ * one held for missing bank details, which has nowhere to send money until HR
+ * adds them and the month is re-synced. Not on a run that is paid: what is
+ * held there was settled as not owed.
+ */
+export async function setLineHold(
+  orgId: string, runId: string, lineId: string, input: { hold: boolean; reason?: string }, actor: { userId: string },
+) {
+  const run = await loadRun(orgId, runId);
+  if (!["imported", "additions", "approved", "partially_paid"].includes(run.status)) {
+    throw new AppError("CONFLICT", `${run.runNumber} is ${run.status.replace("_", " ")} — nobody on it can be held or released now.`);
+  }
+  const line = run.lines.find((l) => String(l._id) === lineId);
+  if (!line) throw new AppError("NOT_FOUND", "That person is not on this run");
+  const who = (await User.findById(oid(actor.userId)).select("name").lean())?.name ?? "accounts";
+  if (input.hold) {
+    if (line.status !== "pending") {
+      throw new AppError("CONFLICT", `${line.name} is ${line.status.replace("_", " ")} — only somebody not paid yet can be held.`);
+    }
+    line.status = "on_hold";
+    line.holdReason = `${input.reason?.trim() || "Held by accounts"} (held by ${who})`;
+  } else {
+    if (line.status !== "on_hold") throw new AppError("CONFLICT", `${line.name} is not held.`);
+    if (!line.payable) {
+      throw new AppError("CONFLICT", `${line.name} has no bank details in HRMS — HR adds them and the month is re-synced.`);
+    }
+    line.status = "pending";
+    line.holdReason = "";
+  }
+  await run.save();
+  return { lineId, status: line.status, holdReason: line.holdReason, message: input.hold ? `${line.name} held` : `${line.name} released — will be paid` };
+}
+
 /** Sign the run off, and tell HRMS it is final. */
 export async function approveRun(orgId: string, runId: string, actor: { userId: string }) {
   const run = await loadRun(orgId, runId);

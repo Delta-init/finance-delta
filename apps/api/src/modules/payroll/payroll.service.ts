@@ -16,6 +16,14 @@ export { summariseByCurrency };
 
 const oid = (id: string) => new Types.ObjectId(id);
 
+/**
+ * Why somebody who has left starts held (2026-10-30: Muskan, who had left, was
+ * on October's run as "To pay"). HRMS still hands over a leaver's payslip — a
+ * final month can be owed — so they are not dropped, but nobody pays them until
+ * accounts look and release the hold.
+ */
+export const LEFT_HOLD_REASON = "Left the company — confirm their final salary";
+
 /** "AED 344,824.88 + INR 627,633.33": one amount per currency, never their sum. */
 function formatByCurrency(rows: Array<{ currency: string; minor: number }>): string {
   return rows.map((r) => formatMinor(r.minor, r.currency)).join(" + ");
@@ -315,9 +323,10 @@ export async function importRun(
       bank: source.bank,
       payable: source.payable,
       // Someone with nowhere to send money starts held, so they cannot be swept
-      // into a bulk payment and silently counted as paid.
-      status: source.payable ? ("pending" as const) : ("on_hold" as const),
-      holdReason: source.payable ? "" : "No bank details in HRMS",
+      // into a bulk payment and silently counted as paid; so does somebody who
+      // has left (inactive here), until accounts confirm a final salary is owed.
+      status: source.payable && employee.status !== "inactive" ? ("pending" as const) : ("on_hold" as const),
+      holdReason: !source.payable ? "No bank details in HRMS" : employee.status === "inactive" ? LEFT_HOLD_REASON : "",
     };
   });
 
@@ -437,6 +446,12 @@ export async function listRuns(
 export async function getRun(orgId: string, id: string) {
   const run = await PayrollRun.findOne({ _id: oid(id), organizationId: oid(orgId) }).lean();
   if (!run) throw new AppError("NOT_FOUND", "Payroll run not found");
+  // Who on the run has left, as finance knows it now — so a month imported
+  // before somebody was switched off still says so.
+  const leftIds = new Set(
+    (await Employee.find({ _id: { $in: run.lines.map((l) => l.employeeId).filter(Boolean) }, status: "inactive" }).select("_id").lean())
+      .map((e) => String(e._id)),
+  );
   const lineCurrency = new Map(run.lines.map((l) => [String(l._id), currencyOf(l.currency, run.currency)]));
 
   return {
@@ -492,6 +507,7 @@ export async function getRun(orgId: string, id: string) {
       status: l.status,
       holdReason: l.holdReason,
       payable: l.payable,
+      left: !!l.employeeId && leftIds.has(String(l.employeeId)),
       bank: l.bank,
     })),
     adjustments: run.adjustments.map((a) => ({

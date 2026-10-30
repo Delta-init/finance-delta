@@ -22,6 +22,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { RUN_STATUS_LABELS, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
 import { Button } from "@/components/ui/button";
 import { ApproxTotal } from "@/features/payroll/currency-amounts";
+import { ExportButton } from "@/components/ui/export-button";
+import type { ExportColumn } from "@/lib/export";
 
 const RUN_TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "primary"> = {
   imported: "primary", additions: "primary", approved: "warning",
@@ -61,6 +63,32 @@ function splitLines(l: RunLine) {
     other: sum(l.deductions, (x) => !ATTENDANCE_DEDUCTION.test(x) && !LOAN_DEDUCTION.test(x)),
   };
 }
+
+/**
+ * One row per person for the export (2026-10-30: "add export to excel") — the
+ * page's own columns, amounts as numbers in the person's currency so they sum
+ * in Excel. No bank details: the page masks them, and a file travels further.
+ */
+const money = (minor: number) => Math.round(minor) / 100;
+const RUN_EXPORT_COLUMNS: ExportColumn<RunLine & { runCurrency: string }>[] = [
+  { header: "Code", value: (l) => l.employeeCode },
+  { header: "Name", value: (l) => l.name },
+  { header: "Designation", value: (l) => l.designation || "" },
+  { header: "Department", value: (l) => l.departmentName || "" },
+  { header: "Currency", value: (l) => l.currency || l.runCurrency },
+  { header: "Basic", value: (l) => money(splitLines(l).basic) },
+  { header: "Add-ons", value: (l) => money(splitLines(l).addOns) },
+  { header: "Gross", value: (l) => money(l.grossMinor) },
+  { header: "LOP & penalties", value: (l) => money(splitLines(l).attendance) },
+  { header: "Loan & advance", value: (l) => money(splitLines(l).loan) },
+  { header: "Other deductions", value: (l) => money(splitLines(l).other) },
+  { header: "By accounts", value: (l) => money(l.adjustmentsMinor) },
+  { header: "Payable", value: (l) => money(l.payableMinor) },
+  { header: "Paid", value: (l) => money(l.amountPaidMinor) },
+  { header: "Status", value: (l) => LINE_LABEL[l.status] },
+  { header: "Hold reason", value: (l) => l.holdReason || "" },
+  { header: "Left the company", value: (l) => (l.left ? "Yes" : "") },
+];
 
 export default function PayrollRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -462,6 +490,15 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
               Left the company <span className="ml-1 tabular-nums">{run.lines.filter((l) => l.left).length}</span>
             </Button>
           )}
+          {/* What is on screen: the search and the Dubai / India / Left filters, every row. */}
+          <ExportButton
+            resource="payroll/runs"
+            columns={RUN_EXPORT_COLUMNS}
+            filename={`${run.runNumber}-${run.period}`}
+            title={`${run.runNumber} · ${run.period}`}
+            formats={["excel", "csv", "pdf"]}
+            fetchRows={async () => lines.map((l) => ({ ...l, runCurrency: run.currency }))}
+          />
           <Button variant="ghost" size="sm" onClick={() => setAllOpen(!allOpen)}>
             {allOpen ? "Hide the lines" : "Show every line"}
           </Button>

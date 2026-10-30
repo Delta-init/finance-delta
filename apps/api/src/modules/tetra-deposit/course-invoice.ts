@@ -328,7 +328,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       if (open) invoice = open.invoice;
       else {
         // Whose it is: the CS Portal person who raised the payment, not the approver (2026-10-30).
-        const seller = await courseSalesperson(orgId, row, { id: salespersonId, name: String(d.decidedByName ?? "") });
+        const seller = await courseSalesperson(orgId, row, { id: salespersonId, name: String(d.decidedByName ?? "") }, { create: true });
         invoice = await makeInvoice(orgId, customer.id, seller.id, row, amountMinor, seller.flag ? [seller.flag] : []);
         created = true;
       }

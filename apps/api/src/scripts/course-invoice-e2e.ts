@@ -420,6 +420,93 @@ step("Whose invoice: the CS Portal person who raised the payment, not the accoun
     && (await Invoice.countDocuments({ ...ours, salespersonId: asha._id })) === carasBefore - 0, `${await Invoice.countDocuments({ ...ours, salespersonId: asha._id })} vs ${carasBefore}`);
 }
 
+/* ── Usernames and missing salespeople (2026-10-30) ─────────────────────── */
+step("CS Portal usernames, and salespeople finance has no account for");
+{
+  const staff = (name: string, email: string, orgId = org._id) => User.create({ name, email, passwordHash: "x", status: "active", memberships: [{ organizationId: orgId, roleId: new Types.ObjectId(), status: "active" }] });
+  const raise = (code: string, over: Record<string, unknown>) => arrive({ type: "COURSE_UPGRADE", amountMinor: 100_000, currency: "AED", student: student(code), coursePayment: upgradeCp(new Types.ObjectId().toString(), 5_000, { paidTodayAed: 1000 }), ...over });
+  const { Role } = await import("../modules/role/role.model");
+  const isPayrollOnly = async (u: any) => {
+    const m = (u?.memberships ?? []).find((x: any) => String(x.organizationId) === ORG);
+    return !!m && (await Role.findById(m.roleId).select("key").lean<any>())?.key === "payroll-employee";
+  };
+
+  const athira = await staff("Athira Velayudhan", "athiravelayudan@e2e-course.test");
+  const pU = await raise("STU-SP6", { requestedBy: "athiravelayudan" });
+  await approve(pU.id, 100_000);
+  const iU = await invoiceOf(pU.id);
+  check("CS Portal name \"athiravelayudan\", no email sent: Athira Velayudhan's (athiravelayudan@…), no flag",
+    String(iU?.salespersonId) === String(athira._id) && !(iU?.external?.flags ?? []).length, j(iU && { s: iU.salespersonName, f: iU.external?.flags }));
+  await staff("Arya One", "arya@e2e-course.test"); await staff("Arya Two", "arya@e2e-course.other");
+  const pU2 = await raise("STU-SP7", { requestedBy: "arya" });
+  await approve(pU2.id, 100_000);
+  check("…two accounts with that username: neither guessed — the approver's, flagged", String((await invoiceOf(pU2.id))?.salespersonId) === String(asha._id));
+
+  const pN = await raise("STU-SP8", { requestedBy: "Gina", requestedByEmail: "gina.s@e2e-course.test" });
+  await approve(pN.id, 100_000);
+  const iN = await invoiceOf(pN.id);
+  const gina = await User.findOne({ email: "gina.s@e2e-course.test" }).lean<any>();
+  check("nobody here, but CS Portal sent the email: a salesperson-only account is made and the invoice is theirs, no flag",
+    !!gina && gina.name === "Gina" && await isPayrollOnly(gina) && String(iN?.salespersonId) === String(gina._id) && !(iN?.external?.flags ?? []).length,
+    j(iN && { s: iN.salespersonName, f: iN.external?.flags }));
+  const pN2 = await raise("STU-SP9", { requestedBy: "Gina", requestedByEmail: "gina.s@e2e-course.test" });
+  await approve(pN2.id, 100_000);
+  check("…her next payment finds that account, not another", String((await invoiceOf(pN2.id))?.salespersonId) === String(gina?._id) && (await User.countDocuments({ email: "gina.s@e2e-course.test" })) === 1);
+
+  const elsewhere = await Organization.create({ name: "Elsewhere E2E", baseCurrency: "AED" });
+  await staff("Out Side", "outside@e2e-course.test", elsewhere._id as Types.ObjectId);
+  const pO = await raise("STU-SP10", { requestedBy: "Out Side", requestedByEmail: "outside@e2e-course.test" });
+  await approve(pO.id, 100_000);
+  const iO = await invoiceOf(pO.id);
+  check("…the email is another organization's account: not taken over — the approver's, flagged",
+    String(iO?.salespersonId) === String(asha._id) && (iO?.external?.flags ?? []).some((f: string) => /Out Side \(CS Portal\)/.test(f)), j(iO?.external?.flags));
+
+  // The fix-up: earlier invoices by "zara.k" (account since) and "Nobody Here" (none; flagged by the first run).
+  const { fixCourseInvoiceSalespeople, undoCourseInvoiceSalespeople, parseCreate } = await import("./course-invoice-salespeople");
+  const pZ = await raise("STU-SP11", { requestedBy: "zara.k" });
+  await approve(pZ.id, 100_000);
+  const zara = await staff("Zara Khan", "zara.k@e2e-course.test");
+  const ours = { organizationId: org._id, "external.source": "tetra-course" };
+  const nobodyBefore = await Invoice.find({ ...ours, "external.flags": /Nobody Here \(CS Portal\)/ }).select("_id invoiceNumber").lean<any[]>();
+  const create = parseCreate(["Nobody Here=Nobody.Here@e2e-course.test"]);
+  const dry = await fixCourseInvoiceSalespeople({ write: false, create });
+  const rowOf = (inv: any) => dry.rows.find((r) => r.invoice === String(inv?.invoiceNumber));
+  const iZ = await invoiceOf(pZ.id);
+  check("fix-up, read only: zara.k's invoice would be Zara Khan's (by username)", /^Zara Khan \(by username\)/.test(rowOf(iZ)?.to ?? "") && rowOf(iZ)?.outcome === "would change", j(rowOf(iZ)));
+  const nobodyRows = dry.rows.filter((r) => nobodyBefore.some((i) => String(i.invoiceNumber) === r.invoice));
+  check("…--create \"Nobody Here=…\": theirs on a new account, nothing made yet",
+    nobodyRows.length > 0 && nobodyRows.length === nobodyBefore.length && nobodyRows.every((r) => r.outcome === "would change" && /new account nobody\.here@/.test(r.to)) && !(await User.exists({ email: "nobody.here@e2e-course.test" })),
+    j(nobodyRows));
+  let bad = "";
+  try { parseCreate(["Nobody Here"]); } catch (e) { bad = (e as Error).message; }
+  check("…--create without an email: refused", /<CS Portal name>=<email>/.test(bad), bad);
+
+  const would = dry.rows.filter((r) => r.outcome === "would change").length;
+  const undoFile = `${process.env.TMPDIR ?? "/tmp"}/course-invoice-salespeople-e2e-create-${Date.now()}.json`;
+  const done = await fixCourseInvoiceSalespeople({ write: true, expect: would, undoFile, create });
+  const nobody = await User.findOne({ email: "nobody.here@e2e-course.test" }).lean<any>();
+  const theirs = await Invoice.find({ _id: { $in: nobodyBefore.map((i) => i._id) } }).lean<any[]>();
+  check("written: one salesperson-only account made for Nobody Here, all their invoices on it, the old flag gone",
+    !!nobody && nobody.name === "Nobody Here" && await isPayrollOnly(nobody) && theirs.length > 0
+      && theirs.every((i) => String(i.salespersonId) === String(nobody._id) && !(i.external?.flags ?? []).some((f: string) => /has no account here/.test(f))),
+    j(theirs.map((i) => ({ s: i.salespersonName, f: i.external?.flags }))));
+  check("…and zara.k's is Zara's", String((await Invoice.findById(iZ?._id).lean<any>())?.salespersonId) === String(zara._id));
+  const after = await fixCourseInvoiceSalespeople({ write: false, create });
+  check("run again: nothing more to change", after.rows.filter((r) => r.outcome === "would change").length === 0, j(after.rows.filter((r) => r.outcome === "would change")));
+
+  const undone = await undoCourseInvoiceSalespeople(done.undoFile ?? undoFile);
+  const back = await Invoice.find({ _id: { $in: nobodyBefore.map((i) => i._id) } }).lean<any[]>();
+  check("undo: the invoices back on the approver with their flag, and the account it made removed",
+    undone.removed === 1 && !(await User.exists({ email: "nobody.here@e2e-course.test" }))
+      && back.every((i) => String(i.salespersonId) === String(asha._id) && (i.external?.flags ?? []).some((f: string) => /Nobody Here \(CS Portal\)/.test(f))),
+    j(undone));
+  const { writeFileSync } = await import("node:fs");
+  const oldStyle = `${process.env.TMPDIR ?? "/tmp"}/course-invoice-salespeople-e2e-old-${Date.now()}.json`;
+  writeFileSync(oldStyle, JSON.stringify([{ _id: String(iZ?._id), salespersonId: String(zara._id), salespersonName: "Zara Khan", flags: [] }]));
+  const r = await undoCourseInvoiceSalespeople(oldStyle);
+  check("…an undo file from the first runs (just the invoices) still works", r.invoices === 1 && r.removed === 0 && String((await Invoice.findById(iZ?._id).lean<any>())?.salespersonId) === String(zara._id), j(r));
+}
+
 await mongoose.disconnect();
 await tc.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

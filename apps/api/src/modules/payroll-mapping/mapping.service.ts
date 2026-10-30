@@ -141,7 +141,7 @@ async function payrollRoleId(orgId: string): Promise<Types.ObjectId> {
  * rather than worked around — it is the one thing standing between an employee
  * and earning commission.
  */
-async function ensureSalespersonLogin(
+export async function ensureSalespersonLogin(
   orgId: string,
   employee: { name: string; email: string; employeeCode: string },
 ): Promise<{ userId: Types.ObjectId | null; created: boolean; reason?: string }> {

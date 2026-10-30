@@ -331,11 +331,13 @@ async function main() {
     organizationId: org._id, externalId, amountMinor: 1_000_00, currency: "USD", student: { name: `Student ${externalId}`, code: `ST-${externalId}` },
     paymentMethod: "Bank", status, requestedAt: when(minutesAgo + 30), createdAt: when(minutesAgo + 30), updatedAt: when(minutesAgo), ...extra,
   });
-  await deposit("D1", "pending", 0);
+  // Typed in dirhams at CS Portal (2026-10-30): shown as typed, never the stored USD.
+  await deposit("D1", "pending", 0, { amountOriginal: 3672.5, amountCurrency: "AED" });
   // Paid more than one way: its methods together, in the summary and the table.
   await deposit("D5", "pending", 1, { payments: [{ method: "CARD PAYMENT", amountMinor: 600_00, currency: "USD" }, { method: "Pay by link", amountMinor: 400_00, currency: "USD" }] });
-  await deposit("D2", "approved", 13, { decision: { decidedByName: "Admin", decidedAt: when(13), approvedAmountMinor: 900_00 }, delivery: { state: "failed", lastError: "Student not found" } });
-  await deposit("D3", "rejected", 14, { decision: { decidedByName: "Admin", decidedAt: when(14), reason: "Proof unreadable" }, delivery: { state: "delivered" } });
+  // Typed in dirhams but changed at approval: the approved amount, as it was entered.
+  await deposit("D2", "approved", 13, { amountOriginal: 3672.5, amountCurrency: "AED", decision: { decidedByName: "Admin", decidedAt: when(13), approvedAmountMinor: 900_00 }, delivery: { state: "failed", lastError: "Student not found" } });
+  await deposit("D3", "rejected", 14, { amountOriginal: 3672.5, amountCurrency: "AED", decision: { decidedByName: "Admin", decidedAt: when(14), reason: "Proof unreadable" }, delivery: { state: "delivered" } });
   await deposit("D4", "closed", 15, { closedReason: "Withdrawn at Tetra" });
 
   const listOf = async (token: string, params: Record<string, string | number> = {}) => {
@@ -362,6 +364,14 @@ async function main() {
       && rowOf(pendingList, "tetra_deposit", "Student D1")?.subtitle === "ST-D1 · Bank"
       && /CARD PAYMENT \+ Pay by link/.test(group(s, "tetra_deposit")?.items?.find((i: any) => i.title === "Student D5")?.subtitle ?? ""),
     show([rowOf(pendingList, "tetra_deposit", "Student D5")?.subtitle, group(s, "tetra_deposit")?.items?.map((i: any) => i.subtitle)]));
+
+  {
+    const d1 = rowOf(pendingList, "tetra_deposit", "Student D1"), d5 = rowOf(pendingList, "tetra_deposit", "Student D5");
+    const card = group(s, "tetra_deposit")?.items?.find((i: any) => i.title === "Student D1");
+    check("a deposit typed in dirhams shows as typed — AED 3,672.50, not the stored USD — in the table and the summary card",
+      d1?.amountMinor === 3_672_50 && d1?.currency === "AED" && card?.amountMinor === 3_672_50 && card?.currency === "AED", show([d1?.amountMinor, d1?.currency, card?.amountMinor, card?.currency]));
+    check("…one with nothing typed keeps its stored amount (USD 1,000)", d5?.amountMinor === 1_000_00 && d5?.currency === "USD", show([d5?.amountMinor, d5?.currency]));
+  }
 
   const approvedList = await listOf(tAdmin, { status: "approved", pageSize: 100 });
   const a5 = rowOf(approvedList, "invoice", "Client IN-5");
@@ -404,7 +414,7 @@ async function main() {
   const failedList = await listOf(tAdmin, { status: "failed", pageSize: 100 });
   const d2 = rowOf(failedList, "tetra_deposit", "Student D2");
   check("an approved deposit CS Portal did not take is under Didn't go through, at the amount approved, and not under Approved",
-    d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00 && !rowOf(approvedList, "tetra_deposit", "Student D2"), show(d2 ?? null));
+    d2?.delivery?.state === "failed" && d2?.amountMinor === 900_00 && d2?.currency === "USD" && !rowOf(approvedList, "tetra_deposit", "Student D2"), show(d2 ?? null));
   check("…only what can be turned down is there, and it is counted",
     failedList.rows.every((r) => r.type === "tetra_deposit") && (failedList as { meta?: { failed?: number } }).meta?.failed === failedList.rows.length, show((failedList as { meta?: unknown }).meta ?? null));
   check("nothing waiting or turned down among them, newest first",
@@ -418,6 +428,8 @@ async function main() {
   check("…a claim, a payroll run sent back, a bill and a deposit",
     rowOf(rejectedList, "expense", "Claim EX-5")?.reason === "No receipt" && rowOf(rejectedList, "payroll", "PR-5 · July 2026")?.reason === "Wrong month"
     && !!rowOf(rejectedList, "bill", "Rejected Co") && rowOf(rejectedList, "tetra_deposit", "Student D3")?.reason === "Proof unreadable", show(rejectedList.rows.map((r) => r.title)));
+  check("a rejected deposit typed in dirhams shows as typed", rowOf(rejectedList, "tetra_deposit", "Student D3")?.currency === "AED"
+    && rowOf(rejectedList, "tetra_deposit", "Student D3")?.amountMinor === 3_672_50, show(rowOf(rejectedList, "tetra_deposit", "Student D3") ?? null));
   check("nothing else", rejectedList.rows.every((r) => r.status === "rejected" || r.status === "returned"));
 
   const everything = await listOf(tAdmin, { status: "all", pageSize: 100 });

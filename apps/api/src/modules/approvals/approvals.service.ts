@@ -48,6 +48,19 @@ const collectedOf = (r: any): number => Math.max(r.amountPaidMinor ?? 0, r.enrol
 const depositPaidBy = (r: any): string =>
   (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
 
+/**
+ * A CS Portal deposit's amount as the CS typed it — AED for most — never converted (the user, 2026-10-30: the
+ * Approvals page still said USD; as the Tetra Deposits page since 2026-10-29). The stored amount when nothing else was
+ * typed (a request in dollars, or one from before CS Portal sent it); an amount changed at approval, as it was entered.
+ */
+const depositAmount = (r: any, approvedMinor?: number): { amountMinor: number; currency: string } => {
+  const currency = r.currency ?? "USD";
+  if (approvedMinor !== undefined && approvedMinor !== r.amountMinor) return { amountMinor: approvedMinor, currency };
+  return r.amountOriginal && r.amountCurrency
+    ? { amountMinor: Math.round(Number(r.amountOriginal) * 100), currency: String(r.amountCurrency).toUpperCase() }
+    : { amountMinor: r.amountMinor, currency };
+};
+
 function monthName(period: string): string {
   return new Date(`${period}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
@@ -125,7 +138,7 @@ const KINDS: Kind[] = [
       const [count, rows] = await Promise.all([
         TetraDepositModel.countDocuments(filter),
         TetraDepositModel.find(filter).sort({ requestedAt: -1, createdAt: -1 }).limit(LATEST)
-          .select("student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt").lean(),
+          .select("student amountMinor currency amountOriginal amountCurrency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt").lean(),
       ]);
       return {
         count,
@@ -133,7 +146,7 @@ const KINDS: Kind[] = [
           id: String(r._id),
           title: r.student?.name ?? "Deposit",
           subtitle: [r.student?.code, depositPaidBy(r), r.requestedBy || r.initiatingMentor, r.team].filter(Boolean).join(" · "),
-          amountMinor: r.amountMinor, currency: r.currency ?? "USD",
+          ...depositAmount(r),
           at: iso(r.requestedAt ?? r.createdAt), href: "/approvals",
         })),
       };
@@ -657,7 +670,7 @@ const LIST_KINDS: ListKind[] = [
         TetraDepositModel,
         narrowed({ organizationId: ctx.org, ...which }, ctx, "tetra_deposit"),
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
-        "type student amountMinor currency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
+        "type student amountMinor currency amountOriginal amountCurrency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
         ctx,
       );
       return {
@@ -670,8 +683,7 @@ const LIST_KINDS: ListKind[] = [
             type: "tetra_deposit",
             title: r.student?.name ?? "Deposit",
             subtitle: [r.student?.code, depositPaidBy(r), r.team].filter(Boolean).join(" · "),
-            amountMinor: r.decision?.approvedAmountMinor ?? r.amountMinor,
-            currency: r.currency ?? "USD",
+            ...depositAmount(r, r.decision?.approvedAmountMinor ?? undefined),
             raisedBy: r.requestedBy || r.initiatingMentor || undefined,
             // Sent back to its CS to correct reads as an invoice sent back does.
             status: r.status === "rejected" && r.decision?.sentBack ? "returned" : r.status,

@@ -361,6 +361,65 @@ step("10. The move: Bangalore bonuses approved in Delta HQ go to Bangalore, in r
   check("run again: nothing left to move", again.rows.length === 0, j(again.rows));
 }
 
+/* ── Whose invoice (2026-10-30) ─────────────────────────────────────────── */
+step("Whose invoice: the CS Portal person who raised the payment, not the accountant who approved it");
+{
+  const staff = (name: string, email: string) => User.create({ name, email, passwordHash: "x", status: "active", memberships: [{ organizationId: org._id, roleId: new Types.ObjectId(), status: "active" }] });
+  const dina = await staff("Dina CS", "dina.cs@e2e-course.test");
+  const raise = (code: string, over: Record<string, unknown>) => arrive({ type: "COURSE_UPGRADE", amountMinor: 100_000, currency: "AED", student: student(code), coursePayment: upgradeCp(new Types.ObjectId().toString(), 5_000, { paidTodayAed: 1000 }), ...over });
+
+  const pA = await raise("STU-SP1", { requestedBy: "D. CS", requestedByEmail: "DINA.CS@e2e-course.test" });
+  await approve(pA.id, 100_000);
+  const iA = await invoiceOf(pA.id);
+  check("raised by someone with an account here, found by the email CS Portal sent: the invoice is theirs, no flag",
+    String(iA?.salespersonId) === String(dina._id) && iA?.salespersonName === "Dina CS" && !(iA?.external?.flags ?? []).length && (await row(pA.id))?.requestedByEmail === "dina.cs@e2e-course.test",
+    j(iA && { s: iA.salespersonName, f: iA.external?.flags }));
+
+  const pB = await raise("STU-SP2", { requestedBy: "dina  cs" });
+  await approve(pB.id, 100_000);
+  const iB = await invoiceOf(pB.id);
+  check("…no email sent (an older CS Portal): found by name, any case or spacing", String(iB?.salespersonId) === String(dina._id), j(iB?.salespersonName));
+
+  const pC = await raise("STU-SP3", { requestedBy: "Nobody Here", initiatingMentor: "Dina CS" });
+  await approve(pC.id, 100_000);
+  check("…not found, but the initiating mentor is: theirs", String((await invoiceOf(pC.id))?.salespersonId) === String(dina._id));
+
+  const pD = await raise("STU-SP4", { requestedBy: "Nobody Here" });
+  await approve(pD.id, 100_000);
+  const iD = await invoiceOf(pD.id);
+  check("nobody here by that name or email: the approver's, as before, flagged to reassign",
+    String(iD?.salespersonId) === String(asha._id) && (iD?.external?.flags ?? []).some((f: string) => /Nobody Here \(CS Portal\) has no account here/.test(f)), j(iD && { s: iD.salespersonName, f: iD.external?.flags }));
+
+  await staff("Twin Name", "twin1@e2e-course.test"); await staff("Twin Name", "twin2@e2e-course.test");
+  const pE = await raise("STU-SP5", { requestedBy: "Twin Name" });
+  await approve(pE.id, 100_000);
+  check("two people with that name: neither guessed — the approver's, flagged", String((await invoiceOf(pE.id))?.salespersonId) === String(asha._id));
+
+  // The ones made before: everything raised by "Cara CS" went to the approver. Cara has an account now.
+  const { fixCourseInvoiceSalespeople, undoCourseInvoiceSalespeople } = await import("./course-invoice-salespeople");
+  const cara = await staff("Cara CS", "cara.cs@e2e-course.test");
+  const ours = { organizationId: org._id, "external.source": "tetra-course" };
+  const before = await Invoice.find(ours).select("salespersonId").lean<any[]>();
+  const carasBefore = before.filter((i) => String(i.salespersonId) === String(asha._id)).length;
+  const dry = await fixCourseInvoiceSalespeople({ write: false });
+  const would = dry.rows.filter((r) => r.outcome === "would change");
+  check("the fix-up, read only: Cara's earlier invoices would be hers, nothing written",
+    would.length > 0 && would.every((r) => /^Cara CS \(by name\)/.test(r.to)) && (await Invoice.countDocuments({ ...ours, salespersonId: cara._id })) === 0, j(dry.rows.map((r) => [r.invoice, r.to, r.outcome])));
+  check("…one given to someone else since is left alone; Nobody Here's has nobody", dry.rows.some((r) => r.outcome === "reassigned by hand") && dry.rows.some((r) => r.outcome === "no account" && r.raisedBy === "Nobody Here"), j(dry.rows.map((r) => r.outcome)));
+  let refused = "";
+  try { await fixCourseInvoiceSalespeople({ write: true, expect: would.length + 1 }); } catch (e) { refused = (e as Error).message; }
+  check("…--expect with the wrong count: refused, nothing written", /--expect/.test(refused) && (await Invoice.countDocuments({ ...ours, salespersonId: cara._id })) === 0, refused);
+  const undoFile = `${process.env.TMPDIR ?? "/tmp"}/course-invoice-salespeople-e2e-${Date.now()}.json`;
+  const done = await fixCourseInvoiceSalespeople({ write: true, expect: would.length, undoFile });
+  check("written: those invoices are Cara's", (await Invoice.countDocuments({ ...ours, salespersonId: cara._id })) === would.length && done.rows.filter((r) => r.outcome === "changed").length === would.length, j(done.rows.map((r) => r.outcome)));
+  check("…the Bangalore organization's left alone (Cara isn't in it), flagged", (await Invoice.countDocuments({ "external.source": "tetra-course", organizationId: { $ne: org._id }, salespersonId: cara._id })) === 0);
+  const again = await fixCourseInvoiceSalespeople({ write: false });
+  check("run again: nothing more to change", again.rows.filter((r) => r.outcome === "would change").length === 0, j(again.rows.map((r) => r.outcome)));
+  await undoCourseInvoiceSalespeople(done.undoFile ?? undoFile);
+  check("…and the undo file puts them back", (await Invoice.countDocuments({ ...ours, salespersonId: cara._id })) === 0
+    && (await Invoice.countDocuments({ ...ours, salespersonId: asha._id })) === carasBefore - 0, `${await Invoice.countDocuments({ ...ours, salespersonId: asha._id })} vs ${carasBefore}`);
+}
+
 await mongoose.disconnect();
 await tc.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

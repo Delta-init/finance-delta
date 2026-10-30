@@ -167,7 +167,10 @@ const inboundTetraDepositObject = z.object({
   resubmitReason: optionalText(1000),
   requestedAt: optionalText(40),
   requestedBy: optionalText(120),
+  /** Who raised it and the initiating mentor, by email (2026-10-30): the invoice a course payment makes is theirs here. */
+  requestedByEmail: z.string().trim().toLowerCase().max(160).optional().default(""),
   initiatingMentor: optionalText(120),
+  initiatingMentorEmail: z.string().trim().toLowerCase().max(160).optional().default(""),
   primaryMentor: optionalText(120),
   meetingMentor: optionalText(120),
   /** A balance payment's facts — required for, and only kept on, type ENROLMENT_PAYMENT. */

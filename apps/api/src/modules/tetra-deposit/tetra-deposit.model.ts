@@ -68,7 +68,10 @@ const tetraDepositSchema = new Schema({
   notes: { type: String, default: "" },
   requestedAt: { type: Date },
   requestedBy: { type: String, default: "" },
+  /** Their emails in CS Portal (2026-10-30) — whose the invoice a course payment makes is (course-invoice.ts). */
+  requestedByEmail: { type: String, default: "" },
   initiatingMentor: { type: String, default: "" },
+  initiatingMentorEmail: { type: String, default: "" },
   primaryMentor: { type: String, default: "" },
   meetingMentor: { type: String, default: "" },
   decision: {

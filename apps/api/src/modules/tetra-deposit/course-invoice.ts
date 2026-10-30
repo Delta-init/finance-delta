@@ -4,6 +4,7 @@ import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { sendNotice } from "../../lib/email";
 import { TetraDepositModel } from "./tetra-deposit.model";
+import { courseSalesperson } from "./course-invoice-salesperson";
 
 /*
  * Course payments from CS Portal become invoices (the user, 2026-10-12).
@@ -159,8 +160,11 @@ async function openInvoiceFor(orgId: Types.ObjectId, customerId: unknown, row: R
   return match ? { invoice: match, made: false } : null;
 }
 
-/** A new invoice for the course: its price, in AED (rupees for Bangalore), issued on the day it was paid, approved by the accountant who approved the payment. */
-async function makeInvoice(orgId: Types.ObjectId, customerId: string, salespersonId: string, row: Row, amountMinor: number) {
+/**
+ * A new invoice for the course: its price, in AED (rupees for Bangalore), issued on the day it was paid, approved by the
+ * accountant who approved the payment — and the CS Portal person who raised it as its salesperson (2026-10-30).
+ */
+async function makeInvoice(orgId: Types.ObjectId, customerId: string, salespersonId: string, row: Row, amountMinor: number, flags: string[] = []) {
   const { Invoice } = await import("../invoice/invoice.model");
   const { createInvoice } = await import("../invoice/invoice.service");
   const { Organization } = await import("../organization/organization.model");
@@ -192,7 +196,7 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
     lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
   } as never, { all: true });
   await Invoice.updateOne({ _id: new Types.ObjectId(created.id) }, {
-    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags: [] }, status: "sent" },
+    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent" },
   });
   return Invoice.findById(created.id).lean<any>();
 }
@@ -323,7 +327,9 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       const open = await openInvoiceFor(orgId, new Types.ObjectId(customer.id), row, amountMinor);
       if (open) invoice = open.invoice;
       else {
-        invoice = await makeInvoice(orgId, customer.id, salespersonId, row, amountMinor);
+        // Whose it is: the CS Portal person who raised the payment, not the approver (2026-10-30).
+        const seller = await courseSalesperson(orgId, row, { id: salespersonId, name: String(d.decidedByName ?? "") });
+        invoice = await makeInvoice(orgId, customer.id, seller.id, row, amountMinor, seller.flag ? [seller.flag] : []);
         created = true;
       }
       // Remembered before the payment, so a retry finds this invoice rather than making another.

@@ -1266,6 +1266,9 @@ export async function restoreInvoice(orgId: string, id: string): Promise<Invoice
   return toDTO(doc);
 }
 
+/** Files other apps link to as well — removed from an invoice, never deleted from storage. */
+export const keepsSharedFile = (key: string): boolean => key.startsWith("enrolment-receipts/");
+
 /** Ten is plenty for an ID, a form and a payment slip, and stops a runaway loop. */
 const MAX_ATTACHMENTS = 10;
 
@@ -1330,7 +1333,10 @@ export async function removeAttachment(
 
   // The row going is what the caller asked for; the object not going is a
   // tidiness problem, not a reason to fail and leave the row behind.
-  if (removed?.key) {
+  // A sales CRM's receipt from the close (enrolment-receipts/) stays in storage:
+  // the CRM's lead and the CS Portal link the same file, and deleting it left
+  // their receipts dead (2026-10-30). Only this invoice's link to it goes.
+  if (removed?.key && !keepsSharedFile(removed.key)) {
     try {
       const { deleteFile } = await import("../../lib/storage");
       await deleteFile(removed.key);

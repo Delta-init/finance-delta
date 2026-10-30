@@ -498,6 +498,17 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             title={`${run.runNumber} · ${run.period}`}
             formats={["excel", "csv", "pdf"]}
             fetchRows={async () => lines.map((l) => ({ ...l, runCurrency: run.currency }))}
+            // A sheet per currency — Dubai (AED), India (INR) — each with its total, and All when there are two.
+            excelSheets={(rows) => {
+              const groups = new Map<string, typeof rows>();
+              for (const r of rows) {
+                const c = r.currency || r.runCurrency;
+                groups.set(c, [...(groups.get(c) ?? []), r]);
+              }
+              const sheets = [...groups].sort((a, b) => b[1].length - a[1].length)
+                .map(([c, rs]) => ({ title: PLACE[c] ? `${PLACE[c]} (${c})` : c, rows: rs, total: true }));
+              return sheets.length > 1 ? [...sheets, { title: "All", rows }] : sheets;
+            }}
           />
           <Button variant="ghost" size="sm" onClick={() => setAllOpen(!allOpen)}>
             {allOpen ? "Hide the lines" : "Show every line"}

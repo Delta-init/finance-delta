@@ -45,6 +45,30 @@ export function exportToExcel<T>(filename: string, sheetTitle: string, columns: 
   XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
 }
 
+/** One sheet of a workbook: a title and its rows; `total` adds a last row summing every numeric column. */
+export interface ExportSheet<T> { title: string; rows: T[]; total?: boolean }
+
+/**
+ * Several sheets in one Excel file (2026-10-30: the payroll run as Dubai, India and All). Each sheet has the same
+ * columns; a total row, when asked for, sums the columns whose every value is a number and labels the first.
+ */
+export function exportSheetsToExcel<T>(filename: string, columns: ExportColumn<T>[], sheets: ExportSheet<T>[]): void {
+  const wb = XLSX.utils.book_new();
+  for (const sheet of sheets) {
+    const { headers, body } = matrix(columns, sheet.rows);
+    if (sheet.total && body.length) {
+      const sums: Array<string | number> = columns.map((_, i) => (body.every((r) => typeof r[i] === "number")
+        ? Math.round(body.reduce((a, r) => a + (r[i] as number), 0) * 100) / 100 : ""));
+      sums[0] = "Total";
+      body.push(sums);
+    }
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...body]);
+    ws["!cols"] = headers.map((h) => ({ wch: Math.max(12, Math.min(40, h.length + 4)) }));
+    XLSX.utils.book_append_sheet(wb, ws, sheet.title.replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || "Sheet");
+  }
+  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
+}
+
 export function exportToPdf<T>(title: string, filename: string, columns: ExportColumn<T>[], rows: T[]): void {
   const { headers, body } = matrix(columns, rows);
   const doc = new jsPDF({ orientation: columns.length > 6 ? "landscape" : "portrait" });

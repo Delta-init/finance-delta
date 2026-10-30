@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ApiError, type QueryParams } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { fetchAllRows, exportToCsv, exportToExcel, exportToPdf, type ExportColumn } from "@/lib/export";
+import { fetchAllRows, exportToCsv, exportToExcel, exportSheetsToExcel, exportToPdf, type ExportColumn, type ExportSheet } from "@/lib/export";
 
 type ExportFormat = "csv" | "excel" | "pdf";
 
@@ -35,9 +35,11 @@ interface ExportButtonProps<T> {
    * applied here (inventory's low stock) — the table's filters, every page. Left out: `resource` and `params`, paged.
    */
   fetchRows?: () => Promise<T[]>;
+  /** Excel only: split the rows over several sheets (the payroll run's Dubai / India / All). Left out: one sheet. */
+  excelSheets?: (rows: T[]) => ExportSheet<T>[];
 }
 
-export function ExportButton<T>({ resource, params, columns, filename, title, disabled, size = "sm", formats = ["excel", "pdf"], fetchRows }: ExportButtonProps<T>) {
+export function ExportButton<T>({ resource, params, columns, filename, title, disabled, size = "sm", formats = ["excel", "pdf"], fetchRows, excelSheets }: ExportButtonProps<T>) {
   const [busy, setBusy] = useState<null | ExportFormat>(null);
   const [open, setOpen] = useState(false);
 
@@ -49,7 +51,8 @@ export function ExportButton<T>({ resource, params, columns, filename, title, di
         toast.error("Nothing to export for the current filters");
         return;
       }
-      if (kind === "excel") exportToExcel(filename, title, columns, rows);
+      if (kind === "excel" && excelSheets) exportSheetsToExcel(filename, columns, excelSheets(rows));
+      else if (kind === "excel") exportToExcel(filename, title, columns, rows);
       else if (kind === "csv") exportToCsv(filename, columns, rows);
       else exportToPdf(title, filename, columns, rows);
       toast.success(`Exported ${rows.length} record${rows.length === 1 ? "" : "s"}`);

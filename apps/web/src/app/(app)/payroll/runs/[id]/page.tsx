@@ -36,11 +36,37 @@ const LINE_LABEL: Record<LineStatus, string> = {
   pending: "To pay", on_hold: "Held", partially_paid: "Part paid", paid: "Paid",
 };
 
+/*
+ * A payslip's lines split the way HRMS's own Payroll page shows them (the user,
+ * 2026-10-30: "show the basic salary of every employee, deductions, every
+ * expense and the amount with details, same as HRMS"). HRMS sends the lines,
+ * not the split, so it is read from HRMS's fixed labels: "Basic"; "Loss of Pay
+ * (…)", "Late Penalty (…)", "Early-Out Penalty (…)"; "Loan repayment…" and
+ * "Salary advance…" (the salary sheet's too). Any other earning is an add-on
+ * (one-time payments, reimbursements, overtime) and any other deduction is
+ * "other".
+ */
+const ATTENDANCE_DEDUCTION = /^(Loss of Pay|Late Penalty|Early-Out Penalty)\b/;
+const LOAN_DEDUCTION = /^(Loan repayment|Salary advance)\b/;
+function splitLines(l: RunLine) {
+  const sum = (items: RunLine["earnings"], keep: (label: string) => boolean) =>
+    items.filter((i) => keep(i.label)).reduce((a, i) => a + i.amountMinor, 0);
+  return {
+    basic: sum(l.earnings, (x) => x.trim().toLowerCase() === "basic"),
+    addOns: sum(l.earnings, (x) => x.trim().toLowerCase() !== "basic"),
+    attendance: sum(l.deductions, (x) => ATTENDANCE_DEDUCTION.test(x)),
+    loan: sum(l.deductions, (x) => LOAN_DEDUCTION.test(x)),
+    other: sum(l.deductions, (x) => !ATTENDANCE_DEDUCTION.test(x) && !LOAN_DEDUCTION.test(x)),
+  };
+}
+
 export default function PayrollRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: run, isLoading } = usePayrollRun(id);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Every row's lines at once, rather than one row at a time.
+  const [allOpen, setAllOpen] = useState(false);
   // Who the adjust dialog is about. One line is the per-person case; several
   // is a bulk apply. Empty means closed.
   const [adjusting, setAdjusting] = useState<RunLine[]>([]);
@@ -405,6 +431,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-64"
           />
+          <Button variant="ghost" size="sm" onClick={() => setAllOpen(!allOpen)}>
+            {allOpen ? "Hide the lines" : "Show every line"}
+          </Button>
           <span className="ml-auto text-xs text-foreground-muted">{lines.length} of {run.lines.length}</span>
         </div>
 
@@ -440,14 +469,29 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 )}
                 <th className="px-5 py-3 font-medium">Employee</th>
                 <th className="px-5 py-3 font-medium">Department</th>
-                <th className="px-5 py-3 text-right font-medium">Gross</th>
-                <th className="px-5 py-3 text-right font-medium">Deductions</th>
-                <th className="px-5 py-3 text-right font-medium">Payable</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Basic</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Add-ons</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Gross</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">LOP &amp; penalties</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Loan &amp; advance</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Other deductions</th>
+                {/* Commission and anything else accounts added or took off here — so the row adds up to Payable. */}
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">By accounts</th>
+                <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Payable</th>
                 <th className="px-5 py-3 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
-              {lines.map((l) => (
+              {lines.map((l) => {
+                const cur = l.currency || run.currency;
+                const parts = splitLines(l);
+                // A nought is a dash, so the figures that are there stand out.
+                const part = (minor: number, tone = "") => (
+                  <td className={`whitespace-nowrap px-5 py-3 text-right ${tone}`}>
+                    {minor ? <MoneyDisplay minor={minor} currency={cur} /> : <span className="text-foreground-muted">—</span>}
+                  </td>
+                );
+                return (
                 // Fragment, not <>, because the key has to live on the element
                 // that is actually the list child — the shorthand cannot take one.
                 <Fragment key={l.id}>
@@ -483,17 +527,26 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                       </div>
                     </td>
                     <td className="px-5 py-3 text-foreground-muted">{l.departmentName || "—"}</td>
-                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={l.currency || run.currency} /></td>
-                    <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.deductionsMinor} currency={l.currency || run.currency} /></td>
-                    <td className="px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={l.currency || run.currency} showConverted /></td>
+                    {part(parts.basic)}
+                    {part(parts.addOns, "text-success")}
+                    <td className="whitespace-nowrap px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={cur} /></td>
+                    {part(parts.attendance, "text-danger")}
+                    {part(parts.loan, "text-danger")}
+                    {part(parts.other, "text-danger")}
+                    <td className={`whitespace-nowrap px-5 py-3 text-right ${l.adjustmentsMinor < 0 ? "text-danger" : "text-success"}`}>
+                      {l.adjustmentsMinor
+                        ? <>{l.adjustmentsMinor > 0 ? "+" : "−"}<MoneyDisplay minor={Math.abs(l.adjustmentsMinor)} currency={cur} /></>
+                        : <span className="text-foreground-muted">—</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={cur} showConverted /></td>
                     <td className="px-5 py-3">
                       <Badge tone={LINE_TONE[l.status]}>{LINE_LABEL[l.status]}</Badge>
                       {l.holdReason && <div className="mt-1 text-xs text-danger">{l.holdReason}</div>}
                     </td>
                   </tr>
-                  {expanded === l.id && (
+                  {(allOpen || expanded === l.id) && (
                     <tr className="border-b border-border bg-surface-muted/50">
-                      <td colSpan={selectable ? 7 : 6} className="px-5 py-4">
+                      <td colSpan={selectable ? 12 : 11} className="px-5 py-4">
                         <div className="grid gap-6 sm:grid-cols-2">
                           <Breakdown title="Earnings" items={l.earnings} currency={l.currency || run.currency} />
                           <Breakdown title="Deductions" items={l.deductions} currency={l.currency || run.currency} />
@@ -559,9 +612,10 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                     </tr>
                   )}
                 </Fragment>
-              ))}
+                );
+              })}
               {lines.length === 0 && (
-                <tr><td colSpan={canPay ? 7 : 6} className="px-5 py-10 text-center text-foreground-muted">Nothing matches that search.</td></tr>
+                <tr><td colSpan={selectable ? 12 : 11} className="px-5 py-10 text-center text-foreground-muted">Nothing matches that search.</td></tr>
               )}
             </tbody>
           </table>

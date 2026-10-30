@@ -9,6 +9,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StateBadge } from "./state-badge";
 import type { EmpRow, SyncDecision } from "./types";
 
+/** HRMS's two ways of leaving (its LEFT_STATUSES). */
+const LEFT = new Set(["terminated", "resigned"]);
+/**
+ * Somebody who has left and is already inactive here: nothing for a sync to
+ * do, so the row is folded away unless asked for (2026-10-30: "why are
+ * resigned employees showing"). One who left but is still active here stays in
+ * view — that row needs deactivating.
+ */
+const settledLeaver = (r: EmpRow) => LEFT.has(r.hrmsStatus) && r.state === "linked" && r.changes.length === 0;
+
 const ACTIONS: Record<EmpRow["state"], SyncDecision["action"][]> = {
   linked: ["link", "skip"],
   proposed: ["link", "create", "import_only", "skip"],
@@ -67,10 +77,14 @@ export function EmployeeReview({
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("all");
+  const [showLeft, setShowLeft] = useState(false);
+  const leftCount = useMemo(() => rows.filter(settledLeaver).length, [rows]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
+      // A search finds anybody; otherwise people who left and need nothing stay folded away.
+      if (!showLeft && !q && settledLeaver(r)) return false;
       if (filter === "issues" && r.issues.length === 0) return false;
       if (filter !== "all" && filter !== "issues" && r.state !== filter) return false;
       if (!q) return true;
@@ -80,7 +94,7 @@ export function EmployeeReview({
         r.email.toLowerCase().includes(q)
       );
     });
-  }, [rows, search, filter]);
+  }, [rows, search, filter, showLeft]);
 
   return (
     <Card>
@@ -115,6 +129,11 @@ export function EmployeeReview({
             <SelectItem value="orphaned">Gone from HRMS</SelectItem>
           </SelectContent>
         </Select>
+        {leftCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={() => setShowLeft(!showLeft)}>
+            {showLeft ? `Hide the ${leftCount} who left` : `Show the ${leftCount} who left`}
+          </Button>
+        )}
         <span className="ml-auto text-xs text-foreground-muted">
           {visible.length} of {rows.length}
         </span>
@@ -152,7 +171,7 @@ export function EmployeeReview({
                   </td>
                   <td className="px-5 py-3">
                     <StateBadge state={row.state} />
-                    {row.hrmsStatus === "terminated" && (
+                    {LEFT.has(row.hrmsStatus) && (
                       <div className="mt-1 text-xs text-foreground-muted">Left the company</div>
                     )}
                   </td>

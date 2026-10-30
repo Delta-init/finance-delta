@@ -296,12 +296,20 @@ function diffDepartments(
   });
 }
 
+/**
+ * Whether HRMS says this person has left. HRMS has two ways of leaving —
+ * terminated and resigned (its LEFT_STATUSES) — and only the first was
+ * checked here, so somebody who resigned stayed active, and payable, in
+ * finance after every sync (2026-10-30).
+ */
+export const hasLeftHrms = (status?: string | null) => status === "terminated" || status === "resigned";
+
 export async function previewSync(orgId: string, hrmsOrgId: string) {
   const link = await requireLink(orgId, hrmsOrgId);
 
   const [hrmsDepts, hrmsEmps, financeDepts, deptLinks, existing, users] = await Promise.all([
     hrmsClient.departments(hrmsOrgId),
-    // Leavers included: a terminated employee still needs their finance record
+    // Leavers included: somebody who left still needs their finance record
     // deactivated, and that only happens if they appear in the feed at all.
     hrmsClient.allEmployees(hrmsOrgId, { includeInactive: true }),
     Department.find({ organizationId: oid(orgId) }).select("name").lean(),
@@ -361,7 +369,7 @@ export async function previewSync(orgId: string, hrmsOrgId: string) {
           to: e.email ? "will be created" : "needs an email in HRMS",
         });
       }
-      const shouldBeActive = e.status !== "terminated";
+      const shouldBeActive = !hasLeftHrms(e.status);
       if (shouldBeActive !== (current.status === "active")) {
         changes.push({ field: "status", from: current.status, to: shouldBeActive ? "active" : "inactive" });
       }
@@ -617,7 +625,7 @@ export async function applySync(
             currency: remote.currency,
             joiningDate: remote.joiningDate ? new Date(remote.joiningDate) : null,
             hrmsStatus: remote.status,
-            status: remote.status === "terminated" ? "inactive" : "active",
+            status: hasLeftHrms(remote.status) ? "inactive" : "active",
             hasBankDetails: remote.hasBankDetails,
             lastSyncedAt: new Date(),
             ...(userId ? { userId } : {}),

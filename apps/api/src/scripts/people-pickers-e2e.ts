@@ -8,7 +8,9 @@
  *     past the hundredth name (Vandana) were never in it; past 1,000 is refused;
  *   - scripts/hrms-missing-employees.ts says, per linked HRMS organisation: not in finance at all, in finance with no
  *     account (so not a salesperson), matching a finance account not linked yet, blocked and why, gone from HRMS;
- *     people who have left are counted, not listed, unless asked.
+ *     people who have left are counted, not listed, unless asked;
+ *   - the mapping (previewSync) takes a resignation as leaving, as it does a termination (2026-10-30): somebody who
+ *     resigned in HRMS and is still active here is offered deactivation, one already inactive needs nothing.
  *
  * Run through scripts/people-pickers-e2e.sh (throwaway mongod, stand-in HRMS, no .env anywhere).
  */
@@ -107,6 +109,19 @@ check("the one who left: counted, not listed", r?.leftCount === 1 && !r.notInFin
 const [all] = await missingEmployees(ORG, true);
 check("--all lists them too", all!.notInFinance.some((e) => e.name === "Old Hand"));
 check("nothing written", (await Employee.countDocuments()) === 3 && (await User.countDocuments()) === 131);
+
+/* ── 3 ── */
+step("3. Resigned is leaving too");
+const { previewSync, hasLeftHrms } = await import("../modules/payroll-mapping/mapping.service");
+ROSTER.push(emp("E10", "Rhea", "rhea@x.test", "resigned"), emp("E11", "Tom", "tom@x.test", "resigned"));
+await Employee.create({ organizationId: org._id, hrmsOrgId: H1, hrmsEmployeeId: "E10", employeeCode: "E10", name: "Rhea", email: "rhea@x.test", status: "active" });
+await Employee.create({ organizationId: org._id, hrmsOrgId: H1, hrmsEmployeeId: "E11", employeeCode: "E11", name: "Tom", email: "tom@x.test", status: "inactive" });
+check("terminated and resigned have left; active has not", hasLeftHrms("terminated") && hasLeftHrms("resigned") && !hasLeftHrms("active") && !hasLeftHrms(undefined));
+const preview = await previewSync(ORG, H1);
+const row = (id: string) => preview.employees.find((e) => e.hrmsEmployeeId === id);
+check("resigned, still active here: offered active → inactive", j(row("E10")?.changes.find((c) => c.field === "status")) === j({ field: "status", from: "active", to: "inactive" }), j(row("E10")));
+check("resigned, already inactive here: no status change", !row("E11")?.changes.some((c) => c.field === "status"), j(row("E11")));
+check("still employed: no status change", !row("E1")?.changes.some((c) => c.field === "status"), j(row("E1")));
 
 server.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} passed\x1b[0m`);

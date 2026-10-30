@@ -100,25 +100,33 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
 
   const account = await BankAccount.findOne({ _id: oid(input.bankAccountId), organizationId: oid(orgId) });
   if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
-  if (account.currency !== run.currency) {
-    // Refused rather than converted. Paying an AED payroll from an INR account
-    // needs a rate and a decision about who bears the difference, and guessing
-    // either would be inventing a number.
-    throw new AppError(
-      "VALIDATION_ERROR",
-      `This run is in ${run.currency} but that account is in ${account.currency}.`,
-    );
-  }
 
-  const selection = selectPayableLines(run.lines as unknown as PayableLine[], input.lineIds);
+  // A payment is in its account's currency and covers only the people paid in
+  // it. A month can hold salaries in dirhams and in rupees (October 2026: 81 and
+  // 22), and an account pays out in one. Only the run's own currency used to be
+  // checked, so a dirham account took every rupee salary too, as dirhams.
+  // Converting instead needs a rate and a decision about who bears the
+  // difference, and guessing either would be inventing a number, so rupees are
+  // paid from a rupee account.
+  const selection = selectPayableLines(run.lines as unknown as PayableLine[], input.lineIds, {
+    currency: account.currency,
+    fallback: run.currency,
+  });
   const { allocations, amountMinor } = selection;
 
   if (!allocations.length) {
+    const { held, otherCurrency } = selection.skipped;
+    const elsewhere =
+      otherCurrency > 0
+        ? `${otherCurrency} ${otherCurrency === 1 ? "person is" : "people are"} paid in another currency — pay them from an account in theirs.`
+        : "";
     throw new AppError(
       "CONFLICT",
-      selection.skipped.held > 0
-        ? `Nobody selected can be paid — ${selection.skipped.held} person(s) are held for missing bank details.`
-        : "There is nothing left to pay on this run.",
+      held > 0
+        ? `Nobody paid in ${account.currency} can be paid — ${held} person(s) are held for missing bank details. ${elsewhere}`.trim()
+        : otherCurrency > 0
+          ? `Nobody ${input.lineIds?.length ? "selected" : "still owed"} on ${run.runNumber} is paid in ${account.currency}. ${elsewhere}`
+          : "There is nothing left to pay on this run.",
     );
   }
 
@@ -167,6 +175,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     bankAccountId: account._id,
     bankAccountName: account.accountName,
     bankTransactionId: transaction._id,
+    currency: account.currency,
     amountMinor,
     allocations,
     syncedToHrms: false,
@@ -196,7 +205,8 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     status: run.status,
     paidCount: allocations.length,
     amountMinor,
-    amountFormatted: formatMinor(amountMinor, run.currency),
+    currency: account.currency,
+    amountFormatted: formatMinor(amountMinor, account.currency),
     bankTransactionId: String(transaction._id),
     expenseId,
     commissionsSettled: commissions,
@@ -248,7 +258,7 @@ async function syncPaymentToHrms(run: PayrollRunDoc, paymentId: string): Promise
       runNumber: run.runNumber,
       paymentId,
       amountMinor: payment.amountMinor,
-      currency: run.currency,
+      currency: payment.currency || run.currency,
       error: payment.syncError,
     });
     return {
@@ -383,7 +393,7 @@ export async function reversePayment(
   return {
     paymentId,
     alreadyReversed: false,
-    message: `${formatMinor(payment.amountMinor, run.currency)} reversed across ${payment.allocations.length} people`,
+    message: `${formatMinor(payment.amountMinor, payment.currency || run.currency)} reversed across ${payment.allocations.length} people`,
     status: run.status,
     commissionsReopened: unsettled,
     bankTransactionId: reversalTxId ? String(reversalTxId) : null,

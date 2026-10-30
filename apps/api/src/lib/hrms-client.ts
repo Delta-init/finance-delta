@@ -184,10 +184,20 @@ export interface HrmsBatchSummary {
   month: string;
   status: string;
   currency: string;
+  /**
+   * From an HRMS since 2026-10-30, these four are `currency`'s people alone; the
+   * rest of the month is in `byCurrency`. Before that, and on a month submitted
+   * before then, they add every payslip together whatever its currency.
+   */
   employeeCount: number;
   grossTotal: number;
   deductionTotal: number;
   netTotal: number;
+  /**
+   * The same per currency, the batch's own first. Absent from an older HRMS and
+   * empty on a month submitted before HRMS split its totals.
+   */
+  byCurrency?: Array<{ currency: string; employeeCount: number; grossTotal: number; deductionTotal: number; netTotal: number }>;
   submittedAt: string | null;
   financeRunId: string;
 }

@@ -40,28 +40,33 @@ export function MoneyDisplay({
   className?: string;
   showConverted?: boolean;
 }) {
-  const { currency: displayCurrency, baseCurrency, convert, rateFor, ratesDate } = useCurrency();
+  const { currency: displayCurrency, baseCurrency, convert, rateFor, rateBetween, ratesDate } = useCurrency();
 
   // ── The amount carries its own currency ────────────────────────────────────
   if (sourceCurrency) {
     const native = formatMoney(minor, sourceCurrency);
     const differs = sourceCurrency !== displayCurrency;
 
-    if (!differs || !showConverted) {
+    // Nothing is nothing in any currency: "INR 0 ≈ AED 0.00" only adds noise.
+    if (!differs || !showConverted || minor === 0) {
       return <span className={cn("font-numeric", className)}>{native}</span>;
     }
 
-    // Cross-rate: both sides are quoted against AED, so one divides out.
-    const from = rateFor(sourceCurrency as CurrencyCode);
-    const to = rateFor(displayCurrency);
-    if (!from) return <span className={cn("font-numeric", className)}>{native}</span>;
+    // Cross-rate: both sides are quoted against AED, so one divides out. None
+    // while the table loads, or for a currency it does not carry, and then no
+    // conversion is shown: a missing rate read as 1 printed rupees as the same
+    // number of dirhams, the very mistake this component exists to prevent.
+    const rate = rateBetween(sourceCurrency, displayCurrency);
+    if (!rate) return <span className={cn("font-numeric", className)}>{native}</span>;
 
-    const asDisplay = Math.round((minor * to) / from);
-    const perUnit = (to / from).toFixed(4);
+    const asDisplay = Math.round(minor * rate);
+    const perUnit = rate.toFixed(4);
 
     return (
       <span className={cn("font-numeric", className)}>
-        {native}
+        {/* Kept on one line: only the conversion may wrap, never "INR" from its figure. */}
+        <span className="whitespace-nowrap">{native}</span>
+        <wbr />
         <Tooltip
           label={`Converted at 1 ${sourceCurrency} = ${perUnit} ${displayCurrency}${ratesDate ? ` (rates ${ratesDate})` : ""}. The record is in ${sourceCurrency}.`}
         >

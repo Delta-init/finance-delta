@@ -116,7 +116,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
             <MoneyDisplay key="g" minor={p.grossMinor} currency={p.currency} />,
             <MoneyDisplay key="d" minor={p.deductionsMinor} currency={p.currency} />,
             p.commissionMinor ? <MoneyDisplay key="c" minor={p.commissionMinor} currency={p.currency} /> : "—",
-            <MoneyDisplay key="p" minor={p.amountPaidMinor} currency={p.currency} className="font-medium" />,
+            <MoneyDisplay key="p" minor={p.amountPaidMinor} currency={p.currency} className="font-medium" showConverted />,
           ])}
           empty="No payroll in this period."
         />

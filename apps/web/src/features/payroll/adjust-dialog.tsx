@@ -24,13 +24,19 @@ import type { RunLine } from "./types";
  * through `toMinor`, which builds the figure from the digits rather than
  * multiplying by a hundred. Applied across sixty people, a fil lost per head
  * is a payroll that does not reconcile.
+ *
+ * In each person's own currency (2026-10-30): the item lands on their payslip,
+ * so 500 on a rupee salary is 500 rupees. One amount for people paid in
+ * different currencies means a different sum of money to each, so that is
+ * refused here rather than written to their payslips.
  */
 export function AdjustDialog({
-  lines, currency, open, onOpenChange, onSubmit, pending,
+  lines, runCurrency, open, onOpenChange, onSubmit, pending,
 }: {
   /** Who this applies to. One entry is the ordinary case; many is a bulk apply. */
   lines: RunLine[];
-  currency: string;
+  /** What a line without a currency of its own is paid in. */
+  runCurrency: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (items: NewAdjustment[]) => void;
@@ -42,8 +48,11 @@ export function AdjustDialog({
   const [notes, setNotes] = useState("");
 
   const bulk = lines.length > 1;
+  const currencies = [...new Set(lines.map((l) => (l.currency || runCurrency).trim().toUpperCase()))];
+  const currency = currencies[0] ?? runCurrency;
+  const mixed = currencies.length > 1;
   const minorEach = toMinor(amount);
-  const valid = label.trim().length > 0 && minorEach > 0 && lines.length > 0;
+  const valid = label.trim().length > 0 && minorEach > 0 && lines.length > 0 && !mixed;
 
   function reset() {
     setKind("addition"); setLabel(""); setAmount(""); setNotes("");
@@ -78,6 +87,13 @@ export function AdjustDialog({
                 {lines.length > 3 ? ` and ${lines.length - 3} more` : ""}
               </p>
             </div>
+          )}
+
+          {mixed && (
+            <p className="rounded-lg border border-danger/20 bg-danger/5 p-2.5 text-xs text-danger">
+              These people are paid in {currencies.join(" and ")}. One amount would be a different sum of
+              money to each, so add it to each currency&rsquo;s people separately.
+            </p>
           )}
 
           <div className="space-y-1.5">

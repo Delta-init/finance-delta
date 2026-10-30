@@ -381,7 +381,8 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
         runNumber: run.runNumber,
         period: run.period,
         status: run.status,
-        currency: run.currency,
+        // Their own: somebody paid in rupees has a rupee payslip on a dirham run.
+        currency: l.currency || run.currency,
         grossMinor: l.grossMinor,
         deductionsMinor: l.deductionsMinor,
         payableMinor: l.payableMinor,

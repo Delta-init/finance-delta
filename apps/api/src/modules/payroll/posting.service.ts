@@ -63,7 +63,8 @@ export async function postPayrollExpense(
       taxPct: 0,
       taxMinor: 0,
       totalMinor: payment.amountMinor,
-      currency: run.currency,
+      // The payment's: a month paid in dirhams and rupees posts one expense in each.
+      currency: payment.currency || run.currency,
       paymentAccount: payment.bankAccountName,
       paymentMethod: payment.method,
       reference: payment.reference || payment.paymentId,

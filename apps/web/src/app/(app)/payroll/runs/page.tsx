@@ -17,7 +17,10 @@ import {
 import {
   useAvailableBatches, useImportPreview, useImportRun, usePayrollRuns, useReconciliation,
 } from "@/features/payroll/api";
-import { RUN_STATUS_LABELS, type AvailableBatch, type RunStatus, type RunSummary } from "@/features/payroll/types";
+import {
+  RUN_STATUS_LABELS, type AvailableBatch, type ImportPreview, type RunCurrencyTotals, type RunStatus, type RunSummary,
+} from "@/features/payroll/types";
+import { AmountsByCurrency, ApproxTotal } from "@/features/payroll/currency-amounts";
 
 const TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "primary"> = {
   imported: "primary",
@@ -52,11 +55,13 @@ export default function PayrollRunsPage() {
     { key: "org", header: "From", cell: (r) => <span className="text-foreground-muted">{r.hrmsOrgName}</span> },
     {
       key: "payable", header: "Payable", align: "right",
-      cell: (r) => <MoneyDisplay minor={r.payableMinor} currency={r.currency} />,
+      cell: (r) => <RunMoney run={r} whole={r.payableMinor} pick={(c) => c.payableMinor} />,
     },
     {
       key: "balance", header: "Outstanding", align: "right",
-      cell: (r) => <MoneyDisplay minor={r.balanceMinor} currency={r.currency} />,
+      cell: (r) => (
+        <RunMoney run={r} whole={r.balanceMinor} pick={(c) => c.balanceMinor ?? c.payableMinor - c.amountPaidMinor} />
+      ),
     },
     { key: "status", header: "Status", cell: (r) => <Badge tone={TONE[r.status]}>{RUN_STATUS_LABELS[r.status]}</Badge> },
   ];
@@ -92,7 +97,17 @@ export default function PayrollRunsPage() {
                     )}
                   </div>
                   <div className="text-xs text-foreground-muted">
-                    {b.employeeCount} people · {b.currency} {b.netTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} net
+                    {b.employeeCount} people
+                    {b.byCurrency === undefined ? (
+                      // An API from before the split: its one figure, as before.
+                      <> · {b.currency} {b.netTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} net</>
+                    ) : b.byCurrency.length > 0 ? (
+                      <>
+                        {" · "}
+                        <AmountsByCurrency rows={b.byCurrency.map((c) => ({ currency: c.currency, amountMinor: c.netMinor }))} />
+                        {" net"}
+                      </>
+                    ) : null}
                   </div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => setCandidate(b)}>
@@ -129,7 +144,14 @@ export default function PayrollRunsPage() {
               <span>
                 <Link href={`/payroll/runs/${u.runId}`} className="font-medium underline">{u.runNumber}</Link>
                 {" · "}{u.peopleLeft} {u.peopleLeft === 1 ? "person is" : "people are"} still unpaid,{" "}
-                <MoneyDisplay minor={u.outstandingMinor} currency={u.currency} /> outstanding.
+                {u.outstandingByCurrency?.length ? (
+                  <AmountsByCurrency
+                    rows={u.outstandingByCurrency.map((o) => ({ currency: o.currency, amountMinor: o.outstandingMinor }))}
+                  />
+                ) : (
+                  <MoneyDisplay minor={u.outstandingMinor} currency={u.currency} />
+                )}{" "}
+                outstanding.
               </span>
             </div>
           ))}
@@ -192,12 +214,14 @@ export default function PayrollRunsPage() {
               <>
                 <div className="rounded-lg border border-border bg-surface-muted p-3">
                   <Row label="People" value={String(preview.data.totals.employeeCount)} />
-                  <Row
-                    label="Net to pay"
-                    value={<MoneyDisplay minor={preview.data.totals.netMinor} currency={preview.data.currency} />}
-                    strong
-                  />
+                  <NetToPay preview={preview.data} />
                 </div>
+                {(preview.data.byCurrency?.length ?? 0) > 1 && (
+                  <p className="text-xs text-foreground-muted">
+                    Totalled per currency, because they cannot be added together; ≈ is at today&rsquo;s rate.
+                    Each currency is paid from a bank account in that currency.
+                  </p>
+                )}
 
                 {preview.data.blockers.map((b) => (
                   <p key={b} className="flex items-start gap-2 text-danger">
@@ -271,6 +295,64 @@ export default function PayrollRunsPage() {
       </Dialog>
     </div>
   );
+}
+
+/**
+ * What the month pays (2026-10-30). One figure when everybody is paid in one
+ * currency, as before; otherwise each currency's people and amount, one in
+ * another currency also as the screen's, and the whole at today's rate. It
+ * used to add rupees to dirhams and print the sum as dirhams.
+ */
+function NetToPay({ preview }: { preview: ImportPreview }) {
+  const rows = preview.byCurrency ?? [];
+  if (rows.length <= 1) {
+    const one = rows[0];
+    return (
+      <Row
+        label="Net to pay"
+        value={
+          <MoneyDisplay
+            minor={one?.netMinor ?? preview.totals.netMinor}
+            currency={one?.currency ?? preview.currency}
+            showConverted
+          />
+        }
+        strong
+      />
+    );
+  }
+  return (
+    <>
+      {rows.map((c) => (
+        <Row
+          key={c.currency}
+          label={`Net to pay in ${c.currency} · ${c.employeeCount} ${c.employeeCount === 1 ? "person" : "people"}`}
+          value={<MoneyDisplay minor={c.netMinor} currency={c.currency} showConverted />}
+        />
+      ))}
+      <div className="mt-1.5 border-t border-border pt-1.5">
+        <Row
+          label="Net to pay, all together"
+          value={
+            <ApproxTotal
+              rows={rows.map((c) => ({ currency: c.currency, amountMinor: c.netMinor }))}
+              fallback={<span className="font-normal text-foreground-muted">waiting for today&rsquo;s rate…</span>}
+            />
+          }
+          strong
+        />
+      </div>
+    </>
+  );
+}
+
+/** One run's figure: as before for a run in one currency, a line per currency for one that is not. */
+function RunMoney({
+  run, whole, pick,
+}: { run: RunSummary; whole: number; pick: (c: RunCurrencyTotals) => number }) {
+  const rows = run.byCurrency ?? [];
+  if (rows.length <= 1) return <MoneyDisplay minor={whole} currency={rows[0]?.currency ?? run.currency} />;
+  return <AmountsByCurrency stacked rows={rows.map((c) => ({ currency: c.currency, amountMinor: pick(c) }))} />;
 }
 
 function Row({ label, value, strong }: { label: string; value: React.ReactNode; strong?: boolean }) {

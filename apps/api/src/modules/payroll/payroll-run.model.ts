@@ -135,6 +135,14 @@ const payrollPaymentSchema = new Schema(
     bankAccountName: { type: String, default: "" },
     bankTransactionId: { type: Schema.Types.ObjectId, ref: "BankTransaction", default: null },
 
+    /**
+     * Its bank account's currency, which is the currency of every person it
+     * paid: an account pays out in one currency, so a month with salaries in two
+     * is paid in two payments. Absent on payments recorded before 2026-10-30,
+     * which were in the run's currency.
+     */
+    currency: { type: String },
+
     amountMinor: { type: Number, required: true },
     allocations: {
       type: [

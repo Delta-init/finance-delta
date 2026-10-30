@@ -286,20 +286,22 @@ function summariseOutcomes(run: PayrollRunDoc, outcomes: HrmsAdjustmentOutcome[]
   for (const o of outcomes) {
     const line = run.lines.find((l) => l.hrmsEmployeeId === o.employeeId);
     const who = line?.name ?? o.employeeId;
+    // HRMS answers in the payslip's own currency, which need not be the run's.
+    const cur = line?.currency || run.currency;
     const asked = toMinor(o.amount);
     const applied = toMinor(o.appliedAmount);
     const movement = toMinor(o.netAfter) - toMinor(o.netBefore);
 
     if (o.kind === "deduction" && applied < asked) {
       notes.push(
-        `${who}: only ${formatMinor(applied, run.currency)} of the ${formatMinor(asked, run.currency)} ` +
-          `deduction could be recovered this month; ${formatMinor(toMinor(o.outstanding), run.currency)} carries to next month.`,
+        `${who}: only ${formatMinor(applied, cur)} of the ${formatMinor(asked, cur)} ` +
+          `deduction could be recovered this month; ${formatMinor(toMinor(o.outstanding), cur)} carries to next month.`,
       );
     }
     if (o.kind === "payment" && movement !== asked) {
       notes.push(
-        `${who}: ${formatMinor(asked, run.currency)} was added but net pay moved by ` +
-          `${formatMinor(movement, run.currency)} — the difference went to loan or advance recovery that the month can now afford.`,
+        `${who}: ${formatMinor(asked, cur)} was added but net pay moved by ` +
+          `${formatMinor(movement, cur)} — the difference went to loan or advance recovery that the month can now afford.`,
       );
     }
   }

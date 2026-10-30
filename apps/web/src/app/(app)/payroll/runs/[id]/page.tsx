@@ -21,6 +21,7 @@ import { ReasonDialog } from "@/features/payroll/reason-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RUN_STATUS_LABELS, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
 import { Button } from "@/components/ui/button";
+import { ApproxTotal } from "@/features/payroll/currency-amounts";
 
 const RUN_TONE: Record<RunStatus, "success" | "warning" | "neutral" | "danger" | "primary"> = {
   imported: "primary", additions: "primary", approved: "warning",
@@ -86,6 +87,12 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   /** More than one currency among the people on this run. */
   const mixed = (run.byCurrency?.length ?? 0) > 1;
   /**
+   * What everybody is paid in when that is one currency: theirs, which is not
+   * always the run's. An all-rupee month handed over as a dirham batch would
+   * otherwise print its rupees as dirhams.
+   */
+  const soleCurrency = !mixed && run.byCurrency?.length === 1 ? run.byCurrency[0]!.currency : run.currency;
+  /**
    * Whether this row can be ticked.
    *
    * Paying excludes anybody held or already paid — there is nothing to send.
@@ -129,7 +136,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             <p className="font-medium">This month is paid in {run.byCurrency.length} currencies</p>
             <p className="mt-0.5 text-foreground-muted">
               Totalled separately, because {run.byCurrency.map((c) => c.currency).join(" and ")} cannot be
-              added together. Each person&rsquo;s own currency is shown against their row.
+              added together. Each person&rsquo;s own currency is shown against their row, and each currency
+              is paid from a bank account in that currency.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -146,21 +154,53 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                   <Figure label="Deductions" minor={c.deductionsMinor} currency={c.currency} />
                   <Figure label="Payable" minor={c.payableMinor} currency={c.currency} strong />
                 </div>
+                {c.amountPaidMinor > 0 && (
+                  <div className="grid grid-cols-3 gap-2 border-t border-border pt-2 text-sm">
+                    <Figure label="Paid" minor={c.amountPaidMinor} currency={c.currency} />
+                    <Figure
+                      label="Outstanding"
+                      minor={c.balanceMinor ?? c.payableMinor - c.amountPaidMinor}
+                      currency={c.currency}
+                      strong
+                    />
+                  </div>
+                )}
               </Card>
             ))}
           </div>
+          <p className="text-sm text-foreground-muted">
+            Payable, all together:{" "}
+            <ApproxTotal
+              rows={run.byCurrency.map((c) => ({ currency: c.currency, amountMinor: c.payableMinor }))}
+              className="font-medium text-foreground"
+              fallback="waiting for today's rate…"
+            />
+            {run.totals.amountPaidMinor > 0 && (
+              <>
+                {" · "}still owed{" "}
+                <ApproxTotal
+                  rows={run.byCurrency.map((c) => ({
+                    currency: c.currency,
+                    amountMinor: c.balanceMinor ?? c.payableMinor - c.amountPaidMinor,
+                  }))}
+                  className="font-medium text-foreground"
+                  fallback="…"
+                />
+              </>
+            )}
+          </p>
         </div>
       ) : (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="People" value={String(run.totals.employeeCount)} />
-        <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={run.currency} showConverted />} />
-        <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={run.currency} showConverted />} />
+        <Stat label="Gross" value={<MoneyDisplay minor={run.totals.hrmsGrossMinor} currency={soleCurrency} showConverted />} />
+        <Stat label="Deductions" value={<MoneyDisplay minor={run.totals.hrmsDeductionsMinor} currency={soleCurrency} showConverted />} />
         {run.totals.adjustmentsMinor !== 0 && (
-          <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={run.currency} showConverted />} />
+          <Stat label="Adjustments" value={<MoneyDisplay minor={run.totals.adjustmentsMinor} currency={soleCurrency} showConverted />} />
         )}
-        <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={run.currency} showConverted />} strong />
+        <Stat label="Payable" value={<MoneyDisplay minor={run.totals.payableMinor} currency={soleCurrency} showConverted />} strong />
         {run.totals.amountPaidMinor > 0 && (
-          <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={run.currency} showConverted />} />
+          <Stat label="Outstanding" value={<MoneyDisplay minor={run.totals.balanceMinor} currency={soleCurrency} showConverted />} />
         )}
       </div>
       )}
@@ -173,7 +213,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           {unsynced.map((p) => (
             <div key={p.paymentId} className="flex flex-wrap items-center gap-2">
               <span className="min-w-0 flex-1">
-                {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={run.currency} /> ·{" "}
+                {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={p.currency ?? run.currency} /> ·{" "}
                 <span className="text-foreground-muted">{p.syncError}</span>
               </span>
               <Button
@@ -319,7 +359,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
               <div key={p.paymentId} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
-                    {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={run.currency} />
+                    {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={p.currency ?? run.currency} />
                   </div>
                   <div className="text-xs text-foreground-muted">
                     {new Date(p.paidOn).toLocaleDateString()} · {p.bankAccountName || p.method} ·{" "}
@@ -445,7 +485,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                     <td className="px-5 py-3 text-foreground-muted">{l.departmentName || "—"}</td>
                     <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={l.currency || run.currency} /></td>
                     <td className="px-5 py-3 text-right"><MoneyDisplay minor={l.deductionsMinor} currency={l.currency || run.currency} /></td>
-                    <td className="px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={l.currency || run.currency} /></td>
+                    <td className="px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={l.currency || run.currency} showConverted /></td>
                     <td className="px-5 py-3">
                       <Badge tone={LINE_TONE[l.status]}>{LINE_LABEL[l.status]}</Badge>
                       {l.holdReason && <div className="mt-1 text-xs text-danger">{l.holdReason}</div>}
@@ -455,8 +495,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                     <tr className="border-b border-border bg-surface-muted/50">
                       <td colSpan={selectable ? 7 : 6} className="px-5 py-4">
                         <div className="grid gap-6 sm:grid-cols-2">
-                          <Breakdown title="Earnings" items={l.earnings} currency={run.currency} />
-                          <Breakdown title="Deductions" items={l.deductions} currency={run.currency} />
+                          <Breakdown title="Earnings" items={l.earnings} currency={l.currency || run.currency} />
+                          <Breakdown title="Deductions" items={l.deductions} currency={l.currency || run.currency} />
                         </div>
 
                         {(adjustmentsByLine.get(l.id) ?? []).length > 0 && (
@@ -474,13 +514,13 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                     )}
                                     {a.outstandingMinor > 0 && (
                                       <span className="ml-2 text-xs text-warning">
-                                        only <MoneyDisplay minor={a.recoveredMinor} currency={run.currency} /> recovered,{" "}
-                                        <MoneyDisplay minor={a.outstandingMinor} currency={run.currency} /> carried forward
+                                        only <MoneyDisplay minor={a.recoveredMinor} currency={a.currency ?? (l.currency || run.currency)} /> recovered,{" "}
+                                        <MoneyDisplay minor={a.outstandingMinor} currency={a.currency ?? (l.currency || run.currency)} /> carried forward
                                       </span>
                                     )}
                                   </span>
                                   <span className="flex items-center gap-2">
-                                    <MoneyDisplay minor={a.amountMinor} currency={run.currency} />
+                                    <MoneyDisplay minor={a.amountMinor} currency={a.currency ?? (l.currency || run.currency)} />
                                     {openForAdjustment && (
                                       <button
                                         type="button"
@@ -560,7 +600,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         onOpenChange={setPaying}
         lines={run.lines}
         selectedIds={Array.from(selected)}
-        currency={run.currency}
+        runCurrency={run.currency}
         pending={pay.isPending}
         onSubmit={(input) =>
           pay.mutate(input, { onSuccess: () => { setPaying(false); setSelected(new Set()); } })
@@ -569,7 +609,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
 
       <AdjustDialog
         lines={adjusting}
-        currency={run.currency}
+        runCurrency={run.currency}
         open={adjusting.length > 0}
         onOpenChange={(o) => { if (!o) setAdjusting([]); }}
         pending={addAdjustments.isPending}

@@ -13,14 +13,25 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   voided: "Voided",
 };
 
+/** One currency's share of a month: its people and what they are paid, never mixed with another's. */
+export interface CurrencyNet {
+  currency: string;
+  employeeCount: number;
+  netMinor: number;
+}
+
 export interface AvailableBatch {
   hrmsOrgId: string;
   hrmsOrgName: string;
   period: string;
   status: string;
   currency: string;
+  /** Everybody on the month, whatever they are paid in. */
   employeeCount: number;
+  /** Adds every currency together on an HRMS from before 2026-10-30. Show `byCurrency`. */
   netTotal: number;
+  /** The month's net per currency. Absent from an older API; empty when it could not be worked out. */
+  byCurrency?: CurrencyNet[];
   imported: boolean;
   /** The state of the run that owns this month, when there is one. */
   runStatus?: string | null;
@@ -35,7 +46,10 @@ export interface ImportPreview {
   canImport: boolean;
   blockers: string[];
   warnings: string[];
+  /** Every payslip added together: an amount of money only when everybody shares a currency. */
   totals: { employeeCount: number; grossMinor: number; deductionsMinor: number; netMinor: number };
+  /** The month per currency, the batch's own first. Absent from an older API. */
+  byCurrency?: Array<CurrencyNet & { grossMinor: number; deductionsMinor: number }>;
   /** On the payroll but not yet mapped in finance — a sync fixes these. */
   unmapped: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
   /** Payslips whose employee was deleted in HRMS — a sync cannot fix these. */
@@ -51,7 +65,9 @@ export interface ImportResult {
   currency: string;
   employeeCount: number;
   netMinor: number;
+  /** One amount per currency: "AED 344,824.88 + INR 627,633.33". */
   netFormatted: string;
+  byCurrency?: CurrencyNet[];
   warnings: string[];
 }
 
@@ -65,6 +81,8 @@ export interface RunSummary {
   payableMinor: number;
   amountPaidMinor: number;
   balanceMinor: number;
+  /** The figures above per currency. More than one row means those add unlike things. Absent from an older API. */
+  byCurrency?: RunCurrencyTotals[];
   importedAt: string | null;
   importedByName: string;
 }
@@ -135,12 +153,16 @@ export interface RunCurrencyTotals {
   deductionsMinor: number;
   payableMinor: number;
   amountPaidMinor: number;
+  /** Payable less paid. Absent from an older API. */
+  balanceMinor?: number;
 }
 
 export interface RunAdjustment {
   externalId: string;
   hrmsEmployeeId: string;
   lineId: string;
+  /** The person's currency: it lands on their payslip. Absent from an older API. */
+  currency?: string;
   kind: "addition" | "deduction";
   source: "commission" | "manual";
   label: string;
@@ -176,6 +198,8 @@ export interface RunPayment {
   paidOn: string;
   reference: string;
   bankAccountName: string;
+  /** Its account's, which is everybody it paid. Absent from an older API: the run's. */
+  currency?: string;
   amountMinor: number;
   payslipCount: number;
   /** False means the money moved but HRMS still shows the payslips as issued. */
@@ -192,6 +216,7 @@ export interface PayResult {
   status: RunStatus;
   paidCount: number;
   amountMinor: number;
+  currency?: string;
   amountFormatted: string;
   bankTransactionId: string;
   commissionsSettled: number;
@@ -212,6 +237,8 @@ export interface Reconciliation {
   unfinished: Array<{
     runId: string; runNumber: string; period: string; currency: string;
     status: string; outstandingMinor: number; peopleLeft: number;
+    /** What is still owed per currency; `outstandingMinor` adds them. Absent from an older API. */
+    outstandingByCurrency?: Array<{ currency: string; outstandingMinor: number }>;
   }>;
   total: number;
 }

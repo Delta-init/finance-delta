@@ -7,8 +7,19 @@ import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { User } from "../user/user.model";
 import { PayrollRun } from "./payroll-run.model";
 import { toMinor, formatMinor, assertTotalsAgree } from "./money";
+import {
+  batchByCurrency, currencyOf, summariseByCurrency, type BatchCurrencyTotals,
+} from "./currency-totals";
+
+// Lives in currency-totals, so it can be tested without config; still offered here.
+export { summariseByCurrency };
 
 const oid = (id: string) => new Types.ObjectId(id);
+
+/** "AED 344,824.88 + INR 627,633.33": one amount per currency, never their sum. */
+function formatByCurrency(rows: Array<{ currency: string; minor: number }>): string {
+  return rows.map((r) => formatMinor(r.minor, r.currency)).join(" + ");
+}
 
 /**
  * Importing a month of payroll from HRMS, and reading it back.
@@ -29,7 +40,14 @@ export interface ImportPreview {
   canImport: boolean;
   blockers: string[];
   warnings: string[];
+  /**
+   * Every payslip added together, as HRMS adds them to check its lines. An
+   * amount of money only when everybody is paid in one currency; show
+   * `byCurrency` instead.
+   */
   totals: { employeeCount: number; grossMinor: number; deductionsMinor: number; netMinor: number };
+  /** The month per currency people are paid in, the batch's own first. */
+  byCurrency: BatchCurrencyTotals[];
   /** On this payroll but not yet mapped in finance. A sync fixes these. */
   unmapped: Array<{ hrmsEmployeeId: string; employeeCode: string; name: string }>;
   /** Payslips whose employee record no longer exists in HRMS. A sync cannot. */
@@ -93,6 +111,26 @@ function convert(batch: HrmsBatch) {
   assertTotalsAgree("Net pay", sum.net, toMinor(batch.totals.netTotal), currency);
 
   return { lines, sum };
+}
+
+/**
+ * A month's payslips per currency. Empty when HRMS sent an amount that is not a
+ * number; `convert` reports that as a blocker.
+ */
+function batchCurrencies(batch: HrmsBatch): BatchCurrencyTotals[] {
+  try {
+    return batchByCurrency(
+      batch.lines.map((l) => ({
+        currency: l.currency,
+        grossMinor: toMinor(l.grossPay),
+        deductionsMinor: toMinor(l.totalDeductions),
+        netMinor: toMinor(l.netPay),
+      })),
+      batch.currency,
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function previewImport(orgId: string, hrmsOrgId: string, period: string): Promise<ImportPreview> {
@@ -203,6 +241,7 @@ export async function previewImport(orgId: string, hrmsOrgId: string, period: st
     blockers,
     warnings,
     totals,
+    byCurrency: batchCurrencies(batch),
     unmapped,
     orphaned,
     unpayable,
@@ -328,14 +367,23 @@ export async function importRun(
       `HR will still see the month as submitted until this is retried.`;
   }
 
+  const byCurrency = batchByCurrency(
+    docLines.map((l) => ({
+      currency: l.currency, grossMinor: l.grossMinor, deductionsMinor: l.deductionsMinor, netMinor: l.netFromHrmsMinor,
+    })),
+    batch.currency,
+  );
+
   return {
     id: String(run._id),
     runNumber,
     period,
     currency: batch.currency,
     employeeCount: docLines.length,
+    /** Every payslip added together; see `byCurrency` for amounts of money. */
     netMinor: sum.net,
-    netFormatted: formatMinor(sum.net, batch.currency),
+    byCurrency,
+    netFormatted: formatByCurrency(byCurrency.map((r) => ({ currency: r.currency, minor: r.netMinor }))),
     warnings: [...preview.warnings, ...(claimWarning ? [claimWarning] : [])],
   };
 }
@@ -354,7 +402,11 @@ export async function listRuns(
 
   const [rows, total] = await Promise.all([
     PayrollRun.find(filter)
-      .select("-lines")
+      // Of each line only what its currency's totals need, not the payslip itself.
+      .select(
+        "runNumber period hrmsOrgName currency status payableMinor amountPaidMinor balanceMinor importedAt importedByName " +
+          "lines.currency lines.grossMinor lines.deductionsMinor lines.payableMinor lines.amountPaidMinor",
+      )
       .sort({ period: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -373,6 +425,8 @@ export async function listRuns(
       payableMinor: r.payableMinor,
       amountPaidMinor: r.amountPaidMinor,
       balanceMinor: r.balanceMinor,
+      /** The three figures above per currency. More than one row means those add unlike things. */
+      byCurrency: summariseByCurrency(r.lines ?? [], r.currency),
       importedAt: r.importedAt ? (r.importedAt as Date).toISOString() : null,
       importedByName: r.importedByName,
     })),
@@ -380,35 +434,10 @@ export async function listRuns(
   };
 }
 
-/**
- * Totals per currency, so a mixed month is reported as what it is.
- *
- * Sorted by size so the currency most of the payroll is in leads, which is
- * almost always the one somebody is looking for.
- */
-export function summariseByCurrency(
-  lines: { currency?: string | null; grossMinor: number; deductionsMinor: number; payableMinor: number; amountPaidMinor: number }[],
-  runCurrency: string,
-) {
-  const acc = new Map<string, { currency: string; employeeCount: number; grossMinor: number; deductionsMinor: number; payableMinor: number; amountPaidMinor: number }>();
-  for (const l of lines) {
-    const cur = l.currency || runCurrency;
-    const row = acc.get(cur) ?? {
-      currency: cur, employeeCount: 0, grossMinor: 0, deductionsMinor: 0, payableMinor: 0, amountPaidMinor: 0,
-    };
-    row.employeeCount += 1;
-    row.grossMinor += l.grossMinor;
-    row.deductionsMinor += l.deductionsMinor;
-    row.payableMinor += l.payableMinor;
-    row.amountPaidMinor += l.amountPaidMinor;
-    acc.set(cur, row);
-  }
-  return [...acc.values()].sort((a, b) => b.payableMinor - a.payableMinor);
-}
-
 export async function getRun(orgId: string, id: string) {
   const run = await PayrollRun.findOne({ _id: oid(id), organizationId: oid(orgId) }).lean();
   if (!run) throw new AppError("NOT_FOUND", "Payroll run not found");
+  const lineCurrency = new Map(run.lines.map((l) => [String(l._id), currencyOf(l.currency, run.currency)]));
 
   return {
     id: String(run._id),
@@ -469,6 +498,8 @@ export async function getRun(orgId: string, id: string) {
       externalId: a.externalId,
       hrmsEmployeeId: a.hrmsEmployeeId,
       lineId: String(a.lineId),
+      // The person's, since it lands on their payslip: a rupee salary's addition is rupees.
+      currency: lineCurrency.get(String(a.lineId)) ?? run.currency,
       kind: a.kind,
       source: a.source,
       label: a.label,
@@ -485,6 +516,8 @@ export async function getRun(orgId: string, id: string) {
       paidOn: (p.paidOn as Date).toISOString(),
       reference: p.reference,
       bankAccountName: p.bankAccountName,
+      // Its account's; the run's for a payment recorded before a payment carried one.
+      currency: p.currency || run.currency,
       amountMinor: p.amountMinor,
       payslipCount: p.allocations.length,
       // Surfaced, never hidden: money moved but HRMS was not told is the one
@@ -509,6 +542,8 @@ export async function listAvailable(orgId: string) {
   const out: Array<{
     hrmsOrgId: string; hrmsOrgName: string; period: string; status: string;
     currency: string; employeeCount: number; netTotal: number; imported: boolean; runNumber: string | null;
+    /** The month's net per currency, the batch's own first. Empty when it could not be worked out. */
+    byCurrency: Array<{ currency: string; employeeCount: number; netMinor: number }>;
     /** The state of the run that owns this month, when there is one. */
     runStatus: string | null;
   }> = [];
@@ -521,22 +556,47 @@ export async function listAvailable(orgId: string) {
     const runByPeriod = new Map(runs.map((r) => [r.period, r]));
 
     for (const b of batches) {
+      // "Imported" means accounts hold this month, not merely that a run
+      // record exists. A returned run has handed it back to HR, so the month
+      // is waiting to come again — and the screen that lists what is waiting
+      // filters on this flag, so treating a returned run as imported hid the
+      // month for good and left no way to re-import it.
+      const imported = Boolean(
+        runByPeriod.get(b.month) && runByPeriod.get(b.month)!.status !== "returned",
+      );
+
+      let byCurrency: Array<{ currency: string; employeeCount: number; netMinor: number }> = [];
+      try {
+        byCurrency = (b.byCurrency ?? [])
+          .filter((r) => r.employeeCount > 0)
+          .map((r) => ({ currency: currencyOf(r.currency, b.currency), employeeCount: r.employeeCount, netMinor: toMinor(r.netTotal) }));
+      } catch {
+        byCurrency = []; // An amount that is not a number: worked out from the payslips below instead.
+      }
+      // A month HR submitted before HRMS split its totals carries one figure
+      // that adds rupees to dirhams, and no breakdown: only its payslips can
+      // say what it is. Asked for just the months waiting here, the only ones
+      // shown with an amount. If HRMS cannot answer, no amount rather than the
+      // wrong one.
+      if (!byCurrency.length && !imported && b.status === "submitted") {
+        byCurrency = await hrmsClient
+          .payrollBatch(link.hrmsOrgId, b.month)
+          .then((full) => batchCurrencies(full).map(({ currency, employeeCount, netMinor }) => ({ currency, employeeCount, netMinor })))
+          .catch(() => []);
+      }
+
       out.push({
         hrmsOrgId: link.hrmsOrgId,
         hrmsOrgName: link.hrmsOrgName,
         period: b.month,
         status: b.status,
         currency: b.currency,
-        employeeCount: b.employeeCount,
+        // Everybody, whatever they are paid in. HRMS's own count is the batch
+        // currency's people alone once it splits its totals.
+        employeeCount: byCurrency.length ? byCurrency.reduce((a, r) => a + r.employeeCount, 0) : b.employeeCount,
         netTotal: b.netTotal,
-        // "Imported" means accounts hold this month, not merely that a run
-        // record exists. A returned run has handed it back to HR, so the month
-        // is waiting to come again — and the screen that lists what is waiting
-        // filters on this flag, so treating a returned run as imported hid the
-        // month for good and left no way to re-import it.
-        imported: Boolean(
-          runByPeriod.get(b.month) && runByPeriod.get(b.month)!.status !== "returned",
-        ),
+        byCurrency,
+        imported,
         runNumber: runByPeriod.get(b.month)?.runNumber ?? null,
         runStatus: runByPeriod.get(b.month)?.status ?? null,
       });
@@ -574,7 +634,9 @@ export async function reconciliation(orgId: string) {
   }> = [];
   const unfinished: Array<{
     runId: string; runNumber: string; period: string; currency: string;
+    /** Every currency added together; `outstandingByCurrency` is the amount owed. */
     status: string; outstandingMinor: number; peopleLeft: number;
+    outstandingByCurrency: Array<{ currency: string; outstandingMinor: number }>;
   }> = [];
 
   for (const run of runs) {
@@ -582,7 +644,7 @@ export async function reconciliation(orgId: string) {
       if (!p.syncedToHrms && !p.reversedAt) {
         unsyncedPayments.push({
           runId: String(run._id), runNumber: run.runNumber, period: run.period,
-          paymentId: p.paymentId, amountMinor: p.amountMinor, currency: run.currency,
+          paymentId: p.paymentId, amountMinor: p.amountMinor, currency: p.currency || run.currency,
           paidOn: (p.paidOn as Date).toISOString(),
           error: p.syncError || "Never acknowledged", attempts: p.syncAttempts,
         });
@@ -591,7 +653,7 @@ export async function reconciliation(orgId: string) {
     for (const l of run.lines) {
       if (l.status === "on_hold") {
         heldPeople.push({
-          runId: String(run._id), runNumber: run.runNumber, period: run.period, currency: run.currency,
+          runId: String(run._id), runNumber: run.runNumber, period: run.period, currency: currencyOf(l.currency, run.currency),
           name: l.name, employeeCode: l.employeeCode,
           reason: l.holdReason || "No bank details", payableMinor: l.payableMinor,
         });
@@ -602,6 +664,9 @@ export async function reconciliation(orgId: string) {
       unfinished.push({
         runId: String(run._id), runNumber: run.runNumber, period: run.period, currency: run.currency,
         status: run.status, outstandingMinor: run.balanceMinor, peopleLeft: left,
+        outstandingByCurrency: summariseByCurrency(run.lines, run.currency)
+          .filter((r) => r.balanceMinor !== 0)
+          .map((r) => ({ currency: r.currency, outstandingMinor: r.balanceMinor })),
       });
     }
   }

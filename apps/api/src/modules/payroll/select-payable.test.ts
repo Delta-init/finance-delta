@@ -73,6 +73,54 @@ describe("selectPayableLines", () => {
   });
 });
 
+describe("selectPayableLines in one currency", () => {
+  const paidIn = (currency: string | null, l: PayableLine): PayableLine => ({ ...l, currency });
+  // A month like October 2026: dirham salaries and rupee salaries on one run.
+  const month = [
+    paidIn("AED", line("a1", 10_000_00)),
+    paidIn("AED", line("a2", 5_000_00)),
+    paidIn("INR", line("i1", 80_000_00)),
+    paidIn(null, line("old", 1_000_00)), // imported before lines carried a currency: the run's
+  ];
+
+  it("never takes a rupee salary into a payment from a dirham account", () => {
+    // The bug: "pay everybody" from the AED account took INR 80,000 out of it as
+    // AED 80,000.
+    const s = selectPayableLines(month, undefined, { currency: "AED", fallback: "AED" });
+    expect(s.allocations.map((a) => a.lineId)).toEqual(["a1", "a2", "old"]);
+    expect(s.amountMinor).toBe(16_000_00);
+    expect(s.skipped.otherCurrency).toBe(1);
+  });
+
+  it("pays the rupee salaries from a rupee account, and only them", () => {
+    const s = selectPayableLines(month, undefined, { currency: "INR", fallback: "AED" });
+    expect(s.allocations.map((a) => a.lineId)).toEqual(["i1"]);
+    expect(s.amountMinor).toBe(80_000_00);
+    expect(s.skipped.otherCurrency).toBe(3);
+  });
+
+  it("drops a named person paid in another currency rather than paying them in this one", () => {
+    const s = selectPayableLines(month, ["a1", "i1"], { currency: "AED", fallback: "AED" });
+    expect(s.allocations.map((a) => a.lineId)).toEqual(["a1"]);
+    expect(s.skipped.otherCurrency).toBe(1);
+  });
+
+  it("reads the account's currency as a code, however it is written", () => {
+    const s = selectPayableLines(month, undefined, { currency: " inr ", fallback: "AED" });
+    expect(s.allocations.map((a) => a.lineId)).toEqual(["i1"]);
+  });
+
+  it("counts a held person in this currency as held, and one in another as elsewhere", () => {
+    const s = selectPayableLines(
+      [paidIn("AED", line("h", 1_00, 0, "on_hold")), paidIn("INR", line("i", 2_00))],
+      undefined,
+      { currency: "AED", fallback: "AED" },
+    );
+    expect(s.allocations).toHaveLength(0);
+    expect(s.skipped).toEqual({ held: 1, alreadyPaid: 0, notFound: 0, otherCurrency: 1 });
+  });
+});
+
 describe("isSettled", () => {
   it("treats a paid or held line as settled", () => {
     expect(isSettled(line("a", 500_00, 500_00, "paid"))).toBe(true);

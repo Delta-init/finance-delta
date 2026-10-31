@@ -16,6 +16,8 @@
  *     its student when its number is another organization's too; with no rate, the rupees shown apart, not added in.
  *   - paid in full first (2026-10-31): commission on a sale the client is still paying for shows as waiting, not
  *     earned, and can't be approved.
+ *   - collected this month (payments dated in it) beside collected in all and the fee; the sale's salesperson and team
+ *     leader from Root; a sale's invoice whole for the pop-up, from any organization, only if a CRM raised it.
  *   - what is approved and paid is the CRM's My Pay "commission payable" (2026-10-21) — earned × the slab level's
  *     percent — shown with the earned figure; nothing payable, or a CRM whose My Pay figures are missing, can't be
  *     approved; the CRMs read their payouts back for My Pay.
@@ -236,6 +238,33 @@ check("an older Root (no waiting figures): nothing waiting", view.crms.find((c) 
   && view.crms.find((c) => c.code === "draw")!.people.every((p) => p.waitingMinor === 0));
 root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== WAFA);
 delete root.crms[0].waitingTotal;
+
+/* ── 8 ── */
+step("8. This month's collected, the people on a sale, the invoice pop-up (2026-10-31)");
+const HANA = new Types.ObjectId().toString(), STU8 = new Types.ObjectId().toString();
+const inv8 = new Types.ObjectId();
+await mongoose.connection.db!.collection("invoices").insertMany([
+  { _id: inv8, organizationId: other._id, invoiceNumber: "IN-S11", status: "partial", currency: "AED", totalMinor: 225000, amountPaidMinor: 150000, balanceMinor: 75000,
+    customerId: new Types.ObjectId(), salespersonId: new Types.ObjectId(), createdAt: new Date(), updatedAt: new Date(), taxBreakdown: [], tagIds: [], subtotalMinor: 225000, taxTotalMinor: 0, discountTotalMinor: 0, customerName: "Client Eleven", issueDate: new Date("2026-09-20"), dueDate: new Date("2026-10-20"), lineItems: [], enrolment: { crm: "delta" }, external: { source: "crm", externalId: STU8 },
+    payments: [{ amountMinor: 50000, paidOn: new Date("2026-09-20T08:00:00Z"), method: "cash" }, { amountMinor: 100000, paidOn: new Date("2026-10-10T08:00:00Z"), method: "card" }] },
+  // Not a CRM's: never shown through the commission page.
+  { _id: new Types.ObjectId("6a0000000000000000000abc"), organizationId: org._id, invoiceNumber: "IN-OWN", status: "paid", currency: "AED", totalMinor: 1000, amountPaidMinor: 1000, customerName: "Walk-in", lineItems: [], payments: [] },
+]);
+root.crms[0].people.push({ userId: HANA, name: "Hana", roles: ["tl"], amount: 85, payable: 85, percent: 100, level: "Level 1", sales: 1,
+  lines: [{ ...line("tl", 85, "S11"), studentId: STU8, salesName: "Ria", tlName: "Hana", waiting: 0, paidInFullAt: "2026-10-10T08:00:00.000Z" }] });
+view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
+const hana = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === HANA)!;
+const l8 = hana.lines[0]!;
+check("the line: 1,000 collected this month (not September's 500), 1,500 in all of 2,250; its invoice and organization",
+  l8.monthCollectedMinor === 100000 && l8.collectedMinor === 150000 && l8.feeMinor === 225000 && l8.invoiceId === String(inv8) && l8.invoiceOrgId === OTHER, j(l8));
+check("…the person: this month's 1,000, of 2,250 fees", hana.monthCollectedMinor === 100000 && hana.feesMinor === 225000 && hana.collectedMinor === 150000, j({ m: hana.monthCollectedMinor, f: hana.feesMinor }));
+check("…who sold it and their team leader, from Root", l8.salesName === "Ria" && l8.tlName === "Hana", j(l8));
+const other8 = await svc.crmCommissionMonth(ORG, ASHA, [], false, "2026-09");
+check("September: the same sale shows September's 500 as that month's", other8.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === HANA)?.lines[0]?.monthCollectedMinor === 50000);
+const pop = await svc.commissionInvoice(String(inv8));
+check("the pop-up: the invoice whole, from another organization, with its organization", pop.invoice.invoiceNumber === "IN-S11" && pop.invoice.payments.length === 2 && pop.orgId === OTHER && pop.orgName === "Delta Bangalore E2E", j({ n: pop.invoice.invoiceNumber, o: pop.orgName }));
+check("…not an invoice no CRM raised, not a made-up id: not found", /not found/i.test(await refusal(svc.commissionInvoice("6a0000000000000000000abc"))) && /not found/i.test(await refusal(svc.commissionInvoice("nope"))));
+root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== HANA);
 
 /* ── 5 ── */
 step("5. Root not set up, out of date, down");

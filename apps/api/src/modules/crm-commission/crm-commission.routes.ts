@@ -14,6 +14,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requirePermission("commission:read"), c.month);
+// A sale's invoice for the page's pop-up, from any organization — CRM enrolment invoices only (2026-10-31).
+router.get("/invoices/:id", requirePermission("commission:read"), c.invoice);
 router.post("/approve", requirePermission("commission:read"), validateBody(approveCrmCommissionSchema), c.approve);
 router.post("/revoke", requirePermission("commission:read"), validateBody(revokeCrmCommissionSchema), c.revoke);
 router.post("/uploads", requirePermission("commission:write"), parseUpload, c.upload);

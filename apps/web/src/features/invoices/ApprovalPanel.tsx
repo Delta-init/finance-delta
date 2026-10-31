@@ -31,7 +31,8 @@ const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offlin
  * Absent entirely for an invoice that needs no approval, which is every invoice
  * raised by somebody trusted with the whole ledger.
  */
-export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
+/** `readOnly` (2026-10-31, the CRM commission page's pop-up): the decision shown, nothing decided from here. */
+export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice; readOnly?: boolean }) {
   const e = invoice.enrolment;
   const approval = invoice.approval;
   const { can } = useCan();
@@ -44,7 +45,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
 
   if (!approval || approval.state === "not_required") return null;
 
-  const canDecide = can("invoice:write");
+  const canDecide = !readOnly && can("invoice:write");
   const pending = approval.state === "pending";
   const returned = approval.state === "returned";
   const approved = approval.state === "approved";
@@ -182,7 +183,7 @@ export function ApprovalPanel({ invoice }: { invoice: Invoice }) {
             </Button>
           </>
         )}
-        {!canDecide && returned && (
+        {!readOnly && !canDecide && returned && (
           <Button size="sm" loading={resubmit.isPending}
             onClick={() => run("Sent for approval again", () => resubmit.mutateAsync())}>
             Submit again

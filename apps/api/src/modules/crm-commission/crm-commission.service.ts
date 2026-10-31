@@ -119,7 +119,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   const invoices = numbers.length || studentIds.length
     // Finance's cancelled invoices are "void" (a moved enrolment's old invoice among them): they collect nothing.
     ? await Invoice.find({ status: { $ne: "void" }, $or: [{ invoiceNumber: { $in: numbers } }, { "external.externalId": { $in: studentIds } }] })
-      .select("invoiceNumber amountPaidMinor totalMinor currency enrolment.crm external.source external.externalId").lean<any[]>()
+      .select("organizationId invoiceNumber amountPaidMinor totalMinor currency enrolment.crm external.source external.externalId payments.amountMinor payments.paidOn").lean<any[]>()
     : [];
   const crmOf = (i: any) => enrolmentCrm(i.enrolment?.crm, i.external?.source);
   const invoiceOf = (crm: string, l: RootLine) => {
@@ -141,32 +141,51 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     if (rate && from === "AED" && to === "INR") return (m) => Math.round(m * rate);
     return null;
   };
+  // This month's money on an invoice (the user, 2026-10-31: "show this month's collected amount, and the full
+  // amount also"): its payments dated in the month, UAE days.
+  const [my, mm] = month.split("-").map(Number);
+  const monthFrom = new Date(`${month}-01T00:00:00+04:00`);
+  const monthTo = new Date(`${mm === 12 ? my! + 1 : my}-${String(mm === 12 ? 1 : mm! + 1).padStart(2, "0")}-01T00:00:00+04:00`);
+  const inMonth = (inv: any) => (inv.payments ?? [])
+    .filter((p: any) => p.paidOn && new Date(p.paidOn) >= monthFrom && new Date(p.paidOn) < monthTo)
+    .reduce((t: number, p: any) => t + (Number(p.amountMinor) || 0), 0);
   const moneyOf = (c: RootCrm, l: RootLine) => {
     const inv = l.invoiceNumber || l.studentId ? invoiceOf(c.code, l) : null;
     if (!inv) return null;
-    const paid = Number(inv.amountPaidMinor) || 0, fee = Number(inv.totalMinor) || 0;
+    const paid = Number(inv.amountPaidMinor) || 0, fee = Number(inv.totalMinor) || 0, monthPaid = inMonth(inv);
     const convert = toCrmCurrency(c, inv);
     const currency = String(inv.currency || "AED").toUpperCase();
     const foreign = currency !== String(c.currency || "AED").toUpperCase();
     return {
-      collectedMinor: convert ? convert(paid) : null, feeMinor: convert ? convert(fee) : null,
-      ...(foreign ? { invoiceCurrency: currency, invoiceCollectedMinor: paid, invoiceFeeMinor: fee } : {}),
+      invoiceId: String(inv._id), invoiceOrgId: String(inv.organizationId),
+      collectedMinor: convert ? convert(paid) : null, feeMinor: convert ? convert(fee) : null, monthCollectedMinor: convert ? convert(monthPaid) : null,
+      ...(foreign ? { invoiceCurrency: currency, invoiceCollectedMinor: paid, invoiceFeeMinor: fee, invoiceMonthCollectedMinor: monthPaid } : {}),
     };
   };
-  /** Each sale once: what it collected in the CRM's currency, and any it couldn't be converted from, per currency. */
+  /**
+   * Each sale once: what it collected in the CRM's currency — this month and in all — its fees, and any it couldn't
+   * be converted from, per currency.
+   */
   const collectedOf = (c: RootCrm, lines: RootLine[]) => {
     const seen = new Set<string>();
-    let sum = 0;
-    const other = new Map<string, number>();
+    let sum = 0, monthSum = 0, fees = 0;
+    const other = new Map<string, number>(), monthOther = new Map<string, number>();
     for (const l of lines) {
       if (seen.has(l.saleId)) continue;
       seen.add(l.saleId);
       const m = moneyOf(c, l);
       if (!m) continue;
-      if (m.collectedMinor !== null) sum += m.collectedMinor;
-      else if (m.invoiceCurrency) other.set(m.invoiceCurrency, (other.get(m.invoiceCurrency) ?? 0) + (m.invoiceCollectedMinor ?? 0));
+      if (m.collectedMinor !== null) {
+        sum += m.collectedMinor;
+        monthSum += m.monthCollectedMinor ?? 0;
+        fees += m.feeMinor ?? 0;
+      } else if (m.invoiceCurrency) {
+        other.set(m.invoiceCurrency, (other.get(m.invoiceCurrency) ?? 0) + (m.invoiceCollectedMinor ?? 0));
+        monthOther.set(m.invoiceCurrency, (monthOther.get(m.invoiceCurrency) ?? 0) + (m.invoiceMonthCollectedMinor ?? 0));
+      }
     }
-    return { collectedMinor: sum, collectedOther: [...other].map(([currency, amountMinor]) => ({ currency, amountMinor })) };
+    const list = (map: Map<string, number>) => [...map].filter(([, a]) => a > 0).map(([currency, amountMinor]) => ({ currency, amountMinor }));
+    return { collectedMinor: sum, collectedOther: list(other), monthCollectedMinor: monthSum, monthCollectedOther: list(monthOther), feesMinor: fees };
   };
   const withMoney = (c: RootCrm, lines: RootLine[]) => lines.map((l) => ({ ...l, ...(moneyOf(c, l) ?? { collectedMinor: null, feeMinor: null }) }));
 
@@ -176,7 +195,10 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     pending: c.pending ?? { progress: 0, waiting: 0 },
     ...(() => {
       const t = collectedOf(c, (c.people ?? []).flatMap((p) => p.lines ?? []));
-      return { collectedTotalMinor: t.collectedMinor, collectedOther: t.collectedOther };
+      return {
+        collectedTotalMinor: t.collectedMinor, collectedOther: t.collectedOther,
+        monthCollectedTotalMinor: t.monthCollectedMinor, monthCollectedOther: t.monthCollectedOther, feesTotalMinor: t.feesMinor,
+      };
     })(),
     people: (c.people ?? []).map((p) => {
       const payout = byKey.get(keyOf(c.code, month, p.userId));
@@ -197,7 +219,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
     crm.people.push({
       userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, waitingMinor: 0, percent: null, level: null,
-      sales: 0, collectedMinor: 0, collectedOther: [], lines: [], state: p.state, payout: view(p), changed: true,
+      sales: 0, collectedMinor: 0, collectedOther: [], monthCollectedMinor: 0, monthCollectedOther: [], feesMinor: 0, lines: [], state: p.state, payout: view(p), changed: true,
     });
   }
 
@@ -320,6 +342,20 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
     });
     throw err;
   }
+}
+
+/**
+ * A sale's invoice, whole, for the CRM commission page's pop-up (the user, 2026-10-31: "click the invoice and see it as
+ * the invoice page shows it") — from any organization, as the page reads every CRM's sales; only an invoice a sales
+ * CRM raised (an enrolment), nothing else. Read-only.
+ */
+export async function commissionInvoice(id: string) {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Invoice not found");
+  const inv = await Invoice.findById(id).select("organizationId enrolment.crm external.source").lean<any>();
+  if (!inv || !enrolmentCrm(inv.enrolment?.crm, inv.external?.source)) throw new AppError("NOT_FOUND", "Invoice not found");
+  const { getInvoice } = await import("../invoice/invoice.service");
+  const org = await Organization.findById(inv.organizationId).select("name").lean<{ name?: string } | null>();
+  return { invoice: await getInvoice(String(inv.organizationId), id, { all: true }), orgId: String(inv.organizationId), orgName: org?.name ?? "" };
 }
 
 /** A CRM's payouts for a month — what its My Pay shows (GET /integrations/crm-commission/payouts, 2026-10-21). */

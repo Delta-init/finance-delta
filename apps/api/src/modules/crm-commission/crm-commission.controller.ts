@@ -13,6 +13,10 @@ export const month = asyncHandler(async (req, res) => {
   ok(res, await svc.crmCommissionMonth(org(req), uid(req), req.auth!.permissions, sa(req), m));
 });
 
+export const invoice = asyncHandler(async (req, res) => {
+  ok(res, await svc.commissionInvoice(String(req.params.id ?? "")));
+});
+
 export const approve = asyncHandler(async (req, res) => {
   ok(res, await svc.approveCrmCommission(org(req), uid(req), sa(req), req.body));
 });

@@ -71,6 +71,15 @@ export interface CrmCommissionLine {
   invoiceCurrency?: string;
   invoiceCollectedMinor?: number;
   invoiceFeeMinor?: number;
+  invoiceMonthCollectedMinor?: number;
+  /** Collected on the invoice in the month asked for (its payments dated in it), CRM currency (2026-10-31). */
+  monthCollectedMinor?: number | null;
+  /** The invoice, for the page's pop-up, and the finance organization it is in. */
+  invoiceId?: string;
+  invoiceOrgId?: string;
+  /** The sale's salesperson and team leader, from Root (2026-10-31); "" when none. */
+  salesName?: string;
+  tlName?: string;
 }
 
 /** Collected in a currency that couldn't be put in the CRM's — shown apart, never added in (2026-10-31). */
@@ -106,6 +115,10 @@ export interface CrmCommissionPerson {
   /** What their sales' invoices have collected (each sale once), minor units of the CRM's currency (2026-10-26). */
   collectedMinor: number;
   collectedOther?: CrmCommissionOtherMoney[];
+  /** Collected in the month asked for, and the fees of their sales' invoices (each sale once), CRM currency (2026-10-31). */
+  monthCollectedMinor: number;
+  monthCollectedOther?: CrmCommissionOtherMoney[];
+  feesMinor: number;
   lines: CrmCommissionLine[];
   state: CrmCommissionState;
   payout: CrmCommissionPayoutView | null;
@@ -123,6 +136,9 @@ export interface CrmCommissionCrm {
   /** What the month's counted sales collected (each sale once, their invoices here), minor units (2026-10-26). */
   collectedTotalMinor: number;
   collectedOther?: CrmCommissionOtherMoney[];
+  monthCollectedTotalMinor: number;
+  monthCollectedOther?: CrmCommissionOtherMoney[];
+  feesTotalMinor: number;
   /** Why My Pay's figures are missing for this CRM, when they are — nothing can be approved then. */
   payError: string | null;
   pending: { progress: number; waiting: number };

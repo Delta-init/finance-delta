@@ -28,7 +28,8 @@ const prettySize = (bytes?: number) =>
  * invoice is with an approver, because the evidence it is being approved
  * against should not move underneath them.
  */
-export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
+/** `readOnly` (2026-10-31, the CRM commission page's pop-up): the files listed, none added or removed. */
+export function InvoiceAttachments({ invoice, readOnly = false }: { invoice: Invoice; readOnly?: boolean }) {
   const { can } = useCan();
   const add = useAddInvoiceAttachment(invoice.id);
   const remove = useRemoveInvoiceAttachment(invoice.id);
@@ -36,7 +37,7 @@ export function InvoiceAttachments({ invoice }: { invoice: Invoice }) {
   const [busy, setBusy] = useState(false);
 
   const files = invoice.attachments ?? [];
-  const canEdit = can("invoice:write") || can("invoice:write:own");
+  const canEdit = !readOnly && (can("invoice:write") || can("invoice:write:own"));
   // Matches the server's rule, so the control is absent rather than offering
   // something that would only produce a refusal. Approved counts as locked too:
   // the documents an invoice was approved against should not move afterwards.

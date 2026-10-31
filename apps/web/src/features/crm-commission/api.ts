@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApproveCrmCommissionInput, CrmCommissionMonth, PayCrmCommissionInput, RevokeCrmCommissionInput, UploadedExpenseFile } from "@delta/shared";
+import type { ApproveCrmCommissionInput, CrmCommissionMonth, Invoice, PayCrmCommissionInput, RevokeCrmCommissionInput, UploadedExpenseFile } from "@delta/shared";
 import { api } from "@/lib/api";
 
 const KEY = ["crm-commission"] as const;
@@ -12,6 +12,16 @@ export function useCrmCommission(month: string) {
     queryKey: [...KEY, month],
     queryFn: () => api.get<CrmCommissionMonth>(`crm-commission?month=${month}`),
     enabled: /^\d{4}-\d{2}$/.test(month),
+    retry: false,
+  });
+}
+
+/** A sale's invoice, whole, for the page's pop-up — from any organization (2026-10-31). */
+export function useCrmCommissionInvoice(id: string | null) {
+  return useQuery({
+    queryKey: [...KEY, "invoice", id],
+    queryFn: () => api.get<{ invoice: Invoice; orgId: string; orgName: string }>(`crm-commission/invoices/${id}`),
+    enabled: !!id,
     retry: false,
   });
 }

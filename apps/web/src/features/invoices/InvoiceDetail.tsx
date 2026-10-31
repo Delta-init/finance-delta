@@ -56,15 +56,23 @@ import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 import { useFileDrop } from "@/components/ui/file-drop";
 
-export function InvoiceDetail({ id }: { id: string }) {
+/**
+ * `preloaded`: the invoice as somebody else read it (2026-10-31: the CRM commission page's pop-up, from any
+ * organization) — shown whole but read-only: no edit, send, pay, void, approve or upload, which belong on the invoice
+ * page in its own organization; `sameOrg` offers that page.
+ */
+export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { invoice: Invoice; orgName: string; sameOrg: boolean } }) {
+  const readOnly = !!preloaded;
   const router = useRouter();
   // The PDF waits for its logo to load; one click is one download.
   const [pdfBusy, setPdfBusy] = useState(false);
-  const { data: invoice, isLoading } = useInvoice(id);
+  const { data: fetched, isLoading: loading } = useInvoice(readOnly ? undefined : id);
+  const invoice = preloaded?.invoice ?? fetched;
+  const isLoading = !readOnly && loading;
   // Everything the PDF prints beyond the invoice itself. Cheap here: all three
   // are already cached by the time somebody reaches for the download.
   const { data: org } = useOrganization();
-  const { data: customer } = useCustomer(invoice?.customerId);
+  const { data: customer } = useCustomer(readOnly ? undefined : invoice?.customerId);
   const { data: bankAccount } = useBankAccount(org?.invoiceDefaults?.bankAccountId || undefined);
   const deletePayment = useDeletePayment(id);
   const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
@@ -90,7 +98,7 @@ export function InvoiceDetail({ id }: { id: string }) {
   // `invoice:write`, and the server refuses them without it — so somebody
   // billing their own work was being shown three buttons that only ever
   // returned an error.
-  const canManage = can("invoice:write");
+  const canManage = !readOnly && can("invoice:write");
 
   // An unapproved invoice gates everything it can do. The server refuses these
   // before approval, so offering them would only produce a refusal — and the
@@ -99,7 +107,7 @@ export function InvoiceDetail({ id }: { id: string }) {
 
   // Editing stays open while it is a draft — correcting something that came
   // back is exactly what should happen next — but it cannot go to the client.
-  const canSend = isDraft && !awaitingApproval;
+  const canSend = !readOnly && isDraft && !awaitingApproval;
 
   /*
    * Approval is worth nothing if the figures can move afterwards, so once an
@@ -113,7 +121,7 @@ export function InvoiceDetail({ id }: { id: string }) {
   // A sent invoice can be corrected now. A voided one cannot — it is a
   // cancelled record rather than a wrong one, and has its own way back.
   const canEdit =
-    invoice.status !== "void" && (canManage || !approvalBlocksEditing(invoice.approval?.state));
+    !readOnly && invoice.status !== "void" && (canManage || !approvalBlocksEditing(invoice.approval?.state));
   const canRestore = canManage && invoice.status === "void";
 
   const canVoid = canManage && invoice.status !== "paid" && invoice.status !== "void";
@@ -126,13 +134,13 @@ export function InvoiceDetail({ id }: { id: string }) {
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <button
+          {!readOnly && <button
             onClick={() => router.back()}
             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-surface-muted hover:text-foreground"
             aria-label="Back"
           >
             <ArrowLeft className="h-4 w-4" />
-          </button>
+          </button>}
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
               <ReceiptText className="h-5 w-5" />
@@ -152,7 +160,14 @@ export function InvoiceDetail({ id }: { id: string }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button
+          {readOnly && (preloaded.sameOrg ? (
+            <Link href={`/invoices/${id}`}>
+              <Button variant="outline" size="sm"><ExternalLink className="h-3.5 w-3.5" /> Open invoice page</Button>
+            </Link>
+          ) : (
+            <span className="text-xs text-foreground-muted">In {preloaded.orgName || "another organization"} — switch to it to work on this invoice</span>
+          ))}
+          {!readOnly && <Button
             variant="ghost"
             size="sm"
             loading={pdfBusy}
@@ -167,7 +182,7 @@ export function InvoiceDetail({ id }: { id: string }) {
             title="Download this invoice as a PDF"
           >
             <Download className="h-3.5 w-3.5" /> PDF
-          </Button>
+          </Button>}
           {canEdit && (
             <Link href={`/invoices/${id}/edit`}>
               <Button variant="outline" size="sm"><Pencil className="h-3.5 w-3.5" /> Edit</Button>
@@ -205,7 +220,7 @@ export function InvoiceDetail({ id }: { id: string }) {
               <Send className="h-3.5 w-3.5" /> Send
             </Button>
           )}
-          {!isDraft && invoice.status !== "void" && (
+          {!readOnly && !isDraft && invoice.status !== "void" && (
             <Button variant="outline" size="sm" onClick={() => setResendOpen(true)}>
               <RotateCcw className="h-3.5 w-3.5" /> Resend
             </Button>
@@ -275,13 +290,13 @@ export function InvoiceDetail({ id }: { id: string }) {
       {/* An invoice that says Sent but was never delivered. The status means
           somebody pressed Send; this is whether the message actually left, and
           for a long time nothing said when it had not. */}
-      <UndeliveredNotice invoice={invoice} onResend={() => setResendOpen(true)} />
+      {!readOnly && <UndeliveredNotice invoice={invoice} onResend={() => setResendOpen(true)} />}
 
       {/* The enrolment and its decision, above the invoice itself: whether
           this has been approved governs everything below it. */}
-      <ApprovalPanel invoice={invoice} />
+      <ApprovalPanel invoice={invoice} readOnly={readOnly} />
 
-      <InvoiceAttachments invoice={invoice} />
+      <InvoiceAttachments invoice={invoice} readOnly={readOnly} />
 
       <Dialog open={!!deletingPayment} onOpenChange={(o) => { if (!o) setDeletingPayment(null); }}>
         <DialogContent className="sm:max-w-md">
@@ -546,13 +561,13 @@ export function InvoiceDetail({ id }: { id: string }) {
                           </button>
                         </>
                       )}
-                      <button
+                      {!readOnly && <button
                         onClick={() => router.push(`/invoices/${id}/payments/${p.id}/receipt`)}
                         className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground"
                         title="View receipt"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>
@@ -563,7 +578,7 @@ export function InvoiceDetail({ id }: { id: string }) {
       )}
 
       {/* Every email sent about this invoice (the user, 2026-10-07) — at the foot, folded until opened (2026-10-22). */}
-      <InvoiceEmailsCard invoiceId={id} onResend={!isDraft && invoice.status !== "void" ? () => setResendOpen(true) : undefined} />
+      {!readOnly && <InvoiceEmailsCard invoiceId={id} onResend={!isDraft && invoice.status !== "void" ? () => setResendOpen(true) : undefined} />}
     </div>
   );
 }

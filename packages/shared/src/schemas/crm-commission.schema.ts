@@ -77,6 +77,8 @@ export interface CrmCommissionLine {
   /** The invoice, for the page's pop-up, and the finance organization it is in. */
   invoiceId?: string;
   invoiceOrgId?: string;
+  /** Who raised the invoice here — its salesperson in finance (2026-10-31). */
+  raisedByName?: string;
   /** The sale's salesperson and team leader, from Root (2026-10-31); "" when none. */
   salesName?: string;
   tlName?: string;

@@ -245,7 +245,7 @@ const HANA = new Types.ObjectId().toString(), STU8 = new Types.ObjectId().toStri
 const inv8 = new Types.ObjectId();
 await mongoose.connection.db!.collection("invoices").insertMany([
   { _id: inv8, organizationId: other._id, invoiceNumber: "IN-S11", status: "partial", currency: "AED", totalMinor: 225000, amountPaidMinor: 150000, balanceMinor: 75000,
-    customerId: new Types.ObjectId(), salespersonId: new Types.ObjectId(), createdAt: new Date(), updatedAt: new Date(), taxBreakdown: [], tagIds: [], subtotalMinor: 225000, taxTotalMinor: 0, discountTotalMinor: 0, customerName: "Client Eleven", issueDate: new Date("2026-09-20"), dueDate: new Date("2026-10-20"), lineItems: [], enrolment: { crm: "delta" }, external: { source: "crm", externalId: STU8 },
+    customerId: new Types.ObjectId(), salespersonId: new Types.ObjectId(), salespersonName: "Jalwa Raiser", createdAt: new Date(), updatedAt: new Date(), taxBreakdown: [], tagIds: [], subtotalMinor: 225000, taxTotalMinor: 0, discountTotalMinor: 0, customerName: "Client Eleven", issueDate: new Date("2026-09-20"), dueDate: new Date("2026-10-20"), lineItems: [], enrolment: { crm: "delta" }, external: { source: "crm", externalId: STU8 },
     payments: [{ amountMinor: 50000, paidOn: new Date("2026-09-20T08:00:00Z"), method: "cash" }, { amountMinor: 100000, paidOn: new Date("2026-10-10T08:00:00Z"), method: "card" }] },
   // Not a CRM's: never shown through the commission page.
   { _id: new Types.ObjectId("6a0000000000000000000abc"), organizationId: org._id, invoiceNumber: "IN-OWN", status: "paid", currency: "AED", totalMinor: 1000, amountPaidMinor: 1000, customerName: "Walk-in", lineItems: [], payments: [] },
@@ -259,6 +259,7 @@ check("the line: 1,000 collected this month (not September's 500), 1,500 in all 
   l8.monthCollectedMinor === 100000 && l8.collectedMinor === 150000 && l8.feeMinor === 225000 && l8.invoiceId === String(inv8) && l8.invoiceOrgId === OTHER, j(l8));
 check("…the person: this month's 1,000, of 2,250 fees", hana.monthCollectedMinor === 100000 && hana.feesMinor === 225000 && hana.collectedMinor === 150000, j({ m: hana.monthCollectedMinor, f: hana.feesMinor }));
 check("…who sold it and their team leader, from Root", l8.salesName === "Ria" && l8.tlName === "Hana", j(l8));
+check("…who raised its invoice here", l8.raisedByName === "Jalwa Raiser", j(l8.raisedByName));
 const other8 = await svc.crmCommissionMonth(ORG, ASHA, [], false, "2026-09");
 check("September: the same sale shows September's 500 as that month's", other8.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === HANA)?.lines[0]?.monthCollectedMinor === 50000);
 const pop = await svc.commissionInvoice(String(inv8));

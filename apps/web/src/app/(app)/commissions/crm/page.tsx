@@ -2,8 +2,8 @@
 
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Loader2, Upload, Users, Wallet, X } from "lucide-react";
-import { EXPENSE_DEFAULTS, type CrmCommissionCrm, type CrmCommissionPerson, type UploadedExpenseFile } from "@delta/shared";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Loader2, Search, Upload, Users, Wallet, X } from "lucide-react";
+import { EXPENSE_DEFAULTS, type CrmCommissionCrm, type CrmCommissionLine, type CrmCommissionPerson, type UploadedExpenseFile } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -228,86 +228,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                           {!p.lines.length ? (
                             <p className="py-2 text-xs text-foreground-muted">No sales counted for {p.name} now.</p>
                           ) : (
-                            <table className="w-full text-xs">
-                              <thead className="text-left text-foreground-muted">
-                                <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 pr-6 text-right font-medium" title="Collected on the invoice this month; under it, collected in all of the invoice's total">Collected this month</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
-                              </thead>
-                              <tbody>
-                                {p.lines.map((l, i) => (
-                                  <tr key={`${l.saleId}:${l.role}:${i}`} className="border-t border-border/60">
-                                    <td className="py-1">{l.saleDate.slice(0, 10)}</td>
-                                    <td className="py-1">{l.student || "—"}</td>
-                                    <td className="py-1">{l.course || "—"}</td>
-                                    <td className="py-1">
-                                      {/* The invoice whole, in a pop-up (2026-10-31) */}
-                                      {l.invoiceId ? (
-                                        <button type="button" onClick={() => setInvoiceOpen(l.invoiceId!)} className="text-primary hover:underline">{l.invoiceNumber || "Invoice"}</button>
-                                      ) : (l.invoiceNumber || "—")}
-                                    </td>
-                                    <td className="py-1 pr-6 text-right font-numeric">
-                                      {/* This month's money on the invoice; under it what it has collected in all, of its total (2026-10-31) */}
-                                      {l.monthCollectedMinor != null ? `${l.invoiceCurrency ? "≈ " : ""}${money(l.monthCollectedMinor, crm.currency)}`
-                                        : l.invoiceCurrency ? money(l.invoiceMonthCollectedMinor ?? 0, l.invoiceCurrency) : <span className="text-foreground-muted">—</span>}
-                                      {l.collectedMinor != null && l.feeMinor != null && (
-                                        <span className="block text-[10px] text-foreground-muted">{money(l.collectedMinor, crm.currency)} collected of {money(l.feeMinor, crm.currency)}</span>
-                                      )}
-                                      {/* A Bangalore sale's rupees (2026-10-31): the invoice's own figure under the AED it counts as */}
-                                      {l.invoiceCurrency && (
-                                        <span className="block text-[10px] text-foreground-muted">
-                                          {money(l.invoiceMonthCollectedMinor ?? 0, l.invoiceCurrency)} this month · {money(l.invoiceCollectedMinor ?? 0, l.invoiceCurrency)} of {money(l.invoiceFeeMinor ?? 0, l.invoiceCurrency)}
-                                        </span>
-                                      )}
-                                      {l.invoiceCurrency && l.collectedMinor == null && <span className="block text-[10px] text-foreground-muted">no rate to {crm.currency}</span>}
-                                    </td>
-                                    <td className="py-1">
-                                      {ROLE[l.role] ?? l.role}
-                                      {/* Who sold it and their team leader (2026-10-31) */}
-                                      {(l.salesName || l.tlName) && (
-                                        <span className="block text-[10px] text-foreground-muted">
-                                          {[l.salesName && `Sales: ${l.salesName}`, l.tlName && `TL: ${l.tlName}`].filter(Boolean).join(" · ")}
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="py-1 text-right font-numeric">
-                                      {money(Math.round(l.amount * 100), crm.currency)}
-                                      {(l.waiting ?? 0) > 0 && <span className="block text-[10px] text-warning">{money(Math.round((l.waiting ?? 0) * 100), crm.currency)} waiting — client still paying</span>}
-                                      {(l.waiting ?? 0) === 0 && l.paidInFullAt && l.paidInFullAt.slice(0, 10) !== l.saleDate.slice(0, 10) && (
-                                        <span className="block text-[10px] text-foreground-muted">paid in full {l.paidInFullAt.slice(0, 10)}</span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                              {/* Their total (the user, 2026-10-26: "show the total collected also"): each sale once — a sale
-                                  counted under two roles is one invoice — with its fees when not all of it is in; and the
-                                  commission earned, every line. */}
-                              {(() => {
-                                const sales = new Map(p.lines.map((l) => [l.saleId, l]));
-                                const known = [...sales.values()].filter((l) => l.collectedMinor != null);
-                                const missing = [...sales.values()].filter((l) => l.collectedMinor == null && !l.invoiceCurrency).length;
-                                const collected = known.reduce((t, l) => t + (l.monthCollectedMinor ?? 0), 0);
-                                const all = known.reduce((t, l) => t + (l.collectedMinor ?? 0), 0);
-                                const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
-                                const earned = p.lines.reduce((t, l) => t + Math.round(l.amount * 100), 0);
-                                const waiting = p.lines.reduce((t, l) => t + Math.round((l.waiting ?? 0) * 100), 0);
-                                return (
-                                  <tfoot>
-                                    <tr className="border-t-2 border-border font-semibold">
-                                      <td className="py-1.5" colSpan={4}>Total · {sales.size} sale{sales.size === 1 ? "" : "s"}{missing ? ` (${missing} with no invoice here)` : ""}</td>
-                                      <td className="py-1.5 pr-6 text-right font-numeric">
-                                        {money(collected, crm.currency)}{plusOther(p.monthCollectedOther)}
-                                        <span className="block text-[10px] font-normal text-foreground-muted">{money(all, crm.currency)} collected of {money(fees, crm.currency)}</span>
-                                      </td>
-                                      <td />
-                                      <td className="py-1.5 text-right font-numeric">
-                                        {money(earned, crm.currency)}
-                                        {waiting > 0 && <span className="block text-[10px] font-normal text-warning">+{money(waiting, crm.currency)} waiting</span>}
-                                      </td>
-                                    </tr>
-                                  </tfoot>
-                                );
-                              })()}
-                            </table>
+                            <SalesBreakdown p={p} crm={crm} onInvoice={setInvoiceOpen} />
                           )}
                         </td>
                       </tr>
@@ -509,5 +430,142 @@ function InvoicePopup({ id, onClose }: { id: string | null; onClose: () => void 
           : <InvoiceDetail id={id!} preloaded={{ invoice: data.invoice, orgName: data.orgName, sameOrg: !!org && data.orgId === org.id }} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+const ALL = "all";
+const STATUS_LABEL: Record<string, string> = { earned: "Earned", waiting: "Waiting for full payment", none: "No commission" };
+const statusOf = (l: CrmCommissionLine) => ((l.waiting ?? 0) > 0 ? "waiting" : l.amount > 0 ? "earned" : "none");
+
+/**
+ * A person's sales, with search and filters (the user, 2026-10-31: "add filter and search in the breakdown, fast") —
+ * on what the page already has, so they answer as you type; the total follows them.
+ */
+function SalesBreakdown({ p, crm, onInvoice }: { p: CrmCommissionPerson; crm: CrmCommissionCrm; onInvoice: (id: string) => void }) {
+  const [q, setQ] = useState("");
+  const [role, setRole] = useState(ALL);
+  const [status, setStatus] = useState(ALL);
+  const [raiser, setRaiser] = useState(ALL);
+  const roles = [...new Set(p.lines.map((l) => l.role))];
+  const raisers = [...new Set(p.lines.map((l) => l.raisedByName || "").filter(Boolean))].sort();
+  const needle = q.trim().toLowerCase();
+  const shown = p.lines.filter((l) =>
+    (role === ALL || l.role === role)
+    && (status === ALL || statusOf(l) === status)
+    && (raiser === ALL || (l.raisedByName || "") === raiser)
+    && (!needle || [l.student, l.course, l.invoiceNumber, l.raisedByName, l.salesName, l.tlName].some((v) => (v ?? "").toLowerCase().includes(needle))));
+  const filtered = shown.length !== p.lines.length;
+  const allSales = new Set(p.lines.map((l) => l.saleId)).size;
+  const pick = (value: string, set: (v: string) => void, label: string, options: Array<[string, string]>) => (
+    <Select value={value} onValueChange={set}>
+      <SelectTrigger className="h-8 w-auto min-w-36 text-xs"><SelectValue placeholder={label} /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>{label}: all</SelectItem>
+        {options.map(([v, text]) => <SelectItem key={v} value={v}>{text}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search student, course, invoice, people…" className="h-8 w-64 pl-7 text-xs" />
+        </div>
+        {roles.length > 1 && pick(role, setRole, "As", roles.map((r) => [r, ROLE[r] ?? r]))}
+        {pick(status, setStatus, "Status", Object.entries(STATUS_LABEL))}
+        {raisers.length > 1 && pick(raiser, setRaiser, "Raised by", raisers.map((r) => [r, r]))}
+        {filtered && (
+          <Button size="sm" variant="ghost" onClick={() => { setQ(""); setRole(ALL); setStatus(ALL); setRaiser(ALL); }}>
+            <X className="h-3.5 w-3.5" /> Clear
+          </Button>
+        )}
+      </div>
+      {!shown.length ? (
+        <p className="py-2 text-xs text-foreground-muted">No sales match.</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead className="text-left text-foreground-muted">
+            <tr><th className="py-1 font-medium">Sale</th><th className="py-1 font-medium">Student</th><th className="py-1 font-medium">Course</th><th className="py-1 font-medium">Invoice</th><th className="py-1 font-medium" title="Who raised the invoice here">Raised by</th><th className="py-1 pr-6 text-right font-medium" title="Collected on the invoice this month; under it, collected in all of the invoice's total">Collected this month</th><th className="py-1 font-medium">As</th><th className="py-1 text-right font-medium">Commission</th></tr>
+          </thead>
+          <tbody>
+            {shown.map((l, i) => (
+              <tr key={`${l.saleId}:${l.role}:${i}`} className="border-t border-border/60">
+                <td className="py-1">{l.saleDate.slice(0, 10)}</td>
+                <td className="py-1">{l.student || "—"}</td>
+                <td className="py-1">{l.course || "—"}</td>
+                <td className="py-1">
+                  {/* The invoice whole, in a pop-up (2026-10-31) */}
+                  {l.invoiceId ? (
+                    <button type="button" onClick={() => onInvoice(l.invoiceId!)} className="text-primary hover:underline">{l.invoiceNumber || "Invoice"}</button>
+                  ) : (l.invoiceNumber || "—")}
+                </td>
+                <td className="py-1">{l.raisedByName || "—"}</td>
+                <td className="py-1 pr-6 text-right font-numeric">
+                  {/* This month's money on the invoice; under it what it has collected in all, of its total (2026-10-31) */}
+                  {l.monthCollectedMinor != null ? `${l.invoiceCurrency ? "≈ " : ""}${money(l.monthCollectedMinor, crm.currency)}`
+                    : l.invoiceCurrency ? money(l.invoiceMonthCollectedMinor ?? 0, l.invoiceCurrency) : <span className="text-foreground-muted">—</span>}
+                  {l.collectedMinor != null && l.feeMinor != null && (
+                    <span className="block text-[10px] text-foreground-muted">{money(l.collectedMinor, crm.currency)} collected of {money(l.feeMinor, crm.currency)}</span>
+                  )}
+                  {/* A Bangalore sale's rupees (2026-10-31): the invoice's own figure under the AED it counts as */}
+                  {l.invoiceCurrency && (
+                    <span className="block text-[10px] text-foreground-muted">
+                      {money(l.invoiceMonthCollectedMinor ?? 0, l.invoiceCurrency)} this month · {money(l.invoiceCollectedMinor ?? 0, l.invoiceCurrency)} of {money(l.invoiceFeeMinor ?? 0, l.invoiceCurrency)}
+                    </span>
+                  )}
+                  {l.invoiceCurrency && l.collectedMinor == null && <span className="block text-[10px] text-foreground-muted">no rate to {crm.currency}</span>}
+                </td>
+                <td className="py-1">
+                  {ROLE[l.role] ?? l.role}
+                  {/* Who sold it and their team leader (2026-10-31) */}
+                  {(l.salesName || l.tlName) && (
+                    <span className="block text-[10px] text-foreground-muted">
+                      {[l.salesName && `Sales: ${l.salesName}`, l.tlName && `TL: ${l.tlName}`].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
+                </td>
+                <td className="py-1 text-right font-numeric">
+                  {money(Math.round(l.amount * 100), crm.currency)}
+                  {(l.waiting ?? 0) > 0 && <span className="block text-[10px] text-warning">{money(Math.round((l.waiting ?? 0) * 100), crm.currency)} waiting — client still paying</span>}
+                  {(l.waiting ?? 0) === 0 && l.paidInFullAt && l.paidInFullAt.slice(0, 10) !== l.saleDate.slice(0, 10) && (
+                    <span className="block text-[10px] text-foreground-muted">paid in full {l.paidInFullAt.slice(0, 10)}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {/* Their total (the user, 2026-10-26: "show the total collected also"): each sale once — a sale
+              counted under two roles is one invoice — with its fees when not all of it is in; and the
+              commission earned, every line. */}
+          {(() => {
+            const sales = new Map(shown.map((l) => [l.saleId, l]));
+            const known = [...sales.values()].filter((l) => l.collectedMinor != null);
+            const missing = [...sales.values()].filter((l) => l.collectedMinor == null && !l.invoiceCurrency).length;
+            const collected = known.reduce((t, l) => t + (l.monthCollectedMinor ?? 0), 0);
+            const all = known.reduce((t, l) => t + (l.collectedMinor ?? 0), 0);
+            const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
+            const earned = shown.reduce((t, l) => t + Math.round(l.amount * 100), 0);
+            const waiting = shown.reduce((t, l) => t + Math.round((l.waiting ?? 0) * 100), 0);
+            return (
+              <tfoot>
+                <tr className="border-t-2 border-border font-semibold">
+                  <td className="py-1.5" colSpan={5}>Total · {sales.size}{filtered ? ` of ${allSales}` : ""} sale{sales.size === 1 ? "" : "s"}{missing ? ` (${missing} with no invoice here)` : ""}</td>
+                  <td className="py-1.5 pr-6 text-right font-numeric">
+                    {money(collected, crm.currency)}{filtered ? "" : plusOther(p.monthCollectedOther)}
+                    <span className="block text-[10px] font-normal text-foreground-muted">{money(all, crm.currency)} collected of {money(fees, crm.currency)}</span>
+                  </td>
+                  <td />
+                  <td className="py-1.5 text-right font-numeric">
+                    {money(earned, crm.currency)}
+                    {waiting > 0 && <span className="block text-[10px] font-normal text-warning">+{money(waiting, crm.currency)} waiting</span>}
+                  </td>
+                </tr>
+              </tfoot>
+            );
+          })()}
+        </table>
+      )}
+    </div>
   );
 }

@@ -119,7 +119,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   const invoices = numbers.length || studentIds.length
     // Finance's cancelled invoices are "void" (a moved enrolment's old invoice among them): they collect nothing.
     ? await Invoice.find({ status: { $ne: "void" }, $or: [{ invoiceNumber: { $in: numbers } }, { "external.externalId": { $in: studentIds } }] })
-      .select("organizationId invoiceNumber amountPaidMinor totalMinor currency enrolment.crm external.source external.externalId payments.amountMinor payments.paidOn").lean<any[]>()
+      .select("organizationId invoiceNumber salespersonName amountPaidMinor totalMinor currency enrolment.crm external.source external.externalId payments.amountMinor payments.paidOn").lean<any[]>()
     : [];
   const crmOf = (i: any) => enrolmentCrm(i.enrolment?.crm, i.external?.source);
   const invoiceOf = (crm: string, l: RootLine) => {
@@ -157,7 +157,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     const currency = String(inv.currency || "AED").toUpperCase();
     const foreign = currency !== String(c.currency || "AED").toUpperCase();
     return {
-      invoiceId: String(inv._id), invoiceOrgId: String(inv.organizationId),
+      invoiceId: String(inv._id), invoiceOrgId: String(inv.organizationId), raisedByName: String(inv.salespersonName ?? ""),
       collectedMinor: convert ? convert(paid) : null, feeMinor: convert ? convert(fee) : null, monthCollectedMinor: convert ? convert(monthPaid) : null,
       ...(foreign ? { invoiceCurrency: currency, invoiceCollectedMinor: paid, invoiceFeeMinor: fee, invoiceMonthCollectedMinor: monthPaid } : {}),
     };

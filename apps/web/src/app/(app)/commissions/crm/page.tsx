@@ -90,6 +90,8 @@ export default function CrmCommissionPage() {
                   <p className="mt-1 text-xs text-foreground-muted">
                     payable of {money(c.earnedTotalMinor, c.currency)} earned · {c.people.length} {c.people.length === 1 ? "person" : "people"}
                   </p>
+                  {/* Paid in full first (2026-10-31): commission on sales the clients are still paying for waits */}
+                  {(c.waitingTotalMinor ?? 0) > 0 && <p className="text-xs text-foreground-muted">{money(c.waitingTotalMinor, c.currency)} waiting for clients to pay in full</p>}
                   <p className="text-xs text-foreground-muted">collected <span className="font-medium text-foreground">{money(c.collectedTotalMinor ?? 0, c.currency)}{plusOther(c.collectedOther)}</span> on the month's sales</p>
                   <p className="text-xs text-foreground-muted">approved {money(approved, c.currency)} · paid {money(paid, c.currency)}</p>
                 </Card>
@@ -129,7 +131,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
         <h2 className="font-semibold">{crm.name}</h2>
         <p className="text-xs text-foreground-muted">
-          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned · {money(crm.collectedTotalMinor ?? 0, crm.currency)}{plusOther(crm.collectedOther)} collected
+          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned{(crm.waitingTotalMinor ?? 0) > 0 ? ` (+${money(crm.waitingTotalMinor, crm.currency)} waiting for full payment)` : ""} · {money(crm.collectedTotalMinor ?? 0, crm.currency)}{plusOther(crm.collectedOther)} collected
           {/* Counted at finance's approval since 2026-10-26: "progress" is waiting for it; "waiting" is on hold in the CRM (its team). */}
           {crm.pending.progress > 0 && ` · ${crm.pending.progress} sale${crm.pending.progress === 1 ? "" : "s"} waiting for finance's approval`}
           {crm.pending.waiting > 0 && ` · ${crm.pending.waiting} on hold in the CRM`}
@@ -182,6 +184,11 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                         <span className="block text-xs font-normal text-foreground-muted">
                           {p.percent !== null ? `${p.percent}% of ` : ""}{money(p.earnedMinor, crm.currency)} earned{p.level ? ` · ${p.level}` : ""}
                         </span>
+                        {(p.waitingMinor ?? 0) > 0 && (
+                          <span className="block text-xs font-normal text-warning" title="Earned whole once the client pays in full, in that month">
+                            +{money(p.waitingMinor, crm.currency)} waiting for full payment
+                          </span>
+                        )}
                         {p.changed && (
                           <span className="block text-xs font-normal text-warning" title="The CRM's figure changed after it was approved">
                             CRM counts {money(p.amountMinor, crm.currency)} now
@@ -203,7 +210,9 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                             {canPay && <Button size="sm" onClick={() => onPay(p)}><Wallet className="h-3.5 w-3.5" /> Mark paid</Button>}
                           </div>
                         )}
-                        {p.state === "earned" && p.payableKnown && p.amountMinor === 0 && <span className="text-xs text-foreground-muted">Nothing payable at this level</span>}
+                        {p.state === "earned" && p.payableKnown && p.amountMinor === 0 && (
+                          <span className="text-xs text-foreground-muted">{p.earnedMinor === 0 && (p.waitingMinor ?? 0) > 0 ? "Nothing yet — waiting for full payment" : "Nothing payable at this level"}</span>
+                        )}
                         {p.state === "earned" && !canApprove && p.amountMinor > 0 && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
                         {p.state === "approved" && !canPay && !canApprove && <span className="text-xs text-foreground-muted">Waiting for accounts</span>}
                       </td>
@@ -238,7 +247,13 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                       {l.invoiceCurrency && l.collectedMinor == null && <span className="block text-[10px] text-foreground-muted">no rate to {crm.currency}</span>}
                                     </td>
                                     <td className="py-1">{ROLE[l.role] ?? l.role}</td>
-                                    <td className="py-1 text-right font-numeric">{money(Math.round(l.amount * 100), crm.currency)}</td>
+                                    <td className="py-1 text-right font-numeric">
+                                      {money(Math.round(l.amount * 100), crm.currency)}
+                                      {(l.waiting ?? 0) > 0 && <span className="block text-[10px] text-warning">{money(Math.round((l.waiting ?? 0) * 100), crm.currency)} waiting — client still paying</span>}
+                                      {(l.waiting ?? 0) === 0 && l.paidInFullAt && l.paidInFullAt.slice(0, 10) !== l.saleDate.slice(0, 10) && (
+                                        <span className="block text-[10px] text-foreground-muted">paid in full {l.paidInFullAt.slice(0, 10)}</span>
+                                      )}
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -252,6 +267,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                 const collected = known.reduce((t, l) => t + (l.collectedMinor ?? 0), 0);
                                 const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
                                 const earned = p.lines.reduce((t, l) => t + Math.round(l.amount * 100), 0);
+                                const waiting = p.lines.reduce((t, l) => t + Math.round((l.waiting ?? 0) * 100), 0);
                                 return (
                                   <tfoot>
                                     <tr className="border-t-2 border-border font-semibold">
@@ -261,7 +277,10 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                         {fees > collected && <span className="block text-[10px] font-normal text-foreground-muted">of {money(fees, crm.currency)}</span>}
                                       </td>
                                       <td />
-                                      <td className="py-1.5 text-right font-numeric">{money(earned, crm.currency)}</td>
+                                      <td className="py-1.5 text-right font-numeric">
+                                        {money(earned, crm.currency)}
+                                        {waiting > 0 && <span className="block text-[10px] font-normal text-warning">+{money(waiting, crm.currency)} waiting</span>}
+                                      </td>
                                     </tr>
                                   </tfoot>
                                 );

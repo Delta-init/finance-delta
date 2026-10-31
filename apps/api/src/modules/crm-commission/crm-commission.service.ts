@@ -36,12 +36,15 @@ type RootLine = CrmCommissionLine & { studentId?: string };
  */
 interface RootPerson {
   userId: string; name: string; roles: string[]; amount: number; sales: number; lines: RootLine[];
+  /** Commission waiting for clients to pay in full (2026-10-31); absent from an older Root. */
+  waiting?: number;
   payable?: number | null; percent?: number | null; level?: string | null;
 }
 interface RootCrm {
   code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number };
   /** Why the CRM's My Pay figures are missing, when they are. */
   payError?: string | null; payableTotal?: number | null;
+  waitingTotal?: number;
   /** 1 AED = this many rupees, the CRM's own rate (2026-10-31); absent from a Root not yet updated. */
   inrPerAed?: number | null;
 }
@@ -169,7 +172,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
 
   const out: CrmCommissionCrm[] = crms.map((c) => ({
     code: c.code, name: c.name, currency: c.currency || "AED", error: c.error, totalMinor: minor(c.payableTotal ?? 0),
-    earnedTotalMinor: minor(c.total), payError: c.payError ?? (c.payableTotal === undefined ? "The Root portal needs updating to give My Pay's figures." : null),
+    earnedTotalMinor: minor(c.total), waitingTotalMinor: minor(c.waitingTotal ?? 0), payError: c.payError ?? (c.payableTotal === undefined ? "The Root portal needs updating to give My Pay's figures." : null),
     pending: c.pending ?? { progress: 0, waiting: 0 },
     ...(() => {
       const t = collectedOf(c, (c.people ?? []).flatMap((p) => p.lines ?? []));
@@ -180,7 +183,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
       const payable = typeof p.payable === "number" ? minor(p.payable) : null;
       return {
         userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor: payable ?? 0, payableKnown: payable !== null,
-        earnedMinor: minor(p.amount), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0,
+        earnedMinor: minor(p.amount), waitingMinor: minor(p.waiting ?? 0), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0,
         ...collectedOf(c, p.lines ?? []), lines: withMoney(c, p.lines ?? []),
         state: payout ? payout.state : "earned",
         payout: payout ? view(payout) : null,
@@ -193,7 +196,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     const crm = out.find((c) => c.code === p.crm);
     if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
     crm.people.push({
-      userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, percent: null, level: null,
+      userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, waitingMinor: 0, percent: null, level: null,
       sales: 0, collectedMinor: 0, collectedOther: [], lines: [], state: p.state, payout: view(p), changed: true,
     });
   }

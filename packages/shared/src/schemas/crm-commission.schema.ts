@@ -53,6 +53,12 @@ export type CrmCommissionState = "earned" | "approved" | "paid";
 
 export interface CrmCommissionLine {
   saleId: string; saleDate: string; student: string; course: string; invoiceNumber: string; role: string; amount: number;
+  /**
+   * Paid in full first (2026-10-31): `amount` is what the line earns this month — all of it in the month the client
+   * finished paying; `waiting` all of it while they still owe. Absent from an older Root (all earned then).
+   */
+  waiting?: number;
+  paidInFullAt?: string | null;
   /** The CRM's student — the sale's invoice here by its external id (2026-10-31); absent from an older Root. */
   studentId?: string;
   /**
@@ -95,6 +101,8 @@ export interface CrmCommissionPerson {
   percent: number | null;
   level: string | null;
   sales: number;
+  /** Commission waiting for their clients to pay in full (2026-10-31), minor units. */
+  waitingMinor: number;
   /** What their sales' invoices have collected (each sale once), minor units of the CRM's currency (2026-10-26). */
   collectedMinor: number;
   collectedOther?: CrmCommissionOtherMoney[];
@@ -110,6 +118,8 @@ export interface CrmCommissionCrm {
   /** Payable this month (My Pay's figures); the commission earned it comes from. */
   totalMinor: number;
   earnedTotalMinor: number;
+  /** Commission waiting for clients to pay in full, everyone (2026-10-31). */
+  waitingTotalMinor: number;
   /** What the month's counted sales collected (each sale once, their invoices here), minor units (2026-10-26). */
   collectedTotalMinor: number;
   collectedOther?: CrmCommissionOtherMoney[];

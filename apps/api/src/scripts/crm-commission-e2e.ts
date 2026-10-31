@@ -14,6 +14,8 @@
  *   - Root not set up, out of date or down says so.
  *   - collected is in the CRM's currency (2026-10-31): a Bangalore sale's rupee invoice at the CRM's rate, found by
  *     its student when its number is another organization's too; with no rate, the rupees shown apart, not added in.
+ *   - paid in full first (2026-10-31): commission on a sale the client is still paying for shows as waiting, not
+ *     earned, and can't be approved.
  *   - what is approved and paid is the CRM's My Pay "commission payable" (2026-10-21) — earned × the slab level's
  *     percent — shown with the earned figure; nothing payable, or a CRM whose My Pay figures are missing, can't be
  *     approved; the CRMs read their payouts back for My Pay.
@@ -217,6 +219,23 @@ check("no rate from Root: the rupees shown apart, never added in", yami.collecte
   && s9.collectedMinor === null && s9.invoiceCollectedMinor === 5737500
   && JSON.stringify(view.crms.find((c) => c.code === "delta")!.collectedOther) === JSON.stringify([{ currency: "INR", amountMinor: 5737500 }]), j({ yami, s9 }));
 root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== YAMI);
+
+/* ── 7 ── */
+step("7. Paid in full first — commission waiting for the client (2026-10-31)");
+const WAFA = new Types.ObjectId().toString();
+root.crms[0].waitingTotal = 230;
+root.crms[0].people.push({ userId: WAFA, name: "Wafa", roles: ["sales"], amount: 0, waiting: 230, payable: 0, percent: 100, level: "Level 1", sales: 1,
+  lines: [{ ...line("sales", 0, "S10"), waiting: 230, paidInFullAt: null }] });
+view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
+const d7 = view.crms.find((c) => c.code === "delta")!;
+const wafa = d7.people.find((p) => p.userId === WAFA)!;
+check("a part-paid sale: nothing earned, all 230 waiting — on the person, the line and the CRM",
+  wafa.earnedMinor === 0 && wafa.waitingMinor === 23000 && wafa.lines[0]!.waiting === 230 && wafa.lines[0]!.paidInFullAt === null && d7.waitingTotalMinor === 23000, j({ wafa, w: d7.waitingTotalMinor }));
+check("…nothing to approve until it is paid in full", /Nothing is payable/.test(await refusal(approve(MONA, WAFA))));
+check("an older Root (no waiting figures): nothing waiting", view.crms.find((c) => c.code === "draw")!.waitingTotalMinor === 0
+  && view.crms.find((c) => c.code === "draw")!.people.every((p) => p.waitingMinor === 0));
+root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== WAFA);
+delete root.crms[0].waitingTotal;
 
 /* ── 5 ── */
 step("5. Root not set up, out of date, down");

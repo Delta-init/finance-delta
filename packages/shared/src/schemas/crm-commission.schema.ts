@@ -53,10 +53,22 @@ export type CrmCommissionState = "earned" | "approved" | "paid";
 
 export interface CrmCommissionLine {
   saleId: string; saleDate: string; student: string; course: string; invoiceNumber: string; role: string; amount: number;
-  /** What the sale's invoice here has collected, and its total — minor units, null when no invoice here matches (2026-10-26). */
+  /** The CRM's student — the sale's invoice here by its external id (2026-10-31); absent from an older Root. */
+  studentId?: string;
+  /**
+   * What the sale's invoice here has collected, and its total — minor units of the CRM's currency, null when no
+   * invoice here matches (2026-10-26) or it is in a currency there is no rate for (2026-10-31).
+   */
   collectedMinor?: number | null;
   feeMinor?: number | null;
+  /** An invoice in another currency than the CRM's (a Bangalore sale's rupees): its currency and own figures. */
+  invoiceCurrency?: string;
+  invoiceCollectedMinor?: number;
+  invoiceFeeMinor?: number;
 }
+
+/** Collected in a currency that couldn't be put in the CRM's — shown apart, never added in (2026-10-31). */
+export interface CrmCommissionOtherMoney { currency: string; amountMinor: number }
 
 export interface CrmCommissionPayoutView {
   state: "approved" | "paid";
@@ -83,8 +95,9 @@ export interface CrmCommissionPerson {
   percent: number | null;
   level: string | null;
   sales: number;
-  /** What their sales' invoices have collected (each sale once), minor units (2026-10-26). */
+  /** What their sales' invoices have collected (each sale once), minor units of the CRM's currency (2026-10-26). */
   collectedMinor: number;
+  collectedOther?: CrmCommissionOtherMoney[];
   lines: CrmCommissionLine[];
   state: CrmCommissionState;
   payout: CrmCommissionPayoutView | null;
@@ -99,6 +112,7 @@ export interface CrmCommissionCrm {
   earnedTotalMinor: number;
   /** What the month's counted sales collected (each sale once, their invoices here), minor units (2026-10-26). */
   collectedTotalMinor: number;
+  collectedOther?: CrmCommissionOtherMoney[];
   /** Why My Pay's figures are missing for this CRM, when they are — nothing can be approved then. */
   payError: string | null;
   pending: { progress: number; waiting: number };

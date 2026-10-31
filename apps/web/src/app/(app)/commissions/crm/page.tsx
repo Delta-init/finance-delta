@@ -36,6 +36,8 @@ const NO_DEPARTMENT = "__none__";
 const ROLE = { sales: "Salesperson", tl: "Team leader", sm: "Sales manager" } as Record<string, string>;
 const thisMonth = () => new Date(Date.now() + 4 * 3_600_000).toISOString().slice(0, 7);
 const money = (minor: number, currency: string) => `${currency} ${(minor / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+/** Collected in a currency there was no rate for (2026-10-31) — said apart, never added in: " + INR 57,375". */
+const plusOther = (list: { currency: string; amountMinor: number }[] | undefined) => (list ?? []).map((o) => ` + ${money(o.amountMinor, o.currency)}`).join("");
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
 type Pick = { crm: CrmCommissionCrm; person: CrmCommissionPerson };
@@ -88,7 +90,7 @@ export default function CrmCommissionPage() {
                   <p className="mt-1 text-xs text-foreground-muted">
                     payable of {money(c.earnedTotalMinor, c.currency)} earned · {c.people.length} {c.people.length === 1 ? "person" : "people"}
                   </p>
-                  <p className="text-xs text-foreground-muted">collected <span className="font-medium text-foreground">{money(c.collectedTotalMinor ?? 0, c.currency)}</span> on the month's sales</p>
+                  <p className="text-xs text-foreground-muted">collected <span className="font-medium text-foreground">{money(c.collectedTotalMinor ?? 0, c.currency)}{plusOther(c.collectedOther)}</span> on the month's sales</p>
                   <p className="text-xs text-foreground-muted">approved {money(approved, c.currency)} · paid {money(paid, c.currency)}</p>
                 </Card>
               );
@@ -127,7 +129,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
         <h2 className="font-semibold">{crm.name}</h2>
         <p className="text-xs text-foreground-muted">
-          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned · {money(crm.collectedTotalMinor ?? 0, crm.currency)} collected
+          {crm.payError ? "" : `${money(crm.totalMinor, crm.currency)} payable · `}{money(crm.earnedTotalMinor, crm.currency)} earned · {money(crm.collectedTotalMinor ?? 0, crm.currency)}{plusOther(crm.collectedOther)} collected
           {/* Counted at finance's approval since 2026-10-26: "progress" is waiting for it; "waiting" is on hold in the CRM (its team). */}
           {crm.pending.progress > 0 && ` · ${crm.pending.progress} sale${crm.pending.progress === 1 ? "" : "s"} waiting for finance's approval`}
           {crm.pending.waiting > 0 && ` · ${crm.pending.waiting} on hold in the CRM`}
@@ -171,7 +173,10 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                         </button>
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">{p.sales}</td>
-                      <td className="px-4 py-2.5 text-right font-numeric">{money(p.collectedMinor ?? 0, crm.currency)}</td>
+                      <td className="px-4 py-2.5 text-right font-numeric">
+                        {money(p.collectedMinor ?? 0, crm.currency)}
+                        {!!p.collectedOther?.length && <span className="block text-xs text-foreground-muted">{plusOther(p.collectedOther).slice(1)}</span>}
+                      </td>
                       <td className="px-4 py-2.5 text-right font-numeric font-semibold">
                         {p.payout ? money(p.payout.amountMinor, crm.currency) : p.payableKnown ? money(p.amountMinor, crm.currency) : "—"}
                         <span className="block text-xs font-normal text-foreground-muted">
@@ -221,8 +226,16 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                                     <td className="py-1">{l.course || "—"}</td>
                                     <td className="py-1">{l.invoiceNumber || "—"}</td>
                                     <td className="py-1 pr-6 text-right font-numeric">
-                                      {l.collectedMinor == null ? <span className="text-foreground-muted">—</span> : money(l.collectedMinor, crm.currency)}
+                                      {l.collectedMinor != null ? `${l.invoiceCurrency ? "≈ " : ""}${money(l.collectedMinor, crm.currency)}`
+                                        : l.invoiceCurrency ? money(l.invoiceCollectedMinor ?? 0, l.invoiceCurrency) : <span className="text-foreground-muted">—</span>}
                                       {l.feeMinor != null && l.collectedMinor != null && l.collectedMinor < l.feeMinor && <span className="block text-[10px] text-foreground-muted">of {money(l.feeMinor, crm.currency)}</span>}
+                                      {/* A Bangalore sale's rupees (2026-10-31): the invoice's own figure under the AED it counts as */}
+                                      {l.invoiceCurrency && l.collectedMinor != null && (
+                                        <span className="block text-[10px] text-foreground-muted">
+                                          {money(l.invoiceCollectedMinor ?? 0, l.invoiceCurrency)}{(l.invoiceFeeMinor ?? 0) > (l.invoiceCollectedMinor ?? 0) ? ` of ${money(l.invoiceFeeMinor ?? 0, l.invoiceCurrency)}` : ""}
+                                        </span>
+                                      )}
+                                      {l.invoiceCurrency && l.collectedMinor == null && <span className="block text-[10px] text-foreground-muted">no rate to {crm.currency}</span>}
                                     </td>
                                     <td className="py-1">{ROLE[l.role] ?? l.role}</td>
                                     <td className="py-1 text-right font-numeric">{money(Math.round(l.amount * 100), crm.currency)}</td>
@@ -235,15 +248,16 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                               {(() => {
                                 const sales = new Map(p.lines.map((l) => [l.saleId, l]));
                                 const known = [...sales.values()].filter((l) => l.collectedMinor != null);
+                                const missing = [...sales.values()].filter((l) => l.collectedMinor == null && !l.invoiceCurrency).length;
                                 const collected = known.reduce((t, l) => t + (l.collectedMinor ?? 0), 0);
                                 const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
                                 const earned = p.lines.reduce((t, l) => t + Math.round(l.amount * 100), 0);
                                 return (
                                   <tfoot>
                                     <tr className="border-t-2 border-border font-semibold">
-                                      <td className="py-1.5" colSpan={4}>Total · {sales.size} sale{sales.size === 1 ? "" : "s"}{known.length < sales.size ? ` (${sales.size - known.length} with no invoice here)` : ""}</td>
+                                      <td className="py-1.5" colSpan={4}>Total · {sales.size} sale{sales.size === 1 ? "" : "s"}{missing ? ` (${missing} with no invoice here)` : ""}</td>
                                       <td className="py-1.5 pr-6 text-right font-numeric">
-                                        {money(collected, crm.currency)}
+                                        {money(collected, crm.currency)}{plusOther(p.collectedOther)}
                                         {fees > collected && <span className="block text-[10px] font-normal text-foreground-muted">of {money(fees, crm.currency)}</span>}
                                       </td>
                                       <td />

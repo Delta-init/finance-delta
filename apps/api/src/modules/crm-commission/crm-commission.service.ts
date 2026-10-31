@@ -26,19 +26,24 @@ import { enrolmentCrm } from "@delta/shared";
  * receipt — a paid expense, in its method's bank or cash book, the receipt on it.
  */
 
+/** A sale's line as Root gives it: since 2026-10-31 with its student (finance's invoice external id). */
+type RootLine = CrmCommissionLine & { studentId?: string };
+
 /**
  * A person as Root gives them: `amount` the commission earned (every line added up); `payable` what the CRM's My Pay
  * pays of it — the slab level's percent (2026-10-21: "finance pays My Pay's commission payable"), null when the CRM
  * couldn't say.
  */
 interface RootPerson {
-  userId: string; name: string; roles: string[]; amount: number; sales: number; lines: CrmCommissionLine[];
+  userId: string; name: string; roles: string[]; amount: number; sales: number; lines: RootLine[];
   payable?: number | null; percent?: number | null; level?: string | null;
 }
 interface RootCrm {
   code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number };
   /** Why the CRM's My Pay figures are missing, when they are. */
   payError?: string | null; payableTotal?: number | null;
+  /** 1 AED = this many rupees, the CRM's own rate (2026-10-31); absent from a Root not yet updated. */
+  inrPerAed?: number | null;
 }
 
 const keyOf = (crm: string, month: string, userId: string) => `${crm}:${month}:${userId}`;
@@ -103,45 +108,80 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
   };
 
   // What each sale collected (the user, 2026-10-26: "show the collected amount also"): its invoice here — by its
-  // number, the one this CRM sold when several organizations have that number — paid so far, and its total.
-  const numbers = [...new Set(crms.flatMap((c) => (c.people ?? []).flatMap((p) => (p.lines ?? []).map((l) => l.invoiceNumber))).filter(Boolean))];
-  const invoices = numbers.length
+  // student (the invoice's external id) when Root gives it, else by its number, the one this CRM sold when several
+  // organizations have that number — paid so far, and its total.
+  const allLines = crms.flatMap((c) => (c.people ?? []).flatMap((p) => p.lines ?? []));
+  const numbers = [...new Set(allLines.map((l) => l.invoiceNumber).filter(Boolean))];
+  const studentIds = [...new Set(allLines.map((l) => l.studentId ?? "").filter(Boolean))];
+  const invoices = numbers.length || studentIds.length
     // Finance's cancelled invoices are "void" (a moved enrolment's old invoice among them): they collect nothing.
-    ? await Invoice.find({ invoiceNumber: { $in: numbers }, status: { $ne: "void" } })
-      .select("invoiceNumber amountPaidMinor totalMinor enrolment.crm external.source").lean<any[]>()
+    ? await Invoice.find({ status: { $ne: "void" }, $or: [{ invoiceNumber: { $in: numbers } }, { "external.externalId": { $in: studentIds } }] })
+      .select("invoiceNumber amountPaidMinor totalMinor currency enrolment.crm external.source external.externalId").lean<any[]>()
     : [];
-  const invoiceOf = (crm: string, number: string) => {
-    const same = invoices.filter((i) => i.invoiceNumber === number);
+  const crmOf = (i: any) => enrolmentCrm(i.enrolment?.crm, i.external?.source);
+  const invoiceOf = (crm: string, l: RootLine) => {
+    const code = crm.toLowerCase();
+    // Invoice numbers repeat across finance's organizations (2026-10-31: two IN-00023s, Dubai's and Bangalore's).
+    const byStudent = l.studentId ? invoices.find((i) => i.external?.externalId === l.studentId && (crmOf(i) ?? code) === code) : null;
+    if (byStudent) return byStudent;
+    const same = invoices.filter((i) => l.invoiceNumber && i.invoiceNumber === l.invoiceNumber);
     if (same.length <= 1) return same[0] ?? null;
-    return same.find((i) => enrolmentCrm(i.enrolment?.crm, i.external?.source) === crm.toLowerCase()) ?? null;
+    return same.find((i) => crmOf(i) === code) ?? null;
   };
-  const collectedOf = (crm: string, lines: CrmCommissionLine[]) => {
+  // In the CRM's currency (2026-10-31: a Bangalore sale's INR 57,375 was added up as AED 57,375): rupees at the CRM's
+  // own rate, the one its revenue and the TV count them at; null when there is no rate for it.
+  const toCrmCurrency = (c: RootCrm, inv: any): ((minorUnits: number) => number) | null => {
+    const from = String(inv.currency || "AED").toUpperCase(), to = String(c.currency || "AED").toUpperCase();
+    if (from === to) return (m) => m;
+    const rate = Number(c.inrPerAed) > 0 ? Number(c.inrPerAed) : null;
+    if (rate && from === "INR" && to === "AED") return (m) => Math.round(m / rate);
+    if (rate && from === "AED" && to === "INR") return (m) => Math.round(m * rate);
+    return null;
+  };
+  const moneyOf = (c: RootCrm, l: RootLine) => {
+    const inv = l.invoiceNumber || l.studentId ? invoiceOf(c.code, l) : null;
+    if (!inv) return null;
+    const paid = Number(inv.amountPaidMinor) || 0, fee = Number(inv.totalMinor) || 0;
+    const convert = toCrmCurrency(c, inv);
+    const currency = String(inv.currency || "AED").toUpperCase();
+    const foreign = currency !== String(c.currency || "AED").toUpperCase();
+    return {
+      collectedMinor: convert ? convert(paid) : null, feeMinor: convert ? convert(fee) : null,
+      ...(foreign ? { invoiceCurrency: currency, invoiceCollectedMinor: paid, invoiceFeeMinor: fee } : {}),
+    };
+  };
+  /** Each sale once: what it collected in the CRM's currency, and any it couldn't be converted from, per currency. */
+  const collectedOf = (c: RootCrm, lines: RootLine[]) => {
     const seen = new Set<string>();
     let sum = 0;
+    const other = new Map<string, number>();
     for (const l of lines) {
       if (seen.has(l.saleId)) continue;
       seen.add(l.saleId);
-      sum += Number(invoiceOf(crm, l.invoiceNumber)?.amountPaidMinor) || 0;
+      const m = moneyOf(c, l);
+      if (!m) continue;
+      if (m.collectedMinor !== null) sum += m.collectedMinor;
+      else if (m.invoiceCurrency) other.set(m.invoiceCurrency, (other.get(m.invoiceCurrency) ?? 0) + (m.invoiceCollectedMinor ?? 0));
     }
-    return sum;
+    return { collectedMinor: sum, collectedOther: [...other].map(([currency, amountMinor]) => ({ currency, amountMinor })) };
   };
-  const withMoney = (crm: string, lines: CrmCommissionLine[]) => lines.map((l) => {
-    const inv = l.invoiceNumber ? invoiceOf(crm, l.invoiceNumber) : null;
-    return { ...l, collectedMinor: inv ? Number(inv.amountPaidMinor) || 0 : null, feeMinor: inv ? Number(inv.totalMinor) || 0 : null };
-  });
+  const withMoney = (c: RootCrm, lines: RootLine[]) => lines.map((l) => ({ ...l, ...(moneyOf(c, l) ?? { collectedMinor: null, feeMinor: null }) }));
 
   const out: CrmCommissionCrm[] = crms.map((c) => ({
     code: c.code, name: c.name, currency: c.currency || "AED", error: c.error, totalMinor: minor(c.payableTotal ?? 0),
     earnedTotalMinor: minor(c.total), payError: c.payError ?? (c.payableTotal === undefined ? "The Root portal needs updating to give My Pay's figures." : null),
     pending: c.pending ?? { progress: 0, waiting: 0 },
-    collectedTotalMinor: collectedOf(c.code, (c.people ?? []).flatMap((p) => p.lines ?? [])),
+    ...(() => {
+      const t = collectedOf(c, (c.people ?? []).flatMap((p) => p.lines ?? []));
+      return { collectedTotalMinor: t.collectedMinor, collectedOther: t.collectedOther };
+    })(),
     people: (c.people ?? []).map((p) => {
       const payout = byKey.get(keyOf(c.code, month, p.userId));
       const payable = typeof p.payable === "number" ? minor(p.payable) : null;
       return {
         userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor: payable ?? 0, payableKnown: payable !== null,
         earnedMinor: minor(p.amount), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0,
-        collectedMinor: collectedOf(c.code, p.lines ?? []), lines: withMoney(c.code, p.lines ?? []),
+        ...collectedOf(c, p.lines ?? []), lines: withMoney(c, p.lines ?? []),
         state: payout ? payout.state : "earned",
         payout: payout ? view(payout) : null,
         changed: !!payout && payable !== null && payout.amountMinor !== payable,
@@ -154,7 +194,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
     if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
     crm.people.push({
       userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, percent: null, level: null,
-      sales: 0, collectedMinor: 0, lines: [], state: p.state, payout: view(p), changed: true,
+      sales: 0, collectedMinor: 0, collectedOther: [], lines: [], state: p.state, payout: view(p), changed: true,
     });
   }
 

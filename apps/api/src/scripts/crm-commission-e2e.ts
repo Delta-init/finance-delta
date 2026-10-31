@@ -12,6 +12,8 @@
  *     the receipt on it, and can't be paid twice — not from another organization either;
  *   - a figure that changes in the CRM after approval is flagged; a payout whose sales all went still shows;
  *   - Root not set up, out of date or down says so.
+ *   - collected is in the CRM's currency (2026-10-31): a Bangalore sale's rupee invoice at the CRM's rate, found by
+ *     its student when its number is another organization's too; with no rate, the rupees shown apart, not added in.
  *   - what is approved and paid is the CRM's My Pay "commission payable" (2026-10-21) — earned × the slab level's
  *     percent — shown with the earned figure; nothing payable, or a CRM whose My Pay figures are missing, can't be
  *     approved; the CRMs read their payouts back for My Pay.
@@ -186,6 +188,35 @@ root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== RIA);
 view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
 const gone = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === RIA);
 check("a paid one whose sales all went: still shown, flagged", gone?.state === "paid" && gone.changed && gone.amountMinor === 0, j(gone));
+
+/* ── 6 ── */
+step("6. A Bangalore sale's rupees, in the CRM's AED (2026-10-31)");
+const YAMI = new Types.ObjectId().toString(), STU = new Types.ObjectId().toString();
+const bangaloreLine = { ...line("sales", 200, "S9"), studentId: STU };
+root.crms[0].inrPerAed = 22.75;
+root.crms[0].people.push({ userId: YAMI, name: "Yami", roles: ["sales"], amount: 400, payable: 400, percent: 100, level: "Level 1", sales: 2,
+  lines: [{ ...line("sales", 200, "S2") }, bangaloreLine] });
+await mongoose.connection.db!.collection("invoices").insertMany([
+  // The Dubai organization's own IN-S9, another student's — the number repeats across organizations.
+  { organizationId: org._id, invoiceNumber: "IN-S9", status: "paid", currency: "AED", totalMinor: 100000, amountPaidMinor: 100000, enrolment: { crm: "delta" }, external: { source: "crm", externalId: new Types.ObjectId().toString() } },
+  { organizationId: other._id, invoiceNumber: "IN-S9", status: "paid", currency: "INR", totalMinor: 5737500, amountPaidMinor: 5737500, enrolment: { crm: "delta", academy: "bangalore" }, external: { source: "crm", externalId: STU } },
+]);
+view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
+let yami = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === YAMI)!;
+let s9 = yami.lines.find((l) => l.invoiceNumber === "IN-S9")!;
+check("found by its student, not the other organization's IN-S9: INR 57,375 ≈ AED 2,521.98 at 22.75",
+  s9.collectedMinor === 252198 && s9.feeMinor === 252198 && s9.invoiceCurrency === "INR" && s9.invoiceCollectedMinor === 5737500, j(s9));
+check("her collected: AED 1,500 + AED 2,521.98 — not AED 58,875", yami.collectedMinor === 402198 && (yami.collectedOther ?? []).length === 0, j({ c: yami.collectedMinor, o: yami.collectedOther }));
+check("an AED invoice stays as it is", yami.lines.find((l) => l.invoiceNumber === "IN-S2")!.collectedMinor === 150000 && !yami.lines.find((l) => l.invoiceNumber === "IN-S2")!.invoiceCurrency);
+check("the CRM's total: S1 (Abrar's line), S2 once, the rupees in AED", view.crms.find((c) => c.code === "delta")!.collectedTotalMinor === 200000 + 150000 + 252198, j(view.crms.find((c) => c.code === "delta")!.collectedTotalMinor));
+delete root.crms[0].inrPerAed;
+view = await svc.crmCommissionMonth(ORG, ASHA, [], false, M);
+yami = view.crms.find((c) => c.code === "delta")!.people.find((p) => p.userId === YAMI)!;
+s9 = yami.lines.find((l) => l.invoiceNumber === "IN-S9")!;
+check("no rate from Root: the rupees shown apart, never added in", yami.collectedMinor === 150000 && JSON.stringify(yami.collectedOther) === JSON.stringify([{ currency: "INR", amountMinor: 5737500 }])
+  && s9.collectedMinor === null && s9.invoiceCollectedMinor === 5737500
+  && JSON.stringify(view.crms.find((c) => c.code === "delta")!.collectedOther) === JSON.stringify([{ currency: "INR", amountMinor: 5737500 }]), j({ yami, s9 }));
+root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== YAMI);
 
 /* ── 5 ── */
 step("5. Root not set up, out of date, down");

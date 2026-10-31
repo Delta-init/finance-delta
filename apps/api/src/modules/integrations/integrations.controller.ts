@@ -8,7 +8,7 @@ import { Item } from "../inventory/item.model";
 import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
 import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
-import { intakeTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
+import { intakeTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 
 /**
  * A signed machine call carries no session, so it carries no organization
@@ -145,6 +145,20 @@ export const takeTetraDeposit = asyncHandler(async (req: Request, res: Response)
   const orgId = await organizationOf(req);
   const parsed = inboundTetraDepositSchema.parse(req.body);
   ok(res, await intakeTetraDeposit(orgId, parsed));
+});
+
+/**
+ * POST /integrations/tetra-deposits/withdrawals { externalId, byName?, reason? } — CS Portal rejected (or deleted) a
+ * payment approved here (2026-10-31): its invoice payment comes off. Always answered with an outcome, never a 404 for
+ * an unknown id — CS Portal reads a 404 as "finance isn't updated yet" and tries again.
+ */
+export const withdrawTetraDepositHandler = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const externalId = String(req.body?.externalId ?? "").trim();
+  if (!/^[a-f0-9]{24}$/i.test(externalId)) throw new AppError("VALIDATION_ERROR", "externalId is CS Portal's request id");
+  const byName = String(req.body?.byName ?? "").trim().slice(0, 120);
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  ok(res, await withdrawTetraDeposit(orgId, { externalId, byName, reason }));
 });
 
 /**

@@ -573,6 +573,83 @@ export async function restoreTetraDeposit(auth: AuthContext, id: string): Promis
   return tetraDepositDTO(done, true);
 }
 
+/* ── Taken back off ──────────────────────────────────────────────────────── */
+
+export interface RemovedPayment { invoiceNumber: string; receiptNumber: string; amountMinor: number; currency: string }
+
+/**
+ * Every payment this request put on an invoice, still there, taken off (the user, 2026-10-31: a payment approved
+ * here three times — two of them rejected in CS Portal — was counted three times). Found by its externalRef, as it
+ * was recorded (course-invoice.ts, balance payments): deletePayment does the rest — the balance, the bank line,
+ * CS Portal's fee update. Refused as deletePayment refuses — a bank statement reconciled against it — before
+ * anything is taken off.
+ */
+export async function takeOffRecordedPayments(row: any): Promise<RemovedPayment[]> {
+  const { Invoice } = await import("../invoice/invoice.model");
+  const { deletePayment } = await import("../invoice/invoice.service");
+  const { assertLineMovable } = await import("../invoice/payment-bank");
+  const externalRef = `tetra:${row.externalId}`;
+  const invoices = await Invoice.find({ organizationId: row.organizationId, status: { $ne: "void" }, "payments.externalRef": externalRef })
+    .select("invoiceNumber currency payments").lean<any[]>();
+  const held = invoices.flatMap((inv) => (inv.payments ?? []).filter((p: any) => p.externalRef === externalRef).map((p: any) => ({ inv, p })));
+  // All or nothing: one that can't move refuses them all.
+  for (const { p } of held) await assertLineMovable(String(row.organizationId), p);
+  const removed: RemovedPayment[] = [];
+  for (const { inv, p } of held) {
+    await deletePayment(String(row.organizationId), String(inv._id), String(p._id));
+    removed.push({ invoiceNumber: String(inv.invoiceNumber ?? ""), receiptNumber: String(p.receiptNumber ?? ""), amountMinor: Number(p.amountMinor ?? 0), currency: String(inv.currency ?? "AED") });
+  }
+  return removed;
+}
+
+const removedText = (removed: RemovedPayment[]) =>
+  removed.map((r) => `${money(r.amountMinor, r.currency)}${r.receiptNumber ? ` (${r.receiptNumber})` : ""} off ${r.invoiceNumber}`).join(", ");
+
+export type WithdrawOutcome = "withdrawn" | "already" | "kept" | "pending" | "unknown";
+export interface WithdrawResult { outcome: WithdrawOutcome; message: string; removed: RemovedPayment[] }
+
+/**
+ * CS Portal rejected (or deleted) a payment this side had approved (the user, 2026-10-31): it isn't counted there, so
+ * it isn't money here either — its invoice payment comes off and the request is kept as deleted, saying who and why.
+ * Always answers, so CS Portal knows whether to try again: "pending" (being decided here again — later), "kept" (a
+ * reconciled bank line: an accountant takes it off by hand), "unknown" (never here). Safe to repeat.
+ */
+export async function withdrawTetraDeposit(organizationId: string, input: { externalId: string; byName: string; reason: string }): Promise<WithdrawResult> {
+  const row = await TetraDepositModel.findOne({ organizationId: new Types.ObjectId(organizationId), externalId: input.externalId }).lean<any>();
+  if (!row) return { outcome: "unknown", message: "Finance never had this request", removed: [] };
+  if (row.status === "pending") return { outcome: "pending", message: "It is being decided in finance again — tried later", removed: [] };
+  const who = input.byName ? `${input.byName} (CS Portal)` : "CS Portal";
+  const why = `Rejected in CS Portal by ${who}${input.reason ? `: ${input.reason}` : ""}`;
+  let removed: RemovedPayment[];
+  try {
+    removed = await takeOffRecordedPayments(row);
+  } catch (err) {
+    if (!(err instanceof AppError)) throw err;
+    const message = `Not taken off: ${err.message}`;
+    await TetraDepositModel.updateOne({ _id: row._id }, {
+      $set: { withdrawal: { at: new Date(), byName: who, reason: input.reason, state: "kept", message } },
+      $push: { events: { at: new Date(), kind: "withdrawal_kept", byName: who, text: `${why} — ${message}` } },
+    });
+    return { outcome: "kept", message, removed: [] };
+  }
+  if (row.status === "deleted") {
+    if (removed.length) {
+      await TetraDepositModel.updateOne({ _id: row._id }, { $push: { events: { at: new Date(), kind: "withdrawn", byName: who, text: `${why} — ${removedText(removed)}` } } });
+    }
+    return { outcome: removed.length ? "withdrawn" : "already", message: removed.length ? removedText(removed) : "Deleted here already", removed };
+  }
+  await TetraDepositModel.updateOne({ _id: row._id }, {
+    $set: {
+      status: "deleted",
+      deleted: { at: new Date(), byName: who, reason: why, previousStatus: row.status },
+      withdrawal: { at: new Date(), byName: who, reason: input.reason, state: "done", message: removed.length ? removedText(removed) : "No payment was on an invoice" },
+    },
+    $push: { events: { at: new Date(), kind: "withdrawn", byName: who, text: `${why}${removed.length ? ` — ${removedText(removed)}` : ""}` } },
+  });
+  logger.info({ externalId: input.externalId, removed }, "tetra deposit withdrawn by CS Portal");
+  return { outcome: "withdrawn", message: removed.length ? removedText(removed) : "No payment was on an invoice", removed };
+}
+
 /* ── Decided, and sent back ──────────────────────────────────────────────── */
 
 /** Backs off to a quarter of an hour and stays there, still trying. */
@@ -788,25 +865,44 @@ export async function resendTetraDeposit(auth: AuthContext, id: string): Promise
   return { deposit: tetraDepositDTO(fresh), delivered: outcome.kind === "delivered", message: outcome.message };
 }
 
-/** A decision CS Portal turned down, back to pending to decide again. */
+/**
+ * A decision CS Portal turned down, back to pending to decide again. An approval's payment comes off its invoice
+ * first (the user, 2026-10-31: one reopened and rejected kept its AED 2,250 on the invoice) — approved again, it goes
+ * back on; a reconciled one refuses the reopen.
+ */
 export async function reopenTetraDeposit(auth: AuthContext, id: string): Promise<TetraDeposit> {
   if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
   const org = new Types.ObjectId(auth.organizationId);
   const me = await User.findById(auth.userId).select("name").lean();
-  const row = await TetraDepositModel.findOneAndUpdate(
-    { _id: id, organizationId: org, status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" },
-    {
-      $set: { status: "pending" },
-      $unset: { decision: "", delivery: "" },
-      $push: { events: { at: new Date(), kind: "reopened", byName: String(me?.name ?? ""), text: "Reopened to decide again" } },
-    },
-    { new: true },
-  ).lean();
-  if (!row) {
+  const reopenable = { _id: id, organizationId: org, status: { $in: ["approved", "rejected"] }, "delivery.state": "failed" };
+  const current = await TetraDepositModel.findOne(reopenable).lean<any>();
+  if (!current) {
     const other = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("_id").lean();
     if (!other) throw new AppError("NOT_FOUND", "Deposit request not found");
     throw new AppError("CONFLICT", "Only a decision CS Portal turned down can be reopened");
   }
+  let removed: RemovedPayment[] = [];
+  try {
+    removed = await takeOffRecordedPayments(current);
+  } catch (err) {
+    if (err instanceof AppError) throw new AppError("CONFLICT", `Not reopened — its payment can't come off the invoice: ${err.message}`);
+    throw err;
+  }
+  const row = await TetraDepositModel.findOneAndUpdate(
+    reopenable,
+    {
+      $set: { status: "pending" },
+      $unset: { decision: "", delivery: "", courseInvoice: "", "enrolmentPayment.recorded": "" },
+      $push: {
+        events: {
+          at: new Date(), kind: "reopened", byName: String(me?.name ?? ""),
+          text: `Reopened to decide again${removed.length ? ` — its payment ${removedText(removed)}` : ""}`,
+        },
+      },
+    },
+    { new: true },
+  ).lean();
+  if (!row) throw new AppError("CONFLICT", "It changed meanwhile — open it again");
   return tetraDepositDTO(row);
 }
 

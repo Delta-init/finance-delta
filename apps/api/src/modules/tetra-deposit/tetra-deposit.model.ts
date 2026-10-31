@@ -161,6 +161,20 @@ const tetraDepositSchema = new Schema({
     }, { _id: false }),
     default: undefined,
   },
+  /**
+   * Rejected in CS Portal after it was approved here (2026-10-31): its payment taken off ("done"), or left because a
+   * bank statement was reconciled against it ("kept" — for an accountant to take off by hand).
+   */
+  withdrawal: {
+    type: new Schema({
+      at: { type: Date, required: true },
+      byName: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      state: { type: String, enum: ["done", "kept"], required: true },
+      message: { type: String, default: "" },
+    }, { _id: false }),
+    default: undefined,
+  },
   events: [{
     _id: false,
     at: { type: Date, required: true },

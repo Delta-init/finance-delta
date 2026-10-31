@@ -14,7 +14,7 @@
  * and adds to it as it goes (--undo <file> takes the payments it recorded off again and puts the rest back — an email
  * sent or an LMS course already opened stays). Run it from apps/api on the server:
  *
- *   bun src/scripts/enrolment-change.ts --invoice IN-00001 --course "<course as the CRM names it>" --item <catalogue item id>
+ *   bun src/scripts/enrolment-change.ts --invoice IN-00001 --course "<course as the CRM names it>" --item <catalogue item id | none --lms <slug>,<slug>>
  *     --price 5500 [--proof <file for the first payment>] [--pay "<amount>|<method>|<YYYY-MM-DD>|<reference>|<file>"]…
  *     [--email] [--write]
  *   bun src/scripts/enrolment-change.ts --undo <file>
@@ -31,6 +31,8 @@ export type Upload = (key: string, file: { buffer: Buffer; mimeType: string; ori
 export interface NewPayment { amountMinor: number; method: string; paidOn: string; reference: string; file: string }
 export interface ChangeOpts {
   invoice: string; course: string; item?: string; priceMinor: number;
+  /** With item "none": the LMS courses the line opens, as the CRM maps the course (a course with no catalogue item). */
+  lms?: string[];
   proof?: string; payments: NewPayment[]; email: boolean; write: boolean; undoFile?: string;
   /** The file store (R2 on the server); the checks pass their own. */
   upload?: Upload;
@@ -90,10 +92,14 @@ export async function changeEnrolment(o: ChangeOpts): Promise<{ lines: string[];
       .select("name sku unitPriceMinor lmsCourseSlug lmsCourseSlugs").limit(20).lean<any[]>();
     return { lines: [], items: found.map((i) => `${i._id} | ${i.name} | ${i.sku} | ${formatMoney(i.unitPriceMinor ?? 0, cur)} | LMS ${(i.lmsCourseSlugs?.length ? i.lmsCourseSlugs : [i.lmsCourseSlug]).filter(Boolean).join(", ") || "—"}`) };
   }
-  if (!Types.ObjectId.isValid(o.item)) throw new Error("--item: the catalogue item's id (leave it out to list them)");
-  const item: any = await M.Item!.findOne({ _id: o.item, organizationId: inv.organizationId }).lean();
-  if (!item) throw new Error(`No catalogue item ${o.item} in this organization`);
-  const slugs: string[] = [...new Set<string>((item.lmsCourseSlugs?.length ? item.lmsCourseSlugs : [item.lmsCourseSlug]).filter(Boolean))];
+  // A course nobody added to the catalogue: a line of plain text, opening the LMS courses the CRM maps it to — as
+  // finance takes such a close from the CRM (lmsCoursesFor falls back to them).
+  const noItem = o.item === "none";
+  if (!noItem && !Types.ObjectId.isValid(o.item)) throw new Error("--item: the catalogue item's id, or none (leave it out to list them)");
+  const item: any = noItem ? null : await M.Item!.findOne({ _id: o.item, organizationId: inv.organizationId }).lean();
+  if (!noItem && !item) throw new Error(`No catalogue item ${o.item} in this organization`);
+  if (noItem && !o.lms?.length) throw new Error("--item none: say which LMS courses it opens with --lms <slug>,<slug>");
+  const slugs: string[] = [...new Set<string>((noItem ? o.lms! : item.lmsCourseSlugs?.length ? item.lmsCourseSlugs : [item.lmsCourseSlug]).map((x: string) => x.trim()).filter(Boolean))];
 
   // Run once already: its payments are on the invoice.
   const repeat = o.payments.filter((p) => (inv.payments ?? []).some((x: any) => x.externalRef === refOf(inv, p)));
@@ -112,7 +118,7 @@ export async function changeEnrolment(o: ChangeOpts): Promise<{ lines: string[];
 
   const lines = [
     `${inv.invoiceNumber} · ${customer?.name ?? ""} <${customer?.email ?? "no email"}> · ${approval ?? "no approval"} · ${inv.status}`,
-    `line:     ${inv.lineItems?.[0]?.description} ${formatMoney(inv.totalMinor ?? 0, cur)}  →  ${course} ${formatMoney(o.priceMinor, cur)} (item ${item.name})`,
+    `line:     ${inv.lineItems?.[0]?.description} ${formatMoney(inv.totalMinor ?? 0, cur)}  →  ${course} ${formatMoney(o.priceMinor, cur)} (${item ? `item ${item.name}` : "no catalogue item"})`,
     ...(o.proof ? [`receipt:  payment 1 (${formatMoney(first.amountMinor, cur)} ${first.method}) gets ${basename(o.proof)} in place of its old one`] : []),
     ...o.payments.map((p, i) => `payment:  + ${formatMoney(p.amountMinor, cur)} ${p.method} on ${p.paidOn} ref ${p.reference || "—"} · ${basename(p.file)}${o.email ? ` · receipt emailed to ${customer?.email || "nobody (no email)"}` : ""}${i === o.payments.length - 1 ? "" : ""}`),
     `after:    ${formatMoney(o.priceMinor, cur)} total, ${formatMoney(paid + adding, cur)} paid, ${formatMoney(o.priceMinor - paid - adding, cur)} owed`,
@@ -156,7 +162,7 @@ export async function changeEnrolment(o: ChangeOpts): Promise<{ lines: string[];
   // 2. The line: the new course at its price.
   const taxes = (inv.lineItems?.[0]?.taxes ?? []).map((t: any) => ({ code: t.code, rate: t.rate }));
   await svc.updateInvoice(orgId, String(inv._id), {
-    lineItems: [{ description: course, quantity: 1, unitPriceMinor: o.priceMinor, discountPct: 0, taxes, itemId: String(item._id), hsnSac: inv.lineItems?.[0]?.hsnSac ?? "" }],
+    lineItems: [{ description: course, quantity: 1, unitPriceMinor: o.priceMinor, discountPct: 0, taxes, ...(item ? { itemId: String(item._id) } : {}), hsnSac: inv.lineItems?.[0]?.hsnSac ?? "" }],
   } as never, { all: true });
   done.push(`line → ${course}, ${formatMoney(o.priceMinor, cur)}`);
 
@@ -266,7 +272,7 @@ if (import.meta.main) {
     } else {
       const write = argv.includes("--write");
       const r = await changeEnrolment({
-        invoice: arg("--invoice"), course: arg("--course"), item: arg("--item") || undefined,
+        invoice: arg("--invoice"), course: arg("--course"), item: arg("--item") || undefined, lms: arg("--lms") ? arg("--lms").split(",") : undefined,
         priceMinor: Math.round(Number(arg("--price")) * 100), proof: arg("--proof") || undefined,
         payments: args("--pay").map(parsePay), email: argv.includes("--email"), write,
       });

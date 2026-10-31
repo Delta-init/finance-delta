@@ -121,6 +121,15 @@ check("the payments it recorded taken off, the rest put back as it was",
   && back.lineItems[0].description === "COURSE 1 - TEST (WITH CREDIT)" && back.enrolment.course === "COURSE 1 - TEST (WITH CREDIT)" && back.enrolment.declaredPayments.length === 1, show({ out, p: back.payments.length, t: back.totalMinor, s: back.status }));
 check("…and the LMS course no longer queued", ((await db.collection("lmsprovisions").findOne({ invoiceId: INV })) as any).extraCourses.length === 0);
 
+step("4. A course with no catalogue item");
+check("--item none without --lms: refused", (await refused(changeEnrolment({ ...base, item: "none", write: false }), /--lms/)) === "");
+r = await changeEnrolment({ ...base, item: "none", lms: [MBT, DWT], write: true, undoFile: join(dir, "undo-none.json") });
+const plain: any = await snapshot();
+check("…with --lms: a plain line at 5,500 (no item), the enrolment's courses from --lms, the LMS course it adds queued",
+  plain.lineItems[0].description === NEW && !plain.lineItems[0].itemId && plain.totalMinor === 550_000 && plain.status === "paid"
+  && JSON.stringify(plain.enrolment.courses) === JSON.stringify([{ name: NEW, lmsCourseSlugs: [MBT, DWT] }])
+  && ((await db.collection("lmsprovisions").findOne({ invoiceId: INV })) as any).extraCourses.some((e: any) => e.slug === DWT), show({ l: plain.lineItems[0], c: plain.enrolment.courses }));
+
 await new Promise((r) => setTimeout(r, 500));
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

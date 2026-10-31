@@ -1569,6 +1569,48 @@ function recordDeclaredPayments(
   return declared.length;
 }
 
+/**
+ * The payments taken at the close of an enrolment approved before approval recorded them (2026-10-05): recorded now
+ * exactly as approval records them (recordDeclaredPayments — its method, the day it was paid, the close's receipt, its
+ * bank account), with the bank lines, LMS access and CS Portal fee update a recorded payment brings (the user,
+ * 2026-11-01: an approved close from 2 October had AED 2,250 collected yet nothing on its invoice — overdue, and no
+ * commission). `dryRun` says what would be recorded, saving nothing.
+ */
+export async function recordDeclaredAfterApproval(
+  orgId: string,
+  id: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ recorded: number; skipped?: string; payments: { id: string; method: string; amountMinor: number; paidOn: string; proof: boolean }[] }> {
+  const doc = await findDoc(orgId, id);
+  if (approvalOf(doc).state !== "approved") return { recorded: 0, skipped: "Not approved", payments: [] };
+  const done = (doc as unknown as { enrolment?: { declaredPaymentsOnApproval?: { state?: string } | null } }).enrolment?.declaredPaymentsOnApproval?.state;
+  if (done) return { recorded: 0, skipped: `Its approval ${done === "recorded" ? "recorded them" : "left them out"} already`, payments: [] };
+  const defaults = await paymentAccountsOf(orgId);
+  const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
+  for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
+  const before = ((doc.payments as unknown[]) ?? []).length;
+  const recorded = recordDeclaredPayments(doc, accountFor);
+  if (!recorded) {
+    const why = (doc as unknown as { enrolment?: { declaredPaymentsOnApproval?: { reason?: string } | null } }).enrolment?.declaredPaymentsOnApproval?.reason;
+    return { recorded: 0, skipped: why ?? "Nothing was collected at the close", payments: [] };
+  }
+  const added = () => ((doc.payments as unknown as { _id: unknown; method: string; amountMinor: number; paidOn: Date; proofUrl?: string }[]) ?? []).slice(before)
+    .map((p) => ({ id: String(p._id), method: p.method, amountMinor: p.amountMinor, paidOn: dateOnly(new Date(p.paidOn)), proof: Boolean(p.proofUrl) }));
+  if (opts.dryRun) return { recorded, payments: added() };
+
+  applyInstalmentDue(doc as never);
+  await doc.save();
+  for (const p of ((doc.payments as unknown as { _id: unknown }[]) ?? []).slice(before)) await syncPaymentLine(doc as never, p._id);
+  if ((doc.balanceMinor ?? 0) <= 0) {
+    const org = await Organization.findById(orgId);
+    const intervals: number[] = (org as unknown as { reminderIntervals?: number[] })?.reminderIntervals ?? [-3, 1, 7];
+    void cancelReminders(id, intervals);
+  }
+  void syncLmsAccess(doc);
+  feeUpdate(doc._id, "payment");
+  return { recorded, payments: added() };
+}
+
 /** Send an invoice back to whoever raised it, with a reason they can act on. */
 export async function returnInvoice(
   orgId: string,

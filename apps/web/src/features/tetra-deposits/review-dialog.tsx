@@ -45,6 +45,13 @@ export const receiptsOf = (d: TetraDeposit) => (d.payments?.length ? d.payments.
 
 /** A bonus is a course payment: approving it here confirms the payment, and a broker admin then credits it in CS Portal. */
 export const isBonus = (d: TetraDeposit | null | undefined) => d?.type === "BONUS";
+/**
+ * A course payment CS Portal sent without the student's email (the user, 2026-10-31): finance invoices the student by
+ * their email, so approving it is refused. Said before anybody tries, with the way out — send it back to the CS.
+ */
+export const missingStudentEmail = (d: TetraDeposit | null | undefined) =>
+  !!d && (d.type === "COURSE_UPGRADE" || (d.type === "BONUS" && Number(d.coursePayment?.paidTodayAed) > 0)) && !String(d.student?.email ?? "").trim();
+const NO_EMAIL_REASON = "The student has no email in CS Portal — add it on their profile, then send this again.";
 /** One payment towards a student's CSE course upgrade, in AED: approving it confirms the money; CS Portal counts it. */
 export const isCourseUpgrade = (d: TetraDeposit | null | undefined) => d?.type === "COURSE_UPGRADE";
 /**
@@ -228,14 +235,16 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
   const [reason, setReason] = useState("");
   useEffect(() => {
     if (!deposit) return;
-    setDecision(start === "sentBack" && isBonus(deposit) ? "sentBack" : "approved");
+    const noEmail = missingStudentEmail(deposit);
+    setDecision((start === "sentBack" || noEmail) && isBonus(deposit) ? "sentBack" : noEmail ? "rejected" : "approved");
     setAmount((deposit.amountMinor / 100).toFixed(2));
     setTransactionId("");
     setPaymentMethod(deposit.type === "ENROLMENT_PAYMENT" ? financeMethodFor(deposit.enrolmentPayment?.method || deposit.paymentMethod) : deposit.paymentMethod);
     setMt5Login(deposit.mt5Login);
     setNote("");
-    setReason("");
+    setReason(noEmail ? NO_EMAIL_REASON : "");
   }, [deposit?.id, start]);
+  const noEmail = missingStudentEmail(deposit);
 
   const balancePayment = isBalancePayment(deposit);
   const methods = useMemo(
@@ -254,6 +263,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
     event.preventDefault();
     if (!deposit) return;
     if (decision === "approved") {
+      if (noEmail) { toast.error(`${deposit.student.name} has no email in CS Portal — send it back to add it`); return; }
       if (!amountValid) { toast.error("Enter the amount that arrived"); return; }
     } else if (reason.trim().length < 5) {
       toast.error(decision === "sentBack" ? "Say what to correct before sending it back" : "Add a short reason before rejecting");
@@ -292,12 +302,20 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
         </DialogHeader>
         {deposit && <TetraDepositFacts deposit={deposit} />}
         <form onSubmit={submit} className="space-y-4">
+          {noEmail && deposit && (
+            <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
+              {deposit.student.name} has no email in CS Portal, so there is no client to invoice and it can&apos;t be approved.{" "}
+              {isBonus(deposit)
+                ? "Send it back: their CS adds the email on the student's profile and sends it again."
+                : "Reject it with that reason: their CS adds the email on the student's profile and records the payment again."}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Decision</Label>
             <Select value={decision} onValueChange={(v) => setDecision(v as "approved" | "rejected" | "sentBack")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="approved">Approve</SelectItem>
+                <SelectItem value="approved" disabled={noEmail}>Approve</SelectItem>
                 {/* A bonus can go back to its CS to correct and send again; a refusal is a Reject. */}
                 {isBonus(deposit) && <SelectItem value="sentBack">Send back to correct</SelectItem>}
                 <SelectItem value="rejected">Reject</SelectItem>

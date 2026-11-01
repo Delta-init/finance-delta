@@ -126,6 +126,20 @@ check("Revenue, Invoiced, November: TI-00003's 1,500, collected", rv.records.map
 const rvOct = await getRevenueAnalysis(String(ON), { from: "2026-10-01", to: "2026-10-31", basis: "invoiced", groupBy: "month", filters: {} });
 check("…October: TI-00001's 2,000 and the paid-in-full invoice — not the pro-forma's 5,500", rvOct.records.map((r) => r.number).sort().join(",") === `${FULL.invoiceNumber},TI-00001` && rvOct.totals.invoicedMinor === 200_000 + 210_000, show(rvOct.records));
 
+step("6b. Sales → Pro-formas & tax invoices");
+const { listProformasAndTaxInvoices } = await import("../modules/invoice/payment-tax-invoice");
+const pageNov = await listProformasAndTaxInvoices(String(ON), { from: "2026-11-01", to: "2026-11-30" });
+check("November: the pro-forma (paid on in it) and TI-00003, the cancelled TI-00002 flagged; VAT 71.43",
+  pageNov.proformas.map((p) => p.invoiceNumber).join(",") === PART.invoiceNumber
+  && pageNov.taxInvoices.map((t) => `${t.number}${t.cancelled ? "x" : ""}`).sort().join(",") === "TI-00002x,TI-00003"
+  && pageNov.totals.AED?.taxMinor === 7_143 && pageNov.totals.AED?.count === 1, show(pageNov));
+const pageAll = await listProformasAndTaxInvoices(String(ON));
+check("all time: every TI, newest first, adding up to the invoice's VAT", pageAll.taxInvoices.filter((t) => !t.cancelled).map((t) => t.number).join(",") === "TI-00004,TI-00003,TI-00001"
+  && pageAll.totals.AED?.taxMinor === TAX && pageAll.proformas[0]!.taxInvoices.join(",") === "TI-00001,TI-00003,TI-00004", show(pageAll.taxInvoices));
+const pageQ = await listProformasAndTaxInvoices(String(ON), { q: "TI-00003" });
+check("search by a TI number finds it and its pro-forma", pageQ.taxInvoices.length === 1 && pageQ.proformas.length === 1, show(pageQ));
+check("the other organization: none", (await listProformasAndTaxInvoices(String(OFF))).proformas.length === 0);
+
 step("7. The documents");
 const dto = await getInvoice(String(ON), String(PART._id), scope);
 const proformaPdf = invoicePdfBuffer({ invoice: dto });

@@ -19,6 +19,8 @@ router.get("/", requireAnyPermission("invoice:read", "invoice:read:own"), c.list
 router.get("/summary", requireAnyPermission("invoice:read", "invoice:read:own"), c.summary);
 // The list's cards, with the list's filters (2026-10-22) — also before "/:id".
 router.get("/list-summary", requireAnyPermission("invoice:read", "invoice:read:own"), c.listSummary);
+// Sales → Pro-formas & tax invoices (VAT on payments received): org-wide, as the VAT report is.
+router.get("/tax-invoices", requirePermission("invoice:read"), c.taxInvoices);
 router.get("/:id", requireAnyPermission("invoice:read", "invoice:read:own"), c.get);
 router.get("/:id/logo", requireAnyPermission("invoice:read", "invoice:read:own"), c.logo);
 router.get("/:id/emails", requireAnyPermission("invoice:read", "invoice:read:own"), c.emails);

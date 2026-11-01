@@ -38,7 +38,7 @@ import {
   ClipboardCheck,
   Coins,
   UserPlus,
-  type LucideIcon, MailCheck, Clock
+  type LucideIcon, MailCheck, Clock, FileCheck2
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
@@ -138,6 +138,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
+      { href: "/tax-invoices", label: "Pro-formas & TIs", icon: FileCheck2, enabled: true, permission: "invoice:read" },
       { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
     ],
   },

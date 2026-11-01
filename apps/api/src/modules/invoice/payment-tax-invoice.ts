@@ -73,16 +73,11 @@ export async function stampTaxInvoices(doc: unknown): Promise<string[]> {
   if (!isProforma(d)) return [];
   const { nextNumber } = await import("../sequence/sequence.service");
   const payments = (d.payments as Pay[]) ?? [];
-  const total = d.totalMinor ?? 0;
-  const tax = d.taxTotalMinor ?? 0;
-  const cleared = (d.balanceMinor ?? 0) <= 0;
-  const share = (amount: number) => (total > 0 ? Math.round((amount * tax) / total) : 0);
+  const taxes = taxShares(d);
   const issued: string[] = [];
   for (let i = 0; i < payments.length; i++) {
     const p = payments[i]!;
-    const others = payments.reduce((s, x, j) => (j === i ? s : s + share(x.amountMinor ?? 0)), 0);
-    const last = cleared && i === payments.length - 1;
-    const taxMinor = Math.max(0, Math.min(p.amountMinor ?? 0, last ? tax - others : share(p.amountMinor ?? 0)));
+    const taxMinor = taxes[i]!;
     const had = p.taxInvoice?.number ? p.taxInvoice : null;
     const number = had?.number ?? await nextNumber(String(d.organizationId), "tax_invoice", "TI-");
     if (!had) issued.push(p._id.toString());
@@ -96,6 +91,24 @@ export async function stampTaxInvoices(doc: unknown): Promise<string[]> {
     });
   }
   return issued;
+}
+
+/**
+ * The VAT in each payment on a pro-forma, in the order they are on it: its share of the invoice's VAT at the
+ * invoice's rate — the payment that clears the invoice taking whatever is left, so they add up to it exactly.
+ */
+export function taxShares(doc: unknown): number[] {
+  const d = doc as Doc;
+  const payments = (d.payments as Pay[]) ?? [];
+  const total = d.totalMinor ?? 0;
+  const tax = d.taxTotalMinor ?? 0;
+  const cleared = (d.balanceMinor ?? 0) <= 0;
+  const share = (amount: number) => (total > 0 ? Math.round((amount * tax) / total) : 0);
+  return payments.map((p, i) => {
+    const others = payments.reduce((s, x, j) => (j === i ? s : s + share(x.amountMinor ?? 0)), 0);
+    const last = cleared && i === payments.length - 1;
+    return Math.max(0, Math.min(p.amountMinor ?? 0, last ? tax - others : share(p.amountMinor ?? 0)));
+  });
 }
 
 /** A payment about to be taken off a pro-forma: its tax invoice kept on the invoice, cancelled — its number is not reused. */
@@ -160,4 +173,85 @@ export async function emailTaxInvoices(orgId: string, invoiceId: unknown, paymen
   } catch (err) {
     logger.error({ err, invoiceId: String(invoiceId) }, "Could not email the payment tax invoices");
   }
+}
+
+export interface ProformaRow {
+  id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
+  issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
+  status: string; taxInvoices: string[]; proformaAt: string;
+}
+export interface TaxInvoiceRow {
+  number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
+  paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
+  emailed: boolean; cancelled: boolean;
+}
+
+/**
+ * Sales → Pro-formas & tax invoices (the user, 2026-11-01): every pro-forma — issued in the period, or paid on in it —
+ * and every payment's tax invoice dated in it (its paid day), the cancelled ones too, flagged. The VAT figure is the
+ * tax invoices', not cancelled — the same the VAT report counts. A word in `q` matches a number or the client.
+ */
+export async function listProformasAndTaxInvoices(
+  orgId: string,
+  opts: { from?: string; to?: string; q?: string } = {},
+): Promise<{ proformas: ProformaRow[]; taxInvoices: TaxInvoiceRow[]; totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }> }> {
+  const { Invoice } = await import("./invoice.model");
+  const { Types } = await import("mongoose");
+  const day = (d: unknown) => new Date(d as Date).toISOString().slice(0, 10);
+  const lo = opts.from ? new Date(`${opts.from}T00:00:00.000Z`) : null;
+  const hi = opts.to ? new Date(`${opts.to}T23:59:59.999Z`) : null;
+  const inRange = (d: unknown) => { const t = new Date(d as Date).getTime(); return (!lo || t >= lo.getTime()) && (!hi || t <= hi.getTime()); };
+  const range = { ...(lo ? { $gte: lo } : {}), ...(hi ? { $lte: hi } : {}) };
+  const ranged = Boolean(lo || hi);
+  const q = (opts.q ?? "").trim();
+  const like = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
+
+  const docs = await Invoice.find({
+    organizationId: new Types.ObjectId(orgId),
+    "proforma.at": { $exists: true },
+    status: { $ne: "void" },
+    ...(ranged ? { $or: [{ issueDate: range }, { "payments.paidOn": range }, { "cancelledTaxInvoices.paidOn": range }] } : {}),
+  }).select("invoiceNumber customerId customerName salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma payments cancelledTaxInvoices")
+    .sort({ issueDate: -1, invoiceNumber: -1 }).lean<any[]>();
+
+  const proformas: ProformaRow[] = [];
+  const taxInvoices: TaxInvoiceRow[] = [];
+  for (const d of docs) {
+    const base = { invoiceId: String(d._id), invoiceNumber: String(d.invoiceNumber), customerId: String(d.customerId ?? ""), customerName: String(d.customerName ?? ""), currency: String(d.currency ?? "AED") };
+    const matches = (...xs: string[]) => !like || [base.invoiceNumber, base.customerName, ...xs].some((x) => like.test(x));
+    const tis: TaxInvoiceRow[] = [];
+    for (const p of d.payments ?? []) {
+      if (!p.taxInvoice?.number) continue;
+      tis.push({
+        ...base, number: p.taxInvoice.number, paymentId: String(p._id), paidOn: day(p.paidOn), amountMinor: p.amountMinor ?? 0,
+        netMinor: p.taxInvoice.netMinor ?? 0, taxMinor: p.taxInvoice.taxMinor ?? 0, method: String(p.method ?? ""),
+        emailed: Boolean(p.taxInvoice.emailedAt), cancelled: false,
+      });
+    }
+    for (const c of d.cancelledTaxInvoices ?? []) {
+      tis.push({
+        ...base, number: c.number, paymentId: "", paidOn: day(c.paidOn), amountMinor: c.amountMinor ?? 0,
+        netMinor: (c.amountMinor ?? 0) - (c.taxMinor ?? 0), taxMinor: c.taxMinor ?? 0, method: "", emailed: false, cancelled: true,
+      });
+    }
+    const course = String(d.enrolment?.course || d.lineItems?.[0]?.description || "");
+    if ((!ranged || inRange(d.issueDate) || tis.some((t) => inRange(t.paidOn))) && matches(course, ...tis.map((t) => t.number))) {
+      proformas.push({
+        id: base.invoiceId, invoiceNumber: base.invoiceNumber, customerId: base.customerId, customerName: base.customerName, course,
+        salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
+        totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
+        status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
+      });
+    }
+    for (const t of tis) if ((!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
+  }
+  taxInvoices.sort((a, b) => (b.paidOn.localeCompare(a.paidOn)) || b.number.localeCompare(a.number));
+
+  const totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }> = {};
+  for (const t of taxInvoices) {
+    if (t.cancelled) continue;
+    const x = (totals[t.currency] ??= { count: 0, amountMinor: 0, netMinor: 0, taxMinor: 0 });
+    x.count++; x.amountMinor += t.amountMinor; x.netMinor += t.netMinor; x.taxMinor += t.taxMinor;
+  }
+  return { proformas, taxInvoices, totals };
 }

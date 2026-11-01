@@ -22,6 +22,13 @@ export const list = asyncHandler(async (req, res) => {
   ok(res, result.data, result.meta);
 });
 
+/** Sales → Pro-formas & tax invoices: the pro-formas and each payment's tax invoice in the period. */
+export const taxInvoices = asyncHandler(async (req, res) => {
+  const { listProformasAndTaxInvoices } = await import("./payment-tax-invoice");
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+  ok(res, await listProformasAndTaxInvoices(orgId(req), { from: day(req.query.from), to: day(req.query.to), q: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : undefined }));
+});
+
 /** The list's cards: what its filters match (2026-10-22). */
 export const listSummary = asyncHandler(async (req, res) => {
   ok(res, await invoiceService.invoiceListSummary(orgId(req), parseQuery(invoiceQuerySchema, req.query), readScope(req)));

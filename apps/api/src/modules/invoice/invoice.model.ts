@@ -105,6 +105,11 @@ const paymentSubSchema = new Schema(
     externalRef: { type: String },
     /** The receipt issued for it (RCT-00001) — a course payment from CS Portal (the user, 2026-10-12). */
     receiptNumber: { type: String },
+    /** Its own tax invoice on a pro-forma enrolment (2026-11-01): TI- number, net and tax (payment-tax-invoice.ts). */
+    taxInvoice: {
+      type: new Schema({ number: String, netMinor: Number, taxMinor: Number, issuedAt: Date, emailedAt: Date }, { _id: false }),
+      default: undefined,
+    },
     /** The Banking account it went into (payment-bank.ts, 2026-10-16), its line there, and what landed in the
         account's currency — or why it is not in (bankNote). */
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
@@ -335,6 +340,13 @@ const invoiceSchema = new Schema(
     terms: { type: String, default: "" },
     tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],
     payments: { type: [paymentSubSchema], default: [] },
+    /** A pro-forma, not a tax invoice: VAT charged payment by payment (payment-tax-invoice.ts, 2026-11-01). */
+    proforma: { type: new Schema({ at: Date }, { _id: false }), default: undefined },
+    /** Tax invoices of payments since deleted — cancelled, kept for the record. */
+    cancelledTaxInvoices: {
+      type: [new Schema({ number: String, amountMinor: Number, taxMinor: Number, paidOn: Date, cancelledAt: Date }, { _id: false })],
+      default: undefined,
+    },
     branding: { type: brandingSnapshotSchema, default: () => ({}) },
     progress: { type: progressSchema, default: null },
     recurring: { type: recurringSchema, default: null },

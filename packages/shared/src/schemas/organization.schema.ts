@@ -80,6 +80,11 @@ export const updateOrganizationSchema = z.object({
   paymentAccounts: z.record(z.string().max(40), z.string().max(40)).optional(),
   /** Entries dated more than this many days back wait for a manager (2026-10-17); 0 turns it off. */
   lateEntryDays: z.coerce.number().int().min(0).max(365).optional(),
+  /**
+   * VAT on payments received (the user, 2026-11-01): a part-paid enrolment is issued as a pro-forma, and each payment
+   * gets its own tax invoice with the VAT on that payment. Off until the organization turns it on.
+   */
+  vatOnPayments: z.boolean().optional(),
 });
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 
@@ -105,6 +110,7 @@ export const organizationSchema = z.object({
   reminderIntervals: z.array(z.number()),
   paymentAccounts: z.record(z.string(), z.string()).default({}),
   lateEntryDays: z.number().default(1),
+  vatOnPayments: z.boolean().default(false),
   taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
   taxLabel: z.string().default("VAT"),
   taxRates: z.array(taxConfigItemSchema).default([]),

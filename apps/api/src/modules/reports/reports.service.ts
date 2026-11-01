@@ -765,20 +765,52 @@ export async function getCashFlow(
 
 // ── 8.6 VAT Report ────────────────────────────────────────────────────────────
 
+/**
+ * The VAT charged in a period, one entry per tax invoice: each invoice by its date — but a pro-forma (VAT on payments
+ * received, invoice/payment-tax-invoice.ts) is not a tax invoice, so instead each payment's tax invoice, by the day it
+ * was paid.
+ */
+async function outputTax(orgId: string, from: string, to: string): Promise<{ taxTotalMinor: number; taxBreakdown: { code: string; amountMinor: number }[] }[]> {
+  const range = { $gte: startOf(from), $lte: endOf(to) };
+  const [invoices, proformas] = await Promise.all([
+    Invoice.find({
+      organizationId: oid(orgId),
+      issueDate: range,
+      status: { $nin: ["draft", "void"] },
+      "proforma.at": { $exists: false },
+    }).select("taxTotalMinor taxBreakdown").lean(),
+    Invoice.find({
+      organizationId: oid(orgId),
+      status: { $nin: ["draft", "void"] },
+      "proforma.at": { $exists: true },
+      payments: { $elemMatch: { paidOn: range, "taxInvoice.number": { $exists: true } } },
+    }).select("taxBreakdown payments.paidOn payments.taxInvoice").lean(),
+  ]);
+  const out = invoices.map((i) => ({
+    taxTotalMinor: (i.taxTotalMinor as number) ?? 0,
+    taxBreakdown: (i as unknown as { taxBreakdown?: { code: string; amountMinor: number }[] }).taxBreakdown ?? [],
+  }));
+  const lo = range.$gte.getTime(), hi = range.$lte.getTime();
+  for (const inv of proformas) {
+    const code = (inv as unknown as { taxBreakdown?: { code: string }[] }).taxBreakdown?.[0]?.code ?? "VAT";
+    for (const p of (inv as unknown as { payments?: { paidOn: Date; taxInvoice?: { number?: string; taxMinor?: number } }[] }).payments ?? []) {
+      const at = new Date(p.paidOn).getTime();
+      if (!p.taxInvoice?.number || at < lo || at > hi) continue;
+      const t = p.taxInvoice.taxMinor ?? 0;
+      out.push({ taxTotalMinor: t, taxBreakdown: t ? [{ code, amountMinor: t }] : [] });
+    }
+  }
+  return out;
+}
+
 export async function getVATReport(
   orgId: string,
   from: string,
   to: string,
   currency = "AED",
 ): Promise<VATReport> {
-  const [invoices, bills] = await Promise.all([
-    Invoice.find({
-      organizationId: oid(orgId),
-      issueDate: { $gte: startOf(from), $lte: endOf(to) },
-      status: { $nin: ["draft", "void"] },
-    })
-      .select("taxTotalMinor taxBreakdown")
-      .lean(),
+  const [tax, bills] = await Promise.all([
+    outputTax(orgId, from, to),
 
     Bill.find({
       organizationId: oid(orgId),
@@ -789,6 +821,7 @@ export async function getVATReport(
       .lean(),
   ]);
 
+  const invoices = tax;
   const outputTaxMinor = invoices.reduce((s, i) => s + ((i.taxTotalMinor as number) ?? 0), 0);
   const inputTaxMinor = bills.reduce((s, b) => s + ((b.taxTotalMinor as number) ?? 0), 0);
 

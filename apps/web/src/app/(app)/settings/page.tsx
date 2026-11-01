@@ -128,6 +128,7 @@ export default function SettingsPage() {
         reminderIntervals: org.reminderIntervals ?? [-3, 1, 7],
         paymentAccounts: Object.fromEntries(PAYMENT_METHODS.map((m) => [m, org.paymentAccounts?.[m] ?? ""])),
         lateEntryDays: org.lateEntryDays ?? 1,
+        vatOnPayments: org.vatOnPayments ?? false,
       });
     }
   }, [org, reset]);
@@ -439,6 +440,23 @@ export default function SettingsPage() {
             <label className="text-sm font-medium text-foreground">Days back</label>
             <input type="number" min={0} max={365} {...register("lateEntryDays", { valueAsNumber: true })} className={FIELD} />
           </div>
+        </section>
+
+        {/* VAT on payments received (the user, 2026-11-01) */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <h2 className="text-sm font-semibold text-foreground">VAT on part-paid enrolments</h2>
+          <label className="flex items-start gap-2.5 rounded-md border border-border p-3">
+            <input type="checkbox" {...register("vatOnPayments")} className="mt-0.5 h-4 w-4 accent-primary" />
+            <span>
+              <span className="block text-sm font-medium text-foreground">VAT on payments received</span>
+              <span className="block text-xs text-foreground-muted">
+                An enrolment approved part paid becomes a pro-forma — not a tax invoice, its VAT not counted — and each
+                payment towards it gets its own tax invoice (TI-…) with the VAT on that payment only, emailed to the
+                client. The VAT report and Revenue count those by the day paid. Fully paid enrolments, and invoices
+                approved before this was turned on, stay as they are.
+              </span>
+            </span>
+          </label>
         </section>
 
         <section className="rounded-xl border border-border bg-surface p-5 space-y-4">

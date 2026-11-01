@@ -7,7 +7,7 @@ import {
   type OrganizationSettings,
 } from "../schemas/organization.schema";
 import { getPrintLabels } from "../i18n/print-labels";
-import type { Invoice } from "../schemas/invoice.schema";
+import type { Invoice, Payment } from "../schemas/invoice.schema";
 import type { Customer } from "../schemas/customer.schema";
 
 /**
@@ -83,8 +83,12 @@ export function buildInvoicePdf(opts: {
   bankAccount?: BankAccount | null;
   /** The logo, loaded: a PNG or JPEG data URL. Without one the name heads the page alone. */
   logo?: string | null;
+  /** A payment's tax invoice (taxInvoiceView), and the invoice it was paid against (2026-11-01). */
+  taxInvoiceAgainst?: string;
 }): jsPDF {
   const { invoice, org, customer, bankAccount } = opts;
+  // A pro-forma (VAT charged payment by payment, 2026-11-01): no tax of its own on it.
+  const proforma = Boolean(invoice.proforma) && !opts.taxInvoiceAgainst;
   const L = getPrintLabels(invoice.locale, org?.taxLabel);
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
@@ -95,7 +99,9 @@ export function buildInvoicePdf(opts: {
   // "TAX INVOICE" is a claim about the seller: only an organization with a tax
   // registration may head a document that way.
   const registered = Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
-  const title = org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
+  const title = opts.taxInvoiceAgainst ? L.taxInvoice
+    : proforma ? (L.proforma ?? "PRO-FORMA INVOICE")
+    : org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
   // HSN/SAC is an Indian requirement; an empty column on a dirham invoice reads
   // as something left unfilled.
   const showHsn = org?.taxSystem === "gst";
@@ -203,6 +209,7 @@ export function buildInvoicePdf(opts: {
   }
   doc.setFont("helvetica", "normal").setFontSize(8.5).setTextColor(71, 85, 105);
   const meta: [string, string][] = [
+    ...(opts.taxInvoiceAgainst ? ([[L.againstInvoice ?? "Against", opts.taxInvoiceAgainst]] as [string, string][]) : []),
     [L.salesperson, invoice.salespersonName],
     ...(invoice.reference ? ([[L.reference, invoice.reference]] as [string, string][]) : []),
     [L.issueDate, invoice.issueDate],
@@ -224,7 +231,7 @@ export function buildInvoicePdf(opts: {
     : [["#", L.description, L.qty, L.unitPrice, L.tax, L.amount]];
 
   const body = invoice.lineItems.map((l, i) => {
-    const taxes = (l.taxes ?? []).map((t) => `${t.code} ${t.rate}%`).join(", ") || "—";
+    const taxes = proforma ? "—" : (l.taxes ?? []).map((t) => `${t.code} ${t.rate}%`).join(", ") || "—";
     const base: string[] = [
       String(i + 1),
       l.description,
@@ -262,9 +269,9 @@ export function buildInvoicePdf(opts: {
     y += LINE + 1;
   };
 
-  row(L.subtotal, money(shown.taxableMinor));
+  if (!proforma) row(L.subtotal, money(shown.taxableMinor));
   if (invoice.discountTotalMinor > 0) row(L.discount, `- ${money(invoice.discountTotalMinor)}`);
-  for (const t of shown.taxes) row(`${L.tax} (${t.code})`, money(t.amountMinor));
+  if (!proforma) for (const t of shown.taxes) row(`${L.tax} (${t.code})`, money(t.amountMinor));
   if (invoice.roundOffMinor !== 0) {
     row(L.roundOff, `${invoice.roundOffMinor < 0 ? "- " : "+ "}${money(Math.abs(invoice.roundOffMinor))}`);
   }
@@ -273,6 +280,11 @@ export function buildInvoicePdf(opts: {
   row(L.total, money(invoice.totalMinor), true);
   if (invoice.amountPaidMinor > 0) row(L.paid, `- ${money(invoice.amountPaidMinor)}`);
   row(L.balanceDue, money(invoice.balanceMinor), true);
+  if (proforma) {
+    doc.setFont("helvetica", "italic").setFontSize(8).setTextColor(180, 83, 9);
+    doc.text(L.notTaxInvoice ?? "Not a tax invoice — VAT is charged on each payment's tax invoice.", PAGE_W - MARGIN, y, { align: "right" });
+    y += LINE + 1;
+  }
 
   y += 4;
 
@@ -433,6 +445,45 @@ export function buildInvoicePdf(opts: {
   // Returned rather than saved: what to do with it is the caller's business,
   // and there are two callers who want different things.
   return doc;
+}
+
+/**
+ * A payment's tax invoice, drawn as an invoice of its own (2026-11-01: VAT on what is paid, as it is paid): its TI-
+ * number, dated the day it was paid, one line — the payment towards the course — with its net and its tax, paid in
+ * full. Draw it with buildInvoicePdf({ invoice: taxInvoiceView(…), taxInvoiceAgainst: invoice.invoiceNumber }).
+ */
+export function taxInvoiceView(invoice: Invoice, payment: Payment): Invoice {
+  const ti = payment.taxInvoice;
+  if (!ti) throw new Error("This payment has no tax invoice");
+  const first = invoice.lineItems[0];
+  const rate = first?.taxes?.[0]?.rate ?? 0;
+  const code = invoice.taxBreakdown[0]?.code ?? first?.taxes?.[0]?.code ?? "VAT";
+  const taxes = ti.taxMinor ? [{ code, rate, amountMinor: ti.taxMinor }] : [];
+  const day = payment.paidOn.slice(0, 10);
+  const what = invoice.enrolment?.course || first?.description || "";
+  return {
+    ...invoice,
+    invoiceNumber: ti.number,
+    proforma: null,
+    issueDate: day,
+    dueDate: day,
+    lineItems: [{
+      description: `Payment towards ${what} (${invoice.invoiceNumber})`, quantity: 1, unitPriceMinor: payment.amountMinor, discountPct: 0,
+      hsnSac: first?.hsnSac ?? "", taxes: taxes as never, lineSubtotalMinor: ti.netMinor, discountMinor: 0, taxableMinor: ti.netMinor,
+      taxTotalMinor: ti.taxMinor, lineTotalMinor: payment.amountMinor,
+    }],
+    subtotalMinor: ti.netMinor,
+    discountTotalMinor: 0,
+    taxBreakdown: taxes.map((t) => ({ code: t.code, amountMinor: t.amountMinor })),
+    taxTotalMinor: ti.taxMinor,
+    roundOffMinor: 0,
+    totalMinor: payment.amountMinor,
+    amountPaidMinor: payment.amountMinor,
+    balanceMinor: 0,
+    payments: [payment],
+    notes: "",
+    terms: "",
+  } as Invoice;
 }
 
 /** The file name both callers use, so the download and the attachment agree. */

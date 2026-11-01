@@ -231,12 +231,16 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
     if (m?.departmentId) deptOf.set(String(u._id), String(m.departmentId));
   }
 
-  const SELECT = "invoiceNumber customerId customerName salespersonId salespersonName issueDate status totalMinor baseTotalMinor balanceMinor exchangeRate payments enrolment.course enrolment.crm enrolment.academy external.source lineItems.description";
+  const SELECT = "invoiceNumber customerId customerName salespersonId salespersonName issueDate status totalMinor baseTotalMinor balanceMinor exchangeRate payments enrolment.course enrolment.crm enrolment.academy external.source lineItems.description proforma";
   const credits = await CreditNote.find({ organizationId: org, status: { $in: ["issued", "applied"] }, ...(ranged ? { issuedAt: range } : {}) })
     .select("creditNoteNumber invoiceId customerName issuedAt totalMinor reason").lean<any[]>();
   const invoiceFilter: Record<string, unknown> = { organizationId: org, status: { $nin: ["draft", "void"] } };
   const invoices = q.basis === "invoiced"
-    ? await Invoice.find({ ...invoiceFilter, $or: [ranged ? { issueDate: range } : {}, { _id: { $in: credits.map((c) => c.invoiceId) } }] }).select(SELECT).lean<any[]>()
+    ? await Invoice.find({ ...invoiceFilter, $or: [
+      ranged ? { issueDate: range } : {}, { _id: { $in: credits.map((c) => c.invoiceId) } },
+      // A pro-forma is invoiced as each payment's tax invoice is, on the day it was paid.
+      { "proforma.at": { $exists: true }, ...(ranged ? { payments: { $elemMatch: { paidOn: range } } } : {}) },
+    ] }).select(SELECT).lean<any[]>()
     : await Invoice.find({ ...invoiceFilter, ...(ranged ? { payments: { $elemMatch: { paidOn: range } } } : { "payments.0": { $exists: true } }) }).select(SELECT).lean<any[]>();
 
   const names = new Names();
@@ -264,6 +268,22 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
   const byId = new Map(invoices.map((i) => [String(i._id), i]));
   if (q.basis === "invoiced") {
     for (const inv of invoices) {
+      // A pro-forma is not a tax invoice (invoice/payment-tax-invoice.ts): what is invoiced on it is each payment's
+      // tax invoice, by the day it was paid — paid in full, the rest of the course not yet invoiced.
+      if (inv.proforma?.at) {
+        for (const p of inv.payments ?? []) {
+          if (!p.taxInvoice?.number || (!inRange(p.paidOn) && ranged)) continue;
+          const date = dayOf(p.paidOn);
+          const amount = Math.round((p.amountMinor ?? 0) * rate(inv));
+          records.push({
+            id: `ti:${inv._id}:${p._id}`, date, number: p.taxInvoice.number, title: inv.customerName ?? "",
+            detail: [`Payment towards ${inv.invoiceNumber}`, inv.salespersonName].filter(Boolean).join(" · "), amountMinor: amount,
+            collectedMinor: amount, owedMinor: 0, href: `/invoices/${inv._id}`,
+            dims: { ...invoiceDims(inv, date), method: names.set("method", NONE, "—"), bank: names.set("bank", NONE, "—") },
+          });
+        }
+        continue;
+      }
       if (!inRange(inv.issueDate) && ranged) continue;
       const date = dayOf(inv.issueDate);
       const amount = inv.baseTotalMinor || Math.round((inv.totalMinor ?? 0) * rate(inv));
@@ -310,7 +330,9 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
     if (q.basis === "invoiced") {
       invoicedMinor = kept.filter((r) => r.amountMinor >= 0 && !r.id.startsWith("cn:")).reduce((s, r) => s + r.amountMinor, 0);
       creditMinor = -kept.filter((r) => r.id.startsWith("cn:")).reduce((s, r) => s + r.amountMinor, 0);
-      const ids = new Set(kept.filter((r) => !r.id.startsWith("cn:")).map((r) => r.id));
+      // A payment's tax invoice is paid in full.
+      collectedMinor += kept.filter((r) => r.id.startsWith("ti:")).reduce((s, r) => s + r.amountMinor, 0);
+      const ids = new Set(kept.filter((r) => !r.id.startsWith("cn:") && !r.id.startsWith("ti:")).map((r) => r.id));
       for (const id of ids) {
         const inv = byId.get(id);
         if (!inv) continue;

@@ -195,8 +195,11 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
     taxInclusive: true,
     lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
   } as never, { all: true });
+  // Part paid, with VAT on payments received: a pro-forma — this payment and each after it gets its own tax invoice.
+  const { vatOnPaymentsFor } = await import("../invoice/payment-tax-invoice");
+  const proforma = amountMinor < (created.totalMinor ?? 0) && (created.taxTotalMinor ?? 0) > 0 && await vatOnPaymentsFor(orgId);
   await Invoice.updateOne({ _id: new Types.ObjectId(created.id) }, {
-    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent" },
+    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent", ...(proforma ? { proforma: { at: new Date() } } : {}) },
   });
   return Invoice.findById(created.id).lean<any>();
 }
@@ -374,7 +377,8 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
         },
       },
     });
-    if (opts.email !== false) track(emailReceipt(row, after, { receiptNumber: receipt.receiptNumber, amountMinor, paidOn, method }));
+    // On a pro-forma the payment's tax invoice went to the student already — it is their receipt.
+    if (opts.email !== false && !after.proforma?.at) track(emailReceipt(row, after, { receiptNumber: receipt.receiptNumber, amountMinor, paidOn, method }));
     return { ok: true };
   } catch (err) {
     if (err instanceof AppError) return { ok: false, message: err.message };

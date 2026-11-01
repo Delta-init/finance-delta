@@ -510,6 +510,14 @@ export const taxBreakdownSchema = z.object({
 });
 export type TaxBreakdown = z.infer<typeof taxBreakdownSchema>;
 
+export const paymentTaxInvoiceSchema = z.object({
+  number: z.string(),
+  netMinor: z.number(),
+  taxMinor: z.number(),
+  issuedAt: z.string(),
+});
+export type PaymentTaxInvoice = z.infer<typeof paymentTaxInvoiceSchema>;
+
 export const paymentSchema = z.object({
   id: z.string(),
   method: z.enum(PAYMENT_METHODS),
@@ -531,6 +539,11 @@ export const paymentSchema = z.object({
   bankNote: z.string().optional(),
   /** Typed in late: waiting for a manager, or what one decided. */
   lateEntry: recordLateEntrySchema.optional(),
+  /**
+   * Its own tax invoice, on a pro-forma enrolment (the user, 2026-11-01: VAT on what is paid, as it is paid): the
+   * number (TI-00001) and the amount split into its net and its tax.
+   */
+  taxInvoice: paymentTaxInvoiceSchema.optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;
@@ -642,6 +655,15 @@ export const invoiceSchema = z.object({
     .nullable()
     .optional(),
   payments: z.array(paymentSchema).default([]),
+  /**
+   * A pro-forma, not a tax invoice (the user, 2026-11-01): a part-paid enrolment whose VAT is charged payment by
+   * payment, each on its own tax invoice (payments[].taxInvoice) — this document carries none of its own.
+   */
+  proforma: z.object({ at: z.string() }).nullable().optional(),
+  /** Tax invoices of payments since deleted: kept, cancelled, for the record. */
+  cancelledTaxInvoices: z.array(z.object({
+    number: z.string(), amountMinor: z.number(), taxMinor: z.number(), paidOn: z.string(), cancelledAt: z.string(),
+  })).optional(),
   sourceQuoteId: z.string().optional(),
   locale: z.string().optional(),
   exchangeRate: z.number().optional(),

@@ -1,7 +1,9 @@
 import {
   buildInvoicePdf,
   invoicePdfName,
+  taxInvoiceView,
   type Invoice,
+  type Payment,
   type OrganizationSettings,
   type Customer,
 } from "@delta/shared";
@@ -41,4 +43,17 @@ export async function downloadInvoicePdf(opts: {
 }): Promise<void> {
   const logo = await loadInvoiceLogo(opts.invoice.id);
   buildInvoicePdf({ ...opts, logo }).save(invoicePdfName(opts.invoice.invoiceNumber));
+}
+
+/** A payment's own tax invoice, on a pro-forma (VAT on payments received): TI-…, the payment, its VAT. */
+export async function downloadTaxInvoicePdf(opts: {
+  invoice: Invoice;
+  payment: Payment;
+  org?: OrganizationSettings | null;
+  customer?: Customer | null;
+}): Promise<void> {
+  const logo = await loadInvoiceLogo(opts.invoice.id);
+  const view = taxInvoiceView(opts.invoice, opts.payment);
+  buildInvoicePdf({ invoice: view, taxInvoiceAgainst: opts.invoice.invoiceNumber, org: opts.org, customer: opts.customer, logo })
+    .save(invoicePdfName(view.invoiceNumber));
 }

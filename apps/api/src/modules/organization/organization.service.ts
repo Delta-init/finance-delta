@@ -52,6 +52,7 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
     reminderIntervals: (doc.reminderIntervals as number[] | undefined) ?? [-3, 1, 7],
     paymentAccounts: Object.fromEntries(Object.entries((d.paymentAccounts as Record<string, unknown>) ?? {}).filter(([, v]) => typeof v === "string" && v)) as Record<string, string>,
     lateEntryDays: typeof d.lateEntryDays === "number" ? d.lateEntryDays : 1,
+    vatOnPayments: d.vatOnPayments === true,
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
     taxLabel: (d.taxLabel as string) ?? "VAT",
     taxRates: ((d.taxRates as unknown[]) ?? []) as OrganizationSettings["taxRates"],
@@ -165,6 +166,7 @@ export async function updateOrganization(
   }
   if (input.reminderIntervals !== undefined) flat.reminderIntervals = input.reminderIntervals;
   if (input.lateEntryDays !== undefined) flat.lateEntryDays = input.lateEntryDays;
+  if (input.vatOnPayments !== undefined) flat.vatOnPayments = input.vatOnPayments;
   if (input.paymentAccounts !== undefined) {
     // Only payment methods, and only this organization's accounts; "" clears a method.
     const { PAYMENT_METHODS } = await import("@delta/shared");

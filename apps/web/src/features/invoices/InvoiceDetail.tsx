@@ -48,7 +48,7 @@ import { useInvoice, useSendInvoice, useRestoreInvoice, useVoidInvoice, useRecor
 import { INVOICE_STATUS_TONE } from "./status";
 import { useCan } from "@/lib/use-can";
 import { ApprovalPanel } from "@/features/invoices/ApprovalPanel";
-import { downloadInvoicePdf } from "@/features/invoices/invoice-pdf";
+import { downloadInvoicePdf, downloadTaxInvoicePdf } from "@/features/invoices/invoice-pdf";
 import { useOrganization } from "@/features/organization/api";
 import { useCustomer } from "@/features/customers/api";
 import { useBankAccount, useBankAccounts } from "@/features/banking/api";
@@ -153,6 +153,12 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
           <Badge tone={INVOICE_STATUS_TONE[invoice.status]} className="capitalize ml-1">
             {invoice.status}
           </Badge>
+          {/* VAT on payments received: each payment below carries its own tax invoice. */}
+          {invoice.proforma && (
+            <Badge tone="warning" title="Not a tax invoice — VAT is charged on each payment's tax invoice (TI-…)">
+              Pro-forma · VAT on payments
+            </Badge>
+          )}
           {invoice.recurring && (
             <span className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-0.5 text-xs text-foreground-muted">
               <RefreshCw className="h-3 w-3" /> {invoice.recurring.frequency}
@@ -498,6 +504,16 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
                   <td className="px-4 py-2.5 text-foreground-muted align-top">
                     {p.paidOn}
                     <div className="mt-0.5"><LateBadge late={p.lateEntry} /></div>
+                    {p.taxInvoice && (
+                      <button
+                        type="button"
+                        onClick={() => void downloadTaxInvoicePdf({ invoice, payment: p, org, customer })}
+                        className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                        title={`Tax invoice for this payment: ${formatMoney(p.taxInvoice.netMinor, invoice.currency)} + ${formatMoney(p.taxInvoice.taxMinor, invoice.currency)} VAT`}
+                      >
+                        <Download className="h-3 w-3" /> {p.taxInvoice.number}
+                      </button>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 align-top">
                     <span className="capitalize">{paymentMethodLabel(p.method)}</span>
@@ -574,6 +590,13 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
               ))}
             </tbody>
           </table>
+          {/* Tax invoices of payments since deleted — their numbers are not used again. */}
+          {invoice.cancelledTaxInvoices?.length ? (
+            <p className="border-t border-border px-4 py-2 text-xs text-foreground-muted">
+              Cancelled tax invoices:{" "}
+              {invoice.cancelledTaxInvoices.map((c) => `${c.number} (${formatMoney(c.amountMinor, invoice.currency)}, paid ${c.paidOn})`).join(" · ")}
+            </p>
+          ) : null}
         </div>
       )}
 

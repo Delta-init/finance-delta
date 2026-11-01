@@ -11,6 +11,8 @@ export interface PrintLabels {
   accountNumber: string; bankName: string; branch: string;
   ifsc: string; swift: string; iban: string;
   hsnSac: string; roundOff: string;
+  /** The pro-forma and a payment's tax invoice (2026-11-01); English where a language has none yet. */
+  proforma?: string; notTaxInvoice?: string; againstInvoice?: string; paymentTowards?: string;
 }
 
 const en: PrintLabels = {
@@ -26,6 +28,8 @@ const en: PrintLabels = {
   accountNumber: "Account No.", bankName: "Bank", branch: "Branch",
   ifsc: "IFSC", swift: "SWIFT", iban: "IBAN",
   hsnSac: "HSN/SAC", roundOff: "Round Off",
+  proforma: "PRO-FORMA INVOICE", notTaxInvoice: "Not a tax invoice — VAT is charged on each payment's tax invoice.",
+  againstInvoice: "Against", paymentTowards: "Payment towards",
 };
 
 const ar: PrintLabels = {

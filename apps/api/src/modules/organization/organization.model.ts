@@ -62,6 +62,8 @@ const organizationSchema = new Schema(
     paymentAccounts: { type: Schema.Types.Mixed, default: {} },
     /** Entries dated this many days back or more wait for a manager (late-entry.service.ts; 1 = before today); 0 turns it off. */
     lateEntryDays: { type: Number, default: 1 },
+    /** VAT on payments received: a part-paid enrolment is a pro-forma, each payment its own tax invoice (2026-11-01). */
+    vatOnPayments: { type: Boolean, default: false },
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },
     taxLabel:  { type: String, default: "VAT" },
     taxRates:  { type: [taxRateSchema], default: [] },

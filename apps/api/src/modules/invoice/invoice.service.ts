@@ -43,6 +43,7 @@ import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
 import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
+import { emailTaxInvoices, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, vatOnPaymentsFor } from "./payment-tax-invoice";
 
 /**
  * Tell CS Portal the enrolment's money changed, if its student went
@@ -119,6 +120,29 @@ function enrolmentAcademyDTO(doc: unknown): { academy?: "dubai" | "bangalore" } 
   return { academy: enrolmentAcademy(d.enrolment?.academy, crm) };
 }
 
+/**
+ * A pro-forma (VAT on payments received, payment-tax-invoice.ts): when it became one, and the tax invoices of payments
+ * since taken off it — kept, a TI number once issued never being reused.
+ */
+function proformaView(doc: unknown): Pick<InvoiceDTO, "proforma" | "cancelledTaxInvoices"> {
+  const d = doc as {
+    proforma?: { at?: Date } | null;
+    cancelledTaxInvoices?: Array<{ number: string; amountMinor: number; taxMinor: number; paidOn: Date; cancelledAt: Date }> | null;
+  };
+  const c = d.cancelledTaxInvoices ?? [];
+  return {
+    proforma: d.proforma?.at ? { at: new Date(d.proforma.at).toISOString() } : null,
+    ...(c.length
+      ? {
+          cancelledTaxInvoices: c.map((x) => ({
+            number: x.number, amountMinor: x.amountMinor, taxMinor: x.taxMinor,
+            paidOn: dateOnly(new Date(x.paidOn)), cancelledAt: new Date(x.cancelledAt).toISOString(),
+          })),
+        }
+      : {}),
+  };
+}
+
 /** Each payment declared at the close, and what the approval did with them — absent where the enrolment has none. */
 function declaredPaymentsDTO(enrolment: unknown): Pick<NonNullable<InvoiceDTO["enrolment"]>, "declaredPayments" | "declaredPaymentsOnApproval"> {
   const e = enrolment as {
@@ -153,7 +177,7 @@ function declaredPaymentsDTO(enrolment: unknown): Pick<NonNullable<InvoiceDTO["e
   };
 }
 
-function toDTO(doc: InvoiceDoc): InvoiceDTO {
+export function toDTO(doc: InvoiceDoc): InvoiceDTO {
   const del = (doc as unknown as Record<string, unknown>).emailDelivery as
     | { state?: string; at?: Date; messageId?: string; error?: string }
     | undefined;
@@ -255,6 +279,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
         proofUrl?: string;
         proofKey?: string;
         receiptNumber?: string;
+        taxInvoice?: { number?: string; netMinor?: number; taxMinor?: number; issuedAt?: Date } | null;
         bankAccountId?: { toString(): string } | null;
         bankTransactionId?: { toString(): string } | null;
         bankAmountMinor?: number | null;
@@ -284,6 +309,12 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
           : undefined,
         proofUrl: pm.proofUrl || undefined,
         ...(pm.receiptNumber ? { receiptNumber: pm.receiptNumber } : {}),
+        ...(pm.taxInvoice?.number ? {
+          taxInvoice: {
+            number: pm.taxInvoice.number, netMinor: pm.taxInvoice.netMinor ?? 0, taxMinor: pm.taxInvoice.taxMinor ?? 0,
+            issuedAt: new Date(pm.taxInvoice.issuedAt ?? pm.paidOn).toISOString(),
+          },
+        } : {}),
         ...(pm.bankAccountId
           ? {
               bankAccountId: pm.bankAccountId.toString(),
@@ -300,6 +331,7 @@ function toDTO(doc: InvoiceDoc): InvoiceDTO {
       };
     }),
     sourceQuoteId: doc.sourceQuoteId?.toString(),
+    ...proformaView(doc),
     locale: (doc as unknown as { locale?: string }).locale ?? "en",
     exchangeRate: (doc as unknown as { exchangeRate?: number }).exchangeRate ?? 1,
     baseTotalMinor: (doc as unknown as { baseTotalMinor?: number }).baseTotalMinor
@@ -1462,8 +1494,11 @@ export async function approveInvoice(
   const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
   for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
   const before = ((doc.payments as unknown[]) ?? []).length;
+  // Part paid at the close, with VAT on payments received: a pro-forma, each payment its own tax invoice.
+  if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
   // In the same save: an approval and the payments it records stand or fall together.
   const recorded = recordDeclaredPayments(doc, accountFor);
+  const taxInvoices = await stampTaxInvoices(doc);
   // Part paid at the close: the next instalment is due 29 days after the money was paid.
   applyInstalmentDue(doc as never);
   await doc.save();
@@ -1498,6 +1533,7 @@ export async function approveInvoice(
       kind: "invoice_approved", actor, salesperson: true, reminders: false,
     });
   }
+  void emailTaxInvoices(orgId, doc._id, taxInvoices);
   return toDTO(doc as unknown as InvoiceDoc);
 }
 
@@ -1598,6 +1634,7 @@ export async function recordDeclaredAfterApproval(
     .map((p) => ({ id: String(p._id), method: p.method, amountMinor: p.amountMinor, paidOn: dateOnly(new Date(p.paidOn)), proof: Boolean(p.proofUrl) }));
   if (opts.dryRun) return { recorded, payments: added() };
 
+  const taxInvoices = await stampTaxInvoices(doc);
   applyInstalmentDue(doc as never);
   await doc.save();
   for (const p of ((doc.payments as unknown as { _id: unknown }[]) ?? []).slice(before)) await syncPaymentLine(doc as never, p._id);
@@ -1608,6 +1645,7 @@ export async function recordDeclaredAfterApproval(
   }
   void syncLmsAccess(doc);
   feeUpdate(doc._id, "payment");
+  void emailTaxInvoices(orgId, doc._id, taxInvoices);
   return { recorded, payments: added() };
 }
 
@@ -2047,6 +2085,8 @@ export async function updatePayment(
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partial";
   // A payment's date moved: the next instalment is due 29 days after the latest.
   applyInstalmentDue(doc as never);
+  // On a pro-forma, its tax invoice follows the new amount (its number kept).
+  await stampTaxInvoices(doc);
 
   await doc.save();
   if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, p));
@@ -2099,6 +2139,8 @@ export async function deletePayment(
   // Its line in the bank account goes with it — not once a bank statement was reconciled against it.
   const gone = { ...(pm as unknown as { toObject?: () => Record<string, unknown> }).toObject?.() } as never;
   await assertLineMovable(orgId, gone);
+  // Its tax invoice, on a pro-forma, kept as cancelled.
+  noteCancelledTaxInvoice(doc, pm);
   pm.deleteOne();
 
   const remaining = (doc.payments as unknown as { amountMinor?: number }[])
@@ -2112,6 +2154,8 @@ export async function deletePayment(
   doc.status = doc.balanceMinor <= 0 ? "paid" : remaining > 0 ? "partial" : "sent";
   // From the latest payment left, where one is.
   applyInstalmentDue(doc as never);
+  // The payment now clearing a pro-forma, if any, takes the VAT left.
+  await stampTaxInvoices(doc);
 
   await doc.save();
   await removePaymentLine(orgId, gone);
@@ -2226,6 +2270,8 @@ export async function recordPayment(
   doc.status = newBalance <= 0 ? "paid" : "partial";
   // Still part paid: the next instalment is due 29 days after this money was paid.
   applyInstalmentDue(doc as never);
+  // On a pro-forma: this payment's tax invoice.
+  const taxInvoices = await stampTaxInvoices(doc);
 
   await doc.save();
   // Its line in the bank account.
@@ -2236,6 +2282,7 @@ export async function recordPayment(
   // More of an enrolment paid opens more of its course in the LMS.
   void syncLmsAccess(doc);
   feeUpdate(doc._id, "payment");
+  void emailTaxInvoices(orgId, doc._id, taxInvoices);
 
   if (newBalance <= 0) {
     const org = await Organization.findById(orgId);

@@ -365,6 +365,8 @@ export async function sendNotice(opts: {
   actionLabel?: string;
   actionUrl?: string;
   log?: MailLog;
+  /** A document to go with it — a payment's tax invoice. */
+  attachments?: MailAttachment[];
 }): Promise<{ sent: number; skipped?: string }> {
   const recipients = [...new Set(opts.to.filter(Boolean))];
   if (!recipients.length) return { sent: 0, skipped: "no_recipients" };
@@ -375,7 +377,7 @@ export async function sendNotice(opts: {
   let sent = 0;
   let lastError: string | undefined;
   for (const to of recipients) {
-    const { error } = await deliver({ to: [to], subject: opts.subject, html, log: opts.log ?? { kind: "notice" } });
+    const { error } = await deliver({ to: [to], subject: opts.subject, html, attachments: opts.attachments, log: opts.log ?? { kind: "notice" } });
     if (error) lastError = error;
     else sent++;
   }

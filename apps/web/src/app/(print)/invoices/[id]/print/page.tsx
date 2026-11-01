@@ -66,7 +66,9 @@ export default function PrintInvoicePage({
   // wins, for the organizations that word it differently.
   const registered =
     Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
-  const docTitle = org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
+  // A pro-forma (VAT on payments received) is not a tax invoice: each payment has its own.
+  const proforma = Boolean(invoice.proforma);
+  const docTitle = proforma ? (L.proforma ?? "PRO-FORMA INVOICE") : org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
 
   // HSN/SAC is an Indian requirement, so the column appears only under GST —
   // an empty column on a dirham invoice reads as something left unfilled.
@@ -192,7 +194,7 @@ export default function PrintInvoicePage({
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>{formatMoney(line.unitPriceMinor, invoice.currency)}</td>
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>{line.discountPct > 0 ? `${line.discountPct}%` : "—"}</td>
                 <td style={{ padding: "8px 10px", textAlign: "right" }}>
-                  {line.taxes.length > 0 ? line.taxes.map((t) => `${t.code} ${t.rate}%`).join(", ") : "—"}
+                  {line.taxes.length > 0 && !proforma ? line.taxes.map((t) => `${t.code} ${t.rate}%`).join(", ") : "—"}
                 </td>
                 <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>{formatMoney(line.lineTotalMinor, invoice.currency)}</td>
               </tr>
@@ -203,11 +205,11 @@ export default function PrintInvoicePage({
         {/* Totals */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 32 }}>
           <div style={{ width: 260, fontSize: 13 }}>
-            <PrintTotalRow label={L.subtotal} value={formatMoney(shown.taxableMinor, invoice.currency)} />
+            {!proforma && <PrintTotalRow label={L.subtotal} value={formatMoney(shown.taxableMinor, invoice.currency)} />}
             {invoice.discountTotalMinor > 0 && (
               <PrintTotalRow label={L.discount} value={`− ${formatMoney(invoice.discountTotalMinor, invoice.currency)}`} />
             )}
-            {shown.taxes.map((t) => (
+            {!proforma && shown.taxes.map((t) => (
               <PrintTotalRow key={t.code} label={`${L.tax} (${t.code})`} value={formatMoney(t.amountMinor, invoice.currency)} />
             ))}
             {invoice.roundOffMinor !== 0 && (
@@ -226,6 +228,11 @@ export default function PrintInvoicePage({
               strong
               accent={invoice.balanceMinor > 0}
             />
+            {proforma && (
+              <div style={{ marginTop: 8, fontSize: 11, fontStyle: "italic", color: "#b45309" }}>
+                {L.notTaxInvoice ?? "Not a tax invoice — VAT is charged on each payment's tax invoice."}
+              </div>
+            )}
           </div>
         </div>
 
@@ -235,7 +242,7 @@ export default function PrintInvoicePage({
             <div style={{ fontWeight: 600, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#64748b", marginBottom: 8 }}>{L.paymentHistory}</div>
             {invoice.payments.map((p) => (
               <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #f1f5f9" }}>
-                <span>{p.paidOn} — {p.method.replace("_", " ")}{p.reference ? ` (${p.reference})` : ""}</span>
+                <span>{p.paidOn} — {p.method.replace("_", " ")}{p.reference ? ` (${p.reference})` : ""}{p.taxInvoice ? ` · ${p.taxInvoice.number}` : ""}</span>
                 <span style={{ fontWeight: 600, color: "#16a34a" }}>{formatMoney(p.amountMinor, invoice.currency)}</span>
               </div>
             ))}

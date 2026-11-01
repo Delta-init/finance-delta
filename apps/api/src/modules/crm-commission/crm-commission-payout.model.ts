@@ -41,6 +41,13 @@ const payoutSchema = new Schema(
       type: new Schema({ name: String, key: String, url: String, size: Number, mimeType: String }, { _id: false }),
       default: null,
     },
+    /**
+     * Pulled onto a payroll run (the user, 2026-11-01: "commission through payroll"): paid with the run's transfer —
+     * marked paid when the run pays this person's line, back to approved if that payment is reversed or the addition
+     * taken off. While set it can't be paid here or have its approval taken back.
+     */
+    payrollRunId: { type: Schema.Types.ObjectId, ref: "PayrollRun", default: null },
+    payrollRunNumber: { type: String, default: "" },
   },
   { timestamps: true },
 );

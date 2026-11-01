@@ -207,7 +207,11 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                         {p.state === "earned" && canApprove && p.payableKnown && p.amountMinor > 0 && (
                           <Button size="sm" onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
                         )}
-                        {p.state === "approved" && (
+                        {/* Commission through payroll (2026-11-01): on a run, it is paid with it — not here. */}
+                        {p.state === "approved" && p.payout?.payrollRunNumber && (
+                          <span className="text-xs text-foreground-muted">In payroll {p.payout.payrollRunNumber} — paid with it</span>
+                        )}
+                        {p.state === "approved" && !p.payout?.payrollRunNumber && (
                           <div className="flex justify-end gap-2">
                             {canApprove && (
                               <Button size="sm" variant="ghost" loading={revoke.isPending} onClick={() => void takeBack(p)}><X className="h-3.5 w-3.5" /> Take back</Button>
@@ -219,7 +223,7 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                           <span className="text-xs text-foreground-muted">{p.earnedMinor === 0 && (p.waitingMinor ?? 0) > 0 ? "Nothing yet — waiting for full payment" : "Nothing payable at this level"}</span>
                         )}
                         {p.state === "earned" && !canApprove && p.amountMinor > 0 && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
-                        {p.state === "approved" && !canPay && !canApprove && <span className="text-xs text-foreground-muted">Waiting for accounts</span>}
+                        {p.state === "approved" && !p.payout?.payrollRunNumber && !canPay && !canApprove && <span className="text-xs text-foreground-muted">Waiting for payroll</span>}
                       </td>
                     </tr>
                     {isOpen && (
@@ -251,7 +255,7 @@ function StatusCell({ p }: { p: CrmCommissionPerson }) {
   if (o.state === "approved") {
     return (
       <div className="space-y-0.5">
-        <Badge tone="warning">Approved — to pay</Badge>
+        <Badge tone="warning">{o.payrollRunNumber ? `In payroll ${o.payrollRunNumber}` : "Approved — pulled into payroll"}</Badge>
         <p className="text-xs text-foreground-muted">by {o.approvedByName}, {o.approvedAt.slice(0, 10)}{o.approvalNote ? ` — ${o.approvalNote}` : ""}</p>
       </div>
     );

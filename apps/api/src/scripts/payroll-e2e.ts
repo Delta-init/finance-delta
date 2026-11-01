@@ -34,6 +34,9 @@ import * as adjustments from "../modules/payroll/adjustments.service";
 import * as payments from "../modules/payroll/payment.service";
 import { hrmsClient } from "../lib/hrms-client";
 import { formatMinor } from "../modules/payroll/money";
+import { CrmCommissionPayout } from "../modules/crm-commission/crm-commission-payout.model";
+import * as crmCommission from "../modules/crm-commission/crm-commission.service";
+import http from "node:http";
 
 const uri = process.env.MONGODB_URI ?? "";
 if (!/127\.0\.0\.1|localhost/.test(uri) || !/e2e|test/i.test(uri)) {
@@ -209,13 +212,51 @@ async function main() {
 
   // ── Adjustments ────────────────────────────────────────────────────────
   step("5. Commission and adjustments (phase 3)");
+  // The sales CRMs' commission through payroll (2026-11-01): a stand-in Root names Aisha's CRM login by her email.
+  const rootApi = http.createServer((req, res) => {
+    const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (req.headers["x-portal-secret"] !== "e2e-root-secret") return send(401, { success: false, message: "Invalid service credential" });
+    if (!(req.url ?? "").startsWith("/api/v1/service/crm-commission")) return send(404, { success: false, message: "Route not found" });
+    send(200, { success: true, data: { crms: [{ code: "delta", name: "Sales CRM", currency: "AED", error: null, total: 0, pending: { progress: 0, waiting: 0 }, people: [
+      { userId: "crm-aisha", name: "Aisha", email: "E2E001@e2e.local", roles: ["sales"], amount: 230, sales: 1, lines: [] },
+      { userId: "crm-ghost", name: "Ghost", email: "ghost@e2e.local", roles: ["sales"], amount: 100, sales: 1, lines: [] },
+    ] }] } });
+  });
+  await new Promise<void>((ok) => rootApi.listen(Number(process.env.E2E_ROOT_PORT), "127.0.0.1", ok));
+  const payout = (userId: string, name: string, month: string, amountMinor: number, state: "approved" | "paid") => ({
+    key: `delta:${month}:${userId}`, organizationId: org._id, crm: "delta", crmName: "Sales CRM", month, userId, personName: name, currency: "AED",
+    amountMinor, state, approvedById: new Types.ObjectId(actor.userId), approvedByName: "Mona Manager", approvedAt: new Date(),
+  });
+  const prev = `${Number(seed.month.slice(0, 4)) - (seed.month.slice(5) === "01" ? 1 : 0)}-${seed.month.slice(5) === "01" ? "12" : String(Number(seed.month.slice(5)) - 1).padStart(2, "0")}`;
+  await CrmCommissionPayout.insertMany([
+    payout("crm-aisha", "Aisha", seed.month, 230_00, "approved"),
+    payout("crm-ghost", "Ghost", seed.month, 100_00, "approved"),
+    payout("crm-aisha", "Aisha", prev, 150_00, "paid"),
+    payout("crm-aisha", "Aisha", "2099-01", 999_00, "approved"),
+  ]);
   const pulled = await adjustments.pullCommissions(orgId, runId, actor);
-  check("commission pulled onto the run", pulled.pulled === 1, pulled.message);
+  check("commission pulled onto the run: hers, and her approved CRM commission", pulled.pulled === 2, pulled.message);
+  check("…the approved CRM commission of somebody not on this run said, not added", /Ghost \(Sales CRM/.test(pulled.message), pulled.message);
 
   run = await payroll.getRun(orgId, runId);
   const aisha = run.lines.find((l) => l.employeeCode === "E2E001")!;
-  check("commission raised her payable by exactly the commission",
-    aisha.adjustmentsMinor === 5_000_00, formatMinor(aisha.adjustmentsMinor, "AED"));
+  check("commission raised her payable by exactly the commission — 5,000 and the CRM's 230",
+    aisha.adjustmentsMinor === 5_230_00, formatMinor(aisha.adjustmentsMinor, "AED"));
+  const crmAdj = run.adjustments.find((a) => a.source === "crm_commission");
+  check("…the CRM's as its own addition, named for the CRM and month", !!crmAdj && /^Sales commission \(CRM\) — Sales CRM, /.test(crmAdj.label) && crmAdj.amountMinor === 230_00, crmAdj?.label);
+  let mine = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
+  check("…the CRM commission is now on this run, still approved", mine?.state === "approved" && mine.payrollRunNumber === run.runNumber);
+  check("…the paid month, the month to come and Ghost's left as they were", (await CrmCommissionPayout.countDocuments({ payrollRunId: { $ne: null } })) === 1);
+  const refusedHere = async (p: Promise<unknown>, re: RegExp) => { try { await p; return false; } catch (e) { return re.test((e as Error).message); } };
+  check("on a run, the CRM commission page won't pay it, nor take the approval back",
+    await refusedHere(crmCommission.payCrmCommission(orgId, actor.userId, { crm: "delta", month: seed.month, userId: "crm-aisha", paidOn: "2026-01-01", paymentMethod: "bank_transfer", receipt: { key: `expenses/${orgId}/uploads/x.pdf`, name: "x.pdf", url: "https://x/x.pdf", size: 1, mimeType: "application/pdf" } } as never), /payroll/)
+    && await refusedHere(crmCommission.revokeCrmCommission(orgId, actor.userId, true, { crm: "delta", month: seed.month, userId: "crm-aisha" }), /payroll/));
+  await adjustments.removeAdjustment(orgId, runId, crmAdj!.externalId);
+  mine = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
+  check("taken off the run: the CRM commission is free again", mine?.state === "approved" && !mine.payrollRunId, String(mine?.payrollRunNumber));
+  const again = await adjustments.pullCommissions(orgId, runId, actor);
+  check("…and pulled again: only it", again.pulled === 1, again.message);
+  run = await payroll.getRun(orgId, runId);
   check("commission written back to the payslip in HRMS",
     run.adjustments.every((a) => a.syncedAt !== null));
 
@@ -274,6 +315,9 @@ async function main() {
   check("only people actually owed money were paid", paid.paidCount === 1, `${paid.paidCount} paid`);
   check("held person never entered the transfer", paid.heldCount === 1);
   check("commission settled by the payment", paid.commissionsSettled === 2, `${paid.commissionsSettled} records`);
+  const crmPaid = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
+  check("…the CRM commission paid with it: paid through payroll, its run the reference",
+    crmPaid?.state === "paid" && crmPaid.paymentMethod === "payroll" && crmPaid.reference === run.runNumber, JSON.stringify({ s: crmPaid?.state, m: crmPaid?.paymentMethod }));
 
   const bankAfter = await BankAccount.findById(bank._id).lean();
   check("bank balance fell by the payment",
@@ -308,6 +352,9 @@ async function main() {
   const reversed = await payments.reversePayment(orgId, runId, paid.paymentId, "Bank returned the transfer");
   check("payment reversed", !reversed.alreadyReversed, reversed.message);
   check("commission returned to unpaid", reversed.commissionsReopened === 2);
+  const crmBack = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
+  check("…the CRM commission owed again, still on the run", crmBack?.state === "approved" && !crmBack.paymentMethod && crmBack.payrollRunNumber === run.runNumber);
+  rootApi.close();
 
   const bankReversed = await BankAccount.findById(bank._id).lean();
   check("bank balance restored", bankReversed!.currentBalanceMinor === 500_000_00,

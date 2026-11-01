@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { hrmsClient } from "../../lib/hrms-client";
@@ -349,6 +350,16 @@ export async function retrySync(orgId: string, runId: string, paymentId: string)
  * a run nobody has transferred.
  */
 async function settleCommissions(orgId: string, run: PayrollRunDoc, paidLineIds: string[]): Promise<number> {
+  // The sales CRMs' commission on those lines (2026-11-01): paid with this transfer.
+  const crmIds = run.adjustments
+    .filter((a) => a.source === "crm_commission" && paidLineIds.includes(String(a.lineId)))
+    .flatMap((a) => a.crmPayoutIds ?? []);
+  if (crmIds.length) {
+    await CrmCommissionPayout.updateMany(
+      { _id: { $in: crmIds }, state: "approved" },
+      { $set: { state: "paid", paidAt: new Date(), paidOn: new Date(), paidByName: `Payroll ${run.runNumber}`, paymentMethod: "payroll", reference: run.runNumber } },
+    );
+  }
   const ids = run.adjustments
     .filter((a) => a.source === "commission" && paidLineIds.includes(String(a.lineId)))
     .flatMap((a) => a.commissionRecordIds);
@@ -460,6 +471,16 @@ export async function reversePayment(
 
 /** Put commission back to earned when the payroll that paid it was reversed. */
 async function unsettleCommissions(orgId: string, run: PayrollRunDoc, lineIds: string[]): Promise<number> {
+  // The sales CRMs' commission on those lines: owed again, still on this run (2026-11-01).
+  const crmIds = run.adjustments
+    .filter((a) => a.source === "crm_commission" && lineIds.includes(String(a.lineId)))
+    .flatMap((a) => a.crmPayoutIds ?? []);
+  if (crmIds.length) {
+    await CrmCommissionPayout.updateMany(
+      { _id: { $in: crmIds }, state: "paid", paymentMethod: "payroll" },
+      { $set: { state: "approved" }, $unset: { paidAt: 1, paidOn: 1, paidByName: 1, paymentMethod: 1, reference: 1 } },
+    );
+  }
   const ids = run.adjustments
     .filter((a) => a.source === "commission" && lineIds.includes(String(a.lineId)))
     .flatMap((a) => a.commissionRecordIds);

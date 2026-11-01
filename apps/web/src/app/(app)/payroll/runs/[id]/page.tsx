@@ -656,6 +656,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                     {a.source === "commission" && (
                                       <Badge tone="primary" className="ml-2">Commission</Badge>
                                     )}
+                                    {a.source === "crm_commission" && (
+                                      <Badge tone="primary" className="ml-2">CRM commission</Badge>
+                                    )}
                                     {a.outstandingMinor > 0 && (
                                       <span className="ml-2 text-xs text-warning">
                                         only <MoneyDisplay minor={a.recoveredMinor} currency={a.currency ?? (l.currency || run.currency)} /> recovered,{" "}

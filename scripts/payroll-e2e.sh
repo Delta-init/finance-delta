@@ -20,6 +20,8 @@ FINANCE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HRMS_REPO="${HRMS_REPO:-$(cd "$FINANCE_REPO/../hrms" 2>/dev/null && pwd || echo "")}"
 MONGO_PORT="${E2E_MONGO_PORT:-27077}"
 HRMS_PORT="${E2E_HRMS_PORT:-5099}"
+# A stand-in Root portal the finance script starts, for the sales CRMs' commission (2026-11-01).
+ROOT_PORT="${E2E_ROOT_PORT:-5098}"
 MONTH="${E2E_MONTH:-2026-03}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/payroll-e2e.XXXXXX")"
 
@@ -53,6 +55,7 @@ release_port() {
 cleanup() {
   local code=$?
   release_port "$HRMS_PORT"
+  release_port "$ROOT_PORT"
   mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --shutdown >/dev/null 2>&1 || true
   release_port "$MONGO_PORT"
   # Only once nothing is still writing to it.
@@ -105,5 +108,6 @@ MONGODB_URI="$FIN_DB" \
 JWT_ACCESS_SECRET="$LONG" JWT_REFRESH_SECRET="$LONG" \
 HRMS_API_URL="http://127.0.0.1:$HRMS_PORT" \
 HRMS_CLIENT_ID="delta-finance" HRMS_INTEGRATION_SECRET="$SECRET" \
+ROOT_ERP_API_URL="http://127.0.0.1:$ROOT_PORT" ROOT_ERP_SECRET="e2e-root-secret" E2E_ROOT_PORT="$ROOT_PORT" \
 E2E_HRMS_SEED="$SEED" \
   bun src/scripts/payroll-e2e.ts

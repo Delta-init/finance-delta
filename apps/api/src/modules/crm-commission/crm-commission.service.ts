@@ -39,6 +39,8 @@ interface RootPerson {
   /** Commission waiting for clients to pay in full (2026-10-31); absent from an older Root. */
   waiting?: number;
   payable?: number | null; percent?: number | null; level?: string | null;
+  /** Their login's email in the CRM (2026-11-01) — how payroll finds their payslip; absent from an older Root. */
+  email?: string;
 }
 interface RootCrm {
   code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number };
@@ -53,7 +55,7 @@ const keyOf = (crm: string, month: string, userId: string) => `${crm}:${month}:$
 const minor = (major: number) => Math.round((Number(major) || 0) * 100);
 
 /** The month's counted commission of every sales CRM, from Root. */
-async function fromRoot(month: string): Promise<RootCrm[]> {
+export async function fromRoot(month: string): Promise<RootCrm[]> {
   const base = env.ROOT_ERP_API_URL.replace(/\/+$/, "");
   if (!base || !env.ROOT_ERP_SECRET) throw new AppError("UNAVAILABLE", "The Root portal is not configured on this server (ROOT_ERP_API_URL, ROOT_ERP_SECRET).");
   const controller = new AbortController();
@@ -107,6 +109,7 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
         receipt: p.receipt?.url ? { name: p.receipt.name ?? "Receipt", url: p.receipt.url } : null,
       } : {}),
       orgId: String(p.organizationId), orgName: orgName.get(String(p.organizationId)) ?? "",
+      payrollRunNumber: p.payrollRunNumber ?? "",
     };
   };
 
@@ -268,6 +271,8 @@ export async function approveCrmCommission(orgId: string, userId: string, isSupe
 /** A manager takes an approval back — only before it is paid. */
 export async function revokeCrmCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: RevokeCrmCommissionInput) {
   if (!isSuperAdmin && !(await canApprove(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager approves commission");
+  const inPayroll = await CrmCommissionPayout.findOne({ key: keyOf(input.crm, input.month, input.userId), payrollRunId: { $ne: null } }).select("payrollRunNumber").lean<any>();
+  if (inPayroll) throw new AppError("CONFLICT", `It is on payroll ${inPayroll.payrollRunNumber} — take it off the run first`);
   const r = await CrmCommissionPayout.deleteOne({ key: keyOf(input.crm, input.month, input.userId), state: "approved" });
   if (!r.deletedCount) throw new AppError("CONFLICT", "It is not waiting to be paid — paid already, or not approved");
   return { revoked: true };
@@ -284,6 +289,9 @@ export async function uploadReceipt(orgId: string, file: ParsedFile) {
  */
 export async function payCrmCommission(orgId: string, userId: string, input: PayCrmCommissionInput) {
   const key = keyOf(input.crm, input.month, input.userId);
+  // Commission through payroll (2026-11-01): one on a run is paid with it, never here.
+  const inPayroll = await CrmCommissionPayout.findOne({ key, payrollRunId: { $ne: null } }).select("payrollRunNumber").lean<any>();
+  if (inPayroll) throw new AppError("CONFLICT", `It is paid through payroll ${inPayroll.payrollRunNumber} — not here`);
   if (!input.receipt.key.startsWith(`expenses/${orgId}/uploads/`) || input.receipt.key.includes("..")) {
     throw new AppError("VALIDATION_ERROR", "Upload the receipt here first");
   }
@@ -293,7 +301,7 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
   }
   const name = await userName(userId);
   const claimed = await CrmCommissionPayout.findOneAndUpdate(
-    { key, state: "approved" },
+    { key, state: "approved", payrollRunId: null },
     { $set: { state: "paid", organizationId: new Types.ObjectId(orgId), paidById: new Types.ObjectId(userId), paidByName: name, paidAt: new Date(),
       paidOn: new Date(`${input.paidOn}T00:00:00.000Z`), paymentMethod: input.paymentMethod, reference: input.reference ?? "" } },
     { new: true },

@@ -97,6 +97,8 @@ export interface CrmCommissionPayoutView {
   receipt?: { name: string; url: string } | null;
   /** The finance organization it was approved and paid in. */
   orgId: string; orgName: string;
+  /** On a payroll run, paid with it (2026-11-01); "" when not. */
+  payrollRunNumber?: string;
 }
 
 export interface CrmCommissionPerson {

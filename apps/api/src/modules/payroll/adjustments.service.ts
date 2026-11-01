@@ -2,6 +2,8 @@ import { Types } from "mongoose";
 import { AppError } from "../../lib/http";
 import { hrmsClient, type HrmsAdjustmentOutcome } from "../../lib/hrms-client";
 import { CommissionRecord } from "../commission/commission-record.model";
+import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
+import { fromRoot } from "../crm-commission/crm-commission.service";
 import { Employee } from "../employee/employee.model";
 import { User } from "../user/user.model";
 import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
@@ -158,7 +160,46 @@ export async function addAdjustments(
 export async function pullCommissions(orgId: string, runId: string, actor: { userId: string }) {
   const run = await loadRun(orgId, runId);
   requireOpen(run);
+  const user = await User.findById(oid(actor.userId)).select("name").lean();
+  const staged: Array<{ externalId: string; employeeId: string; kind: "payment"; label: string; amount: number }> = [];
+  const notes: string[] = [];
 
+  // Finance's own commission records — salespeople linked to a finance login.
+  const records = await stageCommissionRecords(orgId, run, actor, user?.name ?? "", staged);
+  if (records.note) notes.push(records.note);
+  // The sales CRMs' commission (2026-11-01: "commission through payroll") — approved on the CRM commission page.
+  const crm = await stageCrmCommission(orgId, run, actor, user?.name ?? "", staged);
+  if (crm.note) notes.push(crm.note);
+
+  if (!staged.length) {
+    return { pulled: 0, message: notes.join(" ") || "No unpaid commission is outstanding for anybody on this run.", outcomes: [] };
+  }
+
+  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged);
+
+  absorbOutcomes(run, result.outcomes);
+  recalculate(run as unknown as RecalcRun);
+  await run.save();
+  // The CRM commission is claimed for this run once HRMS has it on the payslips; nothing is marked paid until the run
+  // pays the line (see settleCommissions).
+  if (crm.payoutIds.length) {
+    await CrmCommissionPayout.updateMany({ _id: { $in: crm.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
+  }
+
+  // The commission records themselves are NOT marked paid here. They are paid
+  // when the payroll is, and marking them now would report money as paid that
+  // is still sitting in a run nobody has transferred.
+  return {
+    pulled: staged.length,
+    message: [`${staged.length} commission payment(s) added, ${formatMinor(staged.reduce((a, s) => a + toMinor(s.amount), 0), run.currency)} in total.`, ...notes].join(" "),
+    ...summariseOutcomes(run, result.outcomes),
+  };
+}
+
+type Staged = Array<{ externalId: string; employeeId: string; kind: "payment"; label: string; amount: number }>;
+
+/** Finance's own commission records for this run's people, one addition per person. */
+async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string }> {
   // Only people this run can actually reach: a commission owed to somebody not
   // on this payroll is not this run's to pay.
   const employees = await Employee.find({
@@ -167,26 +208,19 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
     hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
     userId: { $ne: null },
   }).lean();
-
-  if (!employees.length) {
-    return { pulled: 0, message: "Nobody on this run is linked to a finance login, so no commission could be matched.", outcomes: [] };
-  }
+  if (!employees.length) return { note: "" };
 
   const userToEmployee = new Map(employees.map((e) => [String(e.userId), e]));
   const alreadyPulled = new Set(
     run.adjustments.filter((a) => a.source === "commission").flatMap((a) => a.commissionRecordIds.map(String)),
   );
-
   const records = await CommissionRecord.find({
     organizationId: oid(orgId),
     salespersonId: { $in: employees.map((e) => e.userId) },
     status: "earned",
   }).lean();
-
   const fresh = records.filter((r) => !alreadyPulled.has(String(r._id)));
-  if (!fresh.length) {
-    return { pulled: 0, message: "No unpaid commission is outstanding for anybody on this run.", outcomes: [] };
-  }
+  if (!fresh.length) return { note: "" };
 
   // One addition per person, not per invoice. A payslip listing forty
   // commission lines is unreadable, and the individual records stay linked on
@@ -197,61 +231,81 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
     if (!byPerson.has(key)) byPerson.set(key, []);
     byPerson.get(key)!.push(r);
   }
-
-  const user = await User.findById(oid(actor.userId)).select("name").lean();
-  const staged: Array<{ externalId: string; employeeId: string; kind: "payment"; label: string; amount: number }> = [];
-
   for (const [userId, rows] of byPerson) {
     const employee = userToEmployee.get(userId);
     if (!employee) continue;
     const line = run.lines.find((l) => l.hrmsEmployeeId === employee.hrmsEmployeeId);
     if (!line) continue;
-
     const amountMinor = rows.reduce((a, r) => a + r.commissionMinor, 0);
     if (amountMinor <= 0) continue;
-
     const seq = run.adjustments.filter((a) => String(a.lineId) === String(line._id)).length + 1;
     const externalId = makeExternalId(run.runNumber, String(line._id), seq);
     const label = `Sales commission (${rows.length} invoice${rows.length === 1 ? "" : "s"})`;
-
     run.adjustments.push({
-      externalId,
-      hrmsEmployeeId: line.hrmsEmployeeId,
-      lineId: line._id,
-      kind: "addition",
-      source: "commission",
-      label,
-      amountMinor,
-      notes: rows.map((r) => r.invoiceNumber).join(", ").slice(0, 500),
-      commissionRecordIds: rows.map((r) => r._id),
-      recoveredMinor: amountMinor,
-      outstandingMinor: 0,
-      syncedAt: null,
-      createdById: oid(actor.userId),
-      createdByName: user?.name ?? "",
+      externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "commission", label, amountMinor,
+      notes: rows.map((r) => r.invoiceNumber).join(", ").slice(0, 500), commissionRecordIds: rows.map((r) => r._id),
+      recoveredMinor: amountMinor, outstandingMinor: 0, syncedAt: null, createdById: oid(actor.userId), createdByName: actorName,
     } as never);
-
     staged.push({ externalId, employeeId: line.hrmsEmployeeId, kind: "payment", label, amount: amountMinor / 100 });
   }
+  return { note: "" };
+}
 
-  if (!staged.length) {
-    return { pulled: 0, message: "No commission could be matched to anybody on this run.", outcomes: [] };
+const monthName = (m: string) =>
+  new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${m}-01T00:00:00Z`));
+
+/**
+ * The sales CRMs' commission for this run's people (2026-11-01: "commission through payroll"): every month a manager
+ * approved on the CRM commission page and nobody has paid — this run's month and any before it — found on the run by
+ * the person's CRM email (an employee's email here), in the line's currency. One addition per CRM month, at the
+ * approved figure.
+ */
+async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string; payoutIds: Types.ObjectId[] }> {
+  const payouts = await CrmCommissionPayout.find({ state: "approved", payrollRunId: null, month: { $lte: run.period } }).sort({ month: 1 }).lean<any[]>();
+  if (!payouts.length) return { note: "", payoutIds: [] };
+  // Each person's CRM email, from Root, a month at a time.
+  const emailOf = new Map<string, string>();
+  const unread: string[] = [];
+  for (const month of [...new Set(payouts.map((p) => p.month as string))]) {
+    try {
+      for (const c of await fromRoot(month)) for (const p of c.people ?? []) if (p.email) emailOf.set(`${c.code}:${month}:${p.userId}`, p.email.toLowerCase());
+    } catch {
+      unread.push(monthName(month));
+    }
   }
-
-  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged);
-
-  absorbOutcomes(run, result.outcomes);
-  recalculate(run as unknown as RecalcRun);
-  await run.save();
-
-  // The commission records themselves are NOT marked paid here. They are paid
-  // when the payroll is, and marking them now would report money as paid that
-  // is still sitting in a run nobody has transferred.
-  return {
-    pulled: staged.length,
-    message: `${staged.length} commission payment(s) added, ${formatMinor(staged.reduce((a, s) => a + toMinor(s.amount), 0), run.currency)} in total.`,
-    ...summariseOutcomes(run, result.outcomes),
-  };
+  const emails = [...new Set(payouts.map((p) => emailOf.get(String(p.key))).filter(Boolean) as string[])];
+  const employees = emails.length ? await Employee.find({
+    organizationId: oid(orgId), hrmsOrgId: run.hrmsOrgId, email: { $in: emails }, hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
+  }).lean() : [];
+  const employeeOf = new Map(employees.map((e) => [String(e.email).toLowerCase(), e]));
+  const payoutIds: Types.ObjectId[] = [];
+  const missed: string[] = [];
+  for (const p of payouts) {
+    const email = emailOf.get(String(p.key));
+    const employee = email ? employeeOf.get(email) : undefined;
+    const line = employee ? run.lines.find((l) => l.hrmsEmployeeId === employee.hrmsEmployeeId) : undefined;
+    const lineCurrency = (line?.currency || run.currency || "AED").toUpperCase();
+    if (!line || lineCurrency !== String(p.currency || "AED").toUpperCase()) {
+      missed.push(`${p.personName} (${p.crmName || p.crm}, ${monthName(p.month)})`);
+      continue;
+    }
+    if (p.amountMinor <= 0) continue;
+    const seq = run.adjustments.filter((a) => String(a.lineId) === String(line._id)).length + 1;
+    const externalId = makeExternalId(run.runNumber, String(line._id), seq);
+    const label = `Sales commission (CRM) — ${p.crmName || p.crm}, ${monthName(p.month)}`;
+    run.adjustments.push({
+      externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "crm_commission", label, amountMinor: p.amountMinor,
+      notes: `Approved by ${p.approvedByName || "a manager"}`.slice(0, 500), commissionRecordIds: [], crmPayoutIds: [p._id],
+      recoveredMinor: p.amountMinor, outstandingMinor: 0, syncedAt: null, createdById: oid(actor.userId), createdByName: actorName,
+    } as never);
+    staged.push({ externalId, employeeId: line.hrmsEmployeeId, kind: "payment", label, amount: p.amountMinor / 100 });
+    payoutIds.push(p._id);
+  }
+  const notes = [
+    ...(missed.length ? [`Approved CRM commission not on this run (no employee here with their CRM email, or another currency): ${missed.join(", ")}.`] : []),
+    ...(unread.length ? [`The CRMs' people couldn't be read from Root for ${unread.join(", ")} — pull again later.`] : []),
+  ];
+  return { note: notes.join(" "), payoutIds };
 }
 
 export async function removeAdjustment(orgId: string, runId: string, externalId: string) {
@@ -266,6 +320,9 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   // longer knows about.
   await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, externalId);
 
+  // CRM commission taken off the run is the CRM commission page's to pay again.
+  const crmPayouts = run.adjustments[index]!.crmPayoutIds ?? [];
+  if (crmPayouts.length) await CrmCommissionPayout.updateMany({ _id: { $in: crmPayouts }, state: "approved" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });
   run.adjustments.splice(index, 1);
   recalculate(run as unknown as RecalcRun);
   await run.save();

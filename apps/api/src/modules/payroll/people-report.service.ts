@@ -388,7 +388,7 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
         payableMinor: l.payableMinor,
         amountPaidMinor: l.amountPaidMinor,
         commissionMinor: run.adjustments
-          .filter((a) => a.source === "commission" && String(a.lineId) === String(l._id))
+          .filter((a) => (a.source === "commission" || a.source === "crm_commission") && String(a.lineId) === String(l._id))
           .reduce((s, a) => s + (a.recoveredMinor ?? 0), 0),
       })),
   );

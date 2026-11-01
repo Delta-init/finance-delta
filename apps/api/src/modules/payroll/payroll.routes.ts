@@ -29,6 +29,7 @@ router.get("/runs/:id", requirePermission("payroll:read"), c.getRun);
 // writes through to HRMS, so the payslip matches what is actually paid.
 router.post("/runs/:id/adjustments", requirePermission("payroll:write"), validateBody(addAdjustmentsSchema), c.addAdjustments);
 router.post("/runs/:id/commissions/pull", requirePermission("payroll:write"), c.pullCommissions);
+router.post("/runs/:id/slabs/pull", requirePermission("payroll:write"), c.pullSlabSalaries);
 router.delete("/runs/:id/adjustments/:externalId", requirePermission("payroll:write"), c.removeAdjustment);
 
 // Sign-off and payment. "pay" is its own permission, separate from approve and

@@ -85,6 +85,14 @@ export function usePullCommissions(runId: string) {
   });
 }
 
+export function usePullSlabSalaries(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<CommissionPullResult>(`payroll/runs/${runId}/slabs/pull`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] }),
+  });
+}
+
 export function useRemoveAdjustment(runId: string) {
   const qc = useQueryClient();
   return useMutation({

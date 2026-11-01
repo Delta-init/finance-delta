@@ -3,12 +3,13 @@ import { AppError } from "../../lib/http";
 import { hrmsClient, type HrmsAdjustmentOutcome } from "../../lib/hrms-client";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
-import { fromRoot } from "../crm-commission/crm-commission.service";
+import { fromRoot, slabsFromRoot } from "../crm-commission/crm-commission.service";
 import { Employee } from "../employee/employee.model";
 import { User } from "../user/user.model";
 import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { toMinor, formatMinor } from "./money";
 import { recalculate, lineAdjustmentTotal, type RecalcAdjustment, type RecalcRun } from "./recalculate";
+import { isAttendance, slabDifference } from "./slab";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -51,6 +52,16 @@ async function loadRun(orgId: string, runId: string) {
  */
 function makeExternalId(runNumber: string, lineId: string, seq: number): string {
   return `${runNumber}:${lineId}:${seq}`;
+}
+
+/**
+ * The next counter for a person's item: one past the highest they have, not one past how many. After a removal those
+ * differ, and a counter already in use makes HRMS overwrite that item (it upserts on the id) — a manual addition taken
+ * off and another added would have replaced a commission payment on the payslip.
+ */
+function nextSeq(run: PayrollRunDoc, lineId: string): number {
+  const mine = run.adjustments.filter((a) => String(a.lineId) === lineId);
+  return Math.max(mine.length, ...mine.map((a) => Number(a.externalId.split(":").pop()) || 0)) + 1;
 }
 
 /**
@@ -108,8 +119,7 @@ export async function addAdjustments(
     if (!line) throw new AppError("NOT_FOUND", `No such person on this run: ${input.lineId}`);
     if (input.amountMinor <= 0) throw new AppError("VALIDATION_ERROR", `"${input.label}" must be a positive amount`);
 
-    const seq = run.adjustments.filter((a) => String(a.lineId) === input.lineId).length + 1;
-    const externalId = makeExternalId(run.runNumber, String(line._id), seq);
+    const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, input.lineId));
 
     run.adjustments.push({
       externalId,
@@ -238,8 +248,7 @@ async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: 
     if (!line) continue;
     const amountMinor = rows.reduce((a, r) => a + r.commissionMinor, 0);
     if (amountMinor <= 0) continue;
-    const seq = run.adjustments.filter((a) => String(a.lineId) === String(line._id)).length + 1;
-    const externalId = makeExternalId(run.runNumber, String(line._id), seq);
+    const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, String(line._id)));
     const label = `Sales commission (${rows.length} invoice${rows.length === 1 ? "" : "s"})`;
     run.adjustments.push({
       externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "commission", label, amountMinor,
@@ -290,8 +299,7 @@ async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { us
       continue;
     }
     if (p.amountMinor <= 0) continue;
-    const seq = run.adjustments.filter((a) => String(a.lineId) === String(line._id)).length + 1;
-    const externalId = makeExternalId(run.runNumber, String(line._id), seq);
+    const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, String(line._id)));
     const label = `Sales commission (CRM) — ${p.crmName || p.crm}, ${monthName(p.month)}`;
     run.adjustments.push({
       externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "crm_commission", label, amountMinor: p.amountMinor,
@@ -306,6 +314,116 @@ async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { us
     ...(unread.length ? [`The CRMs' people couldn't be read from Root for ${unread.join(", ")} — pull again later.`] : []),
   ];
   return { note: notes.join(" "), payoutIds };
+}
+
+/**
+ * Put this run's salespeople on their CRM salary slab (2026-11-01: the slab pulled in finance, not HRMS). Each person
+ * Root has on a slab this month — found on the run by their CRM email, in the line's currency — gets the difference
+ * between the slab and the salary HR sent (see slabDifference), as one addition or deduction written back to their
+ * payslip. HR's figures (contract salary, how much of it the payslip pays) come from HRMS at the time of the pull. Pulled again,
+ * a person's earlier slab item is replaced when the figure moved, and taken off when Root no longer has them on a slab
+ * — unless their CRM couldn't be read, when it stays as it was.
+ */
+export async function pullSlabSalaries(orgId: string, runId: string, actor: { userId: string }) {
+  const run = await loadRun(orgId, runId);
+  requireOpen(run);
+  const [root, batch] = await Promise.all([slabsFromRoot(run.period), hrmsClient.payrollBatch(run.hrmsOrgId, run.period)]);
+  if (!batch.lines.some((l) => l.salary)) {
+    throw new AppError("UNAVAILABLE", "HRMS needs updating before salary slabs can be pulled — it doesn't send each payslip's contract salary yet.");
+  }
+  const salaryOf = new Map(batch.lines.map((l) => [l.payslipId, l.salary]));
+  const user = await User.findById(oid(actor.userId)).select("name").lean();
+  const unread = new Set(root.failures.map((f) => f.crm));
+
+  // Each person on a slab by their CRM email; somebody on two CRMs' slabs can't be told apart, so is left for a person.
+  const byEmail = new Map<string, typeof root.people>();
+  for (const p of root.people) {
+    const email = (p.email ?? "").trim().toLowerCase();
+    if (!email) continue;
+    byEmail.set(email, [...(byEmail.get(email) ?? []), p]);
+  }
+  const employees = byEmail.size ? await Employee.find({
+    organizationId: oid(orgId), hrmsOrgId: run.hrmsOrgId, email: { $in: [...byEmail.keys()] }, hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
+  }).lean() : [];
+
+  type Want = { line: (typeof run.lines)[number]; crm: string; kind: "addition" | "deduction"; amountMinor: number; label: string; notes: string };
+  const wanted = new Map<string, Want | null>();
+  const missed: string[] = [];
+  for (const e of employees) {
+    const on = byEmail.get(String(e.email).toLowerCase()) ?? [];
+    const line = run.lines.find((l) => l.hrmsEmployeeId === e.hrmsEmployeeId);
+    if (!line) continue;
+    if (on.length > 1) { missed.push(`${line.name} (on ${on.map((p) => p.crmName).join(" and ")}'s slabs)`); continue; }
+    const p = on[0]!;
+    const currency = (line.currency || run.currency || "AED").toUpperCase();
+    if (currency !== String(p.currency || "AED").toUpperCase()) { missed.push(`${line.name} (paid in ${currency}, ${p.crmName}'s slab is ${p.currency})`); continue; }
+    const salary = salaryOf.get(line.hrmsPayslipId);
+    const monthly = toMinor(salary?.monthly ?? 0), paid = toMinor(salary?.paid ?? 0), slab = toMinor(p.salary);
+    if (monthly <= 0) { missed.push(`${line.name} (no contract salary in HRMS)`); continue; }
+    const attendance = line.deductions.filter((d) => isAttendance(d.label));
+    const { onSlip, hrAttendance, slabAttendance, difference } = slabDifference({ monthly, paid, slab, attendance: attendance.map((d) => d.amountMinor) });
+    const f = (m: number) => formatMinor(m, currency);
+    wanted.set(String(line._id), difference === 0 ? null : {
+      line, crm: p.crm, kind: difference > 0 ? "addition" : "deduction", amountMinor: Math.abs(difference),
+      label: `Salary slab — ${p.crmName} ${p.level}, ${f(slab)}`,
+      notes: [`Contract ${f(monthly)}, this payslip ${f(paid)} → ${f(onSlip)} on the slab`,
+        ...(attendance.length ? [`${attendance.map((d) => d.label).join(", ")}: ${f(hrAttendance)} → ${f(slabAttendance)}`] : [])].join("; ").slice(0, 500),
+    });
+  }
+
+  // What changes: an item whose figure moved goes and its replacement comes; an item for somebody no longer on a slab
+  // goes, unless their CRM couldn't be read this time.
+  const existing = run.adjustments.filter((a) => a.source === "crm_slab");
+  const same = (a: (typeof existing)[number], w: Want) => a.kind === w.kind && a.amountMinor === w.amountMinor && a.label === w.label;
+  const drop = existing.filter((a) => {
+    const lineId = String(a.lineId);
+    if (!wanted.has(lineId)) return !unread.has(a.crm ?? "");
+    const w = wanted.get(lineId);
+    return !w || !existing.some((x) => String(x.lineId) === lineId && same(x, w)) || existing.filter((x) => String(x.lineId) === lineId).length > 1;
+  });
+  // HRMS first, item by item, so a refusal leaves both sides saying the same; the run is saved once they're gone.
+  for (const a of drop) {
+    await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, a.externalId);
+    run.adjustments.splice(run.adjustments.findIndex((x) => x.externalId === a.externalId), 1);
+  }
+  if (drop.length) { recalculate(run as unknown as RecalcRun); await run.save(); }
+
+  const staged: Array<{ externalId: string; employeeId: string; kind: "payment" | "deduction"; label: string; amount: number; notes?: string }> = [];
+  let unchanged = 0;
+  for (const [lineId, w] of wanted) {
+    if (!w) continue;
+    if (run.adjustments.some((a) => a.source === "crm_slab" && String(a.lineId) === lineId)) { unchanged++; continue; }
+    const externalId = makeExternalId(run.runNumber, lineId, nextSeq(run, lineId));
+    run.adjustments.push({
+      externalId, hrmsEmployeeId: w.line.hrmsEmployeeId, lineId: w.line._id, kind: w.kind, source: "crm_slab", label: w.label, amountMinor: w.amountMinor,
+      notes: w.notes, commissionRecordIds: [], crmPayoutIds: [], crm: w.crm,
+      recoveredMinor: w.kind === "addition" ? w.amountMinor : 0, outstandingMinor: 0, syncedAt: null, createdById: oid(actor.userId), createdByName: user?.name ?? "",
+    } as never);
+    staged.push({ externalId, employeeId: w.line.hrmsEmployeeId, kind: w.kind === "addition" ? "payment" : "deduction", label: w.label, amount: w.amountMinor / 100, notes: w.notes });
+  }
+  let outcomes: HrmsAdjustmentOutcome[] = [];
+  if (staged.length) {
+    outcomes = (await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged)).outcomes;
+    absorbOutcomes(run, outcomes);
+    recalculate(run as unknown as RecalcRun);
+    await run.save();
+  }
+
+  const notes = [
+    ...(missed.length ? [`On a CRM salary slab but not put on it here: ${missed.join(", ")}.`] : []),
+    ...(root.failures.length ? [`Root couldn't read ${root.failures.map((f) => f.crm).join(", ")} — their people keep what they had; pull again later.`] : []),
+  ];
+  const level = [...wanted.values()].filter((w) => w === null).length;
+  return {
+    pulled: staged.length,
+    message: [
+      staged.length || drop.length || unchanged || level
+        ? `${staged.length} put on their salary slab${drop.length ? `, ${drop.length} earlier item${drop.length === 1 ? "" : "s"} taken off` : ""}${unchanged ? `, ${unchanged} as they were` : ""}${level ? `, ${level} already paid their slab` : ""}.`
+        : "Nobody on this run is on a CRM salary slab this month.",
+      ...notes,
+    ].join(" "),
+    ...summariseOutcomes(run, outcomes),
+  };
 }
 
 export async function removeAdjustment(orgId: string, runId: string, externalId: string) {

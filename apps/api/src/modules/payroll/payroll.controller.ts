@@ -45,6 +45,10 @@ export const pullCommissions = asyncHandler(async (req: Request, res: Response) 
   ok(res, await adjustments.pullCommissions(orgId(req), req.params.id!, { userId: req.auth!.userId }));
 });
 
+export const pullSlabSalaries = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await adjustments.pullSlabSalaries(orgId(req), req.params.id!, { userId: req.auth!.userId }));
+});
+
 export const removeAdjustment = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await adjustments.removeAdjustment(orgId(req), req.params.id!, req.params.externalId!));
 });

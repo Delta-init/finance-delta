@@ -213,9 +213,12 @@ async function main() {
   // ── Adjustments ────────────────────────────────────────────────────────
   step("5. Commission and adjustments (phase 3)");
   // The sales CRMs' commission through payroll (2026-11-01): a stand-in Root names Aisha's CRM login by her email.
+  // It also gives the CRM salary slabs (2026-11-01), as `slabs` says.
+  const slabs: { people: unknown[]; failures: unknown[] } = { people: [], failures: [] };
   const rootApi = http.createServer((req, res) => {
     const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.headers["x-portal-secret"] !== "e2e-root-secret") return send(401, { success: false, message: "Invalid service credential" });
+    if ((req.url ?? "").startsWith("/api/v1/service/finance/slab-pay")) return send(200, { success: true, data: { month: seed.month, ...slabs } });
     if (!(req.url ?? "").startsWith("/api/v1/service/crm-commission")) return send(404, { success: false, message: "Route not found" });
     send(200, { success: true, data: { crms: [{ code: "delta", name: "Sales CRM", currency: "AED", error: null, total: 0, pending: { progress: 0, waiting: 0 }, people: [
       { userId: "crm-aisha", name: "Aisha", email: "E2E001@e2e.local", roles: ["sales"], amount: 230, sales: 1, lines: [] },
@@ -256,6 +259,53 @@ async function main() {
   check("taken off the run: the CRM commission is free again", mine?.state === "approved" && !mine.payrollRunId, String(mine?.payrollRunNumber));
   const again = await adjustments.pullCommissions(orgId, runId, actor);
   check("…and pulled again: only it", again.pulled === 1, again.message);
+  // The CRM salary slabs (2026-11-01): Aisha's contract is 12,000; HR sent a whole month, no days off.
+  const onSlab = (salary: number, more: object[] = []) => [
+    { crm: "delta", crmName: "Sales CRM", userId: "crm-aisha", name: "Aisha", email: "E2E001@e2e.local", role: "sales", level: "A", salary, currency: "AED", percent: 100, earned: 230, payable: 230 },
+    ...more,
+  ];
+  const slabItems = async () => (await payroll.getRun(orgId, runId)).adjustments.filter((a) => a.source === "crm_slab");
+  const aishaEarnings = async () => (await hrmsClient.payrollBatch(seed.orgId, seed.month)).lines.find((l) => l.employeeCode === "E2E001")!;
+  slabs.people = onSlab(15_000, [
+    { crm: "delta", crmName: "Sales CRM", userId: "crm-nadia", name: "Nadia", email: "e2e003@e2e.local", role: "sales", level: "Base", salary: 50_000, currency: "INR", percent: 0, earned: 0, payable: 0 },
+    { crm: "draw", crmName: "Draw", userId: "crm-ghost", name: "Ghost", email: "ghost@e2e.local", role: "sales", level: "Base", salary: 2_000, currency: "AED", percent: 0, earned: 0, payable: 0 },
+  ]);
+  const hrSalary = (await aishaEarnings()).salary;
+  check("HRMS sends Aisha's salary: 12,000 a month, 12,000 on this payslip", hrSalary?.monthly === 12_000 && hrSalary.paid === 12_000, JSON.stringify(hrSalary));
+  let slabbed = await adjustments.pullSlabSalaries(orgId, runId, actor);
+  let items = await slabItems();
+  check("salary slabs pulled: Aisha on A, 15,000 — 3,000 added; Nadia's slab in another currency said, not added; Ghost isn't here",
+    slabbed.pulled === 1 && items.length === 1 && items[0]!.kind === "addition" && items[0]!.amountMinor === 3_000_00 && /Nadia Okafor \(paid in AED, Sales CRM's slab is INR\)/.test(slabbed.message), slabbed.message);
+  check("…named for the CRM, level and slab, the working in its notes", items[0]!.label === "Salary slab — Sales CRM A, AED 15,000.00" && /Contract AED 12,000\.00, this payslip AED 12,000\.00 → AED 15,000\.00/.test(items[0]!.notes), `${items[0]!.label} | ${items[0]!.notes}`);
+  let slip = await aishaEarnings();
+  check("…on the HRMS payslip as an earning; HRMS still counts 12,000 of it as salary", slip.earnings.some((e) => e.label === items[0]!.label && e.amount === 3_000) && slip.salary?.paid === 12_000);
+  slabbed = await adjustments.pullSlabSalaries(orgId, runId, actor);
+  check("pulled again, nothing moved: left as it was", slabbed.pulled === 0 && (await slabItems()).length === 1 && /1 as they were/.test(slabbed.message), slabbed.message);
+
+  // A manual item after it, so replacing the slab item can't reuse a counter still in use (HRMS would overwrite it).
+  await adjustments.addAdjustments(orgId, runId, [{ lineId: aisha.id, kind: "addition", label: "Phone allowance", amountMinor: 100_00 }], actor);
+  slabs.people = onSlab(10_000);
+  slabbed = await adjustments.pullSlabSalaries(orgId, runId, actor);
+  items = await slabItems();
+  check("the slab moved down to 10,000: the 3,000 taken off, 2,000 deducted in its place", items.length === 1 && items[0]!.kind === "deduction" && items[0]!.amountMinor === 2_000_00 && /1 earlier item taken off/.test(slabbed.message), slabbed.message);
+  slip = await aishaEarnings();
+  check("…HRMS has the deduction, not the old addition; the phone allowance and both commissions still there",
+    slip.deductions.some((d) => d.label === items[0]!.label && d.amount === 2_000) && !slip.earnings.some((e) => e.label.startsWith("Salary slab"))
+    && slip.earnings.some((e) => e.label === "Phone allowance") && slip.earnings.filter((e) => e.label.startsWith("Sales commission")).length === 2,
+    JSON.stringify({ e: slip.earnings.map((e) => e.label), d: slip.deductions.map((d) => d.label) }));
+  const ids = (await payroll.getRun(orgId, runId)).adjustments.map((a) => a.externalId);
+  check("…every item's id its own", new Set(ids).size === ids.length, ids.join(", "));
+  slabs.people = []; slabs.failures = [{ crm: "delta", error: "Its database can't be reached" }];
+  slabbed = await adjustments.pullSlabSalaries(orgId, runId, actor);
+  check("Root couldn't read the Sales CRM: Aisha's slab item stays, and it says so", (await slabItems()).length === 1 && /Root couldn't read delta/.test(slabbed.message), slabbed.message);
+  slabs.failures = [];
+  slabbed = await adjustments.pullSlabSalaries(orgId, runId, actor);
+  slip = await aishaEarnings();
+  check("Aisha no longer on a slab: her item taken off, here and on the payslip", (await slabItems()).length === 0 && !slip.deductions.some((d) => d.label.startsWith("Salary slab")), slabbed.message);
+  slabs.people = onSlab(15_000);
+  await adjustments.pullSlabSalaries(orgId, runId, actor);
+  check("back on 15,000 for the rest of the month: +3,000", (await slabItems())[0]?.amountMinor === 3_000_00);
+
   run = await payroll.getRun(orgId, runId);
   check("commission written back to the payslip in HRMS",
     run.adjustments.every((a) => a.syncedAt !== null));
@@ -265,8 +315,9 @@ async function main() {
   check("HRMS payslip shows the commission as an earning",
     aishaSlip.earnings.some((e) => e.label.startsWith("Sales commission")),
     aishaSlip.earnings.map((e) => e.label).join(", "));
-  check("HRMS net rose to match", Math.round(aishaSlip.netPay * 100) === aisha.payableMinor,
-    `HRMS ${aishaSlip.netPay} vs finance ${aisha.payableMinor / 100}`);
+  const aishaNow = run.lines.find((l) => l.employeeCode === "E2E001")!;
+  check("HRMS net rose to match — the commission, her slab and the allowance", Math.round(aishaSlip.netPay * 100) === aishaNow.payableMinor,
+    `HRMS ${aishaSlip.netPay} vs finance ${aishaNow.payableMinor / 100}`);
 
   // A deduction larger than the month can absorb, on top of one already
   // carrying forward. This is the case the whole allocator exists for.

@@ -76,6 +76,34 @@ export async function fromRoot(month: string): Promise<RootCrm[]> {
   }
 }
 
+/** One salesperson on a CRM's salary slab in a month, as Root works it out. */
+export interface RootSlabPerson {
+  crm: string; crmName: string; userId: string; name: string; email: string; role: string; level: string;
+  salary: number; currency?: string; percent: number; earned: number; payable: number;
+}
+
+/** Everyone on the CRMs' salary slabs in a month, from Root, for payroll (2026-11-01); a CRM Root couldn't read says why. */
+export async function slabsFromRoot(month: string): Promise<{ people: RootSlabPerson[]; failures: Array<{ crm: string; error: string }> }> {
+  const base = env.ROOT_ERP_API_URL.replace(/\/+$/, "");
+  if (!base || !env.ROOT_ERP_SECRET) throw new AppError("UNAVAILABLE", "The Root portal is not configured on this server (ROOT_ERP_API_URL, ROOT_ERP_SECRET).");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${base}/api/v1/service/finance/slab-pay?month=${encodeURIComponent(month)}`, {
+      headers: { "x-portal-secret": env.ROOT_ERP_SECRET }, signal: controller.signal,
+    });
+    if (res.status === 404) throw new AppError("UNAVAILABLE", "The Root portal needs updating before it can give the CRMs' salary slabs.");
+    const body = (await res.json().catch(() => ({}))) as { data?: { people?: RootSlabPerson[]; failures?: Array<{ crm: string; error: string }> }; message?: string };
+    if (!res.ok || !body.data?.people) throw new AppError("UNAVAILABLE", `The Root portal could not give the CRMs' salary slabs${body.message ? `: ${body.message}` : ` (${res.status})`}.`);
+    return { people: body.data.people, failures: body.data.failures ?? [] };
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError("UNAVAILABLE", `The Root portal could not be reached: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function canApprove(orgId: string, userId: string): Promise<boolean> {
   return isManager(orgId, userId);
 }

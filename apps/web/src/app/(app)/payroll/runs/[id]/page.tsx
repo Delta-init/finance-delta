@@ -3,7 +3,7 @@
 import { Fragment, use, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info,
+  ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info, Layers,
   CheckCircle2, Banknote, Undo2, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
 import {
-  usePayrollRun, useAddAdjustments, usePullCommissions, useRemoveAdjustment,
+  usePayrollRun, useAddAdjustments, usePullCommissions, usePullSlabSalaries, useRemoveAdjustment,
   useApproveRun, useUnapproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
@@ -114,6 +114,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
 
   const addAdjustments = useAddAdjustments(id);
   const pullCommissions = usePullCommissions(id);
+  const pullSlabs = usePullSlabSalaries(id);
   const removeAdjustment = useRemoveAdjustment(id);
   const approve = useApproveRun(id);
   const returnRun = useReturnRun(id);
@@ -125,7 +126,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
 
   // What HRMS actually did, once it has told us. Adding money can move net pay
   // by a different amount, so this is shown rather than assumed.
-  const notes = addAdjustments.data?.notes ?? pullCommissions.data?.notes ?? [];
+  const notes = addAdjustments.data?.notes ?? pullCommissions.data?.notes ?? pullSlabs.data?.notes ?? [];
 
   const lines = useMemo(() => {
     if (!run) return [];
@@ -394,6 +395,15 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           <Button
             variant="secondary"
             size="sm"
+            loading={pullSlabs.isPending}
+            onClick={() => pullSlabs.mutate()}
+            title="Puts each salesperson on their CRM salary slab: the difference from the salary HR sent, loss of pay priced off the slab"
+          >
+            <Layers className="mr-1.5 h-3.5 w-3.5" />Pull salary slabs
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             loading={pullCommissions.isPending}
             onClick={() => pullCommissions.mutate()}
           >
@@ -402,12 +412,15 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
 
+      {pullSlabs.data && (
+        <p className="text-sm text-foreground-muted">{pullSlabs.data.message}</p>
+      )}
       {pullCommissions.data && (
         <p className="text-sm text-foreground-muted">{pullCommissions.data.message}</p>
       )}
-      {(addAdjustments.isError || pullCommissions.isError || removeAdjustment.isError) && (
+      {(addAdjustments.isError || pullCommissions.isError || pullSlabs.isError || removeAdjustment.isError) && (
         <Card className="border-danger/20 bg-danger/5 p-4 text-sm text-danger">
-          {((addAdjustments.error ?? pullCommissions.error ?? removeAdjustment.error) as Error).message}
+          {((addAdjustments.error ?? pullCommissions.error ?? pullSlabs.error ?? removeAdjustment.error) as Error).message}
         </Card>
       )}
 
@@ -658,6 +671,12 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                     )}
                                     {a.source === "crm_commission" && (
                                       <Badge tone="primary" className="ml-2">CRM commission</Badge>
+                                    )}
+                                    {a.source === "crm_slab" && (
+                                      <Badge tone="primary" className="ml-2">Salary slab</Badge>
+                                    )}
+                                    {a.source === "crm_slab" && a.notes && (
+                                      <span className="ml-2 text-xs text-foreground-muted">{a.notes}</span>
                                     )}
                                     {a.outstandingMinor > 0 && (
                                       <span className="ml-2 text-xs text-warning">

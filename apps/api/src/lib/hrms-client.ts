@@ -167,6 +167,11 @@ export interface HrmsHandoverLine {
   netPay: number;
   earnings: Array<{ label: string; amount: number }>;
   deductions: Array<{ label: string; amount: number }>;
+  /**
+   * The contract salary in force for the month and how much of it this payslip pays (less for a part month) — what a
+   * salesperson's CRM salary slab is put in place of (2026-11-01). Absent from an older HRMS.
+   */
+  salary?: { monthly: number; paid: number };
   status: string;
   paidAt: string | null;
   bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string };

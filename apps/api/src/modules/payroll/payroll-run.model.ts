@@ -95,7 +95,7 @@ const payrollAdjustmentSchema = new Schema(
     lineId: { type: Schema.Types.ObjectId, required: true },
 
     kind: { type: String, enum: ["addition", "deduction"], required: true },
-    source: { type: String, enum: ["commission", "crm_commission", "manual"], required: true },
+    source: { type: String, enum: ["commission", "crm_commission", "crm_slab", "manual"], required: true },
     label: { type: String, required: true },
     amountMinor: { type: Number, required: true },
     notes: { type: String, default: "" },
@@ -104,6 +104,8 @@ const payrollAdjustmentSchema = new Schema(
     commissionRecordIds: { type: [Schema.Types.ObjectId], default: [] },
     /** The sales CRMs' approved commission this addition pays (2026-11-01: commission through payroll). */
     crmPayoutIds: { type: [Schema.Types.ObjectId], default: [] },
+    /** The sales CRM whose salary slab a "crm_slab" item puts this person on (2026-11-01). */
+    crm: { type: String, default: "" },
 
     /** What HRMS actually took. Equal to amountMinor for an addition. */
     recoveredMinor: { type: Number, default: 0 },

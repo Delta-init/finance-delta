@@ -110,6 +110,16 @@ export function useApproveRun(runId: string) {
   });
 }
 
+/** Undo an approval while nothing is paid: back to before it was signed off (2026-11-01). */
+export function useUnapproveRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string) =>
+      api.post<{ status: string; message: string }>(`payroll/runs/${runId}/unapprove`, { reason }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useReturnRun(runId: string) {
   const qc = useQueryClient();
   return useMutation({

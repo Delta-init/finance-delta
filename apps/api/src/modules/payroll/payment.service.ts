@@ -94,6 +94,28 @@ export async function approveRun(orgId: string, runId: string, actor: { userId: 
   return { runNumber: run.runNumber, status: run.status, message: `${run.runNumber} approved for payment` };
 }
 
+/**
+ * Undo an approval (the user, 2026-11-01: "approved by mistake — send it one step back"): the run goes back to where
+ * it stood before it was signed off — Additions if it has any, else Imported — and HRMS has the month back with
+ * accounts. Only while nothing of it is paid: after that, a payment is reversed instead. HRMS first, so the two never
+ * disagree: refused there, nothing changes here.
+ */
+export async function unapproveRun(orgId: string, runId: string, reason: string) {
+  const run = await loadRun(orgId, runId);
+  if (run.status !== "approved") {
+    throw new AppError("CONFLICT", `${run.runNumber} is ${run.status.replace("_", " ")} — only an approved run's approval can be undone.`);
+  }
+  if (run.amountPaidMinor > 0 || run.payments.length > 0) {
+    throw new AppError("CONFLICT", `Part of ${run.runNumber} has already been paid — reverse that payment first.`);
+  }
+  await hrmsClient.unapproveBatch(run.hrmsOrgId, run.period, reason);
+  run.status = run.adjustments.length > 0 ? "additions" : "imported";
+  run.set("approvedById", undefined);
+  run.set("approvedAt", undefined);
+  await run.save();
+  return { runNumber: run.runNumber, status: run.status, message: `${run.runNumber} is back before approval` };
+}
+
 /** Hand the month back to HR, with a reason they can act on. */
 export async function returnRun(orgId: string, runId: string, reason: string) {
   const run = await loadRun(orgId, runId);

@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
 import {
   usePayrollRun, useAddAdjustments, usePullCommissions, useRemoveAdjustment,
-  useApproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
+  useApproveRun, useUnapproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
 import { PayDialog } from "@/features/payroll/pay-dialog";
@@ -117,6 +117,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const removeAdjustment = useRemoveAdjustment(id);
   const approve = useApproveRun(id);
   const returnRun = useReturnRun(id);
+  const unapprove = useUnapproveRun(id);
+  const [undoing, setUndoing] = useState(false);
   const pay = usePayRun(id);
   const retrySync = useRetrySync(id);
   const reverse = useReversePayment(id);
@@ -151,6 +153,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const holdable = openForAdjustment || run.status === "approved" || run.status === "partially_paid";
   const canApprove = openForAdjustment && run.lines.length > 0;
   const canPay = run.status === "approved" || run.status === "partially_paid";
+  // Approved by mistake: one step back, while nothing of it is paid (2026-11-01).
+  const canUndoApproval = run.status === "approved" && run.payments.length === 0 && !(run.totals.amountPaidMinor > 0);
   // Rows are tickable in both stages, for two different jobs: choosing who to
   // pay, and choosing who an addition or deduction applies to. Which one the
   // selection means is decided by the stage, so it is cleared when that changes.
@@ -326,6 +330,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
               </Button>
             </>
           )}
+          {canUndoApproval && (
+            <Button variant="ghost" size="sm" onClick={() => setUndoing(true)}>
+              <Undo2 className="mr-1.5 h-3.5 w-3.5" />Undo approval
+            </Button>
+          )}
           {canPay && (
             <Button size="sm" onClick={() => setPaying(true)}>
               <Banknote className="mr-1.5 h-3.5 w-3.5" />Record payment
@@ -346,9 +355,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
 
-      {(approve.isError || pay.isError || returnRun.isError) && (
+      {(approve.isError || pay.isError || returnRun.isError || unapprove.isError) && (
         <Card className="border-danger/20 bg-danger/5 p-4 text-sm text-danger">
-          {((approve.error ?? pay.error ?? returnRun.error) as Error).message}
+          {((approve.error ?? pay.error ?? returnRun.error ?? unapprove.error) as Error).message}
         </Card>
       )}
 
@@ -731,6 +740,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         onConfirm={(reason) =>
           holding && holdLine.mutate({ lineId: holding.id, hold: true, reason }, { onSuccess: () => setHolding(null) })
         }
+      />
+
+      <ReasonDialog
+        open={undoing}
+        onOpenChange={setUndoing}
+        title={`Undo the approval of ${run.runNumber}?`}
+        description="It goes back to before it was approved — nothing is paid, nothing changes in HR — and can be approved again."
+        label="Why?"
+        placeholder="Approved by mistake"
+        confirmLabel="Undo approval"
+        pending={unapprove.isPending}
+        onConfirm={(reason) => unapprove.mutate(reason, { onSuccess: () => setUndoing(false) })}
       />
 
       <ReasonDialog

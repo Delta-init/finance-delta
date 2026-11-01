@@ -53,6 +53,11 @@ export const approveRun = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await payments.approveRun(orgId(req), req.params.id!, { userId: req.auth!.userId }));
 });
 
+export const unapproveRun = asyncHandler(async (req: Request, res: Response) => {
+  const reason = String((req.body as { reason?: unknown } | undefined)?.reason ?? "").trim().slice(0, 300) || "Approved by mistake";
+  ok(res, await payments.unapproveRun(orgId(req), req.params.id!, reason));
+});
+
 export const holdLine = asyncHandler(async (req: Request, res: Response) => {
   const body = req.body as { hold: boolean; reason?: string };
   ok(res, await payments.setLineHold(orgId(req), req.params.id!, req.params.lineId!, body, { userId: req.auth!.userId }));

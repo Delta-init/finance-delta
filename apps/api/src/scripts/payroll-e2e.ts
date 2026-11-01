@@ -249,11 +249,25 @@ async function main() {
   const hrmsApproved = await hrmsClient.payrollBatch(seed.orgId, seed.month);
   check("HRMS agrees the month is approved", hrmsApproved.status === "approved", hrmsApproved.status);
 
+  // Approved by mistake (2026-11-01): one step back — HRMS has it back with accounts — then approved again.
+  const undone = await payments.unapproveRun(orgId, runId, "Approved by mistake");
+  check("approval undone: back to before it (Additions — it has adjustments)", undone.status === "additions", undone.status);
+  const hrmsBack = await hrmsClient.payrollBatch(seed.orgId, seed.month);
+  check("…HRMS has the month back with accounts, not with HR", hrmsBack.status === "in_finance", hrmsBack.status);
+  let notApproved = "";
+  try { await payments.unapproveRun(orgId, runId, "again"); } catch (e) { notApproved = (e as Error).message; }
+  check("…undoing it again: refused, it isn't approved", /only an approved run/.test(notApproved), notApproved);
+  const reapproved = await payments.approveRun(orgId, runId, actor);
+  check("…and approved again, HRMS too", reapproved.status === "approved" && (await hrmsClient.payrollBatch(seed.orgId, seed.month)).status === "approved");
+
   const paid = await payments.payRun(orgId, runId, {
     bankAccountId: String(bank._id), method: "bank_transfer",
     paidOn: new Date().toISOString().slice(0, 10), reference: "WPS-E2E-001",
   }, actor);
   check("payment recorded", Boolean(paid.paymentId), `${paid.paymentId} ${paid.amountFormatted}`);
+  let afterPaid = "";
+  try { await payments.unapproveRun(orgId, runId, "too late"); } catch (e) { afterPaid = (e as Error).message; }
+  check("undoing the approval once money is paid: refused", /already been paid|only an approved run/.test(afterPaid), afterPaid);
   check("HRMS acknowledged the payment", paid.synced, paid.warning ?? "");
   // One of the three has nothing to transfer: his whole salary went to the
   // advance recovery. Held plus zero-payable leaves exactly one real transfer.

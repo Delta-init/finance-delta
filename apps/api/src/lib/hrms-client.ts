@@ -448,6 +448,16 @@ export const hrmsClient = {
     ).data;
   },
 
+  /** Finance undoing its approval (2026-11-01): the month back with accounts — refused by HRMS once any of it is paid. */
+  async unapproveBatch(organizationId: string, month: string, reason: string) {
+    return (
+      await request<{ month: string; status: string }>("POST", `/payroll/batches/${month}/unapprove`, {
+        query: { organizationId },
+        body: { organizationId, reason },
+      })
+    ).data;
+  },
+
   async returnBatch(organizationId: string, month: string, reason: string) {
     return (
       await request<{ month: string; status: string }>("POST", `/payroll/batches/${month}/return`, {

@@ -35,6 +35,7 @@ router.delete("/runs/:id/adjustments/:externalId", requirePermission("payroll:wr
 // from write: the person who signs a payroll off should not be the same one who
 // moves the money unless somebody deliberately decided so.
 router.post("/runs/:id/approve", requirePermission("payroll:approve"), c.approveRun);
+router.post("/runs/:id/unapprove", requirePermission("payroll:approve"), c.unapproveRun);
 router.post("/runs/:id/return", requirePermission("payroll:approve"), validateBody(returnRunSchema), c.returnRun);
 // Hold one person back from payment, or release them (somebody who has left; 2026-10-30).
 router.post("/runs/:id/lines/:lineId/hold", requirePermission("payroll:write"), validateBody(holdLineSchema), c.holdLine);

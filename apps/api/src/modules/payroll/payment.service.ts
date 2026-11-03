@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
+import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
 import { AppError } from "../../lib/http";
 import { logger } from "../../lib/logger";
 import { hrmsClient } from "../../lib/hrms-client";
@@ -360,6 +361,16 @@ async function settleCommissions(orgId: string, run: PayrollRunDoc, paidLineIds:
       { $set: { state: "paid", paidAt: new Date(), paidOn: new Date(), paidByName: `Payroll ${run.runNumber}`, paymentMethod: "payroll", reference: run.runNumber } },
     );
   }
+  // The CS Portal's commission on those lines (2026-11-03): the same.
+  const csIds = run.adjustments
+    .filter((a) => a.source === "cs_commission" && paidLineIds.includes(String(a.lineId)))
+    .flatMap((a) => a.csPayoutIds ?? []);
+  if (csIds.length) {
+    await CsCommissionPayout.updateMany(
+      { _id: { $in: csIds }, state: "approved" },
+      { $set: { state: "paid", paidAt: new Date(), paidOn: new Date(), paidByName: `Payroll ${run.runNumber}`, paymentMethod: "payroll", reference: run.runNumber } },
+    );
+  }
   const ids = run.adjustments
     .filter((a) => a.source === "commission" && paidLineIds.includes(String(a.lineId)))
     .flatMap((a) => a.commissionRecordIds);
@@ -478,6 +489,15 @@ async function unsettleCommissions(orgId: string, run: PayrollRunDoc, lineIds: s
   if (crmIds.length) {
     await CrmCommissionPayout.updateMany(
       { _id: { $in: crmIds }, state: "paid", paymentMethod: "payroll" },
+      { $set: { state: "approved" }, $unset: { paidAt: 1, paidOn: 1, paidByName: 1, paymentMethod: 1, reference: 1 } },
+    );
+  }
+  const csIds = run.adjustments
+    .filter((a) => a.source === "cs_commission" && lineIds.includes(String(a.lineId)))
+    .flatMap((a) => a.csPayoutIds ?? []);
+  if (csIds.length) {
+    await CsCommissionPayout.updateMany(
+      { _id: { $in: csIds }, state: "paid", paymentMethod: "payroll" },
       { $set: { state: "approved" }, $unset: { paidAt: 1, paidOn: 1, paidByName: 1, paymentMethod: 1, reference: 1 } },
     );
   }

@@ -2,7 +2,7 @@
 
 import { useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
-import { TrendingUp, Plus, FileText, Settings2, Users } from "lucide-react";
+import { TrendingUp, Plus, FileText, Settings2, Users, Headset } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { MoneyDisplay } from "@/components/ui/money";
@@ -100,6 +100,19 @@ export default function CommissionsPage() {
             <div>
               <p className="font-semibold text-foreground">CRM commission</p>
               <p className="text-sm text-foreground-muted">Sales CRM, Draw, Remote — approve and pay</p>
+            </div>
+          </div>
+        </Link>
+
+        {/* The CS Portal's commission, beside the CRMs' (2026-11-03). */}
+        <Link href="/commissions/cs" className="group rounded-xl border border-border bg-surface p-5 transition-colors hover:border-primary/40 hover:bg-surface-muted">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Headset className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">CS commission</p>
+              <p className="text-sm text-foreground-muted">CS Portal bonus and deposit — approve and pay</p>
             </div>
           </div>
         </Link>

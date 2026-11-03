@@ -354,6 +354,76 @@ export async function lookupCommissionStudents(codes: string[]): Promise<Map<str
   }
 }
 
+/* ── The CS commission finance pays (2026-11-03) ─────────────────────────── */
+
+/** A CS's credits for a period as the CS Portal gives them (backend finance/csCommission.ts there), in USD. */
+export interface PortalCsCommissionPerson {
+  recipient_id: string;
+  name: string;
+  email: string;
+  location: "dubai" | "bangalore";
+  total_usd: number;
+  credits: Array<{
+    id: string; date: string; student: string; method: string; level: number; position: string; percentage: number;
+    base_usd: number; amount_usd: number; status: string; txn_id: string; initiator: string;
+  }>;
+  approval: {
+    overall_status: string;
+    broker: { status: string; by: string; at: string | null };
+    academic: { status: string; by: string; at: string | null };
+    finance: { status: string; by: string; at: string | null };
+    released_at: string | null;
+    released_by: string;
+    by_finance: boolean;
+  };
+}
+export interface PortalCsCommissionApproval {
+  already: boolean; total_usd: number; credit_ids: string[]; name: string; email: string; location: "dubai" | "bangalore";
+}
+
+/** The CS Portal refused (409 and the like) — `code` says why: NOT_READY, REJECTED, PERIOD_OPEN, NOT_FINANCES, … */
+export class CsCommissionRefusedError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) {
+    super(message);
+  }
+}
+
+async function askPortalCsCommission<T>(path: string, body: unknown): Promise<T> {
+  if (!commissionConfigured()) throw new Error("The CS Portal is not configured on this server (COMMISSION_API_URL, COMMISSION_S2S_SECRET)");
+  const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/cs-commission${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.COMMISSION_S2S_SECRET },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const answer = (await res.json().catch(() => ({}))) as { data?: T; error?: { code?: string; message?: string } | string };
+    if (res.status === 404) throw new Error("The CS Portal needs updating before it can give its CS commission");
+    if (!res.ok) {
+      const code = typeof answer.error === "object" ? answer.error?.code ?? "" : "";
+      const message = (typeof answer.error === "object" ? answer.error?.message : answer.error) ?? `The CS Portal refused with ${res.status}`;
+      if ([400, 409].includes(res.status)) throw new CsCommissionRefusedError(message, res.status, code);
+      throw new Error(message);
+    }
+    if (!answer.data) throw new Error("The CS Portal returned no result");
+    return answer.data;
+  } catch (err) {
+    if ((err as Error).name === "TimeoutError" || (err as Error).name === "AbortError") throw new Error("The CS Portal did not answer in time");
+    throw err;
+  }
+}
+
+/** A period's CS commission: each staff member's credits and where their approval has got. */
+export const portalCsCommission = (kind: string, period: string) =>
+  askPortalCsCommission<{ kind: string; period: string; ended: boolean; people: PortalCsCommissionPerson[] }>("", { kind, period });
+/** Finance's step: the CS's credits for the period released there. Already released → `already`. */
+export const approvePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
+  askPortalCsCommission<PortalCsCommissionApproval>("/approve", { kind, period, recipient_id: recipientId, by });
+/** Finance's step taken back — only one finance released. */
+export const unapprovePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
+  askPortalCsCommission<{ undone: boolean }>("/unapprove", { kind, period, recipient_id: recipientId, by });
+
 /** Said once at boot, so a silent link is visible without digging. */
 export function logCommissionConfig(): void {
   if (commissionConfigured()) logger.info("CS Portal is configured — new LMS students are sent there");

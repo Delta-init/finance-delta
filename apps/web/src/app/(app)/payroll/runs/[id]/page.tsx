@@ -675,6 +675,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                     {a.source === "crm_slab" && (
                                       <Badge tone="primary" className="ml-2">Salary slab</Badge>
                                     )}
+                                    {a.source === "cs_commission" && (
+                                      <Badge tone="primary" className="ml-2">CS commission</Badge>
+                                    )}
                                     {a.source === "crm_slab" && a.notes && (
                                       <span className="ml-2 text-xs text-foreground-muted">{a.notes}</span>
                                     )}

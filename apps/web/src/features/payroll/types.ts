@@ -170,7 +170,7 @@ export interface RunAdjustment {
    * "crm_commission": a sales CRM's approved commission, paid through payroll; "crm_slab": the difference that puts a
    * salesperson on their CRM salary slab (both 2026-11-01).
    */
-  source: "commission" | "crm_commission" | "crm_slab" | "manual";
+  source: "commission" | "crm_commission" | "cs_commission" | "crm_slab" | "manual";
   label: string;
   amountMinor: number;
   notes: string;

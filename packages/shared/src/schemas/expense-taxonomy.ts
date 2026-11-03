@@ -67,6 +67,8 @@ export const EXPENSE_DEFAULTS = {
   oneTimePayment: { category: "payroll_benefits", subcategory: "bonuses" },
   crmCommission: { category: "sales_commission", subcategory: "sales_commission" },
   crmCommissionTeamLeader: { category: "sales_commission", subcategory: "team_leader_commission" },
+  // The CS Portal's commission (2026-11-03): a CS — a mentor, as the taxonomy has them.
+  csCommission: { category: "sales_commission", subcategory: "mentor_commission" },
   procurement: { category: "other_unclassified", subcategory: "pending_classification" },
   unclassified: { category: "other_unclassified", subcategory: "pending_classification" },
 } as const;

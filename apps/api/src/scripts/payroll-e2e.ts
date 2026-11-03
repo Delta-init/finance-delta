@@ -35,6 +35,7 @@ import * as payments from "../modules/payroll/payment.service";
 import { hrmsClient } from "../lib/hrms-client";
 import { formatMinor } from "../modules/payroll/money";
 import { CrmCommissionPayout } from "../modules/crm-commission/crm-commission-payout.model";
+import { CsCommissionPayout } from "../modules/cs-commission/cs-commission-payout.model";
 import * as crmCommission from "../modules/crm-commission/crm-commission.service";
 import http from "node:http";
 
@@ -259,6 +260,23 @@ async function main() {
   check("taken off the run: the CRM commission is free again", mine?.state === "approved" && !mine.payrollRunId, String(mine?.payrollRunNumber));
   const again = await adjustments.pullCommissions(orgId, runId, actor);
   check("…and pulled again: only it", again.pulled === 1, again.message);
+  // The CS Portal's commission through payroll (2026-11-03): a CS period approved on the CS commission page, found by
+  // the CS's CS Portal email; one a later month ends isn't this run's.
+  await CsCommissionPayout.insertMany([
+    { key: `bonus:${seed.month}:cs-aisha`, organizationId: org._id, kind: "bonus", period: seed.month, lastMonth: seed.month, recipientId: "cs-aisha", personName: "Aisha",
+      email: "e2e001@e2e.local", location: "dubai", currency: "AED", amountMinor: 367_00, amountUsd: 100, creditIds: ["c1"], state: "approved",
+      approvedById: new Types.ObjectId(actor.userId), approvedByName: "Mona Manager", approvedAt: new Date() },
+    { key: "deposit:2099-Q1:cs-aisha", organizationId: org._id, kind: "deposit", period: "2099-Q1", lastMonth: "2099-03", recipientId: "cs-aisha", personName: "Aisha",
+      email: "e2e001@e2e.local", location: "dubai", currency: "AED", amountMinor: 999_00, amountUsd: 272.21, creditIds: ["c9"], state: "approved",
+      approvedById: new Types.ObjectId(actor.userId), approvedByName: "Mona Manager", approvedAt: new Date() },
+  ]);
+  const csPulled = await adjustments.pullCommissions(orgId, runId, actor);
+  const csAdj = (await payroll.getRun(orgId, runId)).adjustments.find((a) => a.source === "cs_commission");
+  check("the CS commission pulled too: AED 367 for her bonus month, named for it; the quarter to come left", csPulled.pulled === 1
+    && csAdj?.amountMinor === 367_00 && /^CS commission — Bonus, /.test(csAdj.label), `${csPulled.message} | ${csAdj?.label}`);
+  const csMine = await CsCommissionPayout.findOne({ key: `bonus:${seed.month}:cs-aisha` }).lean();
+  check("…on this run, still approved", csMine?.state === "approved" && csMine.payrollRunNumber === (await payroll.getRun(orgId, runId)).runNumber
+    && !(await CsCommissionPayout.findOne({ key: "deposit:2099-Q1:cs-aisha" }).lean())?.payrollRunId);
   // The CRM salary slabs (2026-11-01): Aisha's contract is 12,000; HR sent a whole month, no days off.
   const onSlab = (salary: number, more: object[] = []) => [
     { crm: "delta", crmName: "Sales CRM", userId: "crm-aisha", name: "Aisha", email: "E2E001@e2e.local", role: "sales", level: "A", salary, currency: "AED", percent: 100, earned: 230, payable: 230 },
@@ -369,6 +387,8 @@ async function main() {
   const crmPaid = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
   check("…the CRM commission paid with it: paid through payroll, its run the reference",
     crmPaid?.state === "paid" && crmPaid.paymentMethod === "payroll" && crmPaid.reference === run.runNumber, JSON.stringify({ s: crmPaid?.state, m: crmPaid?.paymentMethod }));
+  const csPaid = await CsCommissionPayout.findOne({ key: `bonus:${seed.month}:cs-aisha` }).lean();
+  check("…the CS commission too", csPaid?.state === "paid" && csPaid.paymentMethod === "payroll" && csPaid.reference === run.runNumber, JSON.stringify({ s: csPaid?.state }));
 
   const bankAfter = await BankAccount.findById(bank._id).lean();
   check("bank balance fell by the payment",
@@ -405,6 +425,8 @@ async function main() {
   check("commission returned to unpaid", reversed.commissionsReopened === 2);
   const crmBack = await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha` }).lean();
   check("…the CRM commission owed again, still on the run", crmBack?.state === "approved" && !crmBack.paymentMethod && crmBack.payrollRunNumber === run.runNumber);
+  const csBack = await CsCommissionPayout.findOne({ key: `bonus:${seed.month}:cs-aisha` }).lean();
+  check("…the CS commission too", csBack?.state === "approved" && !csBack.paymentMethod && csBack.payrollRunNumber === run.runNumber);
   rootApi.close();
 
   const bankReversed = await BankAccount.findById(bank._id).lean();

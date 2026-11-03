@@ -40,6 +40,7 @@ import inventoryRoutes from "./modules/inventory/inventory.routes";
 import reportRoutes from "./modules/reports/reports.routes";
 import commissionRoutes from "./modules/commission/commission.routes";
 import crmCommissionRoutes from "./modules/crm-commission/crm-commission.routes";
+import csCommissionRoutes from "./modules/cs-commission/cs-commission.routes";
 import loanRoutes from "./modules/loan/loan.routes";
 import platformRoutes from "./modules/platform/platform.routes";
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
@@ -132,6 +133,8 @@ async function bootstrap() {
   api.use("/commissions", commissionRoutes);
   // The sales CRMs' commission: a manager approves, accounts pay with the receipt (2026-10-21).
   api.use("/crm-commission", crmCommissionRoutes);
+  // The CS Portal's commission, beside the CRMs' (2026-11-03).
+  api.use("/cs-commission", csCommissionRoutes);
   api.use("/loans", loanRoutes);
   api.use("/platform", platformRoutes);
   api.use("/dashboard", dashboardRoutes);

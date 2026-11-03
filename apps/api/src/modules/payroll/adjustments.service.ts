@@ -3,6 +3,8 @@ import { AppError } from "../../lib/http";
 import { hrmsClient, type HrmsAdjustmentOutcome } from "../../lib/hrms-client";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
+import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
+import { periodLabel } from "../cs-commission/cs-commission.service";
 import { fromRoot, slabsFromRoot } from "../crm-commission/crm-commission.service";
 import { Employee } from "../employee/employee.model";
 import { User } from "../user/user.model";
@@ -180,6 +182,9 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
   // The sales CRMs' commission (2026-11-01: "commission through payroll") — approved on the CRM commission page.
   const crm = await stageCrmCommission(orgId, run, actor, user?.name ?? "", staged);
   if (crm.note) notes.push(crm.note);
+  // The CS Portal's commission (2026-11-03) — approved on the CS commission page.
+  const cs = await stageCsCommission(orgId, run, actor, user?.name ?? "", staged);
+  if (cs.note) notes.push(cs.note);
 
   if (!staged.length) {
     return { pulled: 0, message: notes.join(" ") || "No unpaid commission is outstanding for anybody on this run.", outcomes: [] };
@@ -194,6 +199,9 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
   // pays the line (see settleCommissions).
   if (crm.payoutIds.length) {
     await CrmCommissionPayout.updateMany({ _id: { $in: crm.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
+  }
+  if (cs.payoutIds.length) {
+    await CsCommissionPayout.updateMany({ _id: { $in: cs.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
   }
 
   // The commission records themselves are NOT marked paid here. They are paid
@@ -426,6 +434,46 @@ export async function pullSlabSalaries(orgId: string, runId: string, actor: { us
   };
 }
 
+/**
+ * The CS Portal's commission for this run's people (2026-11-03), like the CRMs': every period a manager approved on
+ * the CS commission page and nobody has paid — ending this run's month or before — found on the run by the CS's CS
+ * Portal email (an employee's email here), in the line's currency. One addition per period, at the approved figure.
+ */
+async function stageCsCommission(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string; payoutIds: Types.ObjectId[] }> {
+  const payouts = await CsCommissionPayout.find({ state: "approved", payrollRunId: null, lastMonth: { $lte: run.period } }).sort({ lastMonth: 1 }).lean<any[]>();
+  if (!payouts.length) return { note: "", payoutIds: [] };
+  const emails = [...new Set(payouts.map((p) => String(p.email ?? "").toLowerCase()).filter(Boolean))];
+  const employees = emails.length ? await Employee.find({
+    organizationId: oid(orgId), hrmsOrgId: run.hrmsOrgId, email: { $in: emails }, hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
+  }).lean() : [];
+  const employeeOf = new Map(employees.map((e) => [String(e.email).toLowerCase(), e]));
+  const payoutIds: Types.ObjectId[] = [];
+  const missed: string[] = [];
+  for (const p of payouts) {
+    const employee = employeeOf.get(String(p.email ?? "").toLowerCase());
+    const line = employee ? run.lines.find((l) => l.hrmsEmployeeId === employee.hrmsEmployeeId) : undefined;
+    const lineCurrency = (line?.currency || run.currency || "AED").toUpperCase();
+    if (!line || lineCurrency !== String(p.currency || "AED").toUpperCase()) {
+      missed.push(`${p.personName} (${periodLabel(p.kind, p.period)})`);
+      continue;
+    }
+    if (p.amountMinor <= 0) continue;
+    const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, String(line._id)));
+    const label = `CS commission — ${periodLabel(p.kind, p.period)}`;
+    run.adjustments.push({
+      externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "cs_commission", label, amountMinor: p.amountMinor,
+      notes: `Approved by ${p.approvedByName || "a manager"}`.slice(0, 500), commissionRecordIds: [], crmPayoutIds: [], csPayoutIds: [p._id],
+      recoveredMinor: p.amountMinor, outstandingMinor: 0, syncedAt: null, createdById: oid(actor.userId), createdByName: actorName,
+    } as never);
+    staged.push({ externalId, employeeId: line.hrmsEmployeeId, kind: "payment", label, amount: p.amountMinor / 100 });
+    payoutIds.push(p._id);
+  }
+  return {
+    note: missed.length ? `Approved CS commission not on this run (no employee here with their CS Portal email, or another currency): ${missed.join(", ")}.` : "",
+    payoutIds,
+  };
+}
+
 export async function removeAdjustment(orgId: string, runId: string, externalId: string) {
   const run = await loadRun(orgId, runId);
   requireOpen(run);
@@ -441,6 +489,9 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   // CRM commission taken off the run is the CRM commission page's to pay again.
   const crmPayouts = run.adjustments[index]!.crmPayoutIds ?? [];
   if (crmPayouts.length) await CrmCommissionPayout.updateMany({ _id: { $in: crmPayouts }, state: "approved" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });
+  // CS commission likewise (2026-11-03).
+  const csPayouts = run.adjustments[index]!.csPayoutIds ?? [];
+  if (csPayouts.length) await CsCommissionPayout.updateMany({ _id: { $in: csPayouts }, state: "approved" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });
   run.adjustments.splice(index, 1);
   recalculate(run as unknown as RecalcRun);
   await run.save();

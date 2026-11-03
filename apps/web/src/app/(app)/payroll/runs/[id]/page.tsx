@@ -316,8 +316,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             <p className="text-foreground-muted">
               {canPay
                 ? selected.size > 0
-                  ? `${selected.size} selected. Leave nothing selected to pay everybody still owed.`
-                  : "Everybody still owed will be paid. Held people are always excluded."
+                  ? `${selected.size} selected — they start in the payment; pick others or split it there.`
+                  : "Pick who is paid, and how, in the next step — split it into several payments (bank, cash) if needed. Held people are always excluded."
                 : "Approving locks the figures and tells HR the month is final."}
             </p>
           </div>
@@ -812,10 +812,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         lines={run.lines}
         selectedIds={Array.from(selected)}
         runCurrency={run.currency}
-        pending={pay.isPending}
-        onSubmit={(input) =>
-          pay.mutate(input, { onSuccess: () => { setPaying(false); setSelected(new Set()); } })
-        }
+        payOne={(input) => pay.mutateAsync(input)}
+        onDone={() => { setPaying(false); setSelected(new Set()); }}
       />
 
       <AdjustDialog

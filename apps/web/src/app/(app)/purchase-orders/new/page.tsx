@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useVendors } from "@/features/vendors/api";
+import { VendorPicker } from "@/features/vendors/VendorPicker";
 import { QuickCreateVendorModal } from "@/features/vendors/QuickCreateVendorModal";
 import { useCreatePO } from "@/features/purchase-orders/api";
 import { useCurrency } from "@/lib/currency-context";
@@ -56,8 +56,6 @@ export default function NewPurchaseOrderPage() {
   const router = useRouter();
   const createPO = useCreatePO();
   const [vendorModalOpen, setVendorModalOpen] = useState(false);
-  const { data: vendorData } = useVendors({ limit: "200" });
-  const vendors = vendorData?.data ?? [];
   const { baseCurrency: orgCurrency } = useCurrency();
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } =
@@ -148,20 +146,7 @@ export default function NewPurchaseOrderPage() {
                   <Plus className="h-3 w-3" /> New
                 </button>
               </div>
-              {/* Keyed on the value so a vendor created a second ago, which the
-                  list is only now refetching, still shows as the selection. */}
-              <Select
-                key={watch("vendorId")}
-                value={watch("vendorId")}
-                onValueChange={(v) => setValue("vendorId", v)}
-              >
-                <SelectTrigger><SelectValue placeholder="Select vendor" /></SelectTrigger>
-                <SelectContent>
-                  {vendors.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>{v.name}{v.companyName ? ` — ${v.companyName}` : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <VendorPicker value={watch("vendorId")} onChange={(v) => setValue("vendorId", v, { shouldValidate: true })} invalid={!!errors.vendorId} />
               {errors.vendorId && <p className="text-xs text-danger">{errors.vendorId.message}</p>}
             </div>
             <div className="space-y-1.5">

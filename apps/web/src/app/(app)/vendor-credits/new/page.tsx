@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { useVendors } from "@/features/vendors/api";
+import { VendorPicker } from "@/features/vendors/VendorPicker";
 import { useCreateVendorCredit } from "@/features/vendor-credits/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -48,8 +48,6 @@ export default function NewVendorCreditPage() {
   const searchParams = useSearchParams();
   const sourceBillId = searchParams.get("billId") ?? "";
   const createCredit = useCreateVendorCredit();
-  const { data: vendorData } = useVendors({ limit: "200" });
-  const vendors = vendorData?.data ?? [];
   const { baseCurrency: orgCurrency } = useCurrency();
 
   const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } =
@@ -125,14 +123,7 @@ export default function NewVendorCreditPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Vendor *</Label>
-              <Select value={watch("vendorId")} onValueChange={(v) => setValue("vendorId", v)}>
-                <SelectTrigger><SelectValue placeholder="Select vendor" /></SelectTrigger>
-                <SelectContent>
-                  {vendors.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>{v.name}{v.companyName ? ` — ${v.companyName}` : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <VendorPicker value={watch("vendorId")} onChange={(v) => setValue("vendorId", v, { shouldValidate: true })} invalid={!!errors.vendorId} />
               {errors.vendorId && <p className="text-xs text-danger">{errors.vendorId.message}</p>}
             </div>
             <div className="space-y-1.5">

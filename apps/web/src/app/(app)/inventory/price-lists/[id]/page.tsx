@@ -13,13 +13,19 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { type PriceListEntry, ITEM_UNIT_LABELS, type ItemUnit } from "@delta/shared";
-import { useItems, usePriceList, useUpdatePriceList, useDeletePriceList } from "@/features/inventory/api";
+import { usePriceList, useUpdatePriceList, useDeletePriceList } from "@/features/inventory/api";
+import { ItemPicker } from "@/features/inventory/ItemPicker";
+import type { Item } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR"];
 
 interface EntryRow extends PriceListEntry {
   _rowId: string;
+  /** The product's unit, once picked here. */
+  _unit?: string;
+  /** Just added: its picker opens on its own. */
+  _fresh?: boolean;
 }
 
 export default function PriceListDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -28,8 +34,6 @@ export default function PriceListDetailPage({ params }: { params: Promise<{ id: 
   const { data: priceList, isLoading } = usePriceList(id);
   const updatePriceList = useUpdatePriceList(id);
   const deletePriceList = useDeletePriceList();
-  const { data: itemsData } = useItems({ pageSize: 500, isActive: "true", type: "product" });
-  const items = itemsData?.data ?? [];
 
   const { baseCurrency: orgCurrency } = useCurrency();
   const [name, setName] = useState("");
@@ -55,37 +59,26 @@ export default function PriceListDetailPage({ params }: { params: Promise<{ id: 
     setInitialized(true);
   }
 
+  // A row with nothing in it yet, its product search open (2026-11-03: products are searched on the server now, so
+  // there is no first one to drop in).
   function addEntry() {
-    const first = items[0];
-    if (!first) { toast.error("No items available"); return; }
     setEntries((prev) => [
       ...prev,
-      {
-        _rowId: Math.random().toString(36).slice(2),
-        itemId: first.id,
-        itemName: first.name,
-        sku: first.sku,
-        unitPriceMinor: first.unitPriceMinor,
-        discountPct: 0,
-        markupPct: 0,
-      },
+      { _rowId: Math.random().toString(36).slice(2), _fresh: true, itemId: "", itemName: "", sku: "", unitPriceMinor: 0, discountPct: 0, markupPct: 0 },
     ]);
+  }
+
+  function pickItem(rowId: string, item: Item) {
+    setEntries((prev) => prev.map((e) => (e._rowId === rowId
+      ? { ...e, itemId: item.id, itemName: item.name, sku: item.sku, unitPriceMinor: item.unitPriceMinor, _unit: item.unit, _fresh: false }
+      : e)));
   }
 
   function updateEntry(rowId: string, patch: Partial<EntryRow>) {
     setEntries((prev) =>
       prev.map((e) => {
         if (e._rowId !== rowId) return e;
-        const next = { ...e, ...patch };
-        if (patch.itemId) {
-          const item = items.find((i) => i.id === patch.itemId);
-          if (item) {
-            next.itemName = item.name;
-            next.sku = item.sku;
-            next.unitPriceMinor = item.unitPriceMinor;
-          }
-        }
-        return next;
+        return { ...e, ...patch };
       }),
     );
   }
@@ -97,6 +90,7 @@ export default function PriceListDetailPage({ params }: { params: Promise<{ id: 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { toast.error("Name is required"); return; }
+    if (entries.some((x) => !x.itemId)) { toast.error("Pick a product on every row, or remove the row"); return; }
     setSaving(true);
     try {
       await updatePriceList.mutateAsync({
@@ -106,7 +100,7 @@ export default function PriceListDetailPage({ params }: { params: Promise<{ id: 
         currency,
         validFrom: validFrom || undefined,
         validTo: validTo || undefined,
-        entries: entries.map(({ _rowId, ...rest }) => rest),
+        entries: entries.map(({ _rowId, _unit, _fresh, ...rest }) => rest),
       });
       toast.success("Price list updated");
     } catch (err) {
@@ -222,30 +216,22 @@ export default function PriceListDetailPage({ params }: { params: Promise<{ id: 
               </div>
 
               {entries.map((entry) => {
-                const item = items.find((i) => i.id === entry.itemId);
                 return (
                   <div key={entry._rowId} className="grid grid-cols-[1fr_100px_90px_90px_36px] gap-2 items-center">
-                    <Select
+                    <ItemPicker
                       value={entry.itemId}
-                      onValueChange={(v) => updateEntry(entry._rowId, { itemId: v })}
-                    >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {items.map((i) => (
-                          <SelectItem key={i.id} value={i.id}>
-                            {i.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      label={entry.itemName ? `${entry.itemName}${entry.sku ? ` · ${entry.sku}` : ""}` : undefined}
+                      onChange={(item) => pickItem(entry._rowId, item)}
+                      currency={currency}
+                      defaultOpen={entry._fresh}
+                      className="h-8"
+                    />
 
                     <div className="text-right">
                       <MoneyDisplay minor={entry.unitPriceMinor} currency={currency} className="text-sm text-foreground-muted" />
-                      {item && (
+                      {entry._unit && (
                         <p className="text-[10px] text-foreground-subtle">
-                          {ITEM_UNIT_LABELS[item.unit as ItemUnit] ?? item.unit}
+                          {ITEM_UNIT_LABELS[entry._unit as ItemUnit] ?? entry._unit}
                         </p>
                       )}
                     </div>

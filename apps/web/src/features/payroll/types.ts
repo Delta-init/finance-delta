@@ -146,6 +146,8 @@ export interface RunDetail {
   importedAt: string | null;
   importedByName: string;
   notes: string;
+  /** The API pays a person in parts, an amount in each payment (2026-11-03). Absent from an older one. */
+  payInParts?: boolean;
 }
 
 export interface RunCurrencyTotals {
@@ -208,6 +210,8 @@ export interface RunPayment {
   currency?: string;
   amountMinor: number;
   payslipCount: number;
+  /** Of them, how many it paid in full — the others it paid part of. Absent from an older API: all of them. */
+  finishedCount?: number;
   /** False means the money moved but HRMS still shows the payslips as issued. */
   syncedToHrms: boolean;
   syncError: string;
@@ -221,6 +225,8 @@ export interface PayResult {
   runNumber: string;
   status: RunStatus;
   paidCount: number;
+  /** Of them, how many are paid in full now. Absent from an older API. */
+  finishedCount?: number;
   amountMinor: number;
   currency?: string;
   amountFormatted: string;

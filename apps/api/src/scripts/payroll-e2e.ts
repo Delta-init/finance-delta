@@ -449,6 +449,75 @@ async function main() {
   check("run no longer counts the money as paid", runFinal!.amountPaidMinor === 0,
     formatMinor(runFinal!.amountPaidMinor, "AED"));
 
+  // ── Paid in parts ──────────────────────────────────────────────────────
+  step("8. One person paid in parts — part by bank transfer, the rest in cash (2026-11-03)");
+  run = await payroll.getRun(orgId, runId);
+  check("the run says this API pays in parts", run.payInParts === true);
+  const partLine = run.lines.find((l) => l.employeeCode === "E2E001")!;
+  const owedMinor = partLine.payableMinor - partLine.amountPaidMinor;
+  const firstPart = Math.round(owedMinor * 0.6);
+  const today = new Date().toISOString().slice(0, 10);
+  const payPart = (amountMinor: number, method: payments.PayInput["method"], reference: string, lineId = partLine.id) =>
+    payments.payRun(orgId, runId, { amounts: [{ lineId, amountMinor }], bankAccountId: String(bank._id), method, paidOn: today, reference }, actor);
+  const crmKey = `delta:${seed.month}:crm-aisha`;
+  const balance = async () => (await BankAccount.findById(bank._id).lean())!.currentBalanceMinor;
+  const slipOf = async (code: string) => (await hrmsClient.payrollBatch(seed.orgId, seed.month)).lines.find((l) => l.employeeCode === code)?.status;
+
+  check("more than she is owed: refused whole", await refused(payPart(owedMinor + 1, "bank_transfer", "TOO-MUCH"), /is owed .*Nothing was recorded/));
+  check("…no money moved", (await balance()) === 500_000_00, formatMinor(await balance(), "AED"));
+
+  const part1 = await payPart(firstPart, "bank_transfer", "WPS-PART-1");
+  check("the bank part recorded: that amount, nobody finished", part1.amountMinor === firstPart && part1.finishedCount === 0, part1.amountFormatted);
+  check("…nothing for HRMS to wait on", part1.synced, part1.warning ?? "");
+  run = await payroll.getRun(orgId, runId);
+  const half = run.lines.find((l) => l.id === partLine.id)!;
+  check("…she is part paid, the rest still owed", half.status === "partially_paid" && half.amountPaidMinor === firstPart, half.status);
+  check("…the run is part paid", run.status === "partially_paid", run.status);
+  check("…her payslip still says issued in HRMS: not all of it is paid", (await slipOf("E2E001")) === "issued");
+  check("…her commission isn't settled yet",
+    (await CommissionRecord.countDocuments({ status: "earned" })) === 2 && (await CrmCommissionPayout.findOne({ key: crmKey }).lean())?.state === "approved");
+
+  check("the cash part can't be more than what's left", await refused(payPart(owedMinor - firstPart + 1, "cash", "TOO-MUCH-2"), /is owed/));
+  const part2 = await payPart(owedMinor - firstPart, "cash", "CASH-PART-2");
+  check("the rest in cash: she is finished", part2.finishedCount === 1 && part2.synced, part2.warning ?? "");
+  run = await payroll.getRun(orgId, runId);
+  const whole = run.lines.find((l) => l.id === partLine.id)!;
+  check("…paid in full across the two", whole.status === "paid" && whole.amountPaidMinor === whole.payableMinor);
+  check("…each payment its own method and amount",
+    run.payments.filter((p) => !p.reversedAt).map((p) => `${p.method}:${p.amountMinor}`).join(",") === `bank_transfer:${firstPart},cash:${owedMinor - firstPart}`);
+  check("…her payslip says paid in HRMS now", (await slipOf("E2E001")) === "paid");
+  check("…her commission settled with the last part", part2.commissionsSettled === 2 && (await CrmCommissionPayout.findOne({ key: crmKey }).lean())?.state === "paid");
+  check("…the account fell by all she was owed", (await balance()) === 500_000_00 - owedMinor, formatMinor(await balance(), "AED"));
+  const partExpenses = await Expense.find({ organizationId: org._id, status: "approved" }).lean();
+  check("…an expense for each part", partExpenses.map((e) => e.totalMinor).sort((a, b) => (a ?? 0) - (b ?? 0)).join(",") === [firstPart, owedMinor - firstPart].sort((a, b) => a - b).join(","));
+
+  check("the bank part can't be reversed while the cash part that finished her stands",
+    await refused(payments.reversePayment(orgId, runId, part1.paymentId, "Bounced"), new RegExp(`finished by ${part2.paymentId}.*reverse that first`)));
+  const back2 = await payments.reversePayment(orgId, runId, part2.paymentId, "Wrong cash voucher");
+  check("the cash part reversed: her commission owed again", back2.commissionsReopened === 2 && (await CrmCommissionPayout.findOne({ key: crmKey }).lean())?.state === "approved");
+  run = await payroll.getRun(orgId, runId);
+  check("…she is back to part paid, the bank part kept", run.lines.find((l) => l.id === partLine.id)!.amountPaidMinor === firstPart);
+  check("…her payslip back to issued", (await slipOf("E2E001")) === "issued");
+  const back1 = await payments.reversePayment(orgId, runId, part1.paymentId, "Bank returned it");
+  check("then the bank part: reversed, though HRMS never had it", !back1.alreadyReversed, back1.message);
+  run = await payroll.getRun(orgId, runId);
+  const none = run.lines.find((l) => l.id === partLine.id)!;
+  check("…she is owed in full again", none.status === "pending" && none.amountPaidMinor === 0, none.status);
+  check("…the account is back where it was", (await balance()) === 500_000_00, formatMinor(await balance(), "AED"));
+
+  // ── Same day ───────────────────────────────────────────────────────────
+  step("9. Two payments the same day: reversing one leaves the other's payslips paid");
+  // E2E003 has no bank details in the seed; given some here so there are two people to pay.
+  await PayrollRun.updateOne({ _id: runId, "lines._id": e2e003.id }, { $set: { "lines.$.payable": true } });
+  await payments.setLineHold(orgId, runId, e2e003.id, { hold: false }, actor);
+  const byBank = await payPart(owedMinor, "bank_transfer", "WPS-SAME-DAY");
+  const byCash = await payments.payRun(orgId, runId, { lineIds: [e2e003.id], bankAccountId: String(bank._id), method: "cash", paidOn: today }, actor);
+  check("two payments, the same day, one person each", byBank.finishedCount === 1 && byCash.paidCount === 1 && byCash.synced);
+  check("…both payslips say paid", (await slipOf("E2E001")) === "paid" && (await slipOf("E2E003")) === "paid");
+  await payments.reversePayment(orgId, runId, byCash.paymentId, "Cash came back");
+  check("reversing the cash one: only its payslip goes back to issued", (await slipOf("E2E003")) === "issued");
+  check("…the bank one's payslip stays paid", (await slipOf("E2E001")) === "paid", await slipOf("E2E001"));
+
   // ── Result ─────────────────────────────────────────────────────────────
   console.log(`\n${"─".repeat(60)}`);
   if (failures === 0) {

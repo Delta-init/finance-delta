@@ -121,6 +121,43 @@ describe("selectPayableLines in one currency", () => {
   });
 });
 
+/**
+ * One person paid in parts (2026-11-03): part by bank transfer, the rest in cash, each its own payment naming how
+ * much. The amount asked is what moves — never more than they are still owed.
+ */
+describe("selectPayableLines with amounts", () => {
+  const amounts = (o: Record<string, number>) => new Map(Object.entries(o));
+
+  it("pays the amount asked, not the whole remainder", () => {
+    const s = selectPayableLines([line("a", 18_062_00), line("b", 300_00)], undefined, undefined, amounts({ a: 10_000_00 }));
+    expect(s.allocations).toEqual([{ lineId: "a", amountMinor: 10_000_00 }]);
+    expect(s.amountMinor).toBe(10_000_00);
+    expect(s.over).toHaveLength(0);
+  });
+
+  it("pays the rest of somebody part paid", () => {
+    const s = selectPayableLines([line("a", 18_062_00, 10_000_00, "partially_paid")], undefined, undefined, amounts({ a: 8_062_00 }));
+    expect(s.amountMinor).toBe(8_062_00);
+  });
+
+  it("refuses more than somebody is still owed rather than cutting it down", () => {
+    const s = selectPayableLines([line("a", 18_062_00, 10_000_00, "partially_paid"), line("b", 300_00)], undefined, undefined, amounts({ a: 9_000_00, b: 300_00 }));
+    expect(s.over).toEqual([{ lineId: "a", askedMinor: 9_000_00, remainingMinor: 8_062_00 }]);
+    expect(s.allocations.map((x) => x.lineId)).toEqual(["b"]);
+  });
+
+  it("still never pays a held person, nor one in another currency", () => {
+    const s = selectPayableLines(
+      [line("h", 500_00, 0, "on_hold"), { ...line("i", 2_00), currency: "INR" }],
+      undefined,
+      { currency: "AED", fallback: "AED" },
+      amounts({ h: 100_00, i: 1_00 }),
+    );
+    expect(s.allocations).toHaveLength(0);
+    expect(s.skipped).toEqual({ held: 1, alreadyPaid: 0, notFound: 0, otherCurrency: 1 });
+  });
+});
+
 describe("isSettled", () => {
   it("treats a paid or held line as settled", () => {
     expect(isSettled(line("a", 500_00, 500_00, "paid"))).toBe(true);

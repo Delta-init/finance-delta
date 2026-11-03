@@ -22,6 +22,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 /** A line's currency, or the run's for a line imported before lines carried one. */
 const currencyOf = (l: RunLine, runCurrency: string) => (l.currency || runCurrency).trim().toUpperCase();
 const owed = (l: RunLine) => l.payableMinor - l.amountPaidMinor;
+/** A typed amount in minor units; NaN for anything that isn't one (more than two decimals, letters, nothing). */
+const toMinor = (raw: string) => {
+  const t = raw.replace(/,/g, "").trim();
+  return t && /^\d*\.?\d{0,2}$/.test(t) ? Math.round(Number(t) * 100) : NaN;
+};
+const asTyped = (minor: number) => (minor / 100).toFixed(2).replace(/\.00$/, "");
 
 const METHODS: Array<{ value: PayPayload["method"]; label: string }> = [
   { value: "bank_transfer", label: "Bank transfer" },
@@ -40,6 +46,8 @@ interface Draft {
   paidOn: string;
   reference: string;
   ids: string[];
+  /** What was typed as a person's amount in this payment (2026-11-03). None: they take the rest of their pay here. */
+  amounts: Record<string, string>;
   state: "draft" | "paying" | "done" | "failed";
   error?: string;
   /** What it came to when it was recorded — its people are paid since, and leave the list. */
@@ -49,8 +57,23 @@ interface Draft {
 
 let nextKey = 1;
 const draft = (ids: string[], method: PayPayload["method"] = "bank_transfer"): Draft => ({
-  key: nextKey++, method, bankAccountId: "", paidOn: today(), reference: "", ids, state: "draft",
+  key: nextKey++, method, bankAccountId: "", paidOn: today(), reference: "", ids, amounts: {}, state: "draft",
 });
+const without = (d: Draft, ids: string[]): Draft => ({
+  ...d,
+  ids: d.ids.filter((x) => !ids.includes(x)),
+  amounts: Object.fromEntries(Object.entries(d.amounts).filter(([id]) => !ids.includes(id))),
+});
+
+/** A person's pay across the payments still to record: what each pays them, what is wrong, what stays owed. */
+interface Share {
+  at: Map<number, number>;
+  wrong: Map<number, string>;
+  /** Typed amounts adding up to more than they are owed. */
+  over: { typedMinor: number; owedMinor: number } | null;
+  /** Left owed once these payments are recorded: they stay part paid. */
+  leftMinor: number;
+}
 
 /**
  * Paying the run.
@@ -66,11 +89,17 @@ const draft = (ids: string[], method: PayPayload["method"] = "bank_transfer"): D
  *
  * Several payments at once, each with its own people (the user, 2026-11-03: "multiple payment methods here and
  * specific users … with search"): most by bank transfer, a few in cash from petty cash, say. Each is recorded as its
- * own payment — its bank line, expense and HRMS payslips — one after the other; a person is in one of them at most,
- * paid what they are still owed. If one is refused the ones before it stand, and it can be put right and tried again.
+ * own payment — its bank line, expense and HRMS payslips — one after the other. If one is refused the ones before it
+ * stand, and it can be put right and tried again.
+ *
+ * One person paid in parts (the user, 2026-11-03: "some employees are paid by more than one payment method … how much
+ * in each"): ticked in more than one payment, with an amount in each. The first payment they are in without a typed
+ * amount pays the rest of what they are owed; typed amounts that leave some over leave them part paid, which is
+ * allowed. Only when the API says it can (`parts`): one from before ignores amounts and pays everybody named in full.
+ * Without it a person is in one payment at most, paid all they are still owed.
  */
 export function PayDialog({
-  open, onOpenChange, lines, selectedIds, runCurrency, payOne, onDone,
+  open, onOpenChange, lines, selectedIds, runCurrency, parts = false, payOne, onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -79,6 +108,8 @@ export function PayDialog({
   selectedIds: string[];
   /** What a line without a currency of its own is paid in. */
   runCurrency: string;
+  /** The API takes an amount per person, so a person can be paid in parts (the run's `payInParts`). */
+  parts?: boolean;
   /** Records one payment; rejects with the API's reason. */
   payOne: (input: PayPayload) => Promise<unknown>;
   /** Every payment recorded. */
@@ -90,6 +121,8 @@ export function PayDialog({
   const [active, setActive] = useState(0);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Somebody just ticked into a second payment: their amount box takes the cursor. */
+  const [focus, setFocus] = useState("");
 
   /** The people in scope, per currency: the run's currency first, then by how many people. */
   const groups = useMemo(() => {
@@ -136,46 +169,106 @@ export function PayDialog({
   }, [open, currency, seed]);
 
   const eligible = (accounts.data?.data ?? []).filter((a) => a.currency.trim().toUpperCase() === currency && a.isActive);
-  const owner = new Map<string, number>();
-  drafts.forEach((d, i) => { if (d.state !== "done") d.ids.forEach((id) => owner.set(id, i)); });
+  /** The payments still to record that each person is in. */
+  const where = new Map<string, number[]>();
+  drafts.forEach((d, i) => { if (d.state !== "done") d.ids.forEach((id) => where.set(id, [...(where.get(id) ?? []), i])); });
   const payableIds = new Set(payable.map((l) => l.id));
   const peopleOf = (d: Draft) => d.ids.filter((id) => payableIds.has(id));
-  const totalOf = (d: Draft) => peopleOf(d).reduce((a, id) => a + owed(lineOf.get(id)!), 0);
+
+  // What each payment pays each person. A typed amount is that; the first payment somebody is in without one pays the
+  // rest of what they are owed; a later one without one pays nothing until an amount is typed in it.
+  const shares = new Map<string, Share>();
+  for (const l of payable) {
+    const ins = where.get(l.id);
+    if (!ins) continue;
+    const o = owed(l);
+    const typed = new Map<number, number>();
+    for (const i of ins) {
+      const raw = drafts[i]!.amounts[l.id];
+      if (raw !== undefined) typed.set(i, toMinor(raw));
+    }
+    const fine = (v: number) => Number.isFinite(v) && v > 0;
+    const typedSum = [...typed.values()].reduce((a, v) => a + (fine(v) ? v : 0), 0);
+    const restAt = ins.find((i) => !typed.has(i));
+    const at = new Map<number, number>();
+    const wrong = new Map<number, string>();
+    for (const i of ins) {
+      const t = typed.get(i);
+      if (t !== undefined) {
+        at.set(i, fine(t) ? t : 0);
+        if (!fine(t)) wrong.set(i, "Type an amount above 0, at most two decimals");
+      } else if (i === restAt) {
+        at.set(i, Math.max(0, o - typedSum));
+        if (o - typedSum <= 0) wrong.set(i, "Nothing of their pay is left for this payment — untick them here or lower the others");
+      } else {
+        at.set(i, 0);
+        wrong.set(i, `Type how much this payment is — payment ${restAt! + 1} pays the rest`);
+      }
+    }
+    const paid = [...at.values()].reduce((a, v) => a + v, 0);
+    shares.set(l.id, {
+      at,
+      wrong,
+      over: typedSum > o ? { typedMinor: typedSum, owedMinor: o } : null,
+      leftMinor: Math.max(0, o - paid),
+    });
+  }
+  const amountIn = (i: number, id: string) => shares.get(id)?.at.get(i) ?? 0;
+  const wrongIn = (i: number) => peopleOf(drafts[i]!).some((id) => shares.get(id)?.wrong.has(i) || shares.get(id)?.over);
+  const totalOf = (i: number) => peopleOf(drafts[i]!).reduce((a, id) => a + amountIn(i, id), 0);
   const open_ = drafts.filter((d) => d.state !== "done");
-  const unassigned = payable.filter((l) => !owner.has(l.id));
-  const grand = open_.reduce((a, d) => a + totalOf(d), 0);
-  const ready = !busy && open_.length > 0
+  const unassigned = payable.filter((l) => !where.has(l.id));
+  const grand = drafts.reduce((a, d, i) => a + (d.state === "done" ? 0 : totalOf(i)), 0);
+  const troubled = [...shares.values()].some((x) => x.over || x.wrong.size > 0);
+  const partPaid = payable.filter((l) => (shares.get(l.id)?.leftMinor ?? 0) > 0);
+  const ready = !busy && open_.length > 0 && !troubled
     && open_.every((d) => d.bankAccountId && d.paidOn && peopleOf(d).length > 0);
 
   const cur = drafts[active];
   const set = (i: number, patch: Partial<Draft>) =>
     setDrafts((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch, ...(d.state === "failed" ? { state: "draft" as const, error: undefined } : {}) } : d)));
-  /** Into the payment shown, out of whichever it was in. */
+  /** Into the payment shown, out of whichever it was in — or out of the payment shown. */
   const assign = (ids: string[], into: boolean) =>
     setDrafts((ds) => ds.map((d, j) => {
       if (d.state === "done") return d;
-      if (j === active) return { ...d, ids: into ? [...new Set([...d.ids, ...ids])] : d.ids.filter((x) => !ids.includes(x)) };
-      return into ? { ...d, ids: d.ids.filter((x) => !ids.includes(x)) } : d;
+      if (j === active) return into ? { ...without(d, ids), ids: [...new Set([...d.ids, ...ids])] } : without(d, ids);
+      return into ? without(d, ids) : d;
     }));
+  /**
+   * One person ticked or unticked in the payment shown. Paying in parts, ticking somebody already in another payment
+   * puts them in this one too — for the amount typed here; the other keeps the rest.
+   */
+  const toggle = (id: string, into: boolean) => {
+    if (!parts || !into || !where.has(id)) { assign([id], into); return; }
+    setDrafts((ds) => ds.map((d, j) => (j === active && d.state !== "done" ? { ...d, ids: [...new Set([...d.ids, id])] } : d)));
+    setFocus(id);
+  };
+  const type = (id: string, raw: string) =>
+    setDrafts((ds) => ds.map((d, j) => (j === active ? { ...d, amounts: { ...d.amounts, [id]: raw } } : d)));
 
   const needle = q.trim().toLowerCase();
   const shown = [...payable, ...held].filter((l) =>
     !needle || [l.name, l.employeeCode, l.departmentName, l.designation].some((x) => (x ?? "").toLowerCase().includes(needle)));
   // Everybody the search shows who can be paid — "Select all" brings them into the payment shown, from any other.
   const shownFree = shown.filter((l) => l.status !== "on_hold");
-  const allShownHere = shownFree.length > 0 && shownFree.every((l) => owner.get(l.id) === active);
+  const allShownHere = shownFree.length > 0 && shownFree.every((l) => where.get(l.id)?.includes(active));
 
   async function record() {
     setBusy(true);
+    // Fixed before the first is sent: once one is recorded the run reloads, and what people are owed shrinks under it.
+    const plan = drafts.map((d, i) => peopleOf(d).map((id) => ({ lineId: id, amountMinor: amountIn(i, id) })));
     for (let i = 0; i < drafts.length; i++) {
       const d = drafts[i]!;
       if (d.state === "done") continue;
-      const ids = peopleOf(d);
-      const amount = totalOf(d);
+      const people = plan[i]!;
+      const amount = people.reduce((a, x) => a + x.amountMinor, 0);
       setDrafts((ds) => ds.map((x, j) => (j === i ? { ...x, state: "paying", error: undefined } : x)));
       try {
-        await payOne({ lineIds: ids, bankAccountId: d.bankAccountId, method: d.method, paidOn: d.paidOn, reference: d.reference.trim() || undefined });
-        setDrafts((ds) => ds.map((x, j) => (j === i ? { ...x, state: "done", recordedMinor: amount, recordedCount: ids.length } : x)));
+        await payOne({
+          ...(parts ? { amounts: people } : { lineIds: people.map((x) => x.lineId) }),
+          bankAccountId: d.bankAccountId, method: d.method, paidOn: d.paidOn, reference: d.reference.trim() || undefined,
+        });
+        setDrafts((ds) => ds.map((x, j) => (j === i ? { ...x, state: "done", recordedMinor: amount, recordedCount: people.length } : x)));
       } catch (e) {
         const error = e instanceof ApiError || e instanceof Error ? e.message : "Could not record this payment";
         setDrafts((ds) => ds.map((x, j) => (j === i ? { ...x, state: "failed", error } : x)));
@@ -200,7 +293,7 @@ export function PayDialog({
           <DialogDescription>
             This records each transfer against a bank account and tells HRMS, which marks the payslips paid. It does
             not move money by itself — make the transfers first. Split it into several payments to pay some people
-            another way (cash from petty cash, a cheque).
+            another way (cash from petty cash, a cheque){parts ? " — or one person part by each, with an amount in each" : ""}.
           </DialogDescription>
         </DialogHeader>
 
@@ -247,7 +340,7 @@ export function PayDialog({
                 className={cn(
                   "rounded-lg border px-3 py-1.5 text-left text-xs",
                   i === active ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
-                  d.state === "failed" && "border-danger",
+                  (d.state === "failed" || (d.state !== "done" && wrongIn(i))) && "border-danger",
                 )}
               >
                 <span className="flex items-center gap-1 font-semibold">
@@ -258,7 +351,7 @@ export function PayDialog({
                 <span className="text-foreground-muted">
                   {d.state === "done"
                     ? <>Recorded · {d.recordedCount} · <MoneyDisplay minor={d.recordedMinor ?? 0} currency={currency} /></>
-                    : <>{peopleOf(d).length} {peopleOf(d).length === 1 ? "person" : "people"} · <MoneyDisplay minor={totalOf(d)} currency={currency} /></>}
+                    : <>{peopleOf(d).length} {peopleOf(d).length === 1 ? "person" : "people"} · <MoneyDisplay minor={totalOf(i)} currency={currency} /></>}
                 </span>
               </button>
             ))}
@@ -338,7 +431,7 @@ export function PayDialog({
                       className="text-xs text-foreground-muted hover:text-danger"
                       onClick={() => { setDrafts((ds) => ds.filter((_, j) => j !== active)); setActive(0); }}
                     >
-                      Remove payment {active + 1} — its people go back to nobody's
+                      Remove payment {active + 1} — its people come out of it
                     </button>
                   )}
                 </>
@@ -367,28 +460,63 @@ export function PayDialog({
                 {shown.length === 0 && <p className="p-3 text-sm text-foreground-muted">Nobody matches.</p>}
                 {shown.map((l) => {
                   const isHeld = l.status === "on_hold";
-                  const where = owner.get(l.id);
-                  const here = where === active;
+                  const ins = where.get(l.id) ?? [];
+                  const here = ins.includes(active);
+                  const others = ins.filter((i) => i !== active);
+                  const share = shares.get(l.id);
+                  const raw = cur.amounts[l.id];
+                  const amountHere = amountIn(active, l.id);
+                  const wrongHere = share?.wrong.get(active);
                   return (
-                    <div key={l.id} className={cn("flex items-center gap-3 px-3 py-2 text-sm", isHeld && "opacity-60")}>
-                      <Checkbox
-                        checked={here}
-                        aria-label={`Pay ${l.name} in payment ${active + 1}`}
-                        onChange={() => { if (!isHeld && !busy) assign([l.id], !here); }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{l.name}</p>
-                        <p className="truncate text-xs text-foreground-muted">
-                          {[l.employeeCode, l.departmentName].filter(Boolean).join(" · ")}
-                          {isHeld ? ` · held — ${l.holdReason || "no bank details"}` : !l.bank?.iban && !l.bank?.accountNumber ? " · no bank details" : ""}
-                        </p>
+                    <div key={l.id} className={cn("px-3 py-2 text-sm", isHeld && "opacity-60")}>
+                      <div className="flex items-center gap-3">
+                        <Checkbox
+                          checked={here}
+                          aria-label={`Pay ${l.name} in payment ${active + 1}`}
+                          onChange={() => { if (!isHeld && !busy) toggle(l.id, !here); }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{l.name}</p>
+                          <p className="truncate text-xs text-foreground-muted">
+                            {[l.employeeCode, l.departmentName].filter(Boolean).join(" · ")}
+                            {isHeld ? ` · held — ${l.holdReason || "no bank details"}` : !l.bank?.iban && !l.bank?.accountNumber ? " · no bank details" : ""}
+                          </p>
+                        </div>
+                        {!isHeld && others.length > 0 && (
+                          <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted">
+                            {here ? "also " : ""}in payment {others.map((i) => i + 1).join(", ")}
+                            {parts && <> · <MoneyDisplay minor={others.reduce((a, i) => a + amountIn(i, l.id), 0)} currency={currency} /></>}
+                          </span>
+                        )}
+                        {parts && here ? (
+                          <div className="flex shrink-0 flex-col items-end">
+                            <Input
+                              inputMode="decimal"
+                              aria-label={`${l.name}'s amount in payment ${active + 1}`}
+                              autoFocus={focus === l.id}
+                              disabled={busy}
+                              value={raw ?? (amountHere > 0 ? asTyped(amountHere) : "")}
+                              placeholder="Amount"
+                              onChange={(e) => type(l.id, e.target.value)}
+                              className={cn("h-8 w-32 text-right font-numeric", (wrongHere || share?.over) && "border-danger")}
+                            />
+                            <span className="mt-0.5 text-[11px] text-foreground-muted">
+                              of <MoneyDisplay minor={owed(l)} currency={currency} />
+                            </span>
+                          </div>
+                        ) : (
+                          <MoneyDisplay minor={owed(l)} currency={currency} className="shrink-0 font-medium" />
+                        )}
                       </div>
-                      {!isHeld && where !== undefined && !here && (
-                        <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-xs text-foreground-muted">
-                          in payment {where + 1}
-                        </span>
+                      {parts && here && (wrongHere || share?.over || (share?.leftMinor ?? 0) > 0) && (
+                        <p className={cn("mt-1 pl-7 text-xs", wrongHere || share?.over ? "text-danger" : "text-warning")}>
+                          {share?.over
+                            ? <>The amounts add up to <MoneyDisplay minor={share.over.typedMinor} currency={currency} /> — they are owed <MoneyDisplay minor={share.over.owedMinor} currency={currency} />.</>
+                            : wrongHere
+                              ? wrongHere
+                              : <><MoneyDisplay minor={share!.leftMinor} currency={currency} /> stays owed — they will be part paid.</>}
+                        </p>
                       )}
-                      <MoneyDisplay minor={owed(l)} currency={currency} className="shrink-0 font-medium" />
                     </div>
                   );
                 })}
@@ -420,6 +548,17 @@ export function PayDialog({
                 {unassigned.length} {unassigned.length === 1 ? "person is" : "people are"} in no payment and stay
                 outstanding ({<MoneyDisplay minor={unassigned.reduce((a, l) => a + owed(l), 0)} currency={currency} />}).
               </p>
+            )}
+            {partPaid.length > 0 && (
+              <p className="mt-1 text-xs text-warning">
+                Part paid: {partPaid.slice(0, 3).map((l) => l.name).join(", ")}
+                {partPaid.length > 3 ? ` and ${partPaid.length - 3} more` : ""} — the rest
+                ({<MoneyDisplay minor={partPaid.reduce((a, l) => a + (shares.get(l.id)?.leftMinor ?? 0), 0)} currency={currency} />})
+                stays owed on this run.
+              </p>
+            )}
+            {troubled && (
+              <p className="mt-1 text-xs text-danger">An amount needs putting right before this can be recorded — see the payments and people marked in red.</p>
             )}
           </div>
 

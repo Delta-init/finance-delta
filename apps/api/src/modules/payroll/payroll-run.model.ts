@@ -159,6 +159,12 @@ const payrollPaymentSchema = new Schema(
       ],
       default: [],
     },
+    /**
+     * The people this payment finished paying: HRMS marks their payslips paid with it, and their commission is
+     * settled by it. A person paid in parts (2026-11-03) is finished by the payment that pays the last of it.
+     * Absent on payments from before, each of which paid everybody in it in full: all its allocations.
+     */
+    finishedLineIds: { type: [Schema.Types.ObjectId], default: undefined },
 
     /**
      * Whether HRMS has been told. False means the money moved but the payslips

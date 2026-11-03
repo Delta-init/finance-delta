@@ -104,6 +104,8 @@ export function useRemoveAdjustment(runId: string) {
 
 export interface PayPayload {
   lineIds?: string[];
+  /** Or each person and how much of their pay this payment is (2026-11-03). Only to an API whose run says `payInParts`. */
+  amounts?: Array<{ lineId: string; amountMinor: number }>;
   bankAccountId: string;
   method: "bank_transfer" | "cash" | "cheque" | "card" | "online";
   paidOn: string;

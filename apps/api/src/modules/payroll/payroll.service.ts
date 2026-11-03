@@ -536,6 +536,8 @@ export async function getRun(orgId: string, id: string) {
       currency: p.currency || run.currency,
       amountMinor: p.amountMinor,
       payslipCount: p.allocations.length,
+      // Of them, how many it paid in full; the rest it paid part of (2026-11-03).
+      finishedCount: (p.finishedLineIds ?? p.allocations).length,
       // Surfaced, never hidden: money moved but HRMS was not told is the one
       // state where the two systems disagree about whether somebody was paid.
       syncedToHrms: p.syncedToHrms,
@@ -549,6 +551,9 @@ export async function getRun(orgId: string, id: string) {
     importedAt: run.importedAt ? (run.importedAt as Date).toISOString() : null,
     importedByName: run.importedByName,
     notes: run.notes,
+    // This API pays a person in parts, an amount in each payment (2026-11-03). The Pay dialog offers amounts only
+    // when it says so: an API from before would ignore them and pay everybody named in full, in every payment.
+    payInParts: true,
   };
 }
 

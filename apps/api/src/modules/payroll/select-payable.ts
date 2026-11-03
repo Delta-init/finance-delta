@@ -29,6 +29,8 @@ export interface Selection {
   amountMinor: number;
   /** Named by the caller but not payable, so the UI can say why nothing happened. */
   skipped: { held: number; alreadyPaid: number; notFound: number; otherCurrency: number };
+  /** Asked to pay somebody more than they are still owed: refused, never cut down to fit. */
+  over: Array<{ lineId: unknown; askedMinor: number; remainingMinor: number }>;
 }
 
 /**
@@ -39,22 +41,31 @@ export interface Selection {
  * payment that could not have reached them — and that error is invisible
  * afterwards, because the payslip would say paid.
  *
- * Each allocation is the remainder, not the full payable: a line already part
- * paid must not be paid its whole amount a second time.
+ * Each allocation is the remainder, or the amount asked for, never the full
+ * payable: a line already part paid must not be paid its whole amount a second
+ * time.
  *
  * `only` keeps a payment to the people paid in one currency (a line without one
  * counts as `fallback`, the run's). A bank account pays out in one currency,
  * and a month can hold salaries in dirhams and in rupees: counting a rupee
  * salary into a payment from a dirham account takes the rupee figure out of the
  * account as dirhams, which is what happened before this existed.
+ *
+ * `amounts` names the people and how much each gets (2026-11-03: one person paid
+ * part by bank transfer, part in cash). Anything above what somebody is still
+ * owed is listed in `over` for the caller to refuse: trimming it quietly would
+ * record a transfer of a size nobody made.
  */
 export function selectPayableLines(
   lines: PayableLine[],
   lineIds?: string[],
   only?: { currency: string; fallback: string },
+  amounts?: Map<string, number>,
 ): Selection {
-  const wanted = lineIds?.length ? new Set(lineIds) : null;
+  const named = amounts?.size ? [...amounts.keys()] : lineIds;
+  const wanted = named?.length ? new Set(named) : null;
   const skipped = { held: 0, alreadyPaid: 0, notFound: 0, otherCurrency: 0 };
+  const over: Selection["over"] = [];
   const currency = only ? currencyOf(only.currency, only.fallback) : null;
 
   if (wanted) {
@@ -78,13 +89,17 @@ export function selectPayableLines(
     // transfer, and a negative would silently reduce the total.
     if (remaining <= 0) { skipped.alreadyPaid++; continue; }
 
-    allocations.push({ lineId: line._id, amountMinor: remaining });
+    const asked = amounts?.get(String(line._id));
+    if (asked !== undefined && asked > remaining) { over.push({ lineId: line._id, askedMinor: asked, remainingMinor: remaining }); continue; }
+
+    allocations.push({ lineId: line._id, amountMinor: asked ?? remaining });
   }
 
   return {
     allocations,
     amountMinor: allocations.reduce((a, x) => a + x.amountMinor, 0),
     skipped,
+    over,
   };
 }
 

@@ -12,10 +12,15 @@ import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { formatMinor } from "./money";
 import { recalculate, type RecalcRun } from "./recalculate";
 import { selectPayableLines, isSettled, type PayableLine } from "./select-payable";
+import { currencyOf } from "./currency-totals";
 import { postPayrollExpense, voidPayrollExpense } from "./posting.service";
 import { notifyPaymentNotSynced } from "./notify.service";
 
 const oid = (id: string) => new Types.ObjectId(id);
+
+/** Whose pay a payment finished: its own record, or — from before people were paid in parts — everybody in it. */
+const finishedBy = (p: { finishedLineIds?: Types.ObjectId[] | null; allocations: Array<{ lineId: unknown }> }) =>
+  (p.finishedLineIds ?? p.allocations.map((a) => a.lineId)).map(String);
 
 /**
  * Step three: paying the run.
@@ -134,6 +139,8 @@ export async function returnRun(orgId: string, runId: string, reason: string) {
 export interface PayInput {
   /** Which people this transfer covers. Empty means everybody still owed. */
   lineIds?: string[];
+  /** Or which people and how much each (2026-11-03: a person paid in parts, by more than one method). */
+  amounts?: Array<{ lineId: string; amountMinor: number }>;
   bankAccountId: string;
   method: "bank_transfer" | "cash" | "cheque" | "card" | "online";
   paidOn: string;
@@ -168,11 +175,23 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   // Converting instead needs a rate and a decision about who bears the
   // difference, and guessing either would be inventing a number, so rupees are
   // paid from a rupee account.
+  const asked = input.amounts?.length ? new Map(input.amounts.map((a) => [a.lineId, a.amountMinor])) : undefined;
   const selection = selectPayableLines(run.lines as unknown as PayableLine[], input.lineIds, {
     currency: account.currency,
     fallback: run.currency,
-  });
+  }, asked);
   const { allocations, amountMinor } = selection;
+
+  // More than somebody is still owed: refused whole. Recording less than was asked would put a transfer in the books
+  // of a size nobody made; recording more would pay them twice.
+  if (selection.over.length) {
+    const said = selection.over.map((o) => {
+      const line = run.lines.find((l) => String(l._id) === String(o.lineId))!;
+      const cur = currencyOf(line.currency, run.currency);
+      return `${line.name} is owed ${formatMinor(o.remainingMinor, cur)}, not ${formatMinor(o.askedMinor, cur)}`;
+    });
+    throw new AppError("CONFLICT", `${said.join("; ")}. Nothing was recorded.`);
+  }
 
   if (!allocations.length) {
     const { held, otherCurrency } = selection.skipped;
@@ -185,7 +204,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
       held > 0
         ? `Nobody paid in ${account.currency} can be paid — ${held} person(s) are held for missing bank details. ${elsewhere}`.trim()
         : otherCurrency > 0
-          ? `Nobody ${input.lineIds?.length ? "selected" : "still owed"} on ${run.runNumber} is paid in ${account.currency}. ${elsewhere}`
+          ? `Nobody ${input.lineIds?.length || asked ? "selected" : "still owed"} on ${run.runNumber} is paid in ${account.currency}. ${elsewhere}`
           : "There is nothing left to pay on this run.",
     );
   }
@@ -219,10 +238,14 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     { $set: { currentBalanceMinor: (account.currentBalanceMinor ?? 0) - amountMinor } },
   );
 
+  // Somebody paid in parts is finished by the payment that pays the last of it: HRMS hears of them then, and their
+  // commission is settled then — not while some of their pay is still owed.
+  const finished: Types.ObjectId[] = [];
   for (const alloc of allocations) {
     const line = run.lines.find((l) => String(l._id) === String(alloc.lineId))!;
     line.amountPaidMinor += alloc.amountMinor;
     line.status = line.amountPaidMinor >= line.payableMinor ? "paid" : "partially_paid";
+    if (line.status === "paid") finished.push(line._id as Types.ObjectId);
   }
   run.amountPaidMinor += amountMinor;
   recalculate(run as unknown as RecalcRun);
@@ -238,6 +261,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     currency: account.currency,
     amountMinor,
     allocations,
+    finishedLineIds: finished,
     syncedToHrms: false,
     syncAttempts: 0,
     createdById: oid(actor.userId),
@@ -254,7 +278,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
 
   // ── Then everything that follows from it ─────────────────────────────────
   const sync = await syncPaymentToHrms(run, paymentId);
-  const commissions = await settleCommissions(orgId, run, allocations.map((a) => String(a.lineId)));
+  const commissions = await settleCommissions(orgId, run, finished.map(String));
   // Without this the bank balance drops and no report explains why.
   const expenseId = await postPayrollExpense(orgId, run, paymentId, { userId: actor.userId, name: user?.name ?? "" });
   await run.save();
@@ -264,6 +288,8 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     runNumber: run.runNumber,
     status: run.status,
     paidCount: allocations.length,
+    /** Of them, how many are now paid in full; the rest are part paid and still owed. */
+    finishedCount: finished.length,
     amountMinor,
     currency: account.currency,
     amountFormatted: formatMinor(amountMinor, account.currency),
@@ -288,13 +314,22 @@ async function syncPaymentToHrms(run: PayrollRunDoc, paymentId: string): Promise
   const payment = run.payments.find((p) => p.paymentId === paymentId);
   if (!payment) return { ok: false, message: "Payment not found on this run" };
 
-  const lines = payment.allocations.map((a) => {
-    const line = run.lines.find((l) => String(l._id) === String(a.lineId))!;
-    return { payslipId: line.hrmsPayslipId, amount: a.amountMinor / 100 };
-  });
+  // Only the people it finished paying: a payslip says paid when all of it is, so a payment that paid somebody part
+  // of theirs tells HRMS nothing about them. Each is sent with all they have been paid, this payment and before.
+  const done = new Set(finishedBy(payment));
+  const lines = run.lines
+    .filter((l) => done.has(String(l._id)))
+    .map((l) => ({ payslipId: l.hrmsPayslipId, amount: l.amountPaidMinor / 100 }));
 
   payment.syncAttempts += 1;
   payment.lastSyncAttemptAt = new Date();
+
+  // Nobody finished — everybody in it part paid: nothing for HRMS to mark, so nothing waits on it.
+  if (!lines.length) {
+    payment.syncedToHrms = true;
+    payment.syncError = "";
+    return { ok: true, message: "" };
+  }
 
   try {
     await hrmsClient.recordPayment(run.hrmsOrgId, run.period, {
@@ -408,10 +443,26 @@ export async function reversePayment(
     return { paymentId, message: "That payment was already reversed", alreadyReversed: true };
   }
 
+  // Somebody it paid part of, whose pay a later payment finished: HRMS has their payslip paid by that one, so this
+  // one can't come off first — they would be owed money here with a payslip saying paid there.
+  const mine = new Set(finishedBy(payment));
+  const blockers: string[] = [];
+  for (const alloc of payment.allocations) {
+    const id = String(alloc.lineId);
+    const line = run.lines.find((l) => String(l._id) === id);
+    if (!line || line.status !== "paid" || mine.has(id)) continue;
+    const later = run.payments.find((p) => p !== payment && !p.reversedAt && finishedBy(p).includes(id));
+    if (later) blockers.push(`${line.name}'s pay was finished by ${later.paymentId}`);
+  }
+  if (blockers.length) {
+    throw new AppError("CONFLICT", `${blockers.join("; ")} — reverse that first, then this one.`);
+  }
+
   // HRMS first, and only if it ever knew. Reversing here while the payslips
   // still say paid would leave the employee's record claiming money that came
   // back — the exact disagreement this whole handover exists to prevent.
-  if (payment.syncedToHrms) {
+  // A payment that finished nobody never reached HRMS: there is nothing there to undo.
+  if (payment.syncedToHrms && mine.size > 0) {
     await hrmsClient.reversePayment(run.hrmsOrgId, run.period, paymentId, reason);
   }
 
@@ -456,7 +507,8 @@ export async function reversePayment(
   }
   run.amountPaidMinor = Math.max(0, run.amountPaidMinor - payment.amountMinor);
 
-  const unsettled = await unsettleCommissions(orgId, run, payment.allocations.map((a) => String(a.lineId)));
+  // Only the commission this payment settled: somebody it paid part of has none settled yet.
+  const unsettled = await unsettleCommissions(orgId, run, [...mine]);
   if (payment.expenseId) await voidPayrollExpense(orgId, String(payment.expenseId), reason);
 
   payment.reversedAt = new Date();

@@ -456,12 +456,19 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                   </div>
                   <div className="text-xs text-foreground-muted">
                     {new Date(p.paidOn).toLocaleDateString()} · {p.bankAccountName || p.method} ·{" "}
-                    {p.payslipCount} people{p.reference ? ` · ${p.reference}` : ""}
+                    {p.payslipCount} people
+                    {p.finishedCount !== undefined && p.finishedCount < p.payslipCount
+                      ? ` (${p.payslipCount - p.finishedCount} part paid)`
+                      : ""}
+                    {p.reference ? ` · ${p.reference}` : ""}
                     {p.reversalReason ? ` · reversed: ${p.reversalReason}` : ""}
                   </div>
                 </div>
                 {p.reversedAt ? (
                   <Badge tone="neutral">Reversed</Badge>
+                ) : p.finishedCount === 0 ? (
+                  // Paid part of everybody in it: HRMS marks their payslips paid with the payment that pays the rest.
+                  <Badge tone="warning">Part pay — HRMS waits for the rest</Badge>
                 ) : p.syncedToHrms ? (
                   <Badge tone="success">Confirmed by HRMS</Badge>
                 ) : (
@@ -645,6 +652,12 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                     <td className="whitespace-nowrap px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={cur} showConverted /></td>
                     <td className="px-5 py-3">
                       <Badge tone={LINE_TONE[l.status]}>{LINE_LABEL[l.status]}</Badge>
+                      {l.status === "partially_paid" && (
+                        <div className="mt-1 whitespace-nowrap text-xs text-foreground-muted">
+                          <MoneyDisplay minor={l.amountPaidMinor} currency={cur} /> paid ·{" "}
+                          <MoneyDisplay minor={l.payableMinor - l.amountPaidMinor} currency={cur} /> owed
+                        </div>
+                      )}
                       {l.holdReason && <div className="mt-1 text-xs text-danger">{l.holdReason}</div>}
                     </td>
                   </tr>
@@ -812,6 +825,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         lines={run.lines}
         selectedIds={Array.from(selected)}
         runCurrency={run.currency}
+        parts={!!run.payInParts}
         payOne={(input) => pay.mutateAsync(input)}
         onDone={() => { setPaying(false); setSelected(new Set()); }}
       />

@@ -30,15 +30,31 @@ export const addAdjustmentsSchema = z.object({
     .max(200),
 });
 
-export const payRunSchema = z.object({
-  // Empty or absent means everybody still owed. Held lines are never included
-  // either way — the service excludes them.
-  lineIds: z.array(objectId).max(2000).optional(),
-  bankAccountId: objectId,
-  method: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]),
-  paidOn: z.string().min(1),
-  reference: z.string().trim().max(120).optional(),
-});
+export const payRunSchema = z
+  .object({
+    // Empty or absent means everybody still owed. Held lines are never included
+    // either way — the service excludes them.
+    lineIds: z.array(objectId).max(2000).optional(),
+    // How much each named person gets in this payment, in place of `lineIds` (the user, 2026-11-03: one person paid
+    // part by bank transfer, part in cash). Without it a named person is paid all they are still owed.
+    amounts: z
+      .array(z.object({ lineId: objectId, amountMinor: z.number().int().positive() }))
+      .min(1)
+      .max(2000)
+      .optional(),
+    bankAccountId: objectId,
+    method: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]),
+    paidOn: z.string().min(1),
+    reference: z.string().trim().max(120).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.amounts && v.lineIds?.length) {
+      ctx.addIssue({ code: "custom", path: ["amounts"], message: "Send lineIds or amounts, not both" });
+    }
+    if (v.amounts && new Set(v.amounts.map((a) => a.lineId)).size !== v.amounts.length) {
+      ctx.addIssue({ code: "custom", path: ["amounts"], message: "A person can be named once in a payment" });
+    }
+  });
 
 export const holdLineSchema = z.object({
   hold: z.boolean(),

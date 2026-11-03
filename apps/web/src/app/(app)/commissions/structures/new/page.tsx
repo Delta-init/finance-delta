@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useCreateStructure } from "@/features/commissions/api";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import type { CommissionTier } from "@delta/shared";
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -18,7 +18,6 @@ function today() { return new Date().toISOString().slice(0, 10); }
 export default function NewStructurePage() {
   const router = useRouter();
   const { mutate, isPending } = useCreateStructure();
-  const { data: usersData } = useUsers({ page: 1, pageSize: EVERYONE });
 
   const [salespersonId, setSalespersonId] = useState("");
   const [type, setType] = useState<"flat" | "percentage" | "tiered">("percentage");
@@ -72,7 +71,6 @@ export default function NewStructurePage() {
     );
   }
 
-  const users = usersData?.data ?? [];
 
   return (
     <div className="space-y-6 p-6">
@@ -86,16 +84,7 @@ export default function NewStructurePage() {
         {/* Salesperson */}
         <div className="space-y-1.5">
           <Label htmlFor="salesperson">Salesperson</Label>
-          <Select value={salespersonId} onValueChange={setSalespersonId} required>
-            <SelectTrigger id="salesperson">
-              <SelectValue placeholder="Select salesperson…" />
-            </SelectTrigger>
-            <SelectContent>
-              {users.map((u) => (
-                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <UserPicker value={salespersonId} onChange={(id) => setSalespersonId(id)} />
         </div>
 
         {/* Commission type */}

@@ -55,6 +55,11 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
   res.status(204).end();
 });
 
+/** One person, as the list has them (2026-11-03: the pickers that search on the server). */
+export const get = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await userService.getUser(req.auth!.organizationId, req.params.id!));
+});
+
 export const colleagues = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await userService.listColleagues(req.auth!.organizationId));
 });

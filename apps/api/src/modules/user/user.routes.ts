@@ -28,6 +28,8 @@ router.post(
 // Salespeople (2026-10-20): payroll-only accounts and CRM salespeople with none, and making either a real user.
 // Before "/:id" so "salespeople" is never read as an id.
 router.get("/salespeople", requirePermission("user:read"), userController.listSalespeople);
+// One person, for the salesperson pickers that search on the server (2026-11-03). After every named GET above.
+router.get("/:id", requirePermission("user:read"), userController.get);
 router.post(
   "/salespeople",
   requirePermission("user:create"),

@@ -51,7 +51,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { CustomerPicker } from "@/features/customers/CustomerPicker";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import { useTaxConfig, useOrganization } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 import { useCan } from "@/lib/use-can";
@@ -221,10 +221,6 @@ export function InvoiceForm({
   const { data: session } = useSession();
   const mineOnly = ownOnly("invoice:read", "invoice:read:own");
 
-  const { data: users } = useUsers(
-    { pageSize: EVERYONE, sort: "name", dir: "asc" },
-    { enabled: !mineOnly },
-  );
   const { data: taxConfig } = useTaxConfig();
   const { data: org } = useOrganization();
   // HSN/SAC is an Indian requirement; showing the column anywhere else is a box
@@ -469,14 +465,12 @@ export function InvoiceForm({
                 control={control}
                 name="salespersonId"
                 render={({ field }) => (
-                  <Select key={field.value} value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger><SelectValue placeholder="Select a salesperson…" /></SelectTrigger>
-                    <SelectContent>
-                      {users?.data.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <UserPicker
+                    value={field.value}
+                    onChange={(id) => field.onChange(id)}
+                    fallbackLabel={initial?.salespersonId === field.value ? initial?.salespersonName : undefined}
+                    invalid={!!errors.salespersonId}
+                  />
                 )}
               />
               {errors.salespersonId && <p className="text-xs text-danger">{errors.salespersonId.message}</p>}

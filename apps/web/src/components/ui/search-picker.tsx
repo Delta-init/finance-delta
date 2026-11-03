@@ -25,7 +25,7 @@ export interface PickerRow<T> { id: string; label: ReactNode; detail?: ReactNode
  */
 export function SearchPicker<T>({
   value, onChange, selectedLabel, path, params, toRow, queryKey,
-  placeholder, searchPlaceholder, noun, invalid, defaultOpen, className,
+  placeholder, searchPlaceholder, noun, invalid, defaultOpen, className, clearLabel, onClear, disabled,
 }: {
   value: string;
   onChange: (id: string, item: T) => void;
@@ -45,8 +45,15 @@ export function SearchPicker<T>({
   /** Open as it appears — a row just added, waiting for its pick. */
   defaultOpen?: boolean;
   className?: string;
+  /** A first option that picks none — "All salespeople" on a filter, "Not for a salesperson" on a form. */
+  clearLabel?: string;
+  onClear?: () => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(Boolean(defaultOpen));
+  // The one just picked, named at once — before (or without) the caller's look-up of it.
+  const [picked, setPicked] = useState<{ id: string; label: ReactNode } | null>(null);
+  const shownLabel = selectedLabel ?? (picked && picked.id === value ? picked.label : undefined);
   const [typed, setTyped] = useState("");
   const [q, setQ] = useState("");
   useEffect(() => {
@@ -74,20 +81,22 @@ export function SearchPicker<T>({
   useEffect(() => { setHighlight(first); }, [first, q]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(o) => { if (!disabled) setOpen(o); }}>
       <PopoverTrigger asChild>
         <button
           type="button"
           role="combobox"
           aria-expanded={open}
+          disabled={disabled}
           className={cn(
             "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 text-left text-sm shadow-xs transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30",
             invalid && "border-danger",
+            disabled && "cursor-not-allowed opacity-50",
             className,
           )}
         >
-          <span className={cn("line-clamp-1", !selectedLabel && "text-foreground-subtle")}>
-            {selectedLabel ?? (value ? "…" : placeholder)}
+          <span className={cn("line-clamp-1", !shownLabel && !(clearLabel && !value) && "text-foreground-subtle")}>
+            {shownLabel ?? (value ? "…" : clearLabel ?? placeholder)}
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-foreground-subtle" />
         </button>
@@ -102,7 +111,13 @@ export function SearchPicker<T>({
                 <Loader2 className="h-4 w-4 animate-spin" /> Searching…
               </div>
             ) : (
-              <CommandEmpty>{q ? `No ${noun} matches “${q}”.` : `No ${noun}s yet.`}</CommandEmpty>
+              <CommandEmpty>{q ? `No ${noun} matches “${q}”.` : "Nothing here yet."}</CommandEmpty>
+            )}
+            {clearLabel && onClear && !q && (
+              <CommandItem value="__none__" onSelect={() => { onClear(); setOpen(false); }}>
+                <Check className={cn("h-4 w-4 shrink-0", !value ? "opacity-100" : "opacity-0")} />
+                <span className="text-foreground-muted">{clearLabel}</span>
+              </CommandItem>
             )}
             {rows.map((r) => (
               <CommandItem
@@ -110,7 +125,7 @@ export function SearchPicker<T>({
                 value={r.id}
                 disabled={stale}
                 className={cn(stale && "opacity-50")}
-                onSelect={() => { onChange(r.id, r.item); setOpen(false); }}
+                onSelect={() => { setPicked({ id: r.id, label: r.label }); onChange(r.id, r.item); setOpen(false); }}
               >
                 <Check className={cn("h-4 w-4 shrink-0", r.id === value ? "opacity-100" : "opacity-0")} />
                 <span className="min-w-0 flex-1">

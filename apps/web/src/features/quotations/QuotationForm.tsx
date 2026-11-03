@@ -48,7 +48,7 @@ import { useRecentSuggestion } from "@/features/suggestions/api";
 import { CustomerPicker } from "@/features/customers/CustomerPicker";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import { useTaxConfig } from "@/features/organization/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -144,7 +144,6 @@ export function QuotationForm({
   const router = useRouter();
   const { baseCurrency } = useCurrency();
   const isINROrg = baseCurrency === "INR";
-  const { data: users } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
@@ -319,18 +318,7 @@ export function QuotationForm({
               control={control}
               name="salespersonId"
               render={({ field }) => (
-                <Select key={field.value} value={field.value ?? ""} onValueChange={field.onChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a salesperson…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users?.data.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <UserPicker value={field.value ?? ""} onChange={(id) => field.onChange(id)} />
               )}
             />
           </div>

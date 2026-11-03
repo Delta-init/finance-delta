@@ -69,10 +69,11 @@ const SORT = {
   createdAt: "createdAt",
 } as const;
 
-export async function listUsers(orgId: string, query: UserQuery): Promise<Paginated<UserDTO>> {
+export async function listUsers(orgId: string, query: UserQuery, only?: { ids: string[] }): Promise<Paginated<UserDTO>> {
   const filter: Record<string, unknown> = {
     "memberships.organizationId": new Types.ObjectId(orgId),
   };
+  if (only) filter._id = { $in: only.ids.filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id)) };
   const or = searchOr(query.q, ["name", "email"]);
   if (or) filter.$or = or;
   if (query.status) filter.status = query.status;
@@ -131,6 +132,16 @@ export async function listUsers(orgId: string, query: UserQuery): Promise<Pagina
   }
 
   return { data: results, meta: pageMeta(total, query.page, query.pageSize) };
+}
+
+/**
+ * One person, as the list has them — for a picker that searches the list on the server and has only the id of the one
+ * chosen (2026-11-03: salesperson pickers stopped loading everybody).
+ */
+export async function getUser(orgId: string, id: string): Promise<UserDTO> {
+  const { data } = await listUsers(orgId, { page: 1, pageSize: 1, dir: "asc", tagIds: [] } as unknown as UserQuery, { ids: [id] });
+  if (!data[0]) throw new AppError("NOT_FOUND", "User not found");
+  return data[0];
 }
 
 async function requireOrgRole(orgId: string, roleId: string) {

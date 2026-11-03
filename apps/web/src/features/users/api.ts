@@ -28,6 +28,17 @@ export function useUsers(params: QueryParams, options?: { enabled?: boolean }) {
   });
 }
 
+/** One person (2026-11-03): the chosen one of a picker that searches on the server. */
+export function useUser(id: string | undefined) {
+  return useQuery({
+    queryKey: [...KEY, "one", id],
+    queryFn: () => api.get<User>(`users/${id}`),
+    enabled: !!id,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({

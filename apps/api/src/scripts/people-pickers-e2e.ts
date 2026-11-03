@@ -89,6 +89,21 @@ const old = await at(100), now = await at(1000);
 check("at the old 100 a name past the hundredth was never in the picker", old.data.length === 100 && !old.data.some((u) => u.name === "Vandana K"));
 check("at 1,000: all 131, Vandana among them", now.data.length === 131 && now.data.some((u) => u.name === "Vandana K"), String(now.data.length));
 check("more than 1,000 a page: refused", !userQuerySchema.safeParse({ pageSize: 1001 }).success && userQuerySchema.safeParse({ pageSize: 1000 }).success);
+// The pickers search on the server and fetch the chosen one by id (2026-11-03).
+const search = await users.listUsers(ORG, userQuerySchema.parse({ page: 1, pageSize: 50, sort: "name", dir: "asc", q: "vandana" }) as never);
+check("a search finds by name, past the hundredth, among everyone", search.data.length === 1 && search.data[0]!.name === "Vandana K" && search.meta.total === 1, j(search.data.map((u) => u.name)));
+const byEmail = await users.listUsers(ORG, userQuerySchema.parse({ page: 1, pageSize: 50, q: "aaron12" }) as never);
+check("…and by email", byEmail.data.map((u) => u.email).sort().join() === ["aaron12@x.test", "aaron120@x.test", "aaron121@x.test", "aaron122@x.test", "aaron123@x.test", "aaron124@x.test", "aaron125@x.test", "aaron126@x.test", "aaron127@x.test", "aaron128@x.test"].sort().join(), j(byEmail.data.map((u) => u.email)));
+const one = await users.getUser(ORG, String(farhan._id));
+check("getUser: that one person, as the list has them", one.id === String(farhan._id) && one.name === "Farhan" && one.email === "farhan@x.test", j(one));
+let refusedOne = "";
+try { await users.getUser(ORG, String(new Types.ObjectId())); } catch (e) { refusedOne = (e as Error).message; }
+let otherOrg = "";
+const elsewhere = await Organization.create({ name: "Other E2E", baseCurrency: "AED" });
+try { await users.getUser(String(elsewhere._id), String(farhan._id)); } catch (e) { otherOrg = (e as Error).message; }
+let badId = "";
+try { await users.getUser(ORG, "not-an-id"); } catch (e) { badId = (e as Error).message; }
+check("…nobody by that id, somebody of another organization, a malformed id: not found", /not found/i.test(refusedOne) && /not found/i.test(otherOrg) && /not found/i.test(badId), j([refusedOne, otherOrg, badId]));
 
 /* ── 2 ── */
 step("2. Who in HRMS is missing in finance");

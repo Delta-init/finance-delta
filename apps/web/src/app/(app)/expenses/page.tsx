@@ -22,7 +22,7 @@ import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { BankAccountFilter, PaymentMethodFilter } from "@/features/banking/PaymentFilters";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
@@ -144,7 +144,6 @@ export default function ExpensesPage() {
   const stmt = useUrlDateRange({ fromKey: "stmtFrom", toKey: "stmtTo", rangeKey: "stmtRange" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
-  const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -436,15 +435,13 @@ export default function ExpensesPage() {
         )}
 
         {canPickSalesperson && (
-          <Select value={salesperson} onValueChange={setSalesperson}>
-            <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All salespeople</SelectItem>
-              {(userList?.data ?? []).map((u) => (
-                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <UserPicker
+            value={salesperson === "all" ? "" : salesperson}
+            onChange={(id) => setSalesperson(id || "all")}
+            clearLabel="All salespeople"
+            fallbackLabel={data?.data.find((e) => e.salesperson?.id === salesperson)?.salesperson?.name}
+            className="w-[200px]"
+          />
         )}
 
         <Select value={recurring} onValueChange={setRecurring}>

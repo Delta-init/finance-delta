@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAllDepartments } from "@/features/departments/api";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import { QuickCreateDepartmentModal } from "@/features/departments/QuickCreateDepartmentModal";
 import { useCan } from "@/lib/use-can";
 import { ApiError, api } from "@/lib/api";
@@ -102,8 +102,6 @@ export type ExpenseFormValues = z.infer<typeof formSchema>;
 
 /** Radix reads "" as unset, so "no department" needs a value that is not it. */
 const NO_DEPARTMENT = "__none__";
-/** Radix reads "" as unset, so "for nobody" needs a value of its own (2026-10-21). */
-const NO_SALESPERSON = "__no_salesperson__";
 
 interface ExpenseFormProps {
   mode: "create" | "edit";
@@ -124,8 +122,6 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   // The people an expense can be for — the invoice form's salesperson list (2026-10-21). Reading users needs
   // user:read; without it the field isn't offered.
   const canPickSalesperson = can("user:read");
-  const { data: userList } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" }, { enabled: canPickSalesperson });
-  const salespeople = (userList?.data ?? []).filter((u) => u.status !== "suspended");
   const [deptModalOpen, setDeptModalOpen] = useState(false);
   // Shown only where a claim already carries one; there is no way to type a new
   // one, which is the point of replacing it.
@@ -601,28 +597,18 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
                 <Label>Salesperson (optional)</Label>
                 {/* Picking one brings their department with them (2026-10-21) — their user's, else their payroll
                     record's from HRMS (2026-10-22) — still changeable below. */}
-                <Select
-                  value={watch("salespersonId") || NO_SALESPERSON}
-                  onValueChange={(v) => {
-                    const id = v === NO_SALESPERSON ? "" : v;
+                <UserPicker
+                  value={watch("salespersonId") ?? ""}
+                  onChange={(id, who) => {
                     setValue("salespersonId", id, { shouldDirty: true });
-                    const who = salespeople.find((u) => u.id === id);
                     const dept = who?.department?.id ?? who?.employeeDepartment?.id;
                     if (dept) setValue("departmentId", dept, { shouldDirty: true });
                   }}
+                  clearLabel="Not for a salesperson"
+                  fallbackLabel={initialValues?.salespersonName}
+                  onlyActive
                   disabled={!canPickSalesperson}
-                >
-                  <SelectTrigger><SelectValue placeholder="Not for a salesperson" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_SALESPERSON}>Not for a salesperson</SelectItem>
-                    {salespeople.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                    ))}
-                    {watch("salespersonId") && !salespeople.some((u) => u.id === watch("salespersonId")) && (
-                      <SelectItem value={watch("salespersonId")!}>{initialValues?.salespersonName ?? "Current salesperson"}</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
+                />
                 <p className="text-xs text-foreground-muted">It shows on their page under Reports → Salesperson, and counts in their cost there.</p>
               </div>
             )}

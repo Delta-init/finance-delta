@@ -22,7 +22,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
-import { useUsers, EVERYONE } from "@/features/users/api";
+import { UserPicker } from "@/features/users/UserPicker";
 import { useTableQuery } from "@/lib/use-table-query";
 import { countFilters, useUrlListParam, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
@@ -201,10 +201,6 @@ export function InvoiceManager() {
     setSelectionResetKey((n) => n + 1);
   }
 
-  const { data: users } = useUsers(
-    { pageSize: EVERYONE, sort: "name", dir: "asc" },
-    { enabled: !mineOnly },
-  );
 
   // The range is on show beside the search, so the button counts the rest.
   const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds, paymentMethod, bankAccountId);
@@ -377,17 +373,13 @@ export function InvoiceManager() {
 
         {!mineOnly && (
         <Field label="Salesperson">
-          <Select value={salespersonId || "all"} onValueChange={(v) => setSalespersonId(v === "all" ? "" : v)}>
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="All" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              {users?.data.map((u) => (
-                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <UserPicker
+            value={salespersonId}
+            onChange={(id) => setSalespersonId(id)}
+            clearLabel="All"
+            fallbackLabel={data?.data.find((i) => i.salespersonId === salespersonId)?.salespersonName}
+            className="w-[180px]"
+          />
         </Field>
         )}
 

@@ -45,7 +45,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { ProductSearchInput } from "@/features/inventory/ProductSearchInput";
 import { SuggestInput } from "@/components/ui/suggest-input";
 import { useRecentSuggestion } from "@/features/suggestions/api";
-import { useCustomers } from "@/features/customers/api";
+import { CustomerPicker } from "@/features/customers/CustomerPicker";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
 import { useUsers, EVERYONE } from "@/features/users/api";
@@ -144,7 +144,6 @@ export function QuotationForm({
   const router = useRouter();
   const { baseCurrency } = useCurrency();
   const isINROrg = baseCurrency === "INR";
-  const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   const { data: users } = useUsers({ pageSize: EVERYONE, sort: "name", dir: "asc" });
   const { data: taxConfig } = useTaxConfig();
   const [error, setError] = useState<string | null>(null);
@@ -300,18 +299,7 @@ export function QuotationForm({
               control={control}
               name="customerId"
               render={({ field }) => (
-                <Select key={field.value} value={field.value} onValueChange={field.onChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a customer…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers?.data.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <CustomerPicker value={field.value} onChange={field.onChange} invalid={!!errors.customerId} />
               )}
             />
             {errors.customerId && <p className="text-xs text-danger">{errors.customerId.message}</p>}

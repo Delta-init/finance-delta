@@ -48,7 +48,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FadeIn } from "@/components/ui/motion";
 import { TagPicker } from "@/features/tags/TagPicker";
-import { useCustomers } from "@/features/customers/api";
+import { CustomerPicker } from "@/features/customers/CustomerPicker";
 import { QuickCreateCustomerModal } from "@/features/customers/QuickCreateCustomerModal";
 import { QuickCreateSalespersonModal } from "@/features/users/QuickCreateSalespersonModal";
 import { useUsers, EVERYONE } from "@/features/users/api";
@@ -213,7 +213,6 @@ export function InvoiceForm({
   const router = useRouter();
   const { baseCurrency, rateBetween, ratesDate } = useCurrency();
   const isINROrg = baseCurrency === "INR";
-  const { data: customers } = useCustomers({ pageSize: 100, sort: "name", dir: "asc" });
   // Somebody raising their own invoices has one salesperson available —
   // themselves — and cannot read the user list to populate a picker. The
   // server pins it to them regardless, so the field is filled in rather than
@@ -448,14 +447,7 @@ export function InvoiceForm({
               control={control}
               name="customerId"
               render={({ field }) => (
-                <Select key={field.value} value={field.value} onValueChange={field.onChange}>
-                  <SelectTrigger><SelectValue placeholder="Select a customer…" /></SelectTrigger>
-                  <SelectContent>
-                    {customers?.data.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <CustomerPicker value={field.value} onChange={field.onChange} invalid={!!errors.customerId} />
               )}
             />
             {errors.customerId && <p className="text-xs text-danger">{errors.customerId.message}</p>}

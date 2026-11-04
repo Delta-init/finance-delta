@@ -30,11 +30,42 @@ const oid = (id: string) => new Types.ObjectId(id);
 
 const STATUSES_OPEN_TO_ADJUSTMENT = ["imported", "additions"];
 
+/**
+ * Pulling commission and salary slabs: only before approval. They rewrite items across everybody on the run, the
+ * people already paid among them.
+ */
 function requireOpen(run: PayrollRunDoc) {
   if (!STATUSES_OPEN_TO_ADJUSTMENT.includes(run.status)) {
     throw new AppError(
       "CONFLICT",
       `${run.runNumber} is ${run.status.replace("_", " ")} and can no longer be adjusted.`,
+    );
+  }
+}
+
+/**
+ * Approved, and not yet paid in full: one person's additions and deductions can still change (the user, 2026-11-04:
+ * "edit this payroll after the approve also … same as before the approval, for specific people") — only somebody
+ * nothing has been paid to yet. A paid payslip is what the bank sent; one paid in part could be taken below what was
+ * already paid.
+ */
+const STATUSES_OPEN_AFTER_APPROVAL = ["approved", "partially_paid"];
+
+function requireAdjustable(run: PayrollRunDoc) {
+  if (!STATUSES_OPEN_TO_ADJUSTMENT.includes(run.status) && !STATUSES_OPEN_AFTER_APPROVAL.includes(run.status)) {
+    throw new AppError(
+      "CONFLICT",
+      `${run.runNumber} is ${run.status.replace("_", " ")} and can no longer be adjusted.`,
+    );
+  }
+}
+
+function requireLineAdjustable(run: PayrollRunDoc, line: PayrollRunDoc["lines"][number]) {
+  if (!STATUSES_OPEN_AFTER_APPROVAL.includes(run.status)) return;
+  if (line.status === "paid" || line.status === "partially_paid" || (line.amountPaidMinor ?? 0) > 0) {
+    throw new AppError(
+      "CONFLICT",
+      `${line.name} has been paid${line.status === "paid" ? "" : " in part"} — reverse their payment first to change their pay.`,
     );
   }
 }
@@ -110,8 +141,9 @@ export async function addAdjustments(
   actor: { userId: string },
 ) {
   const run = await loadRun(orgId, runId);
-  requireOpen(run);
+  requireAdjustable(run);
   if (!inputs.length) throw new AppError("VALIDATION_ERROR", "Nothing to add");
+  const afterApproval = STATUSES_OPEN_AFTER_APPROVAL.includes(run.status);
 
   const user = await User.findById(oid(actor.userId)).select("name").lean();
   const staged: Array<{ externalId: string; employeeId: string; kind: "payment" | "deduction"; label: string; amount: number; notes?: string }> = [];
@@ -119,6 +151,7 @@ export async function addAdjustments(
   for (const input of inputs) {
     const line = run.lines.find((l) => String(l._id) === input.lineId);
     if (!line) throw new AppError("NOT_FOUND", `No such person on this run: ${input.lineId}`);
+    requireLineAdjustable(run, line);
     if (input.amountMinor <= 0) throw new AppError("VALIDATION_ERROR", `"${input.label}" must be a positive amount`);
 
     const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, input.lineId));
@@ -138,6 +171,7 @@ export async function addAdjustments(
       syncedAt: null,
       createdById: oid(actor.userId),
       createdByName: user?.name ?? "",
+      afterApproval,
     } as never);
 
     staged.push({
@@ -476,10 +510,12 @@ async function stageCsCommission(orgId: string, run: PayrollRunDoc, actor: { use
 
 export async function removeAdjustment(orgId: string, runId: string, externalId: string) {
   const run = await loadRun(orgId, runId);
-  requireOpen(run);
+  requireAdjustable(run);
 
   const index = run.adjustments.findIndex((a) => a.externalId === externalId);
   if (index === -1) throw new AppError("NOT_FOUND", "No such adjustment on this run");
+  const line = run.lines.find((l) => String(l._id) === String(run.adjustments[index]!.lineId));
+  if (line) requireLineAdjustable(run, line);
 
   // HRMS first again: if it refuses, this side is untouched and the two stay in
   // step. Removing here first would leave a payslip carrying money the run no

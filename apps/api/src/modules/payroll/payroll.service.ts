@@ -525,6 +525,8 @@ export async function getRun(orgId: string, id: string) {
       outstandingMinor: a.outstandingMinor,
       syncedAt: a.syncedAt ? (a.syncedAt as Date).toISOString() : null,
       createdByName: a.createdByName,
+      afterApproval: !!(a as { afterApproval?: boolean }).afterApproval,
+      createdAt: (a as { createdAt?: Date }).createdAt ? new Date((a as { createdAt: Date }).createdAt).toISOString() : null,
     })),
     payments: run.payments.map((p) => ({
       paymentId: p.paymentId,

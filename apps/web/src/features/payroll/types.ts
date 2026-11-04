@@ -181,6 +181,9 @@ export interface RunAdjustment {
   outstandingMinor: number;
   syncedAt: string | null;
   createdByName: string;
+  /** Added once the run was approved (2026-11-04). Absent from an older API. */
+  afterApproval?: boolean;
+  createdAt?: string | null;
 }
 
 export interface AdjustmentResult {

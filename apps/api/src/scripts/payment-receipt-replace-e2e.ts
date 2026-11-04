@@ -75,7 +75,7 @@ await db.collection("customers").insertOne({ _id: CUST, organizationId: ORG, cus
 
 const vat = (g: number) => Math.round((g * 5) / 105);
 let n = 0;
-const inv = (o: Record<string, any>) => {
+const inv = (o: Record<string, any>): any => {
   const total = 225_000;
   const paid = (o.payments ?? []).reduce((s: number, p: any) => s + p.amountMinor, 0);
   return {
@@ -156,7 +156,7 @@ try {
   check("…the old file is nowhere on the invoice", !JSON.stringify(doc).includes(R.url));
   check("…the money untouched: paid in full, nothing due", doc.payments[0].amountMinor === 225_000 && doc.amountPaidMinor === 225_000 && doc.balanceMinor === 0 && doc.status === "paid", show({ paid: doc.amountPaidMinor, bal: doc.balanceMinor, status: doc.status }));
   let fee = feeOf(doc);
-  check("CS Portal is sent the new file as the payment's receipt and the close's", fee.payments[0]?.receipt?.url === NEW && fee.declaredPayments[0]?.receipt?.url === NEW, show(fee));
+  check("CS Portal is sent the new file as the payment's receipt and the close's", fee.payments[0]?.receipt?.url === NEW && fee.declaredPayments?.[0]?.receipt?.url === NEW, show(fee));
   check("…and the old one nowhere in what it is sent", !JSON.stringify(fee).includes(R.url), show(fee));
 
   step("2. A close paid in two parts: one payment's receipt replaced");

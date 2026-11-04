@@ -154,6 +154,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const holdable = openForAdjustment || run.status === "approved" || run.status === "partially_paid";
   const canApprove = openForAdjustment && run.lines.length > 0;
   const canPay = run.status === "approved" || run.status === "partially_paid";
+  // After approval, until the run is paid: one person's additions and deductions can still change, for somebody
+  // nothing has been paid to yet (the user, 2026-11-04). Pulling slabs or commission stays before approval.
+  const adjustAfterApproval = canPay;
+  const lineAdjustable = (l: RunLine) =>
+    openForAdjustment || (adjustAfterApproval && (l.status === "pending" || l.status === "on_hold") && !(l.amountPaidMinor > 0));
   // Approved by mistake: one step back, while nothing of it is paid (2026-11-01).
   const canUndoApproval = run.status === "approved" && run.payments.length === 0 && !(run.totals.amountPaidMinor > 0);
   // Rows are tickable in both stages, for two different jobs: choosing who to
@@ -183,6 +188,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // A payment the money left the bank for but HRMS never acknowledged. The one
   // disagreement between the two systems that must never be quiet.
   const unsynced = run.payments.filter((p) => !p.syncedToHrms);
+  /** Of the people ticked, those an addition or deduction can go to now. */
+  const adjustSelected = run.lines.filter((l) => selected.has(l.id) && lineAdjustable(l));
   const adjustmentsByLine = new Map<string, typeof run.adjustments>();
   for (const a of run.adjustments) {
     if (!adjustmentsByLine.has(a.lineId)) adjustmentsByLine.set(a.lineId, []);
@@ -362,19 +369,22 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
 
-      {openForAdjustment && (
+      {(openForAdjustment || adjustAfterApproval) && (
         <Card className="flex flex-wrap items-center gap-3 p-4">
           <div className="min-w-0 flex-1 text-sm">
-            <p className="font-medium">Additions and deductions</p>
+            <p className="font-medium">Additions and deductions{adjustAfterApproval ? " — after approval" : ""}</p>
             <p className="text-foreground-muted">
-              {selected.size > 0
-                ? `${selected.size} selected — the same item will go on each of their payslips.`
-                : "Everything added here is written to the payslip in HRMS, so the employee sees the same figure that is paid. Tick people below to apply one item to several at once."}
+              {adjustSelected.length > 0
+                ? `${adjustSelected.length} selected — the same item will go on each of their payslips.${
+                    adjustSelected.length < selected.size ? ` ${selected.size - adjustSelected.length} already paid, left out.` : ""}`
+                : adjustAfterApproval
+                  ? "For anybody not paid yet: open their row, or tick several. It is written to their payslip in HRMS, and the run stays approved. Somebody paid, even in part, has their payment reversed first."
+                  : "Everything added here is written to the payslip in HRMS, so the employee sees the same figure that is paid. Tick people below to apply one item to several at once."}
             </p>
           </div>
           {/* Only once somebody is ticked. An always-present button that needs
               a selection first is a button that mostly does nothing. */}
-          {selected.size > 0 && (
+          {adjustSelected.length > 0 && (
             <>
               <Button
                 variant="ghost"
@@ -385,13 +395,14 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
               </Button>
               <Button
                 size="sm"
-                onClick={() => setAdjusting(run.lines.filter((l) => selected.has(l.id)))}
+                onClick={() => setAdjusting(adjustSelected)}
               >
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add or deduct for {selected.size}
+                Add or deduct for {adjustSelected.length}
               </Button>
             </>
           )}
+          {openForAdjustment && <>
           <Button
             variant="secondary"
             size="sm"
@@ -409,6 +420,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           >
             <TrendingUp className="mr-1.5 h-3.5 w-3.5" />Pull earned commission
           </Button>
+          </>}
         </Card>
       )}
 
@@ -691,6 +703,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                     {a.source === "cs_commission" && (
                                       <Badge tone="primary" className="ml-2">CS commission</Badge>
                                     )}
+                                    {a.afterApproval && (
+                                      <Badge tone="warning" className="ml-2" title={`Added after approval${a.createdByName ? ` by ${a.createdByName}` : ""}${a.createdAt ? `, ${new Date(a.createdAt).toLocaleString()}` : ""}`}>
+                                        After approval{a.createdByName ? ` · ${a.createdByName}` : ""}
+                                      </Badge>
+                                    )}
                                     {a.source === "crm_slab" && a.notes && (
                                       <span className="ml-2 text-xs text-foreground-muted">{a.notes}</span>
                                     )}
@@ -703,7 +720,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                                   </span>
                                   <span className="flex items-center gap-2">
                                     <MoneyDisplay minor={a.amountMinor} currency={a.currency ?? (l.currency || run.currency)} />
-                                    {openForAdjustment && (
+                                    {lineAdjustable(l) && (
                                       <button
                                         type="button"
                                         aria-label={`Remove ${a.label}`}
@@ -734,7 +751,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                             <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Release — they are owed this
                           </Button>
                         )}
-                        {openForAdjustment && (
+                        {lineAdjustable(l) && (
                           <Button
                             variant="secondary"
                             size="sm"

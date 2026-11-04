@@ -117,6 +117,8 @@ const payrollAdjustmentSchema = new Schema(
     syncedAt: { type: Date, default: null },
     createdById: { type: Schema.Types.ObjectId, ref: "User" },
     createdByName: { type: String, default: "" },
+    /** Added once the run was approved (the user, 2026-11-04: "edit this payroll after the approve also"). */
+    afterApproval: { type: Boolean, default: false },
   },
   { _id: true, timestamps: { createdAt: true, updatedAt: false } },
 );

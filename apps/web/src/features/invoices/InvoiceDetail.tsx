@@ -644,12 +644,14 @@ export function PaymentDialog({
   const [lateReason, setLateReason] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // The proof dropped on the dialog or pasted (a screenshot), as well as picked (2026-10-21).
+  // The proof dropped on the dialog or pasted (a screenshot), as well as picked (2026-10-21) — on an edit too, to
+  // replace the one it has (2026-11-04).
   const proofDrop = useFileDrop({
     onFiles: ([f]) => setProofFile(f ?? null),
     accept: "image/jpeg,image/png,image/webp,application/pdf",
-    disabled: !open || isEdit,
+    disabled: !open,
   });
+  const currentProof = editing?.proofUrl || "";
 
   const {
     register,
@@ -675,6 +677,7 @@ export function PaymentDialog({
   useEffect(() => {
     if (!open) return;
     setLateReason("");
+    setProofFile(null);
     if (editing) {
       reset({
         method: editing.method,
@@ -768,8 +771,8 @@ export function PaymentDialog({
     };
     try {
       if (editing) {
-        await update.mutateAsync({ paymentId: editing.id, input });
-        toast.success("Payment updated");
+        await update.mutateAsync({ paymentId: editing.id, input, file: proofFile ?? undefined });
+        toast.success(proofFile ? "Payment and its receipt updated" : "Payment updated");
       } else {
         await record.mutateAsync({ input, file: proofFile ?? undefined });
         toast.success("Payment recorded");
@@ -914,10 +917,10 @@ export function PaymentDialog({
               </label>
               <Input {...register("notes")} placeholder="Any additional notes…" />
             </div>
-            <div className={`relative col-span-2 ${isEdit ? "hidden" : ""}`} {...proofDrop.zoneProps}>
+            <div className="relative col-span-2" {...proofDrop.zoneProps}>
               {proofDrop.overlay}
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
-                Proof of Payment <span className="text-foreground-subtle">(optional)</span>
+                {isEdit ? "Receipt" : "Proof of Payment"} <span className="text-foreground-subtle">(optional)</span>
               </label>
               <input
                 ref={fileInputRef}
@@ -926,7 +929,28 @@ export function PaymentDialog({
                 className="hidden"
                 onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
               />
-              {proofFile ? (
+              {/* Editing one with a receipt: the one it has, to open or replace (the user, 2026-11-04). */}
+              {currentProof && !proofFile ? (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+                  <a
+                    href={currentProof}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 truncate text-primary hover:underline"
+                    title="Open the current receipt"
+                  >
+                    {proofName(currentProof)}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+                  >
+                    Replace
+                  </button>
+                </div>
+              ) : proofFile ? (
                 <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm">
                   <Paperclip className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
                   <span className="min-w-0 flex-1 truncate text-foreground">{proofFile.name}</span>
@@ -937,6 +961,7 @@ export function PaymentDialog({
                     type="button"
                     onClick={() => { setProofFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
                     className="shrink-0 rounded p-0.5 text-foreground-muted hover:text-foreground"
+                    title={currentProof ? "Keep the current receipt" : "Remove"}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -951,6 +976,11 @@ export function PaymentDialog({
                   Attach receipt, screenshot, or PDF…
                 </button>
               )}
+              {currentProof && proofFile && (
+                <p className="mt-1 text-xs text-foreground-muted">
+                  Saved, it replaces the current receipt — here and in the CS Portal.
+                </p>
+              )}
               <div className="mt-1 space-y-1">{proofDrop.hint}</div>
             </div>
           </div>
@@ -961,7 +991,7 @@ export function PaymentDialog({
             <DialogClose asChild>
               <Button type="button" variant="ghost" size="sm" onClick={handleClose}>Cancel</Button>
             </DialogClose>
-            <Button type="submit" size="sm" loading={isSubmitting || record.isPending}>
+            <Button type="submit" size="sm" loading={isSubmitting || record.isPending || update.isPending}>
               <Plus className="h-3.5 w-3.5" /> {isEdit ? "Save changes" : "Save Payment"}
             </Button>
           </div>
@@ -969,6 +999,13 @@ export function PaymentDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** A stored receipt's file name, from its link: ".../proof-1793…-receipt.jpg" reads "receipt.jpg". */
+function proofName(url: string): string {
+  let last = url.split(/[?#]/)[0]!.split("/").pop() ?? "";
+  try { last = decodeURIComponent(last); } catch { /* left as it is */ }
+  return last.replace(/^proof-\d+-/, "") || "Current receipt";
 }
 
 function Meta({ label, value }: { label: string; value: string }) {

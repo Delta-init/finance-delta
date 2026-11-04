@@ -2017,6 +2017,8 @@ export async function updatePayment(
   input: RecordPaymentInput,
   /** Who is typing it — only the invoice screen passes it: moved too far back, it waits for a manager. */
   late?: LateActor,
+  /** A new receipt for it, in place of the one it has (the user, 2026-11-04). */
+  file?: ProofFile,
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if (effectiveStatus(doc) === "void") throw new AppError("CONFLICT", "Cannot edit a payment on a voided invoice");
@@ -2058,6 +2060,8 @@ export async function updatePayment(
   // Its date moved too far back: it waits for a manager again, out of its account meanwhile.
   const lateNow = await lateForDate(orgId, late, input.paidOn, p.paidOn as Date, p.lateEntry as never);
   if (moves || lateNow.pending) await assertLineMovable(orgId, p as never);
+  // Its receipt replaced — stored only once nothing above refused the edit. The old file is left in storage.
+  if (file) replaceProof(doc, p, await storeProof(orgId, id, file));
   if (lateNow.next !== undefined) p.lateEntry = lateNow.next;
   p.method = input.method;
   p.amountMinor = input.amountMinor;
@@ -2185,11 +2189,55 @@ function paymentLateInfo(doc: unknown, p: unknown) {
   };
 }
 
+/** A payment's receipt as uploaded with the form. */
+type ProofFile = { buffer: Buffer; mimeType: string; originalName: string };
+
+/** A payment's receipt into storage, under its invoice. */
+async function storeProof(orgId: string, invoiceId: string, file: ProofFile) {
+  const { uploadFile, storageConfigured } = await import("../../lib/storage");
+  if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
+  const key = `invoices/${orgId}/${invoiceId}/proof-${Date.now()}-${file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  return uploadFile({ key, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+}
+
+/**
+ * A payment's receipt replaced (the user, 2026-11-04: the wrong file was on a payment, and editing it had no way to
+ * change it). A payment recorded from the close carries the salesperson's receipt, which the invoice also keeps as
+ * the close's — its declared payment's receipt and its attachment. Those copies are the same file, so they are
+ * replaced with it: left alone, CS Portal would go on showing the old file beside the new one.
+ */
+export function replaceProof(
+  doc: unknown,
+  payment: Record<string, unknown>,
+  uploaded: { url: string; key: string; size: number; mimeType: string; originalName: string },
+): void {
+  const was = String(payment.proofUrl ?? "");
+  payment.proofUrl = uploaded.url;
+  payment.proofKey = uploaded.key;
+  if (!was) return;
+  const d = doc as {
+    enrolment?: { declaredPayments?: { receipt?: Record<string, unknown> | null }[] } | null;
+    attachments?: Record<string, unknown>[];
+    markModified?: (path: string) => void;
+  };
+  const file = { name: uploaded.originalName, url: uploaded.url, key: uploaded.key, size: uploaded.size, mimeType: uploaded.mimeType };
+  let declared = false;
+  for (const p of d.enrolment?.declaredPayments ?? []) {
+    if (p?.receipt && String(p.receipt.url ?? "") === was) { p.receipt = { ...file }; declared = true; }
+  }
+  let attached = false;
+  for (const a of d.attachments ?? []) {
+    if (String(a?.url ?? "") === was) { Object.assign(a, file, { uploadedAt: new Date() }); attached = true; }
+  }
+  if (declared) d.markModified?.("enrolment.declaredPayments");
+  if (attached) d.markModified?.("attachments");
+}
+
 export async function recordPayment(
   orgId: string,
   id: string,
   input: RecordPaymentInput,
-  file?: { buffer: Buffer; mimeType: string; originalName: string },
+  file?: ProofFile,
   /**
    * A payment recorded from elsewhere — one a CS took in CS Portal and
    * accounts approved: its receipt where it already lives, and the reference
@@ -2224,10 +2272,7 @@ export async function recordPayment(
   let proofUrl = from?.proofUrl ?? "";
   let proofKey = "";
   if (file) {
-    const { uploadFile, storageConfigured } = await import("../../lib/storage");
-    if (!storageConfigured()) throw new AppError("VALIDATION_ERROR", "File storage is not configured");
-    const key = `invoices/${orgId}/${id}/proof-${Date.now()}-${file.originalName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-    const uploaded = await uploadFile({ key, buffer: file.buffer, mimeType: file.mimeType, originalName: file.originalName });
+    const uploaded = await storeProof(orgId, id, file);
     proofUrl = uploaded.url;
     proofKey = uploaded.key;
   }

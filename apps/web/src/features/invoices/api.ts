@@ -124,8 +124,16 @@ export function useUpdatePayment(invoiceId: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: ({ paymentId, input }: { paymentId: string; input: RecordPaymentInput }) =>
-      api.patch<Invoice>(`invoices/${invoiceId}/payments/${paymentId}`, input),
+    mutationFn: ({ paymentId, input, file }: { paymentId: string; input: RecordPaymentInput; file?: File }) => {
+      // A new receipt in place of its old one (2026-11-04): sent as a form, as recording one is.
+      if (file) {
+        const form = new FormData();
+        form.append("data", JSON.stringify(input));
+        form.append("file", file);
+        return api.patchForm<Invoice>(`invoices/${invoiceId}/payments/${paymentId}`, form);
+      }
+      return api.patch<Invoice>(`invoices/${invoiceId}/payments/${paymentId}`, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });

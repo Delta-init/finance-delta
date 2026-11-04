@@ -13,6 +13,7 @@ import { useCan } from "@/lib/use-can";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
 import { CoursePayments } from "@/components/dashboard/course-payments";
+import { WalletCard } from "@/features/wallet/wallet-card";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -74,6 +75,9 @@ export function MyWorkspace({ name }: { name: string }) {
           )}
         </div>
       </div>
+
+      {/* First in the row: this month's pay from HRMS (2026-11-04). Nothing without a wallet. */}
+      <WalletCard />
 
       {/* An approver on a narrow role lands here too, and the queue is the
           reason they have an account. Both render nothing when empty. */}
@@ -216,6 +220,8 @@ export function NoAccessYet({ name }: { name: string }) {
           role — until then there is nothing here for you to see.
         </p>
       </div>
+      {/* Their pay is theirs whatever access they have here (2026-11-04). */}
+      <WalletCard className="w-full max-w-md text-left" />
     </div>
   );
 }

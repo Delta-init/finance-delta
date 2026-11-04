@@ -129,6 +129,8 @@ const NAV: NavGroup[] = [
       // own work. Every other entry names what it needs, or it is a link to a
       // refusal for anybody who does not have it.
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, enabled: true },
+      // Everybody's own pay from HRMS — a day at a time, deductions and why, commission, what finance paid (2026-11-04).
+      { href: "/wallet", label: "My Wallet", icon: WalletCards, enabled: true },
     ],
   },
   {

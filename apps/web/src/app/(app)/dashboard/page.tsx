@@ -11,6 +11,7 @@ import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
 import { ApprovalsModal } from "@/components/dashboard/approvals-modal";
 import { DashboardBreakdownProvider } from "@/features/dashboard/DashboardBreakdown";
+import { WalletCard } from "@/features/wallet/wallet-card";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -50,6 +51,9 @@ export default async function DashboardPage() {
           {currentMonth} {currentYear}
         </div>
       </div>
+
+      {/* First in the row: this month's pay from HRMS — earned, deducted, paid (2026-11-04). Nothing without a wallet. */}
+      <WalletCard />
 
       {/* Above the numbers: something waiting on a decision outranks a chart
           of what already happened. Renders nothing when the queue is empty,

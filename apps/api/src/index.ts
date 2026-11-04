@@ -52,6 +52,7 @@ import lateEntryRoutes from "./modules/late-entry/late-entry.routes";
 import emailLogRoutes from "./modules/email-log/email-log.routes";
 import tetraDepositRoutes from "./modules/tetra-deposit/tetra-deposit.routes";
 import balancePaymentRoutes from "./modules/balance-payment/balance-payment.routes";
+import walletRoutes from "./modules/wallet/wallet.routes";
 import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
@@ -146,6 +147,8 @@ async function bootstrap() {
   api.use("/email-logs", emailLogRoutes);
   api.use("/tetra-deposits", tetraDepositRoutes);
   api.use("/balance-payments", balancePaymentRoutes);
+  // My Wallet, from HRMS (2026-11-04) — everyone signed in, their own only.
+  api.use("/wallet", walletRoutes);
   app.use("/api/v1", api);
 
   app.use(notFound);

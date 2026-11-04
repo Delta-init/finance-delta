@@ -46,7 +46,14 @@ interface HrmsEnvelope<T> {
 async function request<T>(
   method: "GET" | "POST" | "DELETE",
   path: string,
-  opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
+  opts: {
+    query?: Record<string, string | number | boolean | undefined>;
+    body?: unknown;
+    /** Longer for an answer HRMS asks finance for first — the wallet (2026-11-04). */
+    timeoutMs?: number;
+    /** Pass HRMS's own 404 on as it is ("No HRMS employee has this email."), rather than as a failure here. */
+    relayNotFound?: boolean;
+  } = {},
 ): Promise<HrmsEnvelope<T>> {
   const { baseUrl, clientId, secret } = assertConfigured();
 
@@ -67,8 +74,9 @@ async function request<T>(
     .update(buildCanonical(method, signedPath, timestamp, nonce, rawBody))
     .digest("hex");
 
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${baseUrl}${signedPath}`, {
@@ -104,13 +112,16 @@ async function request<T>(
       if (res.status === 503) {
         throw new AppError("VALIDATION_ERROR", "The HRMS integration API is disabled on that server.");
       }
+      if (res.status === 404 && opts.relayNotFound && parsed?.message) {
+        throw new AppError("NOT_FOUND", parsed.message);
+      }
       throw new AppError("INTERNAL", `HRMS request failed (${res.status}): ${detail}`);
     }
     return parsed;
   } catch (err) {
     if (err instanceof AppError) throw err;
     if ((err as Error).name === "AbortError") {
-      throw new AppError("INTERNAL", `HRMS did not respond within ${TIMEOUT_MS / 1000}s.`);
+      throw new AppError("INTERNAL", `HRMS did not respond within ${timeoutMs / 1000}s.`);
     }
     throw new AppError("INTERNAL", `Could not reach HRMS: ${(err as Error).message}`);
   } finally {
@@ -392,6 +403,14 @@ export const hrmsClient = {
 
   async ping() {
     return (await request<{ service: string; time: string }>("GET", "/ping")).data;
+  },
+
+  /**
+   * Somebody's wallet by the email they sign in with (My Wallet, 2026-11-04) — the same figures HRMS's own wallet
+   * page shows. HRMS asks finance (and finance the CRMs) before it answers, hence the longer wait.
+   */
+  async wallet(email: string, month?: string): Promise<unknown> {
+    return (await request<unknown>("GET", "/wallet", { query: { email, month }, timeoutMs: 30_000, relayNotFound: true })).data;
   },
 
   async organizations(): Promise<HrmsOrganization[]> {

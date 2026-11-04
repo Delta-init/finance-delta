@@ -22,6 +22,8 @@ MONGO_PORT="${E2E_MONGO_PORT:-27077}"
 HRMS_PORT="${E2E_HRMS_PORT:-5099}"
 # A stand-in Root portal the finance script starts, for the sales CRMs' commission (2026-11-01).
 ROOT_PORT="${E2E_ROOT_PORT:-5098}"
+# Finance's integration routes, which the finance script serves for HRMS's wallet to call (2026-11-04).
+FIN_PORT="${E2E_FIN_PORT:-5097}"
 MONTH="${E2E_MONTH:-2026-03}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/payroll-e2e.XXXXXX")"
 
@@ -56,6 +58,7 @@ cleanup() {
   local code=$?
   release_port "$HRMS_PORT"
   release_port "$ROOT_PORT"
+  release_port "$FIN_PORT"
   mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --shutdown >/dev/null 2>&1 || true
   release_port "$MONGO_PORT"
   # Only once nothing is still writing to it.
@@ -83,7 +86,8 @@ hrms_env() {
   MONGODB_URI="$HRMS_DB" JWT_SECRET="$LONG" JWT_REFRESH_SECRET="$LONG" \
   SUPER_ADMIN_EMAIL="e2e@example.com" SUPER_ADMIN_PASSWORD="e2ePassword1" \
   CLIENT_URL="http://localhost:3000" NODE_ENV=development \
-  INTEGRATION_CLIENT_ID="delta-finance" INTEGRATION_SECRET="$SECRET" "$@"
+  INTEGRATION_CLIENT_ID="delta-finance" INTEGRATION_SECRET="$SECRET" \
+  FINANCE_API_URL="http://127.0.0.1:$FIN_PORT" FINANCE_CLIENT_ID="delta-hrms" FINANCE_INTEGRATION_SECRET="$SECRET" "$@"
 }
 
 echo "Seeding HRMS and submitting $MONTH"
@@ -109,5 +113,6 @@ JWT_ACCESS_SECRET="$LONG" JWT_REFRESH_SECRET="$LONG" \
 HRMS_API_URL="http://127.0.0.1:$HRMS_PORT" \
 HRMS_CLIENT_ID="delta-finance" HRMS_INTEGRATION_SECRET="$SECRET" \
 ROOT_ERP_API_URL="http://127.0.0.1:$ROOT_PORT" ROOT_ERP_SECRET="e2e-root-secret" E2E_ROOT_PORT="$ROOT_PORT" \
+INBOUND_CLIENT_ID="delta-hrms" INBOUND_INTEGRATION_SECRET="$SECRET" E2E_FIN_PORT="$FIN_PORT" \
 E2E_HRMS_SEED="$SEED" \
   bun src/scripts/payroll-e2e.ts

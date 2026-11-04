@@ -46,7 +46,7 @@ if (!/127\.0\.0\.1|localhost/.test(uri) || !/e2e|test/i.test(uri)) {
 }
 
 const seed = JSON.parse(process.env.E2E_HRMS_SEED ?? "{}") as {
-  orgId: string; month: string; netTotal: number; employeeCount: number;
+  orgId: string; month: string; netTotal: number; employeeCount: number; hrEmail: string;
   employees: Array<{ id: string; code: string; name: string; email: string }>;
 };
 
@@ -517,6 +517,92 @@ async function main() {
   await payments.reversePayment(orgId, runId, byCash.paymentId, "Cash came back");
   check("reversing the cash one: only its payslip goes back to issued", (await slipOf("E2E003")) === "issued");
   check("…the bank one's payslip stays paid", (await slipOf("E2E001")) === "paid", await slipOf("E2E001"));
+
+  // ── The wallet ─────────────────────────────────────────────────────────
+  step("10. The wallet: HRMS asks finance what somebody was paid (2026-11-04)");
+  // Finance's integration routes as a real server, so HRMS's signed request is checked exactly as in production.
+  const { default: express } = await import("express");
+  const { default: integrationRoutes } = await import("../modules/integrations/integrations.routes");
+  const { errorHandler } = await import("../middleware/errorHandler");
+  const finApp = express();
+  finApp.use(express.json({ verify: (req, _res, buf) => { (req as typeof req & { rawBody?: Buffer }).rawBody = buf; } }));
+  finApp.use("/api/v1/integrations", integrationRoutes);
+  finApp.use(errorHandler);
+  const finServer = await new Promise<http.Server>((ok) => { const srv = finApp.listen(Number(process.env.E2E_FIN_PORT), "127.0.0.1", () => ok(srv)); });
+
+  const hrmsApi = String(process.env.HRMS_API_URL).replace(/\/+$/, "");
+  const loginAs = async (email: string) => {
+    const res = await fetch(`${hrmsApi}/api/v1/auth/login`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: "Password123!" }),
+    });
+    return ((await res.json()) as { data?: { accessToken?: string } }).data?.accessToken ?? "";
+  };
+  type Wallet = {
+    status: string; currency: string; employee: { employeeCode: string };
+    totals: { credited: number; deducted: number; net: number; paid: number; balance: number; financePayable: number | null };
+    finance: { connected: boolean; error: string | null; crmError: string | null };
+    salary: { monthTotal: number; daysInMonth: number };
+    days: Array<{ credit: number; counted: boolean }>;
+    items: Array<{ label: string; amount: number; group: string; direction: string }>;
+    commission: Array<{ source: string; state: string; inBalance: boolean; amount: number; note: string | null }>;
+    payments: Array<{ source: string; reference: string; amount: number; reversed: boolean; note: string | null; method: string }>;
+  };
+  const walletAt = async (token: string, path: string) => {
+    const res = await fetch(`${hrmsApi}/api/v1/wallet/${path}`, { headers: { authorization: `Bearer ${token}` } });
+    return { status: res.status, wallet: ((await res.json().catch(() => ({}))) as { data?: Wallet }).data };
+  };
+  const sumOf = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 100) / 100;
+
+  const hrToken = await loginAs(seed.hrEmail);
+  check("HR signed in to HRMS", !!hrToken);
+  const seedAisha = seed.employees.find((e) => e.code === "E2E001")!;
+  const seedNadia = seed.employees.find((e) => e.code === "E2E003")!;
+  // Root closed after step 7: the CRMs' commission can't be read, and the wallet says so rather than failing.
+  const { wallet: noRoot } = await walletAt(hrToken, `${seedAisha.id}?month=${seed.month}`);
+  check("Root down: the wallet opens, says the CRM commission can't be read", !!noRoot?.finance.crmError && !noRoot.commission.some((c) => c.source === "crm"),
+    noRoot?.finance.crmError ?? "");
+  await new Promise<void>((ok) => rootApi.listen(Number(process.env.E2E_ROOT_PORT), "127.0.0.1", ok));
+  const { wallet: w } = await walletAt(hrToken, `${seedAisha.id}?month=${seed.month}`);
+  check("HR opens her wallet", w?.employee.employeeCode === "E2E001");
+  check("…finance answered HRMS's signed request", w?.finance.connected === true, w?.finance.error ?? "");
+  run = await payroll.getRun(orgId, runId);
+  const walletLine = run.lines.find((l) => l.id === partLine.id)!;
+  check("…what finance owes her is her payroll line", w?.totals.financePayable === walletLine.payableMinor / 100, `${w?.totals.financePayable}`);
+  check("…the days, the payslip and finance agree", w?.totals.net === w?.totals.financePayable && !w?.items.some((i) => /differs/.test(i.label)),
+    `net ${w?.totals.net}`);
+  check("…paid in full, nothing left", w?.status === "paid" && w.totals.paid === walletLine.payableMinor / 100 && w.totals.balance === 0,
+    `paid ${w?.totals.paid}, balance ${w?.totals.balance}`);
+  check("…a day for every day of the month, adding up to her salary",
+    w?.days.length === w?.salary.daysInMonth && sumOf(w!.days.map((d) => d.credit)) === w!.salary.monthTotal, `${w?.salary.monthTotal}`);
+  const live = w?.payments.filter((p) => p.source === "payroll" && !p.reversed) ?? [];
+  check("…the payment that paid her, with its reference", live.length === 1 && live[0]!.reference === "WPS-SAME-DAY" && live[0]!.amount === owedMinor / 100,
+    live.map((p) => `${p.reference}:${p.amount}`).join(","));
+  const reversedPays = w?.payments.filter((p) => p.reversed) ?? [];
+  check("…the bank and cash parts that were reversed, marked so", ["WPS-PART-1", "CASH-PART-2"].every((r) => reversedPays.some((p) => p.reference === r && /^Reversed/.test(p.note ?? ""))),
+    reversedPays.map((p) => p.reference).join(","));
+  const crmRow = w?.commission.find((c) => c.source === "crm");
+  check("…her CRM commission, carried by payroll and paid with it", crmRow?.state === "paid" && crmRow.inBalance === false && /payroll/.test(crmRow.note ?? ""),
+    `${crmRow?.state} · ${crmRow?.note}${w?.finance.crmError ? ` · ${w.finance.crmError}` : ""}`);
+  check("…on her payslip as commission once, not counted twice",
+    (w?.items.filter((i) => i.group === "commission").length ?? 0) >= 1 && !w?.commission.some((c) => c.inBalance));
+
+  const { wallet: wn } = await walletAt(hrToken, `${seedNadia.id}?month=${seed.month}`);
+  const nadiaLine = run.lines.find((l) => l.id === e2e003.id)!;
+  check("somebody whose only payment was reversed: all of it still owed",
+    wn?.totals.paid === 0 && wn.totals.balance === nadiaLine.payableMinor / 100 && wn.payments.some((p) => p.reversed),
+    `balance ${wn?.totals.balance}`);
+
+  const ownToken = await loginAs(seedAisha.email);
+  const own = await walletAt(ownToken, `mine?month=${seed.month}`);
+  check("she opens her own wallet: the same figures", own.status === 200 && own.wallet?.totals.balance === 0 && own.wallet?.totals.paid === w?.totals.paid);
+  check("…but not somebody else's", (await walletAt(ownToken, `${seedNadia.id}?month=${seed.month}`)).status === 403);
+
+  rootApi.close();
+  await new Promise<void>((ok) => finServer.close(() => ok()));
+  const { wallet: down } = await walletAt(hrToken, `${seedAisha.id}?month=${seed.month}`);
+  check("finance down: the wallet still opens and says so", down?.finance.connected === false && /reached|connected/.test(down?.finance.error ?? ""), down?.finance.error ?? "");
+  check("…and falls back on what HRMS recorded: paid", down?.status === "paid" && down.payments.length === 1 && /HRMS/.test(down.payments[0]!.note ?? ""),
+    `${down?.status}`);
 
   // ── Result ─────────────────────────────────────────────────────────────
   console.log(`\n${"─".repeat(60)}`);

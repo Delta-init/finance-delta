@@ -49,4 +49,7 @@ router.post("/tetra-deposits/withdrawals", c.withdrawTetraDepositHandler);
 // A sales CRM's My Pay asking where finance stands on its people's commission for a month (2026-10-21).
 router.get("/crm-commission/payouts", c.crmCommissionPayouts);
 
+// HRMS's wallet page asking what finance knows about one person's month (2026-11-04). Read-only.
+router.post("/hrms/wallet", c.hrmsWallet);
+
 export default router;

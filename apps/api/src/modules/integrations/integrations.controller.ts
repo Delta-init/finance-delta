@@ -9,6 +9,7 @@ import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
 import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 import { intakeTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
+import { walletForHrms } from "./hrms-wallet.service";
 
 /**
  * A signed machine call carries no session, so it carries no organization
@@ -174,3 +175,18 @@ export const crmCommissionPayouts = asyncHandler(async (req: Request, res: Respo
   ok(res, await payoutsForCrm(crm, month));
 });
 
+/**
+ * POST /integrations/hrms/wallet { employeeId, emails, month } — HRMS's wallet page (2026-11-04) asking what finance
+ * knows about one person's month: payroll owed and paid (part payments included), and their CRM and CS commission,
+ * found by the emails HRMS has for them. Read-only. POST so the emails travel in the signed body, not the address.
+ */
+export const hrmsWallet = asyncHandler(async (req: Request, res: Response) => {
+  const employeeId = String(req.body?.employeeId ?? "").trim();
+  const month = String(req.body?.month ?? "");
+  if (!/^[a-f0-9]{24}$/i.test(employeeId)) throw new AppError("VALIDATION_ERROR", "employeeId is the HRMS employee id");
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new AppError("VALIDATION_ERROR", "month is YYYY-MM");
+  const emails = [...new Set((Array.isArray(req.body?.emails) ? req.body.emails : [])
+    .map((e: unknown) => String(e ?? "").trim().toLowerCase())
+    .filter((e: string) => /^\S+@\S+\.\S+$/.test(e)))].slice(0, 5) as string[];
+  ok(res, await walletForHrms({ employeeId, emails, month }));
+});

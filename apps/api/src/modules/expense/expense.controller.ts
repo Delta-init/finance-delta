@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { expenseQuerySchema } from "@delta/shared";
+import { hasPermission } from "@delta/shared";
 import { AppError, asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import { resolveScope } from "../../lib/ownership";
@@ -60,8 +61,25 @@ export const reject = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const remove = asyncHandler(async (req, res) => {
-  await svc.deleteExpense(org(req), req.params.id!);
+  // One a payroll payment posted that still stands is reversed first — paying people back and forth is payroll's.
+  const { payrollPaymentOfExpense } = await import("../payroll/payment.service");
+  const payroll = await payrollPaymentOfExpense(org(req), req.params.id!);
+  if (payroll && !payroll.reversed && !req.auth!.isSuperAdmin && !hasPermission(req.auth!.permissions, "payroll:pay")) {
+    throw new AppError("FORBIDDEN", `Deleting it reverses payroll payment ${payroll.paymentId} — that needs the right to pay payroll.`);
+  }
+  const { User } = await import("../user/user.model");
+  const name = (await User.findById(req.auth!.userId).select("name").lean<{ name?: string }>())?.name ?? "";
+  await svc.deleteExpense(org(req), req.params.id!, {
+    reason: typeof req.query.reason === "string" ? req.query.reason.slice(0, 500) : undefined,
+    actor: { name },
+  });
   res.status(204).end();
+});
+
+/** The payroll payment that posted it, and what deleting it would take with it — null when none did. */
+export const payrollPayment = asyncHandler(async (req, res) => {
+  const { payrollPaymentOfExpense } = await import("../payroll/payment.service");
+  ok(res, await payrollPaymentOfExpense(org(req), req.params.id!));
 });
 
 export const voidExpense = asyncHandler(async (req, res) => {

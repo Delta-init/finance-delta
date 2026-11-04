@@ -779,7 +779,12 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
  * number, and a resend would record it a second time), or one a payroll payment
  * posted. Those are voided. Its receipts go from storage with it.
  */
-export async function deleteExpense(orgId: string, id: string): Promise<void> {
+export async function deleteExpense(
+  orgId: string,
+  id: string,
+  /** One a payroll payment posted (2026-11-04): why, when the payment is still standing and is reversed first. */
+  opts: { reason?: string; actor?: { name: string } } = {},
+): Promise<void> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   refuseBillExpense(doc);
@@ -787,10 +792,23 @@ export async function deleteExpense(orgId: string, id: string): Promise<void> {
   if (kind.startsWith("hrms_")) {
     throw new AppError("CONFLICT", `${doc.expenseNumber} came from HRMS, which keeps its number — void it instead.`);
   }
+  // Posted by a payroll payment: the payment goes with it, from everywhere it reached (payroll/payment.service).
   const { PayrollRun } = await import("../payroll/payroll-run.model");
   if (await PayrollRun.exists({ organizationId: orgId, "payments.expenseId": doc._id })) {
-    throw new AppError("CONFLICT", `${doc.expenseNumber} was posted by a payroll payment — void it from the payroll run instead.`);
+    const { deletePayrollPayment } = await import("../payroll/payment.service");
+    await deletePayrollPayment(orgId, String(doc._id), { reason: opts.reason }, opts.actor ?? { name: "" });
+    return;
   }
+  await removeExpense(orgId, id);
+}
+
+/**
+ * The expense gone, with its bank line (not once a statement was reconciled against it), its late-entry wait and the
+ * receipts nothing else holds. Answers its number. The checks of what may be deleted are the caller's.
+ */
+export async function removeExpense(orgId: string, id: string): Promise<string> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId });
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   const keys = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []).map((a) => a.key).filter(Boolean) as string[];
   // Its line in the bank goes with it — not once a bank statement was reconciled against it.
   const line = (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId;
@@ -802,6 +820,7 @@ export async function deleteExpense(orgId: string, id: string): Promise<void> {
     // A recurring expense's copies share its files: only one nothing else holds goes.
     await deleteUnusedFiles(orgId, keys, doc._id);
   }
+  return doc.expenseNumber;
 }
 
 // ── Recurring template controls ────────────────────────────────────────────────

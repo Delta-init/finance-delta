@@ -85,8 +85,28 @@ export function useDeleteExpense() {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: (id: string) => api.del<void>(`expenses/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    // `reason`: one a payroll payment posted that still stands is reversed first, for it (2026-11-04).
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.del<void>(`expenses/${id}${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["payroll"] });
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("bank") });
+    },
+  });
+}
+
+/** What deleting it would take with it, when a payroll payment posted it (2026-11-04); null when none did. */
+export interface PayrollPaymentOfExpense {
+  runId: string; runNumber: string; period: string; paymentId: string; reversed: boolean;
+  amountMinor: number; currency: string; people: string[]; reconciled: boolean;
+}
+export function usePayrollPaymentOfExpense(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, id, "payroll-payment"],
+    queryFn: () => api.get<PayrollPaymentOfExpense | null>(`expenses/${id}/payroll-payment`),
+    enabled: !!id && enabled,
+    retry: false,
   });
 }
 

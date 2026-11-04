@@ -40,6 +40,8 @@ import {
   useAddExpenseAttachment,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
+import { usePayrollPaymentOfExpense } from "@/features/expenses/api";
+import { PayrollDeleteNote, payrollDeleteReady } from "@/features/expenses/PayrollDeleteNote";
 import { StatementDateField } from "@/features/expenses/StatementDateField";
 import { useCan } from "@/lib/use-can";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -92,6 +94,9 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const deleteExpense = useDeleteExpense();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Posted by a payroll payment (2026-11-04): what deleting it takes with it, asked only once the dialog opens.
+  const { data: payroll } = usePayrollPaymentOfExpense(id, deleteOpen);
+  const [deleteReason, setDeleteReason] = useState("");
   const [rejectOpen, setRejectOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
@@ -248,17 +253,19 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               <DialogHeader>
                 <DialogTitle>Delete {expense.expenseNumber}?</DialogTitle>
                 <DialogDescription>
-                  It is removed for good, with its receipts — void it instead to keep it on the record as cancelled. This cannot be undone.
+                  It is removed for good, with its receipts{payroll ? "" : " — void it instead to keep it on the record as cancelled"}. This cannot be undone.
                 </DialogDescription>
               </DialogHeader>
+              {payroll && <PayrollDeleteNote payroll={payroll} reason={deleteReason} onReason={setDeleteReason} />}
               <DialogFooter>
                 <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
                 <Button
                   variant="destructive"
                   loading={deleteExpense.isPending}
+                  disabled={!payrollDeleteReady(payroll, deleteReason)}
                   onClick={async () => {
                     try {
-                      await deleteExpense.mutateAsync(id);
+                      await deleteExpense.mutateAsync({ id, reason: deleteReason.trim() || undefined });
                       toast.success(`${expense.expenseNumber} deleted`);
                       router.push("/expenses");
                     } catch (e) {

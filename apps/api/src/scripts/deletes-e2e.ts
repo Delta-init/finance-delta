@@ -9,7 +9,7 @@
  *              and its instalment reminders stop with it, a done one stays;
  *   Bills      a payment can be deleted (status worked out again: part paid,
  *              then back to approved), then the bill; not on a voided bill;
- *   Expenses   any status, paid too; one from HRMS or posted by payroll refused;
+ *   Expenses   any status, paid too; one from HRMS refused; one posted by payroll asks why (it is reversed first);
  *   Rights     an employee is refused each of them.
  *
  * Run through scripts/deletes-e2e.sh (throwaway mongod + API, no .env).
@@ -198,7 +198,9 @@ async function main() {
   const e5 = await expense("EXP-5", "approved");
   await db.collection("payrollruns").insertOne({ organizationId: org._id, runNumber: "PR-1", hrmsOrgId: "o", period: "2026-09", status: "paid", currency: "AED", payments: [{ _id: new Types.ObjectId(), amountMinor: 25_00, expenseId: new Types.ObjectId(e5) }] });
   r = await request("DELETE", `/expenses/${e5}`, tA);
-  check("one a payroll payment posted: refused", r.status === 409 && /payroll/.test(r.body?.error?.message ?? ""), show(r.body));
+  // Since 2026-11-04 deleting it takes the payment with it (payroll-payment-delete-e2e) — one still standing is reversed
+  // first, so it needs a reason; without one: refused, nothing gone.
+  check("one a payroll payment posted, still standing, no reason: refused, nothing gone", r.status === 422 && /reverses/.test(r.body?.error?.message ?? "") && !!(await expDoc(e5)), show(r.body));
   r = await request("DELETE", `/expenses/${new Types.ObjectId()}`, tA);
   check("one that isn't there: 404", r.status === 404, `${r.status}`);
 

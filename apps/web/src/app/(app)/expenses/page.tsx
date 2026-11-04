@@ -17,7 +17,8 @@ import { useTableQuery } from "@/lib/use-table-query";
 import { countFilters, useUrlParam } from "@/lib/url-state";
 import { FilterToggle } from "@/components/ui/filter-toggle";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
-import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary } from "@/features/expenses/api";
+import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary, usePayrollPaymentOfExpense } from "@/features/expenses/api";
+import { PayrollDeleteNote, payrollDeleteReady } from "@/features/expenses/PayrollDeleteNote";
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { BankAccountFilter, PaymentMethodFilter } from "@/features/banking/PaymentFilters";
 import { useExpenseCategories } from "@/features/expense-categories/api";
@@ -83,10 +84,13 @@ const EXPENSE_EXPORT_COLUMNS: ExportColumn<Expense>[] = [
 function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const voidExpense = useVoidExpense(expense.id);
   const deleteExpense = useDeleteExpense();
+  // Posted by a payroll payment (2026-11-04): deleting it takes the payment with it — said here, with a reason if asked.
+  const { data: payroll } = usePayrollPaymentOfExpense(expense.id);
+  const [reason, setReason] = useState("");
   async function run(kind: "void" | "delete") {
     try {
       if (kind === "void") await voidExpense.mutateAsync(undefined);
-      else await deleteExpense.mutateAsync(expense.id);
+      else await deleteExpense.mutateAsync({ id: expense.id, reason: reason.trim() || undefined });
       toast.success(kind === "void" ? `${expense.expenseNumber} voided` : `${expense.expenseNumber} deleted`);
       onClose();
     } catch (e) {
@@ -104,10 +108,11 @@ function DeleteExpenseDialog({ expense, onClose }: { expense: Expense; onClose: 
           {voided ? "" : "Void keeps it on the record as cancelled, out of the totals. "}
           Delete removes it for good, with its receipts. This cannot be undone.
         </p>
+        {payroll && <PayrollDeleteNote payroll={payroll} reason={reason} onReason={setReason} />}
         <DialogFooter>
           <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          {!voided && <Button variant="secondary" onClick={() => void run("void")} loading={voidExpense.isPending}>Void</Button>}
-          <Button variant="destructive" onClick={() => void run("delete")} loading={deleteExpense.isPending}>Delete for good</Button>
+          {!voided && !payroll && <Button variant="secondary" onClick={() => void run("void")} loading={voidExpense.isPending}>Void</Button>}
+          <Button variant="destructive" onClick={() => void run("delete")} loading={deleteExpense.isPending} disabled={!payrollDeleteReady(payroll, reason)}>Delete for good</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

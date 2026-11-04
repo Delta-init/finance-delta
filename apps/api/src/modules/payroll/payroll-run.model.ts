@@ -213,6 +213,28 @@ const payrollRunSchema = new Schema(
     lines: { type: [payrollLineSchema], default: [] },
     adjustments: { type: [payrollAdjustmentSchema], default: [] },
     payments: { type: [payrollPaymentSchema], default: [] },
+    /**
+     * Payments taken off the books entirely (2026-11-04: deleting the expense a payroll payment posted) — what they
+     * were, kept so the run says what happened and a payment number is never handed out twice.
+     */
+    deletedPayments: {
+      type: [
+        new Schema(
+          {
+            paymentId: { type: String, required: true },
+            amountMinor: { type: Number, required: true },
+            currency: { type: String, default: "" },
+            paidOn: { type: Date, default: null },
+            expenseNumber: { type: String, default: "" },
+            reason: { type: String, default: "" },
+            deletedAt: { type: Date, default: Date.now },
+            deletedByName: { type: String, default: "" },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
 
     // Totals as HRMS handed them over, kept apart from the running totals so a
     // later phase's additions never overwrite what was originally agreed.

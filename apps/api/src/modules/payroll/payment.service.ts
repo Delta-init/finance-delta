@@ -213,7 +213,8 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   if (Number.isNaN(paidOn.getTime())) throw new AppError("VALIDATION_ERROR", "paidOn is not a valid date");
 
   const user = await User.findById(oid(actor.userId)).select("name").lean();
-  const paymentId = `${run.runNumber}-P${run.payments.length + 1}`;
+  // Counting the deleted ones too (2026-11-04), so a number once used is never handed out again.
+  const paymentId = `${run.runNumber}-P${run.payments.length + ((run as unknown as { deletedPayments?: unknown[] }).deletedPayments?.length ?? 0) + 1}`;
 
   // ── The money moves first ────────────────────────────────────────────────
   // Negative: a payroll is a debit. addTransaction infers direction from the
@@ -564,3 +565,85 @@ async function unsettleCommissions(orgId: string, run: PayrollRunDoc, lineIds: s
   );
   return result.modifiedCount;
 }
+
+/**
+ * What deleting the expense a payroll payment posted would do (2026-11-04) — for the delete dialog. Null for an expense
+ * no payroll payment posted.
+ */
+export async function payrollPaymentOfExpense(orgId: string, expenseId: string): Promise<{
+  runId: string; runNumber: string; period: string; paymentId: string; reversed: boolean; amountMinor: number; currency: string;
+  people: string[]; reconciled: boolean;
+} | null> {
+  if (!Types.ObjectId.isValid(expenseId)) return null;
+  const run = await PayrollRun.findOne({ organizationId: oid(orgId), "payments.expenseId": oid(expenseId) });
+  const payment = run?.payments.find((p) => String(p.expenseId) === expenseId);
+  if (!run || !payment) return null;
+  const lines = [payment.bankTransactionId, payment.reversalTransactionId].filter(Boolean);
+  const reconciled = lines.length > 0 && Boolean(await BankTransaction.exists({ _id: { $in: lines }, isReconciled: true }));
+  return {
+    runId: String(run._id), runNumber: run.runNumber, period: run.period, paymentId: payment.paymentId,
+    reversed: Boolean(payment.reversedAt), amountMinor: payment.amountMinor, currency: payment.currency || run.currency,
+    people: payment.allocations.map((a) => run.lines.find((l) => String(l._id) === String(a.lineId))?.name ?? "").filter(Boolean),
+    reconciled,
+  };
+}
+
+/**
+ * The expense a payroll payment posted, deleted — and the payment with it, from everywhere it reached (the user,
+ * 2026-11-04: "delete it from its connected areas also").
+ *
+ * Not reversed yet: it is reversed first, for the reason given, exactly as Reverse on the run does — HRMS has the
+ * payslips back to issued, the people are owed again here, the commission it settled is open again. Then the
+ * payment's two bank lines (out, and back in — together nothing) go, the account's balances are worked out again,
+ * the expense and its receipts go, and the payment leaves the run's payments — remembered in `deletedPayments`, so the
+ * run says what happened and its number is never handed out again. HRMS keeps its own record of the reversal.
+ *
+ * Refused while either bank line is reconciled against a statement — checked before anything is reversed.
+ */
+export async function deletePayrollPayment(
+  orgId: string,
+  expenseId: string,
+  input: { reason?: string },
+  actor: { name: string },
+): Promise<{ paymentId: string; reversedNow: boolean }> {
+  const { assertDebitMovable } = await import("../banking/money-out");
+  const { recalculateRunningBalances } = await import("../banking/banking.service");
+  let run = await PayrollRun.findOne({ organizationId: oid(orgId), "payments.expenseId": oid(expenseId) });
+  let payment = run?.payments.find((p) => String(p.expenseId) === expenseId);
+  if (!run || !payment) throw new AppError("NOT_FOUND", "No payroll payment posted this expense");
+  const reason = (input.reason ?? "").trim();
+
+  await assertDebitMovable(orgId, payment.bankTransactionId);
+  await assertDebitMovable(orgId, payment.reversalTransactionId);
+  const reversedNow = !payment.reversedAt;
+  if (reversedNow) {
+    if (reason.length < 3) {
+      throw new AppError("VALIDATION_ERROR", `Say why — deleting it reverses ${payment.paymentId} first: its people are owed again and HRMS has their payslips back to issued.`);
+    }
+    await reversePayment(orgId, String(run._id), payment.paymentId, reason);
+    run = await PayrollRun.findById(run._id);
+    payment = run?.payments.find((p) => String(p.expenseId) === expenseId);
+    if (!run || !payment) throw new AppError("CONFLICT", "The payment changed while it was being reversed — try again");
+  }
+
+  // Its two lines in the bank, out and back in: nothing together, so the account ends where it was.
+  const lineIds = [payment.bankTransactionId, payment.reversalTransactionId].filter(Boolean);
+  if (lineIds.length) {
+    const lines = await BankTransaction.find({ _id: { $in: lineIds }, organizationId: oid(orgId) }).select("accountId").lean<{ accountId: Types.ObjectId }[]>();
+    await BankTransaction.deleteMany({ _id: { $in: lineIds }, organizationId: oid(orgId) });
+    for (const acc of new Set(lines.map((l) => String(l.accountId)))) await recalculateRunningBalances(orgId, oid(acc));
+  }
+
+  const { removeExpense } = await import("../expense/expense.service");
+  const expenseNumber = await removeExpense(orgId, expenseId);
+
+  const gone = payment;
+  run.payments.pull(gone._id);
+  (run as unknown as { deletedPayments: unknown[] }).deletedPayments.push({
+    paymentId: gone.paymentId, amountMinor: gone.amountMinor, currency: gone.currency || run.currency, paidOn: gone.paidOn,
+    expenseNumber, reason: reason || gone.reversalReason || "", deletedAt: new Date(), deletedByName: actor.name,
+  });
+  await run.save();
+  return { paymentId: gone.paymentId, reversedNow };
+}
+

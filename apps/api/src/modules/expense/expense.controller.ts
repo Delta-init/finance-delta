@@ -76,6 +76,12 @@ export const remove = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
+/** Who the payroll payment that posted it paid, and how much each — null when none did. */
+export const payrollBreakdown = asyncHandler(async (req, res) => {
+  const { payrollBreakdownOfExpense } = await import("../payroll/payment.service");
+  ok(res, await payrollBreakdownOfExpense(org(req), req.params.id!));
+});
+
 /** The payroll payment that posted it, and what deleting it would take with it — null when none did. */
 export const payrollPayment = asyncHandler(async (req, res) => {
   const { payrollPaymentOfExpense } = await import("../payroll/payment.service");

@@ -118,6 +118,29 @@ check("the next payment number counts the deleted ones (3 payments ever → P4)"
 const plain = await Expense.create({ organizationId: ORG, expenseNumber: "EXP-00300", category: "office", categoryName: "Office", description: "Pens", expenseDate: new Date("2026-11-02"), amountMinor: 1_000, taxPct: 0, taxMinor: 0, totalMinor: 1_000, currency: "AED", submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
 check("an ordinary expense: no payroll preview, deletes as before", (await payrollPaymentOfExpense(org, String(plain._id))) === null && (await errOf(() => deleteExpense(org, String(plain._id)))) === "" && !(await Expense.exists({ _id: plain._id })));
 
+step("5. The breakdown: who it paid, how much each (2026-11-04)");
+const { payrollBreakdownOfExpense } = await import("../modules/payroll/payment.service");
+const { listExpenses, getExpense } = await import("../modules/expense/expense.service");
+const { expenseQuerySchema } = await import("@delta/shared");
+// One payment to two people, the second only part of his pay — as a split payment leaves it.
+const r5 = (await PayrollRun.findById(run._id))!;
+const [la, lb] = [r5.lines.find((l) => l.name === "Asha")!, r5.lines.find((l) => l.name === "Bilal")!];
+const exp5 = await Expense.create({ organizationId: ORG, expenseNumber: "EXP-00265", category: "payroll", categoryName: "Payroll", description: "Payroll PAY-202610-002 · 2026-10 · 2 people", expenseDate: new Date("2026-11-04"), amountMinor: 350_000, taxPct: 0, taxMinor: 0, totalMinor: 350_000, currency: "AED", submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
+r5.payments.push({ paymentId: "PAY-202610-002-P4", method: "cash", paidOn: new Date("2026-11-04"), bankAccountName: "Delta Petty", reference: "V-12", currency: "AED", amountMinor: 350_000,
+  allocations: [{ lineId: la._id, amountMinor: 300_000 }, { lineId: lb._id, amountMinor: 50_000 }], finishedLineIds: [la._id], syncedToHrms: false, expenseId: exp5._id } as never);
+await r5.save();
+const bd = await payrollBreakdownOfExpense(org, String(exp5._id));
+check("the run, payment, method, account, reference", bd?.runNumber === "PAY-202610-002" && bd.paymentId === "PAY-202610-002-P4" && bd.method === "cash" && bd.bankAccountName === "Delta Petty" && bd.reference === "V-12" && !bd.reversed, j(bd));
+check("each person: paid in this payment, their month's pay, finished or part — adding up to the expense",
+  j(bd?.rows.map((x) => [x.name, x.paidMinor, x.payableMinor, x.finished])) === j([["Asha", 300_000, 300_000, true], ["Bilal", 50_000, 150_000, false]])
+  && bd!.rows.reduce((a, x) => a + x.paidMinor, 0) === 350_000, j(bd?.rows));
+const listed = await listExpenses(org, expenseQuerySchema.parse({ page: 1, pageSize: 50 }) as never, { all: true } as never);
+const mark = listed.data.find((e) => e.id === String(exp5._id))?.payroll;
+check("the list marks it — run, payment, 2 people, no salaries", j(mark) === j({ runId: String(run._id), runNumber: "PAY-202610-002", paymentId: "PAY-202610-002-P4", people: 2 }), j(mark));
+check("…and the expense page", (await getExpense(org, String(exp5._id), { all: true } as never)).payroll?.paymentId === "PAY-202610-002-P4");
+const other = await Expense.create({ organizationId: ORG, expenseNumber: "EXP-00301", category: "office", categoryName: "Office", description: "Ink", expenseDate: new Date("2026-11-04"), amountMinor: 500, taxPct: 0, taxMinor: 0, totalMinor: 500, currency: "AED", submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
+check("an ordinary expense: no mark, no breakdown", !(await getExpense(org, String(other._id), { all: true } as never)).payroll && (await payrollBreakdownOfExpense(org, String(other._id))) === null);
+
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);
 process.exit(failures ? 1 : 0);

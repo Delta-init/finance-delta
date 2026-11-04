@@ -15,6 +15,8 @@ router.get("/summary", requireAnyPermission("expense:read", "expense:read:own"),
 router.get("/:id", requireAnyPermission("expense:read", "expense:read:own"), c.get);
 // What deleting one a payroll payment posted would do (2026-11-04) — for the delete dialog.
 router.get("/:id/payroll-payment", requirePermission("expense:delete"), c.payrollPayment);
+// Who a payroll payment paid and how much each (2026-11-04) — salaries, so payroll's to see.
+router.get("/:id/payroll-breakdown", requirePermission("payroll:read"), c.payrollBreakdown);
 router.post("/", requireAnyPermission("expense:create", "expense:write:own"), validateBody(createExpenseSchema), c.create);
 // Supporting documents are uploaded, never pasted (2026-10-20): the form stores each file here, then saves the expense with it.
 router.post("/uploads", requireAnyPermission("expense:create", "expense:write:own"), parseUpload, c.uploadFormFile);

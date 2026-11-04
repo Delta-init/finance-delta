@@ -301,7 +301,21 @@ export async function listExpenses(
       .populate("departmentId", "name"),
     Expense.countDocuments(filter),
   ]);
-  return { data: rows.map((r) => toDTO(r as unknown as ExpenseDoc)), meta: pageMeta(total, query.page, query.pageSize) };
+  return { data: await withPayroll(orgId, rows.map((r) => toDTO(r as unknown as ExpenseDoc))), meta: pageMeta(total, query.page, query.pageSize) };
+}
+
+/** Each one a payroll payment posted, marked with which and how many people (2026-11-04) — one read for the page. */
+async function withPayroll(orgId: string, list: ExpenseDTO[]): Promise<ExpenseDTO[]> {
+  const ids = list.map((e) => e.id).filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id));
+  if (!ids.length) return list;
+  const { PayrollRun } = await import("../payroll/payroll-run.model");
+  const runs = await PayrollRun.find({ organizationId: new Types.ObjectId(orgId), "payments.expenseId": { $in: ids } })
+    .select("runNumber payments.expenseId payments.paymentId payments.allocations.lineId").lean<any[]>();
+  const of = new Map<string, NonNullable<ExpenseDTO["payroll"]>>();
+  for (const r of runs) for (const p of r.payments ?? []) {
+    if (p.expenseId) of.set(String(p.expenseId), { runId: String(r._id), runNumber: r.runNumber, paymentId: p.paymentId, people: (p.allocations ?? []).length });
+  }
+  return list.map((e) => (of.has(e.id) ? { ...e, payroll: of.get(e.id)! } : e));
 }
 
 /**
@@ -344,7 +358,7 @@ export async function getExpense(orgId: string, id: string, scope: Scope): Promi
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
-  return toDTO(doc as unknown as ExpenseDoc);
+  return (await withPayroll(orgId, [toDTO(doc as unknown as ExpenseDoc)]))[0]!;
 }
 
 /* ── The Banking account it is paid from, and its line there (2026-10-16) ──────────────────────────────────────── */

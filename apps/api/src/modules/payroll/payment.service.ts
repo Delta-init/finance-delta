@@ -647,3 +647,44 @@ export async function deletePayrollPayment(
   return { paymentId: gone.paymentId, reversedNow };
 }
 
+
+/** One person in a payroll payment's breakdown. */
+export interface PayrollBreakdownRow {
+  lineId: string; name: string; employeeCode: string; departmentName: string; designation: string;
+  /** What this payment paid them. */
+  paidMinor: number;
+  /** Their pay for the month on the run. */
+  payableMinor: number;
+  /** This payment paid the last of it — or, from before part payments, paid them in full. */
+  finished: boolean;
+}
+
+/**
+ * Who a payroll payment paid, and how much each (the user, 2026-11-04: "for the payroll expense, which employee and
+ * how much") — by the expense it posted. Null for an expense no payroll payment posted.
+ */
+export async function payrollBreakdownOfExpense(orgId: string, expenseId: string): Promise<{
+  runId: string; runNumber: string; period: string; paymentId: string; method: string; paidOn: string;
+  bankAccountName: string; reference: string; currency: string; amountMinor: number;
+  reversed: boolean; reversalReason: string; rows: PayrollBreakdownRow[];
+} | null> {
+  if (!Types.ObjectId.isValid(expenseId)) return null;
+  const run = await PayrollRun.findOne({ organizationId: oid(orgId), "payments.expenseId": oid(expenseId) }).lean<any>();
+  const payment = run?.payments.find((p: any) => String(p.expenseId) === expenseId);
+  if (!run || !payment) return null;
+  const finished = new Set((payment.finishedLineIds?.length ? payment.finishedLineIds : payment.allocations.map((a: any) => a.lineId)).map(String));
+  const rows: PayrollBreakdownRow[] = payment.allocations.map((a: any) => {
+    const l = run.lines.find((x: any) => String(x._id) === String(a.lineId));
+    return {
+      lineId: String(a.lineId), name: l?.name ?? "", employeeCode: l?.employeeCode ?? "", departmentName: l?.departmentName ?? "",
+      designation: l?.designation ?? "", paidMinor: a.amountMinor, payableMinor: l?.payableMinor ?? a.amountMinor,
+      finished: finished.has(String(a.lineId)),
+    };
+  }).sort((x: PayrollBreakdownRow, y: PayrollBreakdownRow) => x.name.localeCompare(y.name));
+  return {
+    runId: String(run._id), runNumber: run.runNumber, period: run.period, paymentId: payment.paymentId, method: payment.method,
+    paidOn: new Date(payment.paidOn).toISOString().slice(0, 10), bankAccountName: payment.bankAccountName ?? "",
+    reference: payment.reference ?? "", currency: payment.currency || run.currency, amountMinor: payment.amountMinor,
+    reversed: Boolean(payment.reversedAt), reversalReason: payment.reversalReason ?? "", rows,
+  };
+}

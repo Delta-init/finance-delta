@@ -40,6 +40,7 @@ import {
   useAddExpenseAttachment,
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
+import { PayrollBreakdownCard } from "@/features/expenses/PayrollBreakdown";
 import { usePayrollPaymentOfExpense } from "@/features/expenses/api";
 import { PayrollDeleteNote, payrollDeleteReady } from "@/features/expenses/PayrollDeleteNote";
 import { StatementDateField } from "@/features/expenses/StatementDateField";
@@ -415,6 +416,9 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
               </div>
             </div>
           )}
+
+          {/* Who a payroll payment paid, and how much each (2026-11-04) — salaries, so payroll's to see. */}
+          {expense.payroll && can("payroll:read") && <PayrollBreakdownCard expenseId={id} />}
 
           {/* Receipts. Editable only while the claim is still the
               claimant's — the server refuses once it is with an approver. */}

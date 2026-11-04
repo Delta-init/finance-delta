@@ -277,6 +277,11 @@ export const expenseSchema = z.object({
   bill: z.object({ id: z.string(), number: z.string() }).optional(),
   /** Where it came from: typed here, a bill, HRMS, or the old books. */
   source: z.enum(["typed", "bill", "hrms", "import"]).optional(),
+  /**
+   * Posted by a payroll payment (2026-11-04): which, and how many people it paid — no salaries; who got what is
+   * GET /expenses/:id/payroll-breakdown, for payroll:read.
+   */
+  payroll: z.object({ runId: z.string(), runNumber: z.string(), paymentId: z.string(), people: z.number() }).nullable().optional(),
   createdAt: z.string(),
 });
 export type Expense = z.infer<typeof expenseSchema>;

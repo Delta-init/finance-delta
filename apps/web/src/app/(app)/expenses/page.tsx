@@ -19,6 +19,7 @@ import { FilterToggle } from "@/components/ui/filter-toggle";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { useExpenses, useVoidExpense, useDeleteExpense, useExpenseSummary, usePayrollPaymentOfExpense } from "@/features/expenses/api";
 import { PayrollDeleteNote, payrollDeleteReady } from "@/features/expenses/PayrollDeleteNote";
+import { PayrollBreakdownDialog } from "@/features/expenses/PayrollBreakdown";
 import { ExpenseSummaryCards } from "@/features/expenses/ExpenseSummaryCards";
 import { BankAccountFilter, PaymentMethodFilter } from "@/features/banking/PaymentFilters";
 import { useExpenseCategories } from "@/features/expense-categories/api";
@@ -149,6 +150,9 @@ export default function ExpensesPage() {
   const stmt = useUrlDateRange({ fromKey: "stmtFrom", toKey: "stmtTo", rangeKey: "stmtRange" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canPickSalesperson = useCan().can("user:read");
+  // Who a payroll expense paid (2026-11-04): "N people" opens it — salaries, so payroll's to see.
+  const canSeePayroll = useCan().can("payroll:read");
+  const [breakdownOf, setBreakdownOf] = useState<Expense | null>(null);
 
   // One set of filters for the table and its export, so the export is always what the table shows (2026-10-18).
   const listParams = {
@@ -195,6 +199,16 @@ export default function ExpensesPage() {
       cell: (e) => (
         <div className="flex items-center gap-2">
           <span className="max-w-xs truncate">{e.description}</span>
+          {e.payroll && canSeePayroll && (
+            <button
+              type="button"
+              onClick={(ev) => { ev.stopPropagation(); setBreakdownOf(e); }}
+              className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/20"
+              title="Who was paid, and how much each"
+            >
+              {e.payroll.people} {e.payroll.people === 1 ? "person" : "people"}
+            </button>
+          )}
           {e.isRecurring && (
             e.recurrence?.isActive === false ? (
               <Badge tone="neutral" className="shrink-0 gap-1">
@@ -531,6 +545,9 @@ export default function ExpensesPage() {
       />
 
       {voidTarget && <DeleteExpenseDialog expense={voidTarget} onClose={() => setVoidTarget(null)} />}
+      {breakdownOf && (
+        <PayrollBreakdownDialog expenseId={breakdownOf.id} title={breakdownOf.expenseNumber} onClose={() => setBreakdownOf(null)} />
+      )}
     </div>
   );
 }

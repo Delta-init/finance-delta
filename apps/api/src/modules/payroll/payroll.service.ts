@@ -208,9 +208,9 @@ export async function previewImport(orgId: string, hrmsOrgId: string, period: st
 
   const unpayable = batch.lines.filter((l) => !l.payable).map((l) => ({ employeeCode: l.employeeCode, name: l.name }));
   if (unpayable.length) {
-    // A warning, not a blocker: the rest of the run can still be paid, and
-    // holding fifty-nine people for one missing IBAN is the worse outcome.
-    warnings.push(`${unpayable.length} person(s) have no bank details and will be held.`);
+    // A warning, not a blocker — and no longer a hold (the user, 2026-11-05: "if the person has no bank we can also
+    // send his money"): they are paid by cash, or by transfer once accounts have the details.
+    warnings.push(`${unpayable.length} person(s) have no bank details in HRMS — pay them by cash, or by transfer once you have their details.`);
   }
 
   const existing = await PayrollRun.findOne({ organizationId: oid(orgId), hrmsOrgId, period }).lean();
@@ -322,11 +322,11 @@ export async function importRun(
       amountPaidMinor: 0,
       bank: source.bank,
       payable: source.payable,
-      // Someone with nowhere to send money starts held, so they cannot be swept
-      // into a bulk payment and silently counted as paid; so does somebody who
-      // has left (inactive here), until accounts confirm a final salary is owed.
-      status: source.payable && employee.status !== "inactive" ? ("pending" as const) : ("on_hold" as const),
-      holdReason: !source.payable ? "No bank details in HRMS" : employee.status === "inactive" ? LEFT_HOLD_REASON : "",
+      // Somebody who has left (inactive here) starts held, until accounts confirm a final salary is owed. Somebody
+      // with no bank details in HRMS no longer does (2026-11-05): `payable` false says so, and they are paid like
+      // anybody else — by cash, or by transfer once accounts have the details.
+      status: employee.status !== "inactive" ? ("pending" as const) : ("on_hold" as const),
+      holdReason: employee.status === "inactive" ? LEFT_HOLD_REASON : "",
     };
   });
 

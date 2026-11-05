@@ -196,7 +196,11 @@ async function main() {
   check("…and marked as left; nobody else is", leaver.left && run.lines.filter((l) => l.left).length === 1);
   const refused = async (p: Promise<unknown>, re: RegExp) => { try { await p; return false; } catch (e) { return re.test((e as Error).message); } };
   const e2e003 = run.lines.find((l) => l.employeeCode === "E2E003")!;
-  check("the unbanked hold cannot be released here", await refused(payments.setLineHold(orgId, runId, e2e003.id, { hold: false }, actor), /no bank details/));
+  // No bank details in HRMS is no longer a hold (2026-11-05: "if the person has no bank we can also send his money").
+  check("somebody with no bank details: imported to be paid, not held — marked as having none",
+    e2e003.status === "pending" && e2e003.payable === false && e2e003.holdReason === "", `${e2e003.status} ${e2e003.holdReason}`);
+  const heldNadia = await payments.setLineHold(orgId, runId, e2e003.id, { hold: true, reason: "Waiting for her bank details" }, actor);
+  check("…accounts can still hold her by hand", heldNadia.status === "on_hold" && /^Waiting for her bank details/.test(heldNadia.holdReason), heldNadia.holdReason);
   check("a held person cannot be held again", await refused(payments.setLineHold(orgId, runId, leaver.id, { hold: true }, actor), /only somebody not paid yet/));
   const released = await payments.setLineHold(orgId, runId, leaver.id, { hold: false }, actor);
   check("accounts release him: his final salary is owed", released.status === "pending" && released.holdReason === "");
@@ -207,8 +211,8 @@ async function main() {
   await Employee.updateOne({ organizationId: org._id, employeeCode: "E2E002" }, { $set: { status: "active" } });
   run = await payroll.getRun(orgId, runId);
   check("the left mark follows finance now: back on, not left", !run.lines.some((l) => l.left));
-  check("unbanked person imported on hold", run.totals.heldCount === 1);
-  check("held person is the one with no bank details",
+  check("one person held", run.totals.heldCount === 1);
+  check("held person is the one accounts held",
     run.lines.find((l) => l.status === "on_hold")?.employeeCode === "E2E003");
 
   // ── Adjustments ────────────────────────────────────────────────────────
@@ -507,9 +511,9 @@ async function main() {
 
   // ── Same day ───────────────────────────────────────────────────────────
   step("9. Two payments the same day: reversing one leaves the other's payslips paid");
-  // E2E003 has no bank details in the seed; given some here so there are two people to pay.
-  await PayrollRun.updateOne({ _id: runId, "lines._id": e2e003.id }, { $set: { "lines.$.payable": true } });
-  await payments.setLineHold(orgId, runId, e2e003.id, { hold: false }, actor);
+  // E2E003 still has no bank details in HRMS: released all the same (2026-11-05) and paid in cash.
+  const nadiaReleased = await payments.setLineHold(orgId, runId, e2e003.id, { hold: false }, actor);
+  check("somebody with no bank details released to be paid", nadiaReleased.status === "pending" && nadiaReleased.holdReason === "", nadiaReleased.message);
   const byBank = await payPart(owedMinor, "bank_transfer", "WPS-SAME-DAY");
   const byCash = await payments.payRun(orgId, runId, { lineIds: [e2e003.id], bankAccountId: String(bank._id), method: "cash", paidOn: today }, actor);
   check("two payments, the same day, one person each", byBank.finishedCount === 1 && byCash.paidCount === 1 && byCash.synced);

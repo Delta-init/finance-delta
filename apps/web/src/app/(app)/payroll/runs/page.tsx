@@ -161,10 +161,11 @@ export default function PayrollRunsPage() {
               <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
               <span>
                 {attention.data.heldPeople.length} {attention.data.heldPeople.length === 1 ? "person" : "people"} held
-                for missing bank details:{" "}
+                and not paid:{" "}
                 {attention.data.heldPeople.slice(0, 5).map((h) => `${h.name} (${h.period})`).join(", ")}
                 {attention.data.heldPeople.length > 5 && `, and ${attention.data.heldPeople.length - 5} more`}.
-                HR needs to add their details, then re-sync the month.
+                Release them on their run to pay them — somebody without bank details by cash, or by transfer once
+                you have the details.
               </span>
             </div>
           )}

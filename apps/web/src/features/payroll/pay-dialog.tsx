@@ -420,6 +420,16 @@ export function PayDialog({
                       />
                     </div>
                   </div>
+                  {/* A note, never a block (2026-11-05): somebody with no bank details in HRMS is paid like anybody else. */}
+                  {cur.method === "bank_transfer" && (() => {
+                    const noBank = lines.filter((l) => cur.ids.includes(l.id) && !l.bank?.iban && !l.bank?.accountNumber);
+                    return noBank.length > 0 ? (
+                      <p className="text-xs text-warning">
+                        {noBank.length === 1 ? `${noBank[0]!.name} has` : `${noBank.length} people in this payment have`} no bank
+                        details in HRMS — make sure you have them before transferring, or pay {noBank.length === 1 ? "them" : "those"} by cash.
+                      </p>
+                    ) : null;
+                  })()}
                   {accounts.data && eligible.length === 0 && (
                     <p className="text-xs text-danger">
                       There is no active {currency} account. Add one under Banking to pay the people paid in {currency}.

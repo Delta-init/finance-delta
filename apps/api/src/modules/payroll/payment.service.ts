@@ -41,9 +41,9 @@ async function loadRun(orgId: string, runId: string) {
 /**
  * Hold one person back from payment, or let them be paid again (2026-10-30:
  * somebody who has left, still on the month HRMS handed over). Only before
- * their money has gone: an unpaid line can be held, a held one released — not
- * one held for missing bank details, which has nowhere to send money until HR
- * adds them and the month is re-synced. Not on a run that is paid: what is
+ * their money has gone: an unpaid line can be held, a held one released — one
+ * held for missing bank details too (2026-11-05: they are paid by cash, or by
+ * transfer once accounts have the details). Not on a run that is paid: what is
  * held there was settled as not owed.
  */
 export async function setLineHold(
@@ -64,9 +64,6 @@ export async function setLineHold(
     line.holdReason = `${input.reason?.trim() || "Held by accounts"} (held by ${who})`;
   } else {
     if (line.status !== "on_hold") throw new AppError("CONFLICT", `${line.name} is not held.`);
-    if (!line.payable) {
-      throw new AppError("CONFLICT", `${line.name} has no bank details in HRMS — HR adds them and the month is re-synced.`);
-    }
     line.status = "pending";
     line.holdReason = "";
   }
@@ -202,7 +199,7 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     throw new AppError(
       "CONFLICT",
       held > 0
-        ? `Nobody paid in ${account.currency} can be paid — ${held} person(s) are held for missing bank details. ${elsewhere}`.trim()
+        ? `Nobody paid in ${account.currency} can be paid — ${held} person(s) are held. Release them on the run to pay them. ${elsewhere}`.trim()
         : otherCurrency > 0
           ? `Nobody ${input.lineIds?.length || asked ? "selected" : "still owed"} on ${run.runNumber} is paid in ${account.currency}. ${elsewhere}`
           : "There is nothing left to pay on this run.",

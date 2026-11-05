@@ -104,6 +104,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // Who the hold dialog is about.
   const [holding, setHolding] = useState<RunLine | null>(null);
   const holdLine = useHoldLine(id);
+  const [releasing, setReleasing] = useState(false);
   // Who the adjust dialog is about. One line is the per-person case; several
   // is a bulk apply. Empty means closed.
   const [adjusting, setAdjusting] = useState<RunLine[]>([]);
@@ -188,6 +189,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // A payment the money left the bank for but HRMS never acknowledged. The one
   // disagreement between the two systems that must never be quiet.
   const unsynced = run.payments.filter((p) => !p.syncedToHrms);
+  /** Held on import only for having no bank details in HRMS — nothing to hold them for since 2026-11-05. */
+  const heldNoBank = run.lines.filter((l) => l.status === "on_hold" && /bank details/i.test(l.holdReason ?? ""));
+  async function releaseNoBank() {
+    setReleasing(true);
+    try {
+      for (const l of heldNoBank) await holdLine.mutateAsync({ lineId: l.id, hold: false });
+    } catch {
+      // The failed one's reason is toasted; the ones released before it stay released.
+    } finally {
+      setReleasing(false);
+    }
+  }
   /** Of the people ticked, those an addition or deduction can go to now. */
   const adjustSelected = run.lines.filter((l) => selected.has(l.id) && lineAdjustable(l));
   const adjustmentsByLine = new Map<string, typeof run.adjustments>();
@@ -446,13 +459,22 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
       )}
 
       {run.totals.heldCount > 0 && (
-        <Card className="flex items-start gap-2 border-danger/20 bg-danger/5 p-4 text-sm">
+        <Card className="flex flex-wrap items-start gap-3 border-danger/20 bg-danger/5 p-4 text-sm">
           <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-          <p>
-            <span className="font-medium text-danger">{run.totals.heldCount} person(s) are held</span> — there
-            is nowhere to send their money. They are excluded from payment until HR adds bank details and the
-            month is re-synced, so they cannot be swept into a bulk transfer and counted as paid.
+          <p className="min-w-0 flex-1">
+            <span className="font-medium text-danger">{run.totals.heldCount} person(s) are held</span> — they are
+            left out of every payment until released. Open a row to release somebody.
+            {heldNoBank.length > 0 && (
+              <> {heldNoBank.length} of them only for missing bank details: they can be paid now, by cash or by
+                transfer once you have their details.</>
+            )}
           </p>
+          {/* Held on import for having no bank details in HRMS — no longer a reason to hold anybody (2026-11-05). */}
+          {holdable && heldNoBank.length > 0 && (
+            <Button size="sm" variant="secondary" loading={releasing} onClick={releaseNoBank}>
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Release the {heldNoBank.length} without bank details
+            </Button>
+          )}
         </Card>
       )}
 
@@ -671,6 +693,10 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                         </div>
                       )}
                       {l.holdReason && <div className="mt-1 text-xs text-danger">{l.holdReason}</div>}
+                      {/* Paid like anybody else since 2026-11-05 — by cash, or by transfer once accounts have the details. */}
+                      {!l.payable && l.status !== "paid" && !/bank details/i.test(l.holdReason ?? "") && (
+                        <div className="mt-1 whitespace-nowrap text-xs text-warning">No bank details in HRMS</div>
+                      )}
                     </td>
                   </tr>
                   {(allOpen || expanded === l.id) && (
@@ -743,7 +769,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                             <PauseCircle className="mr-1.5 h-3.5 w-3.5" />Hold
                           </Button>
                         )}
-                        {holdable && l.status === "on_hold" && l.payable && (
+                        {holdable && l.status === "on_hold" && (
                           <Button
                             variant="ghost" size="sm" className="mr-2 mt-4" loading={holdLine.isPending}
                             onClick={(e) => { e.stopPropagation(); holdLine.mutate({ lineId: l.id, hold: false }); }}

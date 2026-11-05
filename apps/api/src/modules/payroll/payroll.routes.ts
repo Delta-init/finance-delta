@@ -22,6 +22,8 @@ router.get("/reconciliation", requirePermission("payroll:read"), c.reconciliatio
 router.get("/people-report", requirePermission("payroll:read"), c.peopleReport_);
 router.get("/people-report/departments", requirePermission("payroll:read"), c.departmentReport);
 router.get("/people-report/:employeeId", requirePermission("payroll:read"), c.personDetail);
+// Their ledger: every invoice, payroll month, expense and payment in one list (2026-11-05).
+router.get("/people-report/:employeeId/ledger", requirePermission("payroll:read"), c.personLedger);
 router.get("/runs", requirePermission("payroll:read"), c.listRuns);
 router.get("/runs/:id", requirePermission("payroll:read"), c.getRun);
 

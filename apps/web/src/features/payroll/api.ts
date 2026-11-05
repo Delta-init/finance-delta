@@ -1,11 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type QueryParams } from "@/lib/api";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, qs, type QueryParams } from "@/lib/api";
 import type {
   AdjustmentResult, AvailableBatch, CommissionPullResult,
   ImportPreview, ImportResult, PayResult, Reconciliation, RunDetail, RunSummary,
-  PeopleReport, DepartmentReport, PersonDetail,
+  PeopleReport, DepartmentReport, PersonDetail, PersonLedger, LedgerKind,
 } from "./types";
 
 const KEY = ["payroll"] as const;
@@ -208,6 +208,19 @@ export function useDepartmentReport(params: { from: string; to: string }) {
     queryFn: () =>
       api.get<DepartmentReport>(`payroll/people-report/departments?from=${params.from}&to=${params.to}`),
     placeholderData: (prev) => prev,
+  });
+}
+
+/** A person's ledger, a page at a time — searched, filtered and paged by the server (2026-11-05). */
+export function usePersonLedger(
+  employeeId: string | null,
+  params: { page: number; pageSize: number; kind?: LedgerKind; q?: string; from?: string; to?: string; sort?: "asc" | "desc" },
+) {
+  return useQuery({
+    queryKey: [...KEY, "people-report", employeeId, "ledger", params],
+    queryFn: () => api.get<PersonLedger>(`payroll/people-report/${employeeId}/ledger${qs(params)}`),
+    enabled: Boolean(employeeId),
+    placeholderData: keepPreviousData,
   });
 }
 

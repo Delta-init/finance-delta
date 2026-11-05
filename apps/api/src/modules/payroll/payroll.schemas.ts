@@ -81,3 +81,13 @@ export const peopleReportQuerySchema = z.object({
 });
 
 export const personDetailQuerySchema = z.object({ from: isoDate, to: isoDate });
+/** A person's ledger (2026-11-05): paged, filtered and searched by the server; no dates means all of it. */
+export const personLedgerQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  kind: z.enum(["invoice", "payroll", "expense", "advance", "one_time"]).optional(),
+  q: z.string().trim().max(120).optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  sort: z.enum(["asc", "desc"]).default("desc"),
+});

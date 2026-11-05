@@ -7,6 +7,7 @@ import { Expense } from "../expense/expense.model";
 import { pnlExpenseFilter } from "../expense-category/expense-category.service";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { PayrollRun } from "./payroll-run.model";
+import { formatMinor } from "./money";
 import { User } from "../user/user.model";
 
 const oid = (id: string) => new Types.ObjectId(id);
@@ -297,14 +298,13 @@ function emptyTotals() {
   };
 }
 
-/** One person, with the documents behind each figure rather than just the sums. */
-export async function personDetail(orgId: string, employeeId: string, query: { from: string; to: string }) {
+/**
+ * Who a person page is about: their payroll record, or — a `login-` row — the login of somebody on invoices with no
+ * payroll record of their own (2026-10-27). Should their login have been put on a payroll record since, that record
+ * answers.
+ */
+async function resolvePerson(orgId: string, employeeId: string) {
   const org = oid(orgId);
-  const from = new Date(query.from);
-  const to = new Date(`${query.to}T23:59:59.999Z`);
-
-  // A `login-` row: someone on invoices with no payroll record of their own (2026-10-27). Should their login have been
-  // put on a payroll record since, that record answers.
   let login: { _id: Types.ObjectId; name?: string; email?: string; status?: string; memberships?: { organizationId: Types.ObjectId }[] } | null = null;
   let employee;
   if (employeeId.startsWith(LOGIN_PREFIX)) {
@@ -326,11 +326,19 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
     if (!employee) throw new AppError("NOT_FOUND", "Person not found");
   }
   const rowId = employee ? String(employee._id) : loginRowId(String(login!._id));
+  const uid = employee ? employee.userId : login!._id;
+  return { employee, login, rowId, uid };
+}
+
+/** One person, with the documents behind each figure rather than just the sums. */
+export async function personDetail(orgId: string, employeeId: string, query: { from: string; to: string }) {
+  const org = oid(orgId);
+  const from = new Date(query.from);
+  const to = new Date(`${query.to}T23:59:59.999Z`);
+  const { employee, login, rowId, uid } = await resolvePerson(orgId, employeeId);
 
   const summary = await peopleReport(orgId, { from: query.from, to: query.to }, { withLogins: !employee });
   const row = summary.rows.find((r) => r.employeeId === rowId);
-
-  const uid = employee ? employee.userId : login!._id;
 
   const pnl = await pnlExpenseFilter(orgId);
   const [invoices, expenses, commissions] = await Promise.all([
@@ -440,6 +448,259 @@ export async function personDetail(orgId: string, employeeId: string, query: { f
       calculatedAt: c.calculatedAt ? (c.calculatedAt as Date).toISOString() : null,
       paidAt: c.paidAt ? (c.paidAt as Date).toISOString() : null,
     })),
+  };
+}
+
+/**
+ * A person's ledger (the user, 2026-11-05: "a new tab, Ledger — every expense and payroll, invoices raised, commission
+ * and other payments in a single table, as a full ledger … click one to see which invoice or expense").
+ *
+ * One row per document, newest first: each invoice they raised (what they brought in), each payroll month (what it
+ * paid them, its commission inside it — "show on the payroll, no need separate"), each expense entered for them or
+ * claimed by them (as the Expenses tab counts them), and each salary advance or one-time payment HRMS sent finance
+ * for them. An advance or one-time payment names its employee only in its notes, "Name (E0212)", so it is found by
+ * their employee code there. Searched, filtered and paged here, not in the browser.
+ */
+export const LEDGER_KINDS = ["invoice", "payroll", "expense", "advance", "one_time"] as const;
+export type LedgerKind = (typeof LEDGER_KINDS)[number];
+
+export interface LedgerFact { label: string; text?: string; minor?: number; currency?: string }
+export interface LedgerRow {
+  id: string;
+  kind: LedgerKind;
+  date: string;
+  reference: string;
+  title: string;
+  subtitle: string;
+  currency: string;
+  /** Brought in: an invoice's total. */
+  inMinor: number;
+  /** Paid to them or spent on them. */
+  outMinor: number;
+  /** In the totals: a payroll month nothing of which is paid yet is shown, not counted. */
+  counted: boolean;
+  status: string;
+  href: string | null;
+  facts: LedgerFact[];
+  sections: Array<{ title: string; items: LedgerFact[] }>;
+}
+
+export interface LedgerQuery {
+  page: number;
+  pageSize: number;
+  kind?: LedgerKind;
+  q?: string;
+  from?: string;
+  to?: string;
+  sort?: "asc" | "desc";
+}
+
+/** The most of any one kind a ledger reads; past it the answer says so. */
+const LEDGER_CAP = 2000;
+const COMMISSION_SOURCES = new Set(["commission", "crm_commission", "cs_commission"]);
+const escapeRegExp = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const isoDay = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+const methodText = (m?: string | null) => (m ? m.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "");
+const monthEnd = (period: string) => {
+  const [y, m] = period.split("-").map(Number);
+  return new Date(Date.UTC(y!, m!, 0, 12));
+};
+const monthText = (period: string) =>
+  new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${period}-01T00:00:00Z`));
+
+export async function personLedger(orgId: string, employeeId: string, query: LedgerQuery) {
+  const org = oid(orgId);
+  const { employee, uid } = await resolvePerson(orgId, employeeId);
+  const from = query.from ? new Date(`${query.from}T00:00:00.000Z`) : null;
+  const to = query.to ? new Date(`${query.to}T23:59:59.999Z`) : null;
+  const range = from || to ? { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } : null;
+  const rows: LedgerRow[] = [];
+  let capped = false;
+  const cap = <T,>(list: T[]) => { if (list.length >= LEDGER_CAP) capped = true; return list; };
+
+  // What they brought in: the invoices they raised.
+  if (uid) {
+    const invoices = cap(await Invoice.find({
+      organizationId: org, salespersonId: uid, status: { $nin: ["void", "draft"] }, ...(range ? { issueDate: range } : {}),
+    })
+      .select("invoiceNumber customerName issueDate dueDate totalMinor amountPaidMinor balanceMinor status currency enrolment.course")
+      .sort({ issueDate: -1 }).limit(LEDGER_CAP).lean<any[]>());
+    for (const i of invoices) {
+      const cur = String(i.currency ?? "AED");
+      rows.push({
+        id: `invoice:${i._id}`, kind: "invoice", date: new Date(i.issueDate).toISOString(), reference: String(i.invoiceNumber ?? ""),
+        title: String(i.customerName ?? ""), subtitle: String(i.enrolment?.course ?? ""), currency: cur,
+        inMinor: i.totalMinor ?? 0, outMinor: 0, counted: true, status: String(i.status ?? ""), href: `/invoices/${i._id}`,
+        facts: [
+          { label: "Customer", text: String(i.customerName ?? "") },
+          ...(i.enrolment?.course ? [{ label: "Course", text: String(i.enrolment.course) }] : []),
+          { label: "Issued", text: isoDay(i.issueDate) },
+          ...(i.dueDate ? [{ label: "Due", text: isoDay(i.dueDate) }] : []),
+          { label: "Total", minor: i.totalMinor ?? 0, currency: cur },
+          { label: "Paid", minor: i.amountPaidMinor ?? 0, currency: cur },
+          { label: "Balance", minor: i.balanceMinor ?? 0, currency: cur },
+        ],
+        sections: [],
+      });
+    }
+  }
+
+  // Payroll: one row a month, what it paid them; the commission and anything else accounts added inside it.
+  if (employee) {
+    const runs = cap(await PayrollRun.find({ organizationId: org, status: { $ne: "voided" }, "lines.employeeId": employee._id })
+      .sort({ period: -1 }).limit(LEDGER_CAP).lean<any[]>());
+    for (const run of runs) {
+      for (const l of (run.lines ?? []).filter((x: any) => String(x.employeeId) === String(employee._id))) {
+        const cur = String(l.currency || run.currency);
+        const pays = (run.payments ?? []).flatMap((p: any) => {
+          const a = (p.allocations ?? []).find((x: any) => String(x.lineId) === String(l._id));
+          return a ? [{ p, amountMinor: Number(a.amountMinor ?? 0) }] : [];
+        });
+        const last = pays.filter((x: any) => !x.p.reversedAt).map((x: any) => new Date(x.p.paidOn)).sort((a: Date, b: Date) => b.getTime() - a.getTime())[0];
+        // Paid: the day the last of it went. Not yet: the month's last day.
+        const date = last ?? monthEnd(run.period);
+        const mine = (run.adjustments ?? []).filter((a: any) => String(a.lineId) === String(l._id));
+        const commission = mine.filter((a: any) => COMMISSION_SOURCES.has(a.source)).reduce((t: number, a: any) => t + (a.recoveredMinor ?? 0), 0);
+        const paid = Number(l.amountPaidMinor ?? 0);
+        rows.push({
+          id: `payroll:${run._id}:${l._id}`, kind: "payroll", date: date.toISOString(), reference: String(run.runNumber ?? ""),
+          title: `Salary — ${monthText(run.period)}`,
+          subtitle: commission ? `of which commission ${formatMinor(commission, cur)}` : "",
+          currency: cur, inMinor: 0, outMinor: paid, counted: paid > 0, status: String(l.status ?? ""), href: `/payroll/runs/${run._id}`,
+          facts: [
+            { label: "Month", text: monthText(run.period) },
+            { label: "Run", text: String(run.runNumber ?? "") },
+            { label: "Gross", minor: l.grossMinor ?? 0, currency: cur },
+            { label: "Deductions", minor: l.deductionsMinor ?? 0, currency: cur },
+            ...(l.adjustmentsMinor ? [{ label: "Added or taken off by accounts", minor: l.adjustmentsMinor, currency: cur }] : []),
+            ...(commission ? [{ label: "Of which commission", minor: commission, currency: cur }] : []),
+            { label: "Payable", minor: l.payableMinor ?? 0, currency: cur },
+            { label: "Paid", minor: paid, currency: cur },
+            ...((l.payableMinor ?? 0) - paid > 0 ? [{ label: "Still owed", minor: (l.payableMinor ?? 0) - paid, currency: cur }] : []),
+            ...(l.holdReason ? [{ label: "Held", text: String(l.holdReason) }] : []),
+          ],
+          sections: [
+            {
+              title: "Added or taken off by accounts",
+              items: mine.map((a: any) => ({
+                label: `${a.kind === "deduction" ? "−" : "+"} ${a.label}${COMMISSION_SOURCES.has(a.source) ? " (commission)" : ""}`,
+                minor: a.kind === "deduction" ? -(a.recoveredMinor ?? 0) : a.amountMinor ?? 0, currency: cur,
+              })),
+            },
+            {
+              title: "Payments",
+              items: pays.map((x: any) => ({
+                label: `${x.p.paymentId} · ${methodText(x.p.method)} · ${isoDay(x.p.paidOn)}${x.p.reversedAt ? " · reversed" : ""}`,
+                minor: x.amountMinor, currency: cur,
+              })),
+            },
+          ].filter((sec) => sec.items.length > 0),
+        });
+      }
+    }
+  }
+
+  // Expenses entered for them, or their own claim for nobody — as the Expenses tab and the cost count them.
+  const listed = new Set<string>();
+  if (uid) {
+    const pnl = await pnlExpenseFilter(orgId);
+    const expenses = cap(await Expense.find({
+      organizationId: org, status: { $in: ["approved", "submitted"] },
+      $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
+      // An advance or one-time payment is paid to its employee, below — not the accountant who approved it (its
+      // submitter), whose own claim it would otherwise read as.
+      "source.kind": { $nin: ["import", "bill", "hrms_advance", "hrms_one_time"] },
+      ...pnl,
+      ...(range ? { expenseDate: range } : {}),
+    })
+      .select("expenseNumber description categoryName subcategoryName expenseDate totalMinor status currency salespersonId submittedByName paidOn paymentMethod reference")
+      .sort({ expenseDate: -1 }).limit(LEDGER_CAP).lean<any[]>());
+    for (const e of expenses) {
+      listed.add(String(e._id));
+      const cur = String(e.currency ?? "AED");
+      rows.push({
+        id: `expense:${e._id}`, kind: "expense", date: new Date(e.expenseDate).toISOString(), reference: String(e.expenseNumber || ""),
+        title: String(e.description || e.categoryName || "Expense"), subtitle: [e.categoryName, e.subcategoryName].filter(Boolean).join(" · "),
+        currency: cur, inMinor: 0, outMinor: e.totalMinor ?? 0, counted: true, status: String(e.status ?? ""), href: `/expenses/${e._id}`,
+        facts: [
+          { label: "Category", text: [e.categoryName, e.subcategoryName].filter(Boolean).join(" · ") || "—" },
+          { label: "Description", text: String(e.description ?? "") },
+          { label: "Date", text: isoDay(e.expenseDate) },
+          { label: "Amount", minor: e.totalMinor ?? 0, currency: cur },
+          { label: "For them / own", text: e.salespersonId ? `For them${e.submittedByName ? ` · entered by ${e.submittedByName}` : ""}` : "Own claim" },
+          ...(e.paidOn ? [{ label: "Paid on", text: isoDay(e.paidOn) }] : []),
+          ...(e.paymentMethod ? [{ label: "Paid by", text: methodText(e.paymentMethod) }] : []),
+          ...(e.reference ? [{ label: "Reference", text: String(e.reference) }] : []),
+        ],
+        sections: [],
+      });
+    }
+  }
+
+  // Salary advances and one-time payments HRMS sent finance for them: their employee code is in the notes.
+  const code = employee?.employeeCode ? String(employee.employeeCode) : "";
+  if (code) {
+    const paidOut = cap(await Expense.find({
+      organizationId: org, "source.kind": { $in: ["hrms_advance", "hrms_one_time"] }, status: { $nin: ["rejected", "voided", "draft"] },
+      notes: new RegExp(`\\(${escapeRegExp(code)}\\)`), ...(range ? { expenseDate: range } : {}),
+    })
+      .select("expenseNumber description expenseDate totalMinor status currency paidOn paymentMethod reference notes source.kind")
+      .sort({ expenseDate: -1 }).limit(LEDGER_CAP).lean<any[]>());
+    for (const e of paidOut) {
+      if (listed.has(String(e._id))) continue;
+      const cur = String(e.currency ?? "AED");
+      const advance = e.source?.kind === "hrms_advance";
+      rows.push({
+        id: `${advance ? "advance" : "one_time"}:${e._id}`, kind: advance ? "advance" : "one_time", date: new Date(e.expenseDate).toISOString(),
+        reference: String(e.expenseNumber || ""), title: advance ? "Salary advance" : "One-time payment",
+        subtitle: advance ? "Recovered from their pay" : String(e.description ?? ""),
+        currency: cur, inMinor: 0, outMinor: e.totalMinor ?? 0, counted: true, status: String(e.status ?? ""), href: `/expenses/${e._id}`,
+        facts: [
+          { label: "Date", text: isoDay(e.expenseDate) },
+          { label: "Amount", minor: e.totalMinor ?? 0, currency: cur },
+          ...(e.paidOn ? [{ label: "Paid on", text: isoDay(e.paidOn) }] : []),
+          ...(e.paymentMethod ? [{ label: "Paid by", text: methodText(e.paymentMethod) }] : []),
+          ...(e.reference ? [{ label: "Reference", text: String(e.reference) }] : []),
+        ],
+        sections: e.notes ? [{ title: "From HRMS", items: String(e.notes).split("\n").filter(Boolean).map((t) => ({ label: t })) }] : [],
+      });
+    }
+  }
+
+  // Dated within the range (a payroll month's date is worked out above, so it is checked here), and the search.
+  const needle = (query.q ?? "").trim().toLowerCase();
+  const inRange = rows.filter((r) => {
+    const t = new Date(r.date).getTime();
+    return (!from || t >= from.getTime()) && (!to || t <= to.getTime());
+  });
+  const found = needle
+    ? inRange.filter((r) => [r.reference, r.title, r.subtitle, r.status].some((x) => x.toLowerCase().includes(needle)))
+    : inRange;
+  const counts = Object.fromEntries(LEDGER_KINDS.map((k) => [k, found.filter((r) => r.kind === k).length])) as Record<LedgerKind, number>;
+  const list = query.kind ? found.filter((r) => r.kind === query.kind) : found;
+
+  const dir = query.sort === "asc" ? 1 : -1;
+  list.sort((a, b) => dir * (new Date(a.date).getTime() - new Date(b.date).getTime()) || dir * a.id.localeCompare(b.id));
+
+  // Each currency apart: never added across them.
+  const byCurrency = new Map<string, { currency: string; inMinor: number; outMinor: number }>();
+  for (const r of list) {
+    if (!r.counted) continue;
+    const t = byCurrency.get(r.currency) ?? { currency: r.currency, inMinor: 0, outMinor: 0 };
+    t.inMinor += r.inMinor;
+    t.outMinor += r.outMinor;
+    byCurrency.set(r.currency, t);
+  }
+
+  const pageSize = Math.min(100, Math.max(1, Math.floor(query.pageSize) || 25));
+  const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, Math.floor(query.page) || 1));
+  return {
+    rows: list.slice((page - 1) * pageSize, page * pageSize),
+    meta: { page, pageSize, total: list.length, pageCount },
+    totals: [...byCurrency.values()].sort((a, b) => b.inMinor + b.outMinor - (a.inMinor + a.outMinor)),
+    counts,
+    capped,
   };
 }
 

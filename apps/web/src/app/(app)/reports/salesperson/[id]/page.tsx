@@ -11,6 +11,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyDisplay } from "@/components/ui/money";
 import { usePersonDetail } from "@/features/payroll/api";
+import { PersonLedgerTab } from "@/features/payroll/person-ledger";
+
+/** The page's tabs; the ledger first and open by default (2026-11-05). */
+const TABS = [
+  { key: "ledger", label: "Ledger" },
+  { key: "payroll", label: "Payroll" },
+  { key: "expenses", label: "Expenses" },
+  { key: "invoices", label: "Invoices raised" },
+  { key: "commission", label: "Commission" },
+] as const;
+type Tab = (typeof TABS)[number]["key"];
 
 const monthStart = () => `${new Date().toISOString().slice(0, 7)}-01`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -29,6 +40,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
   // In the address bar (2026-10-22), read back as the salespeople list links here — so a refresh or a shared link keeps the same period and page.
   const [from, setFrom] = useUrlParam("from", monthStart());
   const [to, setTo] = useUrlParam("to", today());
+  const [tab, setTab] = useUrlParam<Tab>("tab", "ledger", { allowed: TABS.map((t) => t.key) });
 
   const { data, isLoading } = usePersonDetail(id, { from, to });
 
@@ -102,12 +114,29 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         <p className="text-sm text-foreground-muted">
           {/* Said once, plainly, because the same money appears in two tables. */}
           Of the payroll figure, <MoneyDisplay minor={summary.commissionInPayrollMinor} currency={currency} /> was
-          commission. It is counted once, inside payroll — the commission table below shows which invoices
-          earned it.
+          commission. It is counted once, inside payroll — the Commission tab shows which invoices earned it.
         </p>
       )}
 
-      <Section title="Payroll" description="What was actually transferred each month.">
+      <div className="flex w-fit flex-wrap gap-1 rounded-lg border border-border bg-surface p-1 text-sm" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`rounded-md px-3 py-1.5 font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Its own dates, search and pages — not the period above, which the other tabs and the figures use. */}
+      {tab === "ledger" && <PersonLedgerTab employeeId={id} />}
+
+      {tab === "payroll" && <Section title="Payroll" description="What was actually transferred each month.">
         <Table
           head={["Month", "Run", "Gross", "Deductions", "of which commission", "Paid"]}
           rows={payslips.map((p) => [
@@ -120,9 +149,9 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           ])}
           empty="No payroll in this period."
         />
-      </Section>
+      </Section>}
 
-      <Section title="Expenses" description="Expenses entered for them, and their own claims for nobody else — counted the same way the profit and loss counts them.">
+      {tab === "expenses" && <Section title="Expenses" description="Expenses entered for them, and their own claims for nobody else — counted the same way the profit and loss counts them.">
         <Table
           head={["Date", "Expense", "Category", "For them / own", "Status", "Amount"]}
           rows={expenses.map((e) => [
@@ -137,9 +166,9 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           ])}
           empty="No expenses in this period."
         />
-      </Section>
+      </Section>}
 
-      <Section title="Invoices raised" description="What they brought in.">
+      {tab === "invoices" && <Section title="Invoices raised" description="What they brought in.">
         <Table
           head={["Date", "Invoice", "Customer", "Status", "Amount"]}
           rows={invoices.map((i) => [
@@ -149,9 +178,9 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           ])}
           empty="No invoices in this period."
         />
-      </Section>
+      </Section>}
 
-      <Section
+      {tab === "commission" && <Section
         title="Commission"
         description="Which invoices earned it. Paid commission is already inside the payroll figures above — this is the breakdown, not an addition."
       >
@@ -166,7 +195,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           ])}
           empty="No commission recorded."
         />
-      </Section>
+      </Section>}
     </div>
   );
 }

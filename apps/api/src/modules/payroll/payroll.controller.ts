@@ -7,7 +7,7 @@ import * as payments from "./payment.service";
 import * as peopleReport from "./people-report.service";
 import {
   importPreviewQuerySchema, runQuerySchema,
-  peopleReportQuerySchema, personDetailQuerySchema,
+  peopleReportQuerySchema, personDetailQuerySchema, personLedgerQuerySchema,
 } from "./payroll.schemas";
 
 const orgId = (req: Request) => req.auth!.organizationId;
@@ -94,6 +94,11 @@ export const reconciliation = asyncHandler(async (req: Request, res: Response) =
 export const peopleReport_ = asyncHandler(async (req: Request, res: Response) => {
   const query = parseQuery(peopleReportQuerySchema, req.query);
   ok(res, await peopleReport.peopleReport(orgId(req), query, { withLogins: true }));
+});
+
+export const personLedger = asyncHandler(async (req: Request, res: Response) => {
+  const query = parseQuery(personLedgerQuerySchema, req.query);
+  ok(res, await peopleReport.personLedger(orgId(req), req.params.employeeId!, query));
 });
 
 export const personDetail = asyncHandler(async (req: Request, res: Response) => {

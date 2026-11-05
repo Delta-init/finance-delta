@@ -346,3 +346,34 @@ export interface PersonDetail {
     status: string; calculatedAt: string | null; paidAt: string | null;
   }>;
 }
+
+/** A person's ledger (2026-11-05): every invoice they raised, payroll month, expense and payment, one list. */
+export type LedgerKind = "invoice" | "payroll" | "expense" | "advance" | "one_time";
+export interface LedgerFact { label: string; text?: string; minor?: number; currency?: string }
+export interface LedgerRow {
+  id: string;
+  kind: LedgerKind;
+  date: string;
+  reference: string;
+  title: string;
+  subtitle: string;
+  currency: string;
+  /** Brought in: an invoice's total. */
+  inMinor: number;
+  /** Paid to them or spent on them. */
+  outMinor: number;
+  /** In the totals: a payroll month nothing of which is paid yet is shown, not counted. */
+  counted: boolean;
+  status: string;
+  href: string | null;
+  facts: LedgerFact[];
+  sections: Array<{ title: string; items: LedgerFact[] }>;
+}
+export interface PersonLedger {
+  rows: LedgerRow[];
+  meta: { page: number; pageSize: number; total: number; pageCount: number };
+  totals: Array<{ currency: string; inMinor: number; outMinor: number }>;
+  counts: Record<LedgerKind, number>;
+  /** One kind had more than the server reads at once: the oldest of it are left out. */
+  capped: boolean;
+}

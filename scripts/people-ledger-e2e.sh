@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MONGO_PORT="${E2E_MONGO_PORT:-27143}"
+MONGO_PORT="${E2E_MONGO_PORT:-27147}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/people-ledger-e2e.XXXXXX")"
 LONG="$(printf 'x%.0s' {1..40})"
 

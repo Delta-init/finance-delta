@@ -206,6 +206,31 @@ function awaitingPayment(doc: unknown): boolean {
 }
 
 /** A bill's own expense (2026-10-23) follows its bill: it is changed, paid, approved and removed there. */
+/**
+ * The payroll payment that posted this expense, if one did (2026-11-05). Such an expense is paid when the payment is,
+ * in its account through the payment's own bank line — it never has a line of its own (one it was given by being
+ * marked paid here took the money out of the account a second time).
+ */
+async function payrollPaymentOf(orgId: string, doc: unknown): Promise<{ runNumber: string; paymentId: string } | null> {
+  const d = doc as { _id: unknown; source?: { kind?: string } | null };
+  const { PayrollRun } = await import("../payroll/payroll-run.model");
+  const run = await PayrollRun.findOne({ organizationId: new Types.ObjectId(orgId), "payments.expenseId": d._id })
+    .select("runNumber payments.paymentId payments.expenseId").lean<{ runNumber: string; payments: { paymentId: string; expenseId?: unknown }[] }>();
+  if (run) return { runNumber: run.runNumber, paymentId: run.payments.find((p) => String(p.expenseId) === String(d._id))?.paymentId ?? "" };
+  return d.source?.kind === "payroll" ? { runNumber: "", paymentId: "" } : null;
+}
+
+/** Refused for an expense a payroll payment posted: what it says is the payment's, changed only through the payment. */
+async function refusePayrollExpense(orgId: string, doc: unknown, what: string): Promise<void> {
+  const p = await payrollPaymentOf(orgId, doc);
+  if (!p) return;
+  const by = p.paymentId || p.runNumber || "its payroll run";
+  throw new AppError(
+    "CONFLICT",
+    `${(doc as { expenseNumber?: string }).expenseNumber ?? "This expense"} was paid by payroll ${by} — it can't be ${what} here. Reverse or delete that payment on its payroll run instead.`,
+  );
+}
+
 function refuseBillExpense(doc: unknown): void {
   const bill = billOfExpense(doc);
   if (bill) throw new AppError("CONFLICT", `${(doc as { expenseNumber?: string }).expenseNumber ?? "This expense"} comes from bill ${bill.billNumber} — change it on the bill.`);
@@ -403,6 +428,8 @@ export async function applyExpenseAccount(orgId: string, d: Record<string, unkno
 export async function syncExpenseLine(orgId: string, id: unknown): Promise<void> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).lean<any>();
   if (!doc) return;
+  // A payroll payment's: in the account through the payment's own line, which is the payment's to move (2026-11-05).
+  if (await payrollPaymentOf(orgId, doc)) return;
   let note = "";
   let want: Parameters<typeof syncDebitLine>[2] = null;
   // Not while it waits for a manager to approve it being entered late.
@@ -673,6 +700,10 @@ export async function updateExpense(
       : undefined;
   }
 
+  // A payroll payment's: its money, day and account are the payment's (2026-11-05) — its category and words may change.
+  if (doc.isModified(["amountMinor", "taxPct", "taxMinor", "totalMinor", "currency", "expenseDate", "paidOn", "paymentMethod", "bankAccountId"])) {
+    await refusePayrollExpense(orgId, doc, "given another amount, date, method or account");
+  }
   // Its line in the bank follows — unless a bank statement was reconciled against it.
   if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
   // Waiting for a manager again, a paid one leaves its account until it is approved.
@@ -775,6 +806,7 @@ export async function voidExpense(orgId: string, id: string): Promise<ExpenseDTO
   refuseBillExpense(doc);
   if (doc.status === "voided")
     throw new AppError("CONFLICT", "Expense is already voided");
+  await refusePayrollExpense(orgId, doc, "voided");
   doc.status = "voided";
   await assertDebitMovable(orgId, (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId);
   await doc.save();
@@ -872,6 +904,7 @@ export async function markExpensePaid(
   if (awaitingPayment(doc)) {
     throw new AppError("CONFLICT", `${doc.expenseNumber} is an approved purchase — record its payment with the receipt`);
   }
+  await refusePayrollExpense(orgId, doc, "marked paid");
   assertNotWaiting(doc, "marked paid");
   await applyPayment(orgId, doc, input);
   await doc.save();
@@ -930,6 +963,7 @@ export async function markExpenseUnpaid(orgId: string, id: string): Promise<Expe
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   refuseBillExpense(doc);
+  await refusePayrollExpense(orgId, doc, "marked unpaid");
   if (!(doc as unknown as Record<string, unknown>).paidOn) {
     throw new AppError("CONFLICT", "This expense is not marked paid");
   }

@@ -406,6 +406,24 @@ async function main() {
   const expense = await Expense.findOne({ organizationId: org._id }).lean();
   check("payroll posted to the P&L", Boolean(expense) && expense!.status === "approved",
     expense ? `${expense.expenseNumber} ${formatMinor(expense.totalMinor ?? 0, "AED")}` : "no expense");
+  // 2026-11-05: posted unpaid and in no account, the expense was marked paid in Expenses and the money left twice.
+  const ex = expense as unknown as { _id: unknown; paidOn?: Date; bankAccountId?: unknown; bankTransactionId?: unknown; source?: { kind?: string } };
+  check("…paid on the payment's day, in its account, through the payment's own bank line — none of its own",
+    !!ex.paidOn && String(ex.bankAccountId) === String(bank._id) && String(ex.bankTransactionId) === String(paid.bankTransactionId) && ex.source?.kind === "payroll"
+    && (await BankTransaction.countDocuments({ "matches.type": "expense", "matches.referenceId": String(ex._id) })) === 0,
+    JSON.stringify({ paidOn: ex.paidOn, acc: String(ex.bankAccountId), line: String(ex.bankTransactionId), src: ex.source }));
+  const expenses = await import("../modules/expense/expense.service");
+  const balanceNow = (await BankAccount.findById(bank._id).lean())!.currentBalanceMinor;
+  check("…marking it paid in Expenses: refused, it was paid by the payroll payment",
+    await refused(expenses.markExpensePaid(orgId, String(ex._id), { paidOn: new Date().toISOString().slice(0, 10), paymentMethod: "bank_transfer" } as never), /paid by payroll .*-P1/));
+  check("…marking it unpaid, or voiding it: refused too",
+    await refused(expenses.markExpenseUnpaid(orgId, String(ex._id)), /paid by payroll/) && await refused(expenses.voidExpense(orgId, String(ex._id)), /paid by payroll/));
+  check("…another amount on it: refused", await refused(expenses.updateExpense(orgId, String(ex._id), { amountMinor: 1 } as never, { all: true } as never), /paid by payroll/));
+  await expenses.updateExpense(orgId, String(ex._id), { description: "October payroll" } as never, { all: true } as never);
+  await expenses.syncExpenseLine(orgId, ex._id);
+  check("…its words can change, and that puts no line of its own in the account: the balance as it was",
+    (await Expense.findById(ex._id).lean())?.description === "October payroll" && (await BankAccount.findById(bank._id).lean())!.currentBalanceMinor === balanceNow
+    && (await BankTransaction.countDocuments({ "matches.type": "expense" })) === 0);
 
   const hrmsPaid = await hrmsClient.payrollBatch(seed.orgId, seed.month);
   check("HRMS shows the month partly paid", hrmsPaid.status === "partially_paid", hrmsPaid.status);

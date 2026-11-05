@@ -68,6 +68,12 @@ export async function postPayrollExpense(
       paymentAccount: payment.bankAccountName,
       paymentMethod: payment.method,
       reference: payment.reference || payment.paymentId,
+      // Paid when the payment is, in its account, through the payment's own bank line (the user, 2026-11-05: saved
+      // unpaid and in no account, it was marked paid in Expenses and the money went out of the account a second time).
+      paidOn: payment.paidOn,
+      bankAccountId: payment.bankAccountId ?? null,
+      bankTransactionId: payment.bankTransactionId ?? null,
+      source: { kind: "payroll", key: `payroll:${run._id}:${payment.paymentId}` },
       submittedById: oid(actor.userId),
       submittedByName: actor.name,
       // Approved on arrival: the money is already gone, so an expense sitting in

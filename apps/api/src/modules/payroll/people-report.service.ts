@@ -608,8 +608,8 @@ export async function personLedger(orgId: string, employeeId: string, query: Led
       organizationId: org, status: { $in: ["approved", "submitted"] },
       $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
       // An advance or one-time payment is paid to its employee, below — not the accountant who approved it (its
-      // submitter), whose own claim it would otherwise read as.
-      "source.kind": { $nin: ["import", "bill", "hrms_advance", "hrms_one_time"] },
+      // submitter), whose own claim it would otherwise read as; a payroll payment's expense is the payroll rows'.
+      "source.kind": { $nin: ["import", "bill", "hrms_advance", "hrms_one_time", "payroll"] },
       ...pnl,
       ...(range ? { expenseDate: range } : {}),
     })

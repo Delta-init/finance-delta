@@ -141,6 +141,29 @@ check("…and the expense page", (await getExpense(org, String(exp5._id), { all:
 const other = await Expense.create({ organizationId: ORG, expenseNumber: "EXP-00301", category: "office", categoryName: "Office", description: "Ink", expenseDate: new Date("2026-11-04"), amountMinor: 500, taxPct: 0, taxMinor: 0, totalMinor: 500, currency: "AED", submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
 check("an ordinary expense: no mark, no breakdown", !(await getExpense(org, String(other._id), { all: true } as never)).payroll && (await payrollBreakdownOfExpense(org, String(other._id))) === null);
 
+step("6. The expense page: the payment record and its line in Banking, each a link (2026-11-05)");
+const page3 = await getExpense(org, p3.expenseId, { all: true } as never);
+const lineView = (ls: typeof page3.bankLines) => j((ls ?? []).map((l) => [l.kind, l.accountId, l.accountName, l.date, l.reference, l.amountMinor, l.currency, l.reconciled]));
+check("a payroll expense: the payment's line — its account, day, reference, money out, reconciled",
+  lineView(page3.bankLines) === j([["paid", String(bank._id), "Delta Bank", "2026-11-02", "PAY-202610-002-P3", -100_000, "AED", true]]), j(page3.bankLines));
+const bd3 = await payrollBreakdownOfExpense(org, p3.expenseId);
+check("the payment record: its account and line, the people, HRMS not told, not reversed",
+  bd3?.bankAccountId === String(bank._id) && bd3.bankTransactionId === String(p3.txId) && bd3.reversalTransactionId === null && bd3.reversedAt === null
+  && bd3.people === 1 && bd3.finishedCount === 1 && bd3.syncedToHrms === false && typeof bd3.recordedByName === "string" && !bd3.reversed, j(bd3));
+const p6 = await pay(B, 6);
+await reversePayment(org, String(run._id), p6.paymentId, "Wrong account");
+const page6 = await getExpense(org, p6.expenseId, { all: true } as never);
+const bd6 = await payrollBreakdownOfExpense(org, p6.expenseId);
+check("a reversed one: the line out, then the line that put it back",
+  j(page6.bankLines?.map((l) => [l.kind, l.amountMinor])) === j([["paid", -150_000], ["reversal", 150_000]]) && page6.bankLines![1]!.id === bd6?.reversalTransactionId && !!bd6?.reversedAt, j({ lines: page6.bankLines, bd6 }));
+const ownTx = await BankTransaction.create({ organizationId: ORG, accountId: bank._id, accountName: "Delta Bank", currency: "AED", date: new Date("2026-11-04"), description: "EXP-00302 · Toner", reference: "EXP-00302", amountMinor: -2_500, type: "debit", runningBalanceMinor: 0 });
+const plainPaid = await Expense.create({ organizationId: ORG, expenseNumber: "EXP-00302", category: "office", categoryName: "Office", description: "Toner", expenseDate: new Date("2026-11-04"), paidOn: new Date("2026-11-04"), amountMinor: 2_500, taxPct: 0, taxMinor: 0, totalMinor: 2_500, currency: "AED", paymentAccount: "Delta Bank", bankAccountId: bank._id, bankTransactionId: ownTx._id, paymentMethod: "bank_transfer", submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
+const pagePlain = await getExpense(org, String(plainPaid._id), { all: true } as never);
+check("an ordinary paid expense: its own line, not reconciled", lineView(pagePlain.bankLines) === j([["paid", String(bank._id), "Delta Bank", "2026-11-04", "EXP-00302", -2_500, "AED", false]]), j(pagePlain.bankLines));
+check("an ordinary unpaid one: no line", j((await getExpense(org, String(other._id), { all: true } as never)).bankLines) === "[]");
+const foreign = await Expense.create({ organizationId: new Types.ObjectId(), expenseNumber: "EXP-00303", category: "office", categoryName: "Office", description: "Elsewhere", expenseDate: new Date("2026-11-04"), amountMinor: 100, taxPct: 0, taxMinor: 0, totalMinor: 100, currency: "AED", bankTransactionId: ownTx._id, submittedById: new Types.ObjectId(), submittedByName: "Admin", status: "approved" });
+check("another organization's line is never shown", j((await getExpense(String(foreign.organizationId), String(foreign._id), { all: true } as never)).bankLines) === "[]");
+
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);
 process.exit(failures ? 1 : 0);

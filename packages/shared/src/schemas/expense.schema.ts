@@ -193,6 +193,24 @@ export const rejectExpenseSchema = z.object({
 });
 export type RejectExpenseInput = z.infer<typeof rejectExpenseSchema>;
 
+/** One line in Banking an expense's money went out by (or came back by): what the account's page shows for it. */
+export const expenseBankLineSchema = z.object({
+  id: z.string(),
+  /** "paid": the money going out; "reversal": a reversed payroll payment's money coming back. */
+  kind: z.enum(["paid", "reversal"]),
+  accountId: z.string(),
+  accountName: z.string(),
+  date: z.string(),
+  description: z.string(),
+  reference: z.string(),
+  /** Signed, as the account shows it: negative out, positive in. */
+  amountMinor: z.number(),
+  currency: z.string(),
+  reconciled: z.boolean(),
+  statementDate: z.string().optional(),
+});
+export type ExpenseBankLine = z.infer<typeof expenseBankLineSchema>;
+
 export const expenseSchema = z.object({
   id: z.string(),
   expenseNumber: z.string(),
@@ -282,6 +300,12 @@ export const expenseSchema = z.object({
    * GET /expenses/:id/payroll-breakdown, for payroll:read.
    */
   payroll: z.object({ runId: z.string(), runNumber: z.string(), paymentId: z.string(), people: z.number() }).nullable().optional(),
+  /**
+   * Where its money left, on the expense's own page only (the user, 2026-11-05: "show the linked bank payment here,
+   * with a link"): its line in Banking — the expense's own, or the payroll payment's — and the line that put a
+   * reversed payroll payment's money back.
+   */
+  bankLines: z.array(expenseBankLineSchema).optional(),
   createdAt: z.string(),
 });
 export type Expense = z.infer<typeof expenseSchema>;

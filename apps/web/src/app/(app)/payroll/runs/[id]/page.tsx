@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, use, useMemo, useState } from "react";
+import { Fragment, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info, Layers,
@@ -93,6 +93,20 @@ const RUN_EXPORT_COLUMNS: ExportColumn<RunLine & { runCurrency: string }>[] = [
 export default function PayrollRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: run, isLoading } = usePayrollRun(id);
+  // A link to one payment — from its expense's page, /payroll/runs/<id>#payment-<paymentId> (2026-11-05) — brings it
+  // into view and marks it a while.
+  const [linkedPayment, setLinkedPayment] = useState<string | null>(null);
+  const hasPayments = (run?.payments.length ?? 0) > 0;
+  useEffect(() => {
+    if (!hasPayments) return;
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    if (!hash.startsWith("payment-")) return;
+    const paymentId = hash.slice("payment-".length);
+    setLinkedPayment(paymentId);
+    const frame = requestAnimationFrame(() => document.getElementById(`payment-${paymentId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    const done = setTimeout(() => setLinkedPayment(null), 6000);
+    return () => { cancelAnimationFrame(frame); clearTimeout(done); };
+  }, [hasPayments]);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   // Every row's lines at once, rather than one row at a time.
@@ -483,7 +497,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           <div className="border-b border-border px-5 py-3 text-sm font-medium">Payments</div>
           <div className="divide-y divide-border">
             {run.payments.map((p) => (
-              <div key={p.paymentId} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+              <div
+                key={p.paymentId}
+                id={`payment-${p.paymentId}`}
+                className={`flex flex-wrap items-center gap-3 px-5 py-3 text-sm scroll-mt-24 transition-colors duration-700 ${linkedPayment === p.paymentId ? "bg-primary-50 ring-2 ring-inset ring-primary" : ""}`}
+              >
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
                     {p.paymentId} · <MoneyDisplay minor={p.amountMinor} currency={p.currency ?? run.currency} />

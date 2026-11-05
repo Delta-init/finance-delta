@@ -20,6 +20,10 @@ export interface PayrollBreakdown {
   runId: string; runNumber: string; period: string; paymentId: string; method: string; paidOn: string;
   bankAccountName: string; reference: string; currency: string; amountMinor: number;
   reversed: boolean; reversalReason: string; rows: PayrollBreakdownRow[];
+  /** The payment record (2026-11-05) — absent from an API older than that. */
+  bankAccountId?: string | null; bankTransactionId?: string | null; reversalTransactionId?: string | null;
+  reversedAt?: string | null; recordedByName?: string; recordedAt?: string | null;
+  people?: number; finishedCount?: number; syncedToHrms?: boolean; syncError?: string;
 }
 
 /** Who the payroll payment that posted this expense paid, and how much each — payroll:read only (2026-11-04). */

@@ -14,6 +14,7 @@ import type {
   SetExpenseStatementDateInput,
   ExpenseAttachmentInput,
   UploadedExpenseFile,
+  ExpenseBankLine,
 } from "@delta/shared";
 import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, lateEntryCutoff, resolveCategoryName } from "@delta/shared";
 import { throughDay } from "../../lib/day-range";
@@ -32,6 +33,7 @@ import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
+import { BankTransaction } from "../banking/bank-transaction.model";
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { lateView, isLatePending } from "../late-entry/late-entry.model";
 import { lateEntryDaysOf, lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
@@ -383,7 +385,34 @@ export async function getExpense(orgId: string, id: string, scope: Scope): Promi
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   assertOwned(scope, doc.submittedById, "Expense");
-  return (await withPayroll(orgId, [toDTO(doc as unknown as ExpenseDoc)]))[0]!;
+  const dto = (await withPayroll(orgId, [toDTO(doc as unknown as ExpenseDoc)]))[0]!;
+  return { ...dto, bankLines: await bankLinesOf(orgId, doc as unknown as { _id: Types.ObjectId; bankTransactionId?: unknown }) };
+}
+
+/**
+ * Its lines in Banking (the user, 2026-11-05: "show the linked bank payment here also, with a link"): the line its
+ * money went out by — its own, or the payroll payment's that posted it — and, for a reversed payroll payment, the line
+ * that put the money back. An expense from before the payroll fix that still has a line of its own as well shows both.
+ */
+async function bankLinesOf(orgId: string, doc: { _id: Types.ObjectId; bankTransactionId?: unknown }): Promise<ExpenseBankLine[]> {
+  const paid = new Set<string>(), back = new Set<string>();
+  if (doc.bankTransactionId) paid.add(String(doc.bankTransactionId));
+  const { PayrollRun } = await import("../payroll/payroll-run.model");
+  const run = await PayrollRun.findOne({ organizationId: new Types.ObjectId(orgId), "payments.expenseId": doc._id })
+    .select("payments.expenseId payments.bankTransactionId payments.reversalTransactionId").lean<any>();
+  const payment = run?.payments?.find((p: any) => String(p.expenseId) === String(doc._id));
+  if (payment?.bankTransactionId) paid.add(String(payment.bankTransactionId));
+  if (payment?.reversalTransactionId) back.add(String(payment.reversalTransactionId));
+  const ids = [...paid, ...back].filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id));
+  if (!ids.length) return [];
+  const lines = await BankTransaction.find({ _id: { $in: ids }, organizationId: new Types.ObjectId(orgId) })
+    .select("accountId accountName date description reference amountMinor currency isReconciled statementDate").sort({ date: 1, _id: 1 }).lean<any[]>();
+  return lines.map((l) => ({
+    id: String(l._id), kind: back.has(String(l._id)) ? "reversal" : "paid",
+    accountId: String(l.accountId), accountName: l.accountName ?? "", date: dateOnly(l.date),
+    description: l.description ?? "", reference: l.reference ?? "", amountMinor: l.amountMinor ?? 0, currency: l.currency ?? "AED",
+    reconciled: Boolean(l.isReconciled), ...(l.statementDate ? { statementDate: dateOnly(l.statementDate) } : {}),
+  }));
 }
 
 /* ── The Banking account it is paid from, and its line there (2026-10-16) ──────────────────────────────────────── */

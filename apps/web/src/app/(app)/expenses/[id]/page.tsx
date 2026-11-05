@@ -41,6 +41,7 @@ import {
 } from "@/features/expenses/api";
 import { ExpenseReceipts } from "@/features/expenses/ExpenseReceipts";
 import { PayrollBreakdownCard } from "@/features/expenses/PayrollBreakdown";
+import { ExpensePaymentCard } from "@/features/expenses/ExpensePaymentCard";
 import { usePayrollPaymentOfExpense } from "@/features/expenses/api";
 import { PayrollDeleteNote, payrollDeleteReady } from "@/features/expenses/PayrollDeleteNote";
 import { StatementDateField } from "@/features/expenses/StatementDateField";
@@ -419,6 +420,9 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
 
           {/* Who a payroll payment paid, and how much each (2026-11-04) — salaries, so payroll's to see. */}
           {expense.payroll && can("payroll:read") && <PayrollBreakdownCard expenseId={id} />}
+
+          {/* The payment record and its line in Banking, each a link (2026-11-05). */}
+          <ExpensePaymentCard expense={expense} canPayroll={can("payroll:read")} canBanking={can("banking:read")} />
 
           {/* Receipts. Editable only while the claim is still the
               claimant's — the server refuses once it is with an approver. */}

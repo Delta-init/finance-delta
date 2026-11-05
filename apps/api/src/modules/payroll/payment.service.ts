@@ -664,6 +664,10 @@ export async function payrollBreakdownOfExpense(orgId: string, expenseId: string
   runId: string; runNumber: string; period: string; paymentId: string; method: string; paidOn: string;
   bankAccountName: string; reference: string; currency: string; amountMinor: number;
   reversed: boolean; reversalReason: string; rows: PayrollBreakdownRow[];
+  /** The payment record itself (2026-11-05: "show the payment record … and a link"): its account and line in Banking, who recorded it, HRMS. */
+  bankAccountId: string | null; bankTransactionId: string | null; reversalTransactionId: string | null;
+  reversedAt: string | null; recordedByName: string; recordedAt: string | null;
+  people: number; finishedCount: number; syncedToHrms: boolean; syncError: string;
 } | null> {
   if (!Types.ObjectId.isValid(expenseId)) return null;
   const run = await PayrollRun.findOne({ organizationId: oid(orgId), "payments.expenseId": oid(expenseId) }).lean<any>();
@@ -683,5 +687,11 @@ export async function payrollBreakdownOfExpense(orgId: string, expenseId: string
     paidOn: new Date(payment.paidOn).toISOString().slice(0, 10), bankAccountName: payment.bankAccountName ?? "",
     reference: payment.reference ?? "", currency: payment.currency || run.currency, amountMinor: payment.amountMinor,
     reversed: Boolean(payment.reversedAt), reversalReason: payment.reversalReason ?? "", rows,
+    bankAccountId: payment.bankAccountId ? String(payment.bankAccountId) : null,
+    bankTransactionId: payment.bankTransactionId ? String(payment.bankTransactionId) : null,
+    reversalTransactionId: payment.reversalTransactionId ? String(payment.reversalTransactionId) : null,
+    reversedAt: payment.reversedAt ? new Date(payment.reversedAt).toISOString() : null,
+    recordedByName: payment.createdByName ?? "", recordedAt: payment.createdAt ? new Date(payment.createdAt).toISOString() : null,
+    people: rows.length, finishedCount: finished.size, syncedToHrms: Boolean(payment.syncedToHrms), syncError: payment.syncError ?? "",
   };
 }

@@ -106,7 +106,7 @@ export async function listOrgLinks(orgId: string) {
  * reference a User — not so they can use the finance application. Anybody who
  * genuinely needs access is given a real role by an administrator afterwards.
  */
-async function payrollRoleId(orgId: string): Promise<Types.ObjectId> {
+export async function payrollRoleId(orgId: string): Promise<Types.ObjectId> {
   const role = await Role.findOneAndUpdate(
     { organizationId: oid(orgId), key: "payroll-employee" },
     {

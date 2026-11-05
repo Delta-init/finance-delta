@@ -484,7 +484,14 @@ async function main() {
   const inv2 = await Invoice.findOne({ "external.externalId": "e2e-2" }).lean();
   const flags2 = (inv2?.external as { flags?: string[] } | undefined)?.flags ?? [];
   check("...the invoice still exists", !!inv2);
-  check("...and is flagged for somebody to reassign", flags2.some((f) => /no account/i.test(f)), JSON.stringify(flags2));
+  // Since 2026-11-05 a salesperson with no account here is given one (no access) and the invoice is theirs — not the
+  // organization's first admin's, flagged for somebody to reassign.
+  const madeFor2 = await User.findOne({ email: "nobody@e2e-test.com" }).lean<any>();
+  check("...billed to the CRM's salesperson, given an account here for it", !!madeFor2 && String(inv2?.salespersonId) === String(madeFor2._id) && inv2?.salespersonName === "Drift One",
+    JSON.stringify({ sp: inv2?.salespersonName, made: !!madeFor2 }));
+  const madeRole = madeFor2 ? await Role.findById(madeFor2.memberships?.[0]?.roleId).lean<any>() : null;
+  check("...an account with no access: the Payroll employee role, no permissions", madeRole?.key === "payroll-employee" && (madeRole?.permissions ?? []).length === 0, JSON.stringify(madeRole));
+  check("...and nothing flagged for reassigning", !flags2.some((f) => /no account/i.test(f)), JSON.stringify(flags2));
 
   // The counter-example: the address the CRM would have used before section B.
   const stale = await signedPost(
@@ -494,10 +501,12 @@ async function main() {
   );
   const inv3 = await Invoice.findOne({ "external.externalId": "e2e-3" }).lean();
   const flags3 = (inv3?.external as { flags?: string[] } | undefined)?.flags ?? [];
+  // Before 2026-11-05 this address fell back on the first admin, flagged; now it is billed under an account of its own.
   check(
-    "the pre-realignment address falls back, which is what made the fix necessary",
-    stale.status === 200 && flags3.some((f) => /no account/i.test(f)),
-    JSON.stringify(flags3),
+    "the pre-realignment address: an account of its own, not a fallback",
+    stale.status === 200 && !flags3.some((f) => /no account/i.test(f)) && inv3?.salespersonName === "Drift One"
+      && String(inv3?.salespersonId) === String((await User.findOne({ email: "drift1@e2e-test.com" }).lean<any>())?._id),
+    JSON.stringify({ sp: inv3?.salespersonName, flags3 }),
   );
 
   const secondCourse = {

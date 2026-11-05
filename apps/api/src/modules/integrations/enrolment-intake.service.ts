@@ -6,6 +6,7 @@ import { logger } from "../../lib/logger";
 import { Invoice } from "../invoice/invoice.model";
 import { Item } from "../inventory/item.model";
 import { User } from "../user/user.model";
+import { ensureCrmSalesperson } from "../user/crm-salesperson";
 import { Customer } from "../customer/customer.model";
 import { findOrCreateCustomer } from "../customer/customer.service";
 import { createInvoice, updateInvoice } from "../invoice/invoice.service";
@@ -61,6 +62,20 @@ async function resolveSalesperson(
       status: "active",
     }).select("name");
     if (user) return { _id: user._id as Types.ObjectId, name: user.name as string };
+    // No account here (2026-11-05: a Bangalore close went on the organization's first admin): one is made for them,
+    // with no access, so the invoice is theirs — its salesperson, who raised it, their commission.
+    try {
+      const made = await ensureCrmSalesperson(orgId, input.salespersonEmail, input.salespersonName ?? "");
+      if (made) {
+        if (made.created || made.joined) {
+          logger.info({ organizationId: orgId, userId: String(made._id), created: made.created }, "Gave a CRM salesperson an account for their enrolment");
+        }
+        return { _id: made._id, name: made.name };
+      }
+    } catch (err) {
+      // Never what stops a sale being recorded: the fallback below, flagged, as before.
+      logger.error({ err, organizationId: orgId }, "Could not give a CRM salesperson an account");
+    }
     flag(
       flags,
       `${input.salespersonName || input.salespersonEmail} has no account here — reassign this invoice to the right person.`,

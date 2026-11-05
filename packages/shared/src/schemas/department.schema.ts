@@ -14,6 +14,8 @@ export const departmentSchema = z.object({
   name: z.string(),
   description: z.string(),
   createdAt: z.string(),
+  /** The HRMS departments it follows (2026-11-05) — absent for one made here by hand. */
+  hrmsNames: z.array(z.string()).optional(),
 });
 export type Department = z.infer<typeof departmentSchema>;
 

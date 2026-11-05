@@ -57,6 +57,7 @@ import { startRecurringWorker } from "./jobs/recurring-invoice.worker";
 import { startReminderWorker } from "./jobs/reminder.worker";
 import { startRecurringExpenseWorker } from "./jobs/recurring-expense.worker";
 import { startPayrollWaitingWorker } from "./jobs/payroll-waiting.worker";
+import { startDepartmentSyncWorker } from "./jobs/department-sync.worker";
 import { startProcurementWaitingWorker } from "./jobs/procurement-waiting.worker";
 import { startTetraDepositWorker } from "./jobs/tetra-deposit.worker";
 import { startCommissionFeeUpdateWorker } from "./jobs/commission-fee-update.worker";
@@ -165,6 +166,8 @@ async function bootstrap() {
     void startReminderWorker();
     void startRecurringExpenseWorker();
     void startPayrollWaitingWorker();
+    // HRMS's departments into finance, renamed with it, people moved with it — hourly (2026-11-05).
+    void startDepartmentSyncWorker();
     void startProcurementWaitingWorker();
     startLmsProvisionWorker();
     startTetraDepositWorker();

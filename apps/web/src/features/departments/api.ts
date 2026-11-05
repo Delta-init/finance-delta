@@ -58,3 +58,24 @@ export function useDeleteDepartment() {
     },
   });
 }
+
+/** What a sync from HRMS did (2026-11-05). */
+export interface DepartmentSyncResult {
+  organizations: number;
+  created: Array<{ name: string; from: string }>;
+  linked: Array<{ name: string; from: string }>;
+  renamed: Array<{ from: string; to: string }>;
+  peopleMoved: number;
+  inactiveLeft: number;
+  problems: string[];
+}
+
+/** HRMS's departments brought in now, renamed as there, people moved with them — what the hourly job does. */
+export function useSyncDepartmentsFromHrms() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: () => api.post<DepartmentSyncResult>("departments/sync-hrms"),
+    onSuccess: () => invalidate(qc),
+  });
+}

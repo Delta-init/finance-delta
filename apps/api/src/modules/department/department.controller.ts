@@ -16,6 +16,11 @@ export const listAll = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await departmentService.listAllDepartments(orgId(req)));
 });
 
+/** Admin → Departments → Sync from HRMS (2026-11-05). */
+export const syncHrms = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await departmentService.syncFromHrms(orgId(req), req.auth!.userId));
+});
+
 export const create = asyncHandler(async (req: Request, res: Response) => {
   created(res, await departmentService.createDepartment(orgId(req), req.body));
 });

@@ -14,6 +14,8 @@ router.get("/", c.list);
 router.get("/all", c.listAll);
 // Writes require explicit permission (admins hold the "*" wildcard).
 router.post("/", requirePermission("department:create"), validateBody(createDepartmentSchema), c.create);
+// HRMS's departments brought in, renamed as there, people moved with them — what the hourly job does (2026-11-05).
+router.post("/sync-hrms", requirePermission("department:update"), c.syncHrms);
 router.patch("/:id", requirePermission("department:update"), validateBody(updateDepartmentSchema), c.update);
 router.delete("/:id", requirePermission("department:delete"), c.remove);
 

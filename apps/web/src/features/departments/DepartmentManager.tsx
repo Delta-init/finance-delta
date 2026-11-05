@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Search, Pencil, Trash2, Building } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Building, RefreshCw, AlertTriangle } from "lucide-react";
 import {
   createDepartmentSchema,
   type CreateDepartmentInput,
@@ -11,6 +11,9 @@ import {
 } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { useCan } from "@/lib/use-can";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DataTable, type Column } from "@/components/ui/data-table";
@@ -29,7 +32,9 @@ import {
   useCreateDepartment,
   useDeleteDepartment,
   useDepartments,
+  useSyncDepartmentsFromHrms,
   useUpdateDepartment,
+  type DepartmentSyncResult,
 } from "./api";
 
 export function DepartmentManager() {
@@ -38,6 +43,21 @@ export function DepartmentManager() {
   const createDepartment = useCreateDepartment();
   const updateDepartment = useUpdateDepartment();
   const deleteDepartment = useDeleteDepartment();
+  const syncHrms = useSyncDepartmentsFromHrms();
+  const { can } = useCan();
+  const [synced, setSynced] = useState<DepartmentSyncResult | null>(null);
+
+  async function syncNow() {
+    try {
+      const r = await syncHrms.mutateAsync();
+      setSynced(r);
+      const changed = r.created.length + r.linked.length + r.renamed.length + r.peopleMoved;
+      if (changed) toast.success("Departments brought into line with HRMS");
+      else if (!r.problems.length) toast.success("Already as HRMS has them");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't sync with HRMS");
+    }
+  }
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Department | null>(null);
@@ -79,7 +99,15 @@ export function DepartmentManager() {
       key: "name",
       header: "Department",
       sortable: true,
-      cell: (dept) => <span className="font-medium">{dept.name}</span>,
+      cell: (dept) => (
+        <span className="font-medium">
+          {dept.name}
+          {/* Kept as HRMS has it — renamed with it, every hour (2026-11-05). */}
+          {dept.hrmsNames?.length ? (
+            <Badge tone="primary" className="ml-2" title={`Follows HRMS: ${dept.hrmsNames.join(", ")}`}>HRMS</Badge>
+          ) : null}
+        </span>
+      ),
     },
     {
       key: "description",
@@ -132,11 +160,20 @@ export function DepartmentManager() {
         title="Departments"
         description="Organize salespersons and customers into departments."
         action={
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" /> New department
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {can("department:update") && (
+              <Button variant="secondary" loading={syncHrms.isPending} onClick={syncNow} title="Brings in HRMS's departments, renames ours as HRMS has them, and moves people with them — it also runs every hour">
+                <RefreshCw className="h-4 w-4" /> Sync from HRMS
+              </Button>
+            )}
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4" /> New department
+            </Button>
+          </div>
         }
       />
+
+      {synced && <SyncResult r={synced} onClose={() => setSynced(null)} />}
 
       <div className="relative w-full max-w-xs">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
@@ -188,5 +225,43 @@ export function DepartmentManager() {
         emptyMessage="No departments yet. Create your first department."
       />
     </div>
+  );
+}
+
+/** What the sync did: each department made, linked or renamed, the people moved, and what it couldn't do. */
+function SyncResult({ r, onClose }: { r: DepartmentSyncResult; onClose: () => void }) {
+  const lines = [
+    ...r.created.map((x) => `Made "${x.name}" (from ${x.from})`),
+    ...r.linked.map((x) => `Linked "${x.name}" to HRMS (${x.from})`),
+    ...r.renamed.map((x) => `Renamed "${x.from}" to "${x.to}"`),
+    ...(r.peopleMoved ? [`${r.peopleMoved} ${r.peopleMoved === 1 ? "person" : "people"} moved to their HRMS department`] : []),
+  ];
+  return (
+    <Card className="space-y-2 p-4 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <p className="font-medium">
+          {lines.length ? "Brought into line with HRMS" : "Nothing to change — already as HRMS has them"}
+          <span className="ml-2 font-normal text-foreground-muted">
+            {r.organizations} HRMS organization{r.organizations === 1 ? "" : "s"} read
+            {r.inactiveLeft ? ` · ${r.inactiveLeft} inactive in HRMS, not brought in` : ""}
+          </span>
+        </p>
+        <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+      </div>
+      {lines.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-5">
+          {lines.map((l) => <li key={l}>{l}</li>)}
+        </ul>
+      )}
+      {r.problems.length > 0 && (
+        <div className="space-y-1 rounded-md border border-warning/30 bg-warning/5 p-2.5">
+          {r.problems.map((p) => (
+            <p key={p} className="flex items-start gap-2 text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{p}
+            </p>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }

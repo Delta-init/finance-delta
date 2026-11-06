@@ -231,6 +231,22 @@ export interface HrmsAdjustmentOutcome {
   netBefore: number;
   netAfter: number;
   deferred: number;
+  /** Paid or issued after it, for somebody already paid some of theirs — from an HRMS that knows (2026-11-06). */
+  payslipStatus?: "paid" | "issued" | null;
+}
+
+/**
+ * What finance has paid somebody so far, sent with a change to their payslip once some of it is paid (2026-11-06):
+ * HRMS marks the payslip paid when nothing is left owed — closed by `paymentId`, finance's last payment that paid them
+ * — and issued again when an addition leaves some unpaid.
+ */
+export interface HrmsSettle {
+  employeeId: string;
+  paidSoFar: number;
+  paymentId: string;
+  paidOn?: string;
+  reference?: string;
+  method?: string;
 }
 
 export interface HrmsAdjustmentResult {
@@ -444,21 +460,22 @@ export const hrmsClient = {
       externalId: string; employeeId: string;
       kind: "payment" | "deduction"; label: string; amount: number; notes?: string;
     }>,
+    settle: HrmsSettle[] = [],
   ): Promise<HrmsAdjustmentResult> {
     return (
       await request<HrmsAdjustmentResult>("POST", `/payroll/batches/${month}/adjustments`, {
         query: { organizationId },
-        body: { organizationId, items },
+        body: { organizationId, items, ...(settle.length ? { settle } : {}) },
       })
     ).data;
   },
 
-  async removeAdjustment(organizationId: string, month: string, externalId: string) {
+  async removeAdjustment(organizationId: string, month: string, externalId: string, settle?: Omit<HrmsSettle, "employeeId">) {
     return (
-      await request<{ externalId: string }>(
+      await request<{ externalId: string; payslipStatus?: "paid" | "issued" | null }>(
         "DELETE",
         `/payroll/batches/${month}/adjustments/${externalId}`,
-        { query: { organizationId } },
+        { query: { organizationId }, ...(settle ? { body: { organizationId, settle } } : {}) },
       )
     ).data;
   },

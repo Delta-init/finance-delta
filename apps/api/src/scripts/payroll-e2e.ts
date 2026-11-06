@@ -659,16 +659,30 @@ async function main() {
     formatMinor(nadiaMinus.payableMinor, "AED"));
   check("…HRMS agrees", Math.round((await slipLine("E2E003")).netPay * 100) === nadiaMinus.payableMinor);
 
-  const aishaSlipBefore = await slipLine("E2E001");
-  check("somebody already paid: refused, reverse their payment first",
-    await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: aishaPaid.id, kind: "addition", label: "Too late", amountMinor: 100_00 }], actor), /has been paid in full — reverse their payment first/));
-  const aishaItem = run.adjustments.find((a) => a.lineId === aishaPaid.id);
-  check("…nor can an item of hers be taken off", !!aishaItem && await refused(adjustments.removeAdjustment(orgId, runId, aishaItem.externalId), /has been paid in full — reverse their payment first/));
-  check("…HRMS refuses a paid payslip itself, asked directly",
-    await refused(hrmsClient.applyAdjustments(seed.orgId, seed.month, [{ externalId: `${run.runNumber}:direct:1`, employeeId: aishaPaid.hrmsEmployeeId, kind: "payment", label: "Direct", amount: 1 }]), /already paid/));
-  const aishaSlipAfter = await slipLine("E2E001");
-  check("…her payslip untouched", aishaSlipAfter.netPay === aishaSlipBefore.netPay && aishaSlipAfter.status === "paid");
   check("pulling commission after approval: still refused", await refused(adjustments.pullCommissions(orgId, runId, actor), /can no longer be adjusted/));
+
+  // ── Somebody paid in full (2026-11-06): added to, part paid; taken off, paid again ──
+  const finishedCountOf = (paymentId: string) => run.payments.find((p) => p.paymentId === paymentId)?.finishedCount;
+  check("somebody paid in full: a deduction refused — nothing is left for it to take",
+    await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: aishaPaid.id, kind: "deduction", label: "Too late", amountMinor: 100_00 }], actor), /has been paid in full .* nothing is left for a deduction to take/));
+  await adjustments.addAdjustments(orgId, runId, [{ lineId: aishaPaid.id, kind: "addition", label: "Late bonus", amountMinor: 100_00 }], actor);
+  run = await payroll.getRun(orgId, runId);
+  const aishaUp = run.lines.find((l) => l.id === aishaPaid.id)!;
+  const aishaSlipUp = await slipLine("E2E001");
+  check("…an addition for her: accepted — part paid now, owed just it", aishaUp.status === "partially_paid" && aishaUp.payableMinor - aishaUp.amountPaidMinor === 100_00,
+    `${aishaUp.status} owed ${formatMinor(aishaUp.payableMinor - aishaUp.amountPaidMinor, "AED")}`);
+  check("…her payslip back to issued in HRMS, its net matching finance", aishaSlipUp.status === "issued" && Math.round(aishaSlipUp.netPay * 100) === aishaUp.payableMinor,
+    `${aishaSlipUp.status} ${aishaSlipUp.netPay}`);
+  check("…the payment that paid her no longer says it finished her", finishedCountOf(byBank.paymentId) === 0, String(finishedCountOf(byBank.paymentId)));
+  check("…the run part paid", run.status === "partially_paid", run.status);
+  const aishaBonus = run.adjustments.find((a) => a.lineId === aishaPaid.id && a.label === "Late bonus")!;
+  await adjustments.removeAdjustment(orgId, runId, aishaBonus.externalId);
+  run = await payroll.getRun(orgId, runId);
+  const aishaBack = run.lines.find((l) => l.id === aishaPaid.id)!;
+  check("…taken off again: paid in full once more, by the same payment, her payslip paid",
+    aishaBack.status === "paid" && aishaBack.payableMinor === aishaBack.amountPaidMinor && finishedCountOf(byBank.paymentId) === 1 && (await slipOf("E2E001")) === "paid",
+    `${aishaBack.status} ${await slipOf("E2E001")}`);
+  check("…her commission still paid", (await CrmCommissionPayout.findOne({ key: crmKey }).lean())?.state === "paid");
 
   const fineAdj = run.adjustments.find((a) => a.lineId === e2e003.id && a.label === "Late fine")!;
   await adjustments.removeAdjustment(orgId, runId, fineAdj.externalId);
@@ -692,35 +706,58 @@ async function main() {
     nadiaUp.payableMinor - nadiaUp.amountPaidMinor === 500_00 && Math.round((await slipLine("E2E003")).netPay * 100) === nadiaUp.payableMinor && nadiaUp.status === "partially_paid",
     formatMinor(nadiaUp.payableMinor - nadiaUp.amountPaidMinor, "AED"));
   const slipBeforeRefusal = await slipLine("E2E003");
-  check("…a deduction of all she is still owed: refused, it would leave nothing to pay her",
-    await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Too big", amountMinor: 500_00 }], actor), /is still owed AED 500\.00: this deduction would leave nothing to pay them/));
-  check("…more than that: refused too", await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Far too big", amountMinor: 900_00 }], actor), /still owed/));
-  check("…two that together take it all: refused, nothing written",
+  check("…a deduction of more than she is still owed: refused",
+    await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Too big", amountMinor: 600_00 }], actor), /is still owed AED 500\.00 — a deduction can take at most that/));
+  check("…two that together take more: refused, nothing written",
     await refused(adjustments.addAdjustments(orgId, runId, [
-      { lineId: e2e003.id, kind: "deduction", label: "Half", amountMinor: 250_00 }, { lineId: e2e003.id, kind: "deduction", label: "Other half", amountMinor: 250_00 }], actor), /still owed/)
+      { lineId: e2e003.id, kind: "deduction", label: "Half", amountMinor: 300_00 }, { lineId: e2e003.id, kind: "deduction", label: "Other half", amountMinor: 300_00 }], actor), /still owed/)
     && (await slipLine("E2E003")).netPay === slipBeforeRefusal.netPay && (await payroll.getRun(orgId, runId)).adjustments.every((a) => !/half/i.test(a.label)));
   await adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Uniform", amountMinor: 250_00 }], actor);
   run = await payroll.getRun(orgId, runId);
   const nadiaDown = run.lines.find((l) => l.id === e2e003.id)!;
   check("…a deduction under it: accepted — still owed 250, HRMS agrees",
-    nadiaDown.payableMinor - nadiaDown.amountPaidMinor === 250_00 && Math.round((await slipLine("E2E003")).netPay * 100) === nadiaDown.payableMinor,
+    nadiaDown.payableMinor - nadiaDown.amountPaidMinor === 250_00 && Math.round((await slipLine("E2E003")).netPay * 100) === nadiaDown.payableMinor && nadiaDown.status === "partially_paid",
     formatMinor(nadiaDown.payableMinor - nadiaDown.amountPaidMinor, "AED"));
   const allowance = run.adjustments.find((a) => a.lineId === e2e003.id && a.label === "Late allowance")!;
-  check("…taking the addition off would leave her overpaid: refused",
-    await refused(adjustments.removeAdjustment(orgId, runId, allowance.externalId), /taking "Late allowance" off would leave nothing to pay them/));
-  const uniform = run.adjustments.find((a) => a.lineId === e2e003.id && a.label === "Uniform")!;
-  await adjustments.removeAdjustment(orgId, runId, uniform.externalId);
+  check("…taking the addition off would pay her more than her pay: refused",
+    await refused(adjustments.removeAdjustment(orgId, runId, allowance.externalId), /is still owed AED 250\.00 — taking "Late allowance" off can take at most that/));
+
+  // A deduction of all that is left: she is paid, on its own.
+  await adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Uniform balance", amountMinor: 250_00 }], actor);
   run = await payroll.getRun(orgId, runId);
-  const nadiaRest = run.lines.find((l) => l.id === e2e003.id)!;
-  check("…taking the deduction off: allowed, still owed 500 again",
-    nadiaRest.payableMinor - nadiaRest.amountPaidMinor === 500_00 && Math.round((await slipLine("E2E003")).netPay * 100) === nadiaRest.payableMinor);
+  const nadiaZero = run.lines.find((l) => l.id === e2e003.id)!;
+  check("a deduction of all that is left: accepted — she shows as paid, nothing owed",
+    nadiaZero.status === "paid" && nadiaZero.payableMinor === nadiaZero.amountPaidMinor, `${nadiaZero.status} owed ${formatMinor(nadiaZero.payableMinor - nadiaZero.amountPaidMinor, "AED")}`);
+  check("…her payslip paid in HRMS, closed by her cash payment", (await slipOf("E2E003")) === "paid" && finishedCountOf(nadiaPart.paymentId) === 1,
+    `${await slipOf("E2E003")} ${finishedCountOf(nadiaPart.paymentId)}`);
+  // As a payment settles a run: everybody paid or owed nothing, nobody held.
+  const everyoneSettled = run.lines.every((l) => l.status === "paid" || l.payableMinor - l.amountPaidMinor <= 0) && !run.lines.some((l) => l.status === "on_hold");
+  check("…the run follows: paid once nobody is owed", run.status === (everyoneSettled ? "paid" : "partially_paid") && run.status === "paid", run.status);
+  // A payslip of nothing (E2E002's) is never sent to HRMS by any payment — as before — so HRMS's month stays part paid on it.
+  const hb = await hrmsClient.payrollBatch(seed.orgId, seed.month);
+  check("…HRMS: every payslip with pay on it paid", hb.lines.filter((l) => l.netPay > 0).every((l) => l.status === "paid"),
+    JSON.stringify(hb.lines.filter((l) => l.status !== "paid").map((l) => [l.employeeCode, l.status, l.netPay])));
+
+  // Paid in full, then an addition: part paid again.
+  await adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "addition", label: "Overtime", amountMinor: 400_00 }], actor);
+  run = await payroll.getRun(orgId, runId);
+  const nadiaAgain = run.lines.find((l) => l.id === e2e003.id)!;
+  check("an addition after she is paid: part paid, owed 400; her payslip issued again; her cash payment no longer closes it",
+    nadiaAgain.status === "partially_paid" && nadiaAgain.payableMinor - nadiaAgain.amountPaidMinor === 400_00 && (await slipOf("E2E003")) === "issued" && finishedCountOf(nadiaPart.paymentId) === 0,
+    `${nadiaAgain.status} ${await slipOf("E2E003")}`);
+  check("…the run and HRMS's month part paid again", run.status === "partially_paid" && (await hrmsClient.payrollBatch(seed.orgId, seed.month)).status === "partially_paid", run.status);
+  check("…a deduction over the 400: refused", await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "deduction", label: "Over", amountMinor: 500_00 }], actor), /is still owed AED 400\.00/));
 
   const payNadia = await payments.payRun(orgId, runId, { lineIds: [e2e003.id], bankAccountId: String(bank._id), method: "cash", paidOn: today }, actor);
-  check("she is paid the rest she is owed now, the addition with it", payNadia.amountMinor === nadiaRest.payableMinor - nadiaRest.amountPaidMinor && payNadia.finishedCount === 1 && payNadia.synced,
+  check("she is paid the 400: paid in full, her payslip paid", payNadia.amountMinor === 400_00 && payNadia.finishedCount === 1 && payNadia.synced && (await slipOf("E2E003")) === "paid",
     `${payNadia.amountFormatted} ${payNadia.warning ?? ""}`);
-  check("…her payslip says paid", (await slipLine("E2E003")).status === "paid");
-  check("…and from now on hers can't change either",
-    await refused(adjustments.addAdjustments(orgId, runId, [{ lineId: e2e003.id, kind: "addition", label: "Once more", amountMinor: 100_00 }], actor), /has been paid|can no longer be adjusted/));
+  await payments.reversePayment(orgId, runId, payNadia.paymentId, "Paid twice");
+  run = await payroll.getRun(orgId, runId);
+  const nadiaRev = run.lines.find((l) => l.id === e2e003.id)!;
+  check("…that payment reversed: part paid again, owed 400, her payslip issued",
+    nadiaRev.status === "partially_paid" && nadiaRev.payableMinor - nadiaRev.amountPaidMinor === 400_00 && (await slipOf("E2E003")) === "issued", nadiaRev.status);
+  const payNadia2 = await payments.payRun(orgId, runId, { lineIds: [e2e003.id], bankAccountId: String(bank._id), method: "cash", paidOn: today }, actor);
+  check("…paid again: paid, her payslip paid", payNadia2.finishedCount === 1 && (await slipOf("E2E003")) === "paid");
 
   // ── Result ─────────────────────────────────────────────────────────────
   console.log(`\n${"─".repeat(60)}`);

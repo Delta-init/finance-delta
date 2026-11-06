@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { AppError } from "../../lib/http";
-import { hrmsClient, type HrmsAdjustmentOutcome } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsAdjustmentOutcome, type HrmsSettle } from "../../lib/hrms-client";
 import { CommissionRecord } from "../commission/commission-record.model";
 import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
 import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
@@ -12,6 +12,7 @@ import { PayrollRun, type PayrollRunDoc } from "./payroll-run.model";
 import { toMinor, formatMinor } from "./money";
 import { recalculate, lineAdjustmentTotal, type RecalcAdjustment, type RecalcRun } from "./recalculate";
 import { isAttendance, slabDifference } from "./slab";
+import { afterPayChange, lastPaymentOf } from "./payment.service";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -44,14 +45,14 @@ function requireOpen(run: PayrollRunDoc) {
 }
 
 /**
- * Approved, and not yet paid in full: one person's additions and deductions can still change (the user, 2026-11-04:
- * "edit this payroll after the approve also … same as before the approval, for specific people"). A payslip paid in
- * full is what the bank sent, and stays. Somebody paid in part (the user, 2026-11-06: "add or deduct … need to appear
- * on the part payment also") can still change — as long as something is left to pay them: a deduction under what is
- * still owed, an addition taken off only if that holds. Their payslip is closed in HRMS by the payment that pays the
- * last of it, so pay brought down to what has been paid would leave it open for ever.
+ * Approved — and paid too, in part or in full: one person's additions and deductions can still change (the user,
+ * 2026-11-04: "edit this payroll after the approve also … same as before the approval, for specific people";
+ * 2026-11-06: "after the paid also we can add or deduct — it will auto change to part paid"). Somebody already paid some
+ * or all of theirs is never taken below what they have been paid: an addition makes them owed more (part paid), a
+ * deduction can take what is still owed and no more (all of it marks them paid). Their status, the run's and their
+ * payslip in HRMS follow (payment.service afterPayChange).
  */
-const STATUSES_OPEN_AFTER_APPROVAL = ["approved", "partially_paid"];
+const STATUSES_OPEN_AFTER_APPROVAL = ["approved", "partially_paid", "paid"];
 
 function requireAdjustable(run: PayrollRunDoc) {
   if (!STATUSES_OPEN_TO_ADJUSTMENT.includes(run.status) && !STATUSES_OPEN_AFTER_APPROVAL.includes(run.status)) {
@@ -64,26 +65,28 @@ function requireAdjustable(run: PayrollRunDoc) {
 
 type RunLineDoc = PayrollRunDoc["lines"][number];
 
-/** Paid something, not all of it. */
-const isPartPaid = (line: RunLineDoc) => line.status !== "paid" && (line.amountPaidMinor ?? 0) > 0;
-
-function requireLineAdjustable(run: PayrollRunDoc, line: RunLineDoc) {
-  if (!STATUSES_OPEN_AFTER_APPROVAL.includes(run.status)) return;
-  if (line.status === "paid" || (isPartPaid(line) && line.payableMinor - line.amountPaidMinor <= 0)) {
-    throw new AppError("CONFLICT", `${line.name} has been paid in full — reverse their payment first to change their pay.`);
-  }
-}
-
-/** Somebody paid in part keeps something still to pay, whatever this change does to their pay. */
-function requireStillOwed(run: PayrollRunDoc, line: RunLineDoc, payableAfterMinor: number, what: string) {
-  if (!isPartPaid(line) || payableAfterMinor - line.amountPaidMinor > 0) return;
+/** Somebody already paid some or all of theirs is never left owing it back: what has gone to them stays theirs. */
+function requireNotOverpaid(run: PayrollRunDoc, line: RunLineDoc, payableAfterMinor: number, what: string) {
+  if (!(line.amountPaidMinor > 0) || payableAfterMinor >= line.amountPaidMinor) return;
   const cur = line.currency || run.currency;
-  const owed = line.payableMinor - line.amountPaidMinor;
+  const owed = Math.max(0, line.payableMinor - line.amountPaidMinor);
   throw new AppError(
     "CONFLICT",
-    `${line.name} has been paid ${formatMinor(line.amountPaidMinor, cur)} and is still owed ${formatMinor(owed, cur)}: ${what} would leave nothing to pay them, `
-      + `and only a payment closes their payslip. Keep it under ${formatMinor(owed, cur)}, or reverse their payment first.`,
+    owed > 0
+      ? `${line.name} is still owed ${formatMinor(owed, cur)} — ${what} can take at most that: the rest of their pay (${formatMinor(line.amountPaidMinor, cur)}) has already been paid to them.`
+      : `${line.name} has been paid in full (${formatMinor(line.amountPaidMinor, cur)}) — nothing is left for ${what} to take. Put it on next month's payroll instead.`,
   );
+}
+
+/** What finance has paid them, for HRMS to mark their payslip paid or not (2026-11-06); none for somebody not paid yet. */
+function settleFor(run: PayrollRunDoc, line: RunLineDoc): HrmsSettle | null {
+  if (!(line.amountPaidMinor > 0)) return null;
+  const last = lastPaymentOf(run, line._id);
+  if (!last) return null;
+  return {
+    employeeId: line.hrmsEmployeeId, paidSoFar: line.amountPaidMinor / 100, paymentId: last.paymentId,
+    paidOn: last.paidOn.toISOString(), reference: last.reference ?? "", method: last.method,
+  };
 }
 
 async function loadRun(orgId: string, runId: string) {
@@ -169,11 +172,10 @@ export async function addAdjustments(
   for (const input of inputs) {
     const line = run.lines.find((l) => String(l._id) === input.lineId);
     if (!line) throw new AppError("NOT_FOUND", `No such person on this run: ${input.lineId}`);
-    requireLineAdjustable(run, line);
     if (input.amountMinor <= 0) throw new AppError("VALIDATION_ERROR", `"${input.label}" must be a positive amount`);
     const moved = (change.get(input.lineId) ?? 0) + (input.kind === "addition" ? input.amountMinor : -input.amountMinor);
     change.set(input.lineId, moved);
-    requireStillOwed(run, line, line.payableMinor + moved, "this deduction");
+    requireNotOverpaid(run, line, line.payableMinor + moved, "a deduction");
 
     const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, input.lineId));
 
@@ -208,21 +210,29 @@ export async function addAdjustments(
   // HRMS first. If it refuses, nothing is saved here either, and the run is
   // left exactly as it was rather than holding an addition the payslip does not
   // know about.
-  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged);
+  // Those already paid something go with what they have been paid, so HRMS marks their payslip paid or not with it.
+  const touched = run.lines.filter((l) => change.has(String(l._id)));
+  const settle = touched.map((l) => settleFor(run, l)).filter((x): x is HrmsSettle => !!x);
+  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged, settle);
 
   absorbOutcomes(run, result.outcomes);
   recalculate(run as unknown as RecalcRun);
 
-  // HRMS rebuilds the payslip as it applies an item, and the rebuilt one could still take somebody paid in part down
-  // to what they have been paid. Then the items come back off HRMS and nothing here is saved.
-  const emptied = run.lines.filter((l) => change.has(String(l._id)) && isPartPaid(l) && l.payableMinor - l.amountPaidMinor <= 0);
-  if (emptied.length) {
-    for (const item of staged) await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, item.externalId).catch(() => undefined);
+  // HRMS rebuilds the payslip as it applies an item, and the rebuilt one could still take somebody below what they
+  // have been paid. Then the items come back off HRMS, their payslip as it was, and nothing here is saved.
+  const overpaid = touched.filter((l) => l.amountPaidMinor > 0 && l.payableMinor < l.amountPaidMinor);
+  if (overpaid.length) {
+    for (const item of staged) {
+      const line = touched.find((l) => l.hrmsEmployeeId === item.employeeId);
+      const back = line ? settleFor(run, line) : null;
+      await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, item.externalId, back ?? undefined).catch(() => undefined);
+    }
     throw new AppError(
       "CONFLICT",
-      `${emptied.map((l) => l.name).join(", ")} would be left with nothing to pay after HRMS worked out the payslip again — nothing was added. Use a smaller amount.`,
+      `${overpaid.map((l) => l.name).join(", ")} would be paid more than their pay after HRMS worked out the payslip again — nothing was changed. Use a smaller amount.`,
     );
   }
+  await afterPayChange(orgId, run, touched.map((l) => String(l._id)));
   await run.save();
 
   return summariseOutcomes(run, result.outcomes);
@@ -548,15 +558,14 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   if (index === -1) throw new AppError("NOT_FOUND", "No such adjustment on this run");
   const line = run.lines.find((l) => String(l._id) === String(run.adjustments[index]!.lineId));
   if (line) {
-    requireLineAdjustable(run, line);
     const rest = run.adjustments.filter((_, i) => i !== index) as unknown as RecalcAdjustment[];
-    requireStillOwed(run, line, line.netFromHrmsMinor + lineAdjustmentTotal(rest, line._id), `taking "${run.adjustments[index]!.label}" off`);
+    requireNotOverpaid(run, line, line.netFromHrmsMinor + lineAdjustmentTotal(rest, line._id), `taking "${run.adjustments[index]!.label}" off`);
   }
 
   // HRMS first again: if it refuses, this side is untouched and the two stay in
   // step. Removing here first would leave a payslip carrying money the run no
   // longer knows about.
-  await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, externalId);
+  await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, externalId, (line && settleFor(run, line)) || undefined);
 
   // CRM commission taken off the run is the CRM commission page's to pay again.
   const crmPayouts = run.adjustments[index]!.crmPayoutIds ?? [];
@@ -566,6 +575,7 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   if (csPayouts.length) await CsCommissionPayout.updateMany({ _id: { $in: csPayouts }, state: "approved" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });
   run.adjustments.splice(index, 1);
   recalculate(run as unknown as RecalcRun);
+  if (line) await afterPayChange(orgId, run, [String(line._id)]);
   await run.save();
   return { message: "Adjustment removed", externalId };
 }

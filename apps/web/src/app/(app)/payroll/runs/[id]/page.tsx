@@ -169,12 +169,11 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const holdable = openForAdjustment || run.status === "approved" || run.status === "partially_paid";
   const canApprove = openForAdjustment && run.lines.length > 0;
   const canPay = run.status === "approved" || run.status === "partially_paid";
-  // After approval, until the run is paid: one person's additions and deductions can still change, for somebody
-  // nothing has been paid to yet (the user, 2026-11-04). Pulling slabs or commission stays before approval.
-  const adjustAfterApproval = canPay;
-  // After approval: anybody not paid in full — somebody paid in part too, while something is left to pay them (2026-11-06).
-  const lineAdjustable = (l: RunLine) =>
-    openForAdjustment || (adjustAfterApproval && l.status !== "paid" && (l.amountPaidMinor === 0 || l.payableMinor - l.amountPaidMinor > 0));
+  // After approval — paid in part or in full too: one person's additions and deductions can still change (the user,
+  // 2026-11-04 and 2026-11-06). Somebody already paid is never taken below what they have been paid; their status
+  // follows on its own. Pulling slabs or commission stays before approval.
+  const adjustAfterApproval = canPay || run.status === "paid";
+  const lineAdjustable = (_l: RunLine) => openForAdjustment || adjustAfterApproval;
   // Approved by mistake: one step back, while nothing of it is paid (2026-11-01).
   const canUndoApproval = run.status === "approved" && run.payments.length === 0 && !(run.totals.amountPaidMinor > 0);
   // Rows are tickable in both stages, for two different jobs: choosing who to
@@ -404,9 +403,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             <p className="text-foreground-muted">
               {adjustSelected.length > 0
                 ? `${adjustSelected.length} selected — the same item will go on each of their payslips.${
-                    adjustSelected.length < selected.size ? ` ${selected.size - adjustSelected.length} paid in full, left out.` : ""}`
+                    adjustSelected.length < selected.size ? ` ${selected.size - adjustSelected.length} left out.` : ""}`
                 : adjustAfterApproval
-                  ? "For anybody not paid in full: open their row, or tick several. It is written to their payslip in HRMS, and the run stays approved. Somebody paid in part can still get an addition, or a deduction under what is still owed to them. Somebody paid in full has their payment reversed first."
+                  ? "For anybody: open their row, or tick several. It is written to their payslip in HRMS. Somebody already paid can get an addition (they become part paid, owed it) or a deduction up to what is still owed to them (all of it marks them paid) — their status changes on its own."
                   : "Everything added here is written to the payslip in HRMS, so the employee sees the same figure that is paid. Tick people below to apply one item to several at once."}
             </p>
           </div>

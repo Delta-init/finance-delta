@@ -52,10 +52,12 @@ export function AdjustDialog({
   const currency = currencies[0] ?? runCurrency;
   const mixed = currencies.length > 1;
   const minorEach = toMinor(amount);
-  // Somebody paid in part keeps something to pay (2026-11-06): a deduction stays under what is still owed to them.
-  const partPaid = lines.filter((l) => l.amountPaidMinor > 0 && l.status !== "paid");
-  const leastOwed = partPaid.length ? Math.min(...partPaid.map((l) => l.payableMinor - l.amountPaidMinor)) : null;
-  const tooMuch = kind === "deduction" && leastOwed !== null && minorEach >= leastOwed;
+  // Somebody already paid some or all of theirs (2026-11-06): a deduction takes at most what is still owed — all of it
+  // marks them paid — and an addition makes them part paid, owed it. Their status changes on its own.
+  const paidSome = lines.filter((l) => l.amountPaidMinor > 0);
+  const leastOwed = paidSome.length ? Math.max(0, Math.min(...paidSome.map((l) => l.payableMinor - l.amountPaidMinor))) : null;
+  const tooMuch = kind === "deduction" && leastOwed !== null && minorEach > leastOwed;
+  const takesAll = !bulk && kind === "deduction" && leastOwed !== null && leastOwed > 0 && minorEach === leastOwed;
   const valid = label.trim().length > 0 && minorEach > 0 && lines.length > 0 && !mixed && !tooMuch;
 
   function reset() {
@@ -93,17 +95,22 @@ export function AdjustDialog({
             </div>
           )}
 
-          {partPaid.length > 0 && leastOwed !== null && (
+          {paidSome.length > 0 && leastOwed !== null && (
             <div className="rounded-lg border border-border bg-surface-muted/40 p-2.5 text-xs">
               {bulk ? (
                 <p>
-                  <span className="font-medium">{partPaid.length} of them paid in part.</span>{" "}
-                  The least still owed to one of them is {formatMoney(leastOwed, currency)}, so a deduction must be under that.
+                  <span className="font-medium">{paidSome.length} of them already paid some or all of theirs.</span>{" "}
+                  An addition makes them owed it; a deduction can take at most {formatMoney(leastOwed, currency)}, the least still owed to one of them.
+                </p>
+              ) : leastOwed === 0 ? (
+                <p>
+                  <span className="font-medium">Paid in full: {formatMoney(paidSome[0]!.amountPaidMinor, currency)}.</span>{" "}
+                  An addition makes them part paid, owed it. Nothing is left to deduct from — put a deduction on next month&rsquo;s payroll.
                 </p>
               ) : (
                 <p>
-                  <span className="font-medium">Paid {formatMoney(partPaid[0]!.amountPaidMinor, currency)} · still owed {formatMoney(leastOwed, currency)}.</span>{" "}
-                  An addition is paid with the rest; a deduction must be under {formatMoney(leastOwed, currency)}, since only a payment closes their payslip.
+                  <span className="font-medium">Paid {formatMoney(paidSome[0]!.amountPaidMinor, currency)} · still owed {formatMoney(leastOwed, currency)}.</span>{" "}
+                  An addition is paid with the rest. A deduction can take up to {formatMoney(leastOwed, currency)} — all of it marks them paid.
                 </p>
               )}
             </div>
@@ -154,8 +161,13 @@ export function AdjustDialog({
             />
             {tooMuch && leastOwed !== null && (
               <p className="text-xs text-danger">
-                Must be under {formatMoney(leastOwed, currency)} — {bulk ? "somebody selected" : "they"} would be left with nothing to pay.
+                {leastOwed === 0
+                  ? `Nothing is left to deduct from — ${bulk ? "somebody selected has" : "they have"} been paid in full.`
+                  : `At most ${formatMoney(leastOwed, currency)} — the rest has already been paid to ${bulk ? "somebody selected" : "them"}.`}
               </p>
+            )}
+            {takesAll && (
+              <p className="text-xs text-success">This takes all that is left: they will show as paid.</p>
             )}
             {bulk && minorEach > 0 && (
               <p className="text-xs text-foreground-muted">

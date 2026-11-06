@@ -417,6 +417,52 @@ async function settleCommissions(orgId: string, run: PayrollRunDoc, paidLineIds:
 }
 
 
+/** The last payment still standing that paid this person something: the one that closes their payslip. */
+export function lastPaymentOf(run: PayrollRunDoc, lineId: unknown) {
+  const mine = run.payments.filter((p) => !p.reversedAt && p.allocations.some((a) => String(a.lineId) === String(lineId)));
+  return mine[mine.length - 1] ?? null;
+}
+
+/**
+ * After an addition or deduction on somebody already paid some or all of theirs (the user, 2026-11-06: "if they
+ * aren't paid, the status changes on its own; after they're paid we can also add or deduct and it goes to part
+ * paid"): paid once nothing is left owed — finished by the last payment that paid them, which settles their commission
+ * as a finishing payment does, and which reversing then opens again — and part paid when more is owed. The run follows.
+ * HRMS has already been told, with the change itself. No money moves.
+ */
+export async function afterPayChange(orgId: string, run: PayrollRunDoc, lineIds: string[]): Promise<{ finished: string[]; reopened: string[] }> {
+  const finished: string[] = [], reopened: string[] = [];
+  for (const line of run.lines) {
+    const id = String(line._id);
+    if (!lineIds.includes(id) || !(line.amountPaidMinor > 0)) continue;
+    const owed = line.payableMinor - line.amountPaidMinor;
+    if (owed <= 0 && line.status !== "paid") {
+      line.status = "paid";
+      const last = lastPaymentOf(run, id);
+      if (last) {
+        const ids = finishedBy(last);
+        if (!ids.includes(id)) last.finishedLineIds = [...ids, id].map((x) => oid(x)) as never;
+      }
+      finished.push(id);
+    } else if (owed > 0 && line.status === "paid") {
+      line.status = "partially_paid";
+      for (const p of run.payments) {
+        const ids = finishedBy(p);
+        if (ids.includes(id)) p.finishedLineIds = ids.filter((x) => x !== id).map((x) => oid(x)) as never;
+      }
+      reopened.push(id);
+    }
+  }
+  if (run.payments.some((p) => !p.reversedAt)) {
+    const anyOutstanding = run.lines.some((l) => !isSettled(l as unknown as PayableLine));
+    const held = run.lines.some((l) => l.status === "on_hold");
+    run.status = anyOutstanding || held ? "partially_paid" : "paid";
+    run.paidAt = run.status === "paid" ? run.paidAt ?? new Date() : null;
+  }
+  if (finished.length) await settleCommissions(orgId, run, finished);
+  return { finished, reopened };
+}
+
 /**
  * Reverse a payment, when a transfer bounced or was sent in error.
  *

@@ -57,6 +57,7 @@ import {
   useDeleteBankTransaction,
 } from "@/features/banking/api";
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
+import { PspPanel } from "@/features/banking/psp";
 import { TransferDialog } from "@/features/banking/TransferDialog";
 import { PaymentDetailsCard } from "@/features/banking/payment-details-card";
 import { CashBook } from "@/features/banking/CashBook";
@@ -333,7 +334,11 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
 
       {account.accountType === "petty_cash" && <CashCounts account={account} />}
 
-      {account.accountType !== "petty_cash" && <PaymentDetailsCard account={account} />}
+      {/* A payment provider's account (2026-11-06): what waits to be settled, and its settlements — or, for a bank
+          account, setting it up as one. */}
+      <PspPanel account={account} canWrite={canWrite} />
+
+      {account.accountType !== "petty_cash" && account.accountType !== "psp" && <PaymentDetailsCard account={account} />}
 
       {/* Transactions, and — for a bank account — its Reconciliations (2026-10-23), each in its own tab. */}
       {account.accountType !== "petty_cash" && (

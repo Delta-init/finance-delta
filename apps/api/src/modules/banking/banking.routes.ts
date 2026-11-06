@@ -14,12 +14,14 @@ import {
   editReconciliationSchema,
   createTransferSchema,
   updateTransferSchema,
+  createPspSettlementSchema,
 } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { parseUpload } from "../../middleware/upload";
 import { validateBody } from "../../middleware/validate";
 import * as c from "./banking.controller";
+import * as psp from "../psp-settlement/psp-settlement.controller";
 
 const router = Router();
 router.use(authenticate);
@@ -32,6 +34,12 @@ router.delete("/transfers/:transferId", requirePermission("banking:write"), c.de
 // Bank accounts
 router.get("/", requirePermission("banking:read"), c.listAccounts);
 router.get("/:id", requirePermission("banking:read"), c.getAccount);
+// A PSP account's settlements (2026-11-06): what waits to be settled, and each settlement — the transfer and fee it made.
+router.get("/:id/psp/unsettled", requirePermission("banking:read"), psp.unsettled);
+router.get("/:id/psp/summary", requirePermission("banking:read"), psp.summary);
+router.get("/:id/psp/settlements", requirePermission("banking:read"), psp.list);
+router.post("/:id/psp/settlements", requirePermission("banking:write"), validateBody(createPspSettlementSchema), psp.create);
+router.delete("/:id/psp/settlements/:settlementId", requirePermission("banking:write"), psp.remove);
 router.post("/", requirePermission("banking:write"), validateBody(createBankAccountSchema), c.createAccount);
 router.patch("/:id", requirePermission("banking:write"), validateBody(updateBankAccountSchema), c.updateAccount);
 router.post("/:id/deactivate", requirePermission("banking:write"), c.deactivateAccount);

@@ -57,7 +57,46 @@ function accountToDTO(doc: BankAccountDoc): BankAccountDTO {
       | number
       | undefined,
     notes: (doc.notes as string) ?? "",
+    psp: pspDTO((doc as unknown as { psp?: Record<string, unknown> | null }).psp),
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
+  };
+}
+
+function pspDTO(p: Record<string, unknown> | null | undefined): BankAccountDTO["psp"] {
+  if (!p?.settlementAccountId) return null;
+  return {
+    provider: String(p.provider ?? ""), feePct: Number(p.feePct ?? 0), fixedFeeMinor: Number(p.fixedFeeMinor ?? 0),
+    feeVatPct: Number(p.feeVatPct ?? 0), settlementAccountId: String(p.settlementAccountId),
+    settlementAccountName: String(p.settlementAccountName ?? ""), settlementDays: Number(p.settlementDays ?? 0),
+    startDate: dateOnly(p.startDate as Date),
+  };
+}
+
+/**
+ * A PSP account's settings as stored (2026-11-06), or null for any other account: the account it settles into must be
+ * another of this organization's, open, in the same currency, and not a PSP itself. The start date stays as it was,
+ * else today — payments before it count as settled already.
+ */
+async function pspToStore(
+  orgId: string, selfId: string | null, type: string | undefined, currency: string,
+  input: CreateBankAccountInput["psp"], had: { startDate?: Date } | null | undefined,
+): Promise<Record<string, unknown> | null> {
+  if (type !== "psp") return null;
+  if (!input) throw new AppError("VALIDATION_ERROR", "A PSP account needs its settings — what it charges and where it settles");
+  if (!Types.ObjectId.isValid(input.settlementAccountId) || input.settlementAccountId === selfId) {
+    throw new AppError("VALIDATION_ERROR", "Choose another account for it to settle into");
+  }
+  const to = await BankAccount.findOne({ _id: new Types.ObjectId(input.settlementAccountId), organizationId: new Types.ObjectId(orgId) })
+    .select("accountName currency isActive accountType").lean<{ accountName: string; currency: string; isActive?: boolean; accountType: string }>();
+  if (!to) throw new AppError("VALIDATION_ERROR", "The account it settles into is not one of this organization's");
+  if (to.isActive === false) throw new AppError("VALIDATION_ERROR", `${to.accountName} is closed`);
+  if (to.accountType === "psp") throw new AppError("VALIDATION_ERROR", "A PSP settles into a bank account, not another PSP");
+  if (to.currency !== currency) throw new AppError("VALIDATION_ERROR", `${to.accountName} is in ${to.currency}, this account in ${currency} — it settles into an account in ${currency}`);
+  return {
+    provider: input.provider ?? "", feePct: input.feePct ?? 0, fixedFeeMinor: input.fixedFeeMinor ?? 0, feeVatPct: input.feeVatPct ?? 0,
+    settlementAccountId: new Types.ObjectId(input.settlementAccountId), settlementAccountName: to.accountName,
+    settlementDays: input.settlementDays ?? 7,
+    startDate: input.startDate ? new Date(input.startDate) : had?.startDate ?? new Date(new Date().toISOString().slice(0, 10)),
   };
 }
 
@@ -239,9 +278,11 @@ export async function createBankAccount(
   orgId: string,
   input: CreateBankAccountInput,
 ): Promise<BankAccountDTO> {
+  const psp = await pspToStore(orgId, null, input.accountType, input.currency, input.psp, null);
   const doc = await BankAccount.create({
     organizationId: new Types.ObjectId(orgId),
     ...input,
+    psp,
     openingDate: new Date(input.openingDate),
     currentBalanceMinor: input.openingBalanceMinor ?? 0,
   });
@@ -255,6 +296,13 @@ export async function updateBankAccount(
 ): Promise<BankAccountDTO> {
   const update: Record<string, unknown> = { ...input };
   if (input.openingDate) update.openingDate = new Date(input.openingDate);
+  // A PSP's settings, checked; turning it into another kind of account drops them (2026-11-06).
+  if (input.accountType !== undefined || input.psp !== undefined) {
+    const was = await BankAccount.findOne({ _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) })
+      .select("accountType currency psp").lean<{ accountType: string; currency: string; psp?: { startDate?: Date } | null }>();
+    if (!was) throw new AppError("NOT_FOUND", "Bank account not found");
+    update.psp = await pspToStore(orgId, id, input.accountType ?? was.accountType, input.currency ?? was.currency, (input.psp ?? was.psp) as never, was.psp);
+  }
   const doc = await BankAccount.findOneAndUpdate(
     { _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) },
     { $set: update },
@@ -441,6 +489,11 @@ export async function assertEditable(orgId: string, accountId: string, txId: str
       "CONFLICT",
       "This transaction has been reconciled and can no longer be changed. Add a correcting entry instead.",
     );
+  }
+  // Part of a PSP settlement (2026-11-06): it goes back with the settlement, not on its own.
+  const settled = (tx as unknown as { settlement?: { number?: string } | null }).settlement;
+  if (settled?.number) {
+    throw new AppError("CONFLICT", `This line is part of PSP settlement ${settled.number} — delete the settlement to change it.`);
   }
   if (tx.matches?.length) {
     const m = tx.matches[0]!;

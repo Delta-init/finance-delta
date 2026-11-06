@@ -236,6 +236,10 @@ async function refusePayrollExpense(orgId: string, doc: unknown, what: string): 
 function refuseBillExpense(doc: unknown): void {
   const bill = billOfExpense(doc);
   if (bill) throw new AppError("CONFLICT", `${(doc as { expenseNumber?: string }).expenseNumber ?? "This expense"} comes from bill ${bill.billNumber} — change it on the bill.`);
+  // A PSP settlement's fee (2026-11-06): it goes with the settlement.
+  if ((doc as { source?: { kind?: string } }).source?.kind === "psp_settlement") {
+    throw new AppError("CONFLICT", `${(doc as { expenseNumber?: string }).expenseNumber ?? "This expense"} is the fee of a PSP settlement — delete the settlement on its PSP account to change it.`);
+  }
 }
 
 const SORT = {

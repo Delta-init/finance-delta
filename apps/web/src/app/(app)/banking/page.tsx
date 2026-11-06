@@ -25,6 +25,7 @@ const TYPE_TONE: Record<BankAccountType, NonNullable<BadgeProps["tone"]>> = {
   savings: "success",
   petty_cash: "warning",
   internal: "neutral",
+  psp: "warning",
 };
 
 export default function BankingPage() {

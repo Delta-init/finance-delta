@@ -59,7 +59,8 @@ const expenseSourceSchema = new Schema(
     // "bill": a bill's own expense (bill-expense.ts, 2026-10-23) — key "bill:<bill id>"; it follows the bill.
     // "payroll": a payroll payment's (payroll/posting.service.ts, 2026-11-05) — key "payroll:<run id>:<payment id>"; paid
     // when that payment is, in its account through the payment's own bank line, and changed only through the payment.
-    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time", "import", "bill", "payroll"], required: true },
+    // "psp_settlement": a PSP settlement's fee (psp-settlement, 2026-11-06) — key "psp:<settlement id>"; it goes with it.
+    kind: { type: String, enum: ["hrms_procurement", "hrms_advance", "hrms_one_time", "import", "bill", "payroll", "psp_settlement"], required: true },
     key: { type: String, required: true },
     hrmsOrgId: { type: String, required: function (this: { kind?: string }) { return String(this.kind ?? "").startsWith("hrms_"); } },
     requestId: { type: String, required: function (this: { kind?: string }) { return String(this.kind ?? "").startsWith("hrms_"); } },

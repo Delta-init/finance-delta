@@ -3,7 +3,7 @@ import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
 // ── Bank Account ──────────────────────────────────────────────────────────────
 
-export const bankAccountTypeSchema = z.enum(["current", "savings", "petty_cash", "internal"]);
+export const bankAccountTypeSchema = z.enum(["current", "savings", "petty_cash", "internal", "psp"]);
 export type BankAccountType = z.infer<typeof bankAccountTypeSchema>;
 
 export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
@@ -11,7 +11,38 @@ export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
   savings: "Savings",
   petty_cash: "Petty Cash",
   internal: "Internal Fund",
+  psp: "PSP",
 };
+
+/**
+ * A payment service provider's account (the user, 2026-11-06): Tabby, Tamara, Billexpro, Easebuzz, a card acquirer.
+ * Clients' payments land in it whole; the provider pays them on to a bank account later, less its fee — a settlement
+ * (psp-settlement). What it charges — a percentage, a fixed amount a payment, VAT on the fee — is what each payment
+ * is expected to cost; what actually arrived decides the fee booked.
+ */
+export const pspSettingsSchema = z.object({
+  provider: z.string().trim().max(60).default(""),
+  /** Of each payment, e.g. 5.5. */
+  feePct: z.number().min(0).max(100).default(0),
+  /** A payment, in the account's currency. */
+  fixedFeeMinor: z.number().int().min(0).default(0),
+  /** On the fee, e.g. 5. */
+  feeVatPct: z.number().min(0).max(100).default(0),
+  /** The bank account it pays out to. */
+  settlementAccountId: z.string().min(1, "Choose the account it settles into"),
+  /** How many days after a payment its money is expected there. */
+  settlementDays: z.number().int().min(0).max(120).default(7),
+  /** Payments dated before this count as settled already — the day it became a PSP account, unless said. */
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+export type PspSettings = z.infer<typeof pspSettingsSchema>;
+
+/** What one payment is expected to cost: the percentage and the fixed fee, and VAT on both. */
+export function expectedPspFeeMinor(amountMinor: number, s: Pick<PspSettings, "feePct" | "fixedFeeMinor" | "feeVatPct">): number {
+  if (!(amountMinor > 0)) return 0;
+  const fee = (amountMinor * (s.feePct ?? 0)) / 100 + (s.fixedFeeMinor ?? 0);
+  return Math.min(amountMinor, Math.round(fee * (1 + (s.feeVatPct ?? 0) / 100)));
+}
 
 export const createBankAccountSchema = z.object({
   accountName: z.string().min(1, "Account name is required"),
@@ -28,6 +59,8 @@ export const createBankAccountSchema = z.object({
   openingBalanceMinor: z.number().default(0),
   openingDate: z.string().min(1, "Opening date is required"),
   notes: z.string().optional().default(""),
+  /** A PSP account's (accountType "psp"). */
+  psp: pspSettingsSchema.nullable().optional(),
 });
 export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 
@@ -52,9 +85,68 @@ export const bankAccountSchema = z.object({
   lastReconciledAt: z.string().optional(),
   lastReconciledStatementBalanceMinor: z.number().optional(),
   notes: z.string(),
+  /** A PSP account's settings, its settlement account named. */
+  psp: pspSettingsSchema.extend({ settlementAccountName: z.string(), startDate: z.string() }).nullable().optional(),
   createdAt: z.string(),
 });
 export type BankAccount = z.infer<typeof bankAccountSchema>;
+
+// ── PSP settlements (2026-11-06) ─────────────────────────────────────────────
+
+export const createPspSettlementSchema = z.object({
+  /** The PSP account's money-in lines being settled. */
+  lineIds: z.array(z.string().min(1)).min(1, "Pick the payments being settled").max(2000),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date is required"),
+  /** What arrived in the bank account. */
+  receivedMinor: z.number().int().positive("What arrived must be more than 0"),
+  reference: z.string().max(100).optional().default(""),
+  notes: z.string().max(1000).optional().default(""),
+});
+export type CreatePspSettlementInput = z.infer<typeof createPspSettlementSchema>;
+
+/** A money-in line in a PSP account not settled yet. */
+export interface PspUnsettledLine {
+  id: string;
+  date: string;
+  description: string;
+  reference: string;
+  amountMinor: number;
+  /** The invoice it is a payment on, where it is one. */
+  invoice: { id: string; number: string } | null;
+  expectedFeeMinor: number;
+  /** When the provider should have paid it out. */
+  expectedOn: string;
+  late: boolean;
+}
+
+export interface PspSettlementDTO {
+  id: string;
+  number: string;
+  date: string;
+  pspAccountId: string;
+  pspAccountName: string;
+  bankAccountId: string;
+  bankAccountName: string;
+  currency: string;
+  lineCount: number;
+  grossMinor: number;
+  receivedMinor: number;
+  feeMinor: number;
+  expectedFeeMinor: number;
+  expense: { id: string; number: string } | null;
+  reference: string;
+  notes: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+export interface PspSummary {
+  unsettledMinor: number;
+  unsettledCount: number;
+  expectedFeeMinor: number;
+  lateCount: number;
+  lateMinor: number;
+}
 
 // ── Bank Transaction ──────────────────────────────────────────────────────────
 

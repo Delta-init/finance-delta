@@ -116,7 +116,11 @@ export function stampAccount(
 export async function assertLineMovable(orgId: string, p: StoredPayment | undefined | null): Promise<void> {
   for (const id of [p?.bankTransactionId, p?.bankChargesTransactionId]) {
     if (!id) continue;
-    const tx = await BankTransaction.findOne({ _id: id, organizationId: oid(orgId) }).select("isReconciled accountId accountName").lean<any>();
+    const tx = await BankTransaction.findOne({ _id: id, organizationId: oid(orgId) }).select("isReconciled accountId accountName settlement").lean<any>();
+    // Settled by a PSP (2026-11-06): the settlement counted it as it is.
+    if (tx?.settlement?.number) {
+      throw new AppError("CONFLICT", `This payment was settled in ${tx.accountName} (PSP settlement ${tx.settlement.number}) — delete the settlement to change it`);
+    }
     if (!tx?.isReconciled) continue;
     const acc = await BankAccount.findById(tx.accountId).select("accountType").lean<any>();
     if (acc?.accountType === "petty_cash") continue;
@@ -196,6 +200,12 @@ export async function syncPaymentLine(inv: InvoiceLike, paymentId: unknown): Pro
   const p: StoredPayment | undefined = (fresh?.payments ?? []).find((x: any) => String(x._id) === String(paymentId));
   if (!fresh || !p) return false;
   const want = wantedLines(fresh, p);
+  // Into a PSP account (2026-11-06): the whole payment lands there; its fee is taken when the provider settles, so no
+  // charges line of its own.
+  if (want?.debit) {
+    const acc = await BankAccount.findOne({ _id: oid(want.accountId), organizationId: oid(orgId) }).select("accountType").lean<{ accountType?: string }>();
+    if (acc?.accountType === "psp") want.debit = null;
+  }
   try {
     const credit = await syncOne(orgId, fresh, p.bankTransactionId, want, want?.credit ?? null, "credit");
     const debit = await syncOne(orgId, fresh, p.bankChargesTransactionId, want, want?.debit ?? null, "debit");

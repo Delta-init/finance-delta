@@ -71,6 +71,8 @@ export const EXPENSE_DEFAULTS = {
   csCommission: { category: "sales_commission", subcategory: "mentor_commission" },
   procurement: { category: "other_unclassified", subcategory: "pending_classification" },
   unclassified: { category: "other_unclassified", subcategory: "pending_classification" },
+  // What a PSP kept when it settled (psp-settlement, 2026-11-06).
+  pspFee: { category: "bank_fees", subcategory: "payment_gateway_fees" },
 } as const;
 
 /** "Travel & Transportation › Fuel", or the category alone. */

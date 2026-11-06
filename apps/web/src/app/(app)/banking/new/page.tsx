@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -16,6 +16,7 @@ import { toast } from "@/lib/toast";
 import { useCreateBankAccount } from "@/features/banking/api";
 import { BANK_ACCOUNT_TYPE_LABELS, type BankAccountType } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
+import { PspSettingsFields, draftOf, settingsOf, type PspDraft } from "@/features/banking/psp";
 
 const ACCOUNT_TYPES = Object.keys(BANK_ACCOUNT_TYPE_LABELS) as BankAccountType[];
 const PRESET_TYPES: string[] = ACCOUNT_TYPES;
@@ -30,7 +31,7 @@ const formSchema = z.object({
   ifsc: z.string().optional(),
   swift: z.string().optional(),
   iban: z.string().optional(),
-  accountType: z.enum(["current", "savings", "petty_cash", "internal"]),
+  accountType: z.enum(["current", "savings", "petty_cash", "internal", "psp"]),
   currency: z.string().min(3).max(3),
   openingBalanceDisplay: z.string().default("0"),
   openingDate: z.string().min(1, "Opening date is required"),
@@ -84,7 +85,14 @@ export default function NewBankAccountPage() {
     if (!currencyPicked.current) setValue("currency", orgCurrency, { shouldDirty: false });
   }, [orgCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A payment provider's account (2026-11-06): what it charges and where it settles, asked here.
+  const [pspDraft, setPspDraft] = useState<PspDraft>(() => draftOf(null));
+
   async function onSubmit(values: FormValues) {
+    if (values.accountType === "psp" && !pspDraft.settlementAccountId) {
+      toast.error("Choose the bank account it settles into");
+      return;
+    }
     try {
       const account = await createAccount.mutateAsync({
         accountName: values.accountName,
@@ -99,6 +107,7 @@ export default function NewBankAccountPage() {
         openingBalanceMinor: toMinor(values.openingBalanceDisplay),
         openingDate: values.openingDate,
         notes: values.notes ?? "",
+        ...(values.accountType === "psp" ? { psp: settingsOf(pspDraft) } : {}),
       });
       toast.success("Bank account created");
       router.push(`/banking/${account.id}`);
@@ -208,6 +217,14 @@ export default function NewBankAccountPage() {
             </div>
           </div>
         </div>
+
+        {/* A payment provider's account (2026-11-06): what it charges and where it settles. */}
+        {watch("accountType") === "psp" && (
+          <div className="rounded-lg border border-border bg-surface p-6 space-y-4">
+            <h2 className="text-sm font-semibold text-foreground-muted uppercase tracking-wide">PSP — fees and settlement</h2>
+            <PspSettingsFields value={pspDraft} onChange={setPspDraft} currency={currency} />
+          </div>
+        )}
 
         {/* Opening Balance */}
         <div className="rounded-lg border border-border bg-surface p-6 space-y-4">

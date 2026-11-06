@@ -14,7 +14,7 @@ const bankAccountSchema = new Schema(
     iban:   { type: String, default: "" },
     accountType: {
       type: String,
-      enum: ["current", "savings", "petty_cash", "internal"],
+      enum: ["current", "savings", "petty_cash", "internal", "psp"],
       required: true,
     },
     currency: { type: String, required: true },
@@ -25,6 +25,23 @@ const bankAccountSchema = new Schema(
     lastReconciledAt: { type: Date },
     lastReconciledStatementBalanceMinor: { type: Number },
     notes: { type: String, default: "" },
+    /** A PSP account's (2026-11-06): what it charges, where it settles to, from when (shared pspSettingsSchema). */
+    psp: {
+      type: new Schema(
+        {
+          provider: { type: String, default: "" },
+          feePct: { type: Number, default: 0 },
+          fixedFeeMinor: { type: Number, default: 0 },
+          feeVatPct: { type: Number, default: 0 },
+          settlementAccountId: { type: Types.ObjectId, required: true },
+          settlementAccountName: { type: String, default: "" },
+          settlementDays: { type: Number, default: 7 },
+          startDate: { type: Date, required: true },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { timestamps: true },
 );

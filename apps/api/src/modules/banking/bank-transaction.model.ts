@@ -103,6 +103,14 @@ const bankTransactionSchema = new Schema(
       ),
       default: null,
     },
+    /**
+     * Settled by a PSP settlement (2026-11-06, psp-settlement): a payment's money-in line in a PSP account, or one of
+     * the lines the settlement made (its transfer, its fee) — none of them changes but by deleting the settlement.
+     */
+    settlement: {
+      type: new Schema({ id: { type: Types.ObjectId, required: true }, number: { type: String, required: true } }, { _id: false }),
+      default: null,
+    },
   },
   { timestamps: true },
 );

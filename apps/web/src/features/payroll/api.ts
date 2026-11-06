@@ -85,6 +85,18 @@ export function usePullCommissions(runId: string) {
   });
 }
 
+/** The CS Portal's approved commission onto the run, on its own (2026-11-06). */
+export function usePullCsCommission(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<CommissionPullResult>(`payroll/runs/${runId}/cs-commission/pull`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, "runs", runId] });
+      void qc.invalidateQueries({ queryKey: ["cs-commission"] });
+    },
+  });
+}
+
 export function usePullSlabSalaries(runId: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approveCsCommissionSchema, payCsCommissionSchema, revokeCsCommissionSchema } from "@delta/shared";
+import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, revokeCsCommissionSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -18,5 +18,6 @@ router.post("/approve", requirePermission("commission:read"), validateBody(appro
 router.post("/revoke", requirePermission("commission:read"), validateBody(revokeCsCommissionSchema), c.revoke);
 router.post("/uploads", requirePermission("commission:write"), parseUpload, c.upload);
 router.post("/pay", requirePermission("commission:write"), validateBody(payCsCommissionSchema), c.pay);
+router.post("/record-payment", requirePermission("commission:write"), validateBody(recordCsCommissionPaymentSchema), c.recordPayment);
 
 export default router;

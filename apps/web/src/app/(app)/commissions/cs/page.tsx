@@ -19,7 +19,7 @@ import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useFileDrop } from "@/components/ui/file-drop";
-import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, usePayCsCommission, useRevokeCsCommission } from "@/features/cs-commission/api";
+import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission } from "@/features/cs-commission/api";
 
 /*
  * The CS Portal's commission (the user, 2026-11-03: "CS commission in finance, beside the CRM commission, in AED").
@@ -54,6 +54,8 @@ export default function CsCommissionPage() {
   const { data, isLoading, error } = useCsCommission(kind, period);
   const [approving, setApproving] = useState<Pick | null>(null);
   const [paying, setPaying] = useState<Pick | null>(null);
+  // Approve and pay in one step (2026-11-06) — before the CS Portal's approvals too, with a reason.
+  const [recording, setRecording] = useState<Pick | null>(null);
   const years = Array.from({ length: 4 }, (_, i) => String(dubaiNow().getUTCFullYear() - i));
   const [qYear, qNum] = quarter.split("-");
 
@@ -120,21 +122,22 @@ export default function CsCommissionPage() {
             ))}
           </div>
           <CsTable people={data.people} kind={kind} period={period} ended={data.ended} canApprove={data.canApprove} canPay={data.canPay}
-            onApprove={(person) => setApproving({ person })} onPay={(person) => setPaying({ person })} />
+            onApprove={(person) => setApproving({ person })} onPay={(person) => setPaying({ person })} onRecord={(person) => setRecording({ person })} />
         </>
       )}
 
       <ApproveDialog pick={approving} kind={kind} period={period} onClose={() => setApproving(null)} />
       <PayDialog pick={paying} kind={kind} period={period} onClose={() => setPaying(null)} />
+      <PayDialog pick={recording} kind={kind} period={period} onClose={() => setRecording(null)} mode="record" />
     </div>
   );
 }
 
 const tick = (s: CsCommissionStage) => (s.status === "approved" ? "✓" : s.status === "rejected" ? "✗" : "…");
 
-function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, onPay }: {
+function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, onPay, onRecord }: {
   people: CsCommissionPerson[]; kind: CsCommissionKind; period: string; ended: boolean; canApprove: boolean; canPay: boolean;
-  onApprove: (p: CsCommissionPerson) => void; onPay: (p: CsCommissionPerson) => void;
+  onApprove: (p: CsCommissionPerson) => void; onPay: (p: CsCommissionPerson) => void; onRecord: (p: CsCommissionPerson) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const revoke = useRevokeCsCommission();
@@ -193,11 +196,20 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                       {p.approval.overall === "released" && !p.approval.byFinance && p.approval.releasedBy && (
                         <span className="block text-foreground-muted">released there by {p.approval.releasedBy}</span>
                       )}
+                      {p.approval.override && (
+                        <span className="block text-warning">released by finance before them{p.approval.overrideReason ? ` — ${p.approval.overrideReason}` : ""}</span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5"><StatusCell p={p} /></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                      {p.state === "ready" && canApprove && ended && p.amountMinor > 0 && (
-                        <Button size="sm" onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
+                      {(p.state === "waiting" || p.state === "ready") && ended && p.amountMinor > 0 && canApprove && (
+                        <div className="flex justify-end gap-2">
+                          {p.state === "ready" && (
+                            <Button size="sm" variant={canPay ? "outline" : undefined} onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
+                          )}
+                          {/* Approve and pay in one step — while it waits in the CS Portal too, with a reason (2026-11-06). */}
+                          {canPay && <Button size="sm" onClick={() => onRecord(p)}><Wallet className="h-3.5 w-3.5" /> Record payment</Button>}
+                        </div>
                       )}
                       {p.state === "ready" && !canApprove && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
                       {p.state === "approved" && p.payout?.payrollRunNumber && (
@@ -282,6 +294,9 @@ function StatusCell({ p }: { p: CsCommissionPerson }) {
         {o.receipt && <a href={o.receipt.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><FileText className="h-3 w-3" /> Receipt</a>}
       </p>
       <p className="text-xs text-foreground-muted">Approved by {o.approvedByName}</p>
+      {o.beforePortal && (
+        <p className="text-xs text-warning">Paid before the CS Portal&rsquo;s approvals{o.approvalNote ? ` — ${o.approvalNote}` : ""}</p>
+      )}
     </div>
   );
 }
@@ -323,10 +338,16 @@ function ApproveDialog({ pick, kind, period, onClose }: { pick: Pick | null; kin
   );
 }
 
-function PayDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: CsCommissionKind; period: string; onClose: () => void }) {
+function PayDialog({ pick, kind, period, onClose, mode = "pay" }: { pick: Pick | null; kind: CsCommissionKind; period: string; onClose: () => void; mode?: "pay" | "record" }) {
   const categories = useExpenseCategories();
   const departments = useAllDepartments();
-  const pay = usePayCsCommission();
+  const payApproved = usePayCsCommission();
+  const record = useRecordCsCommissionPayment();
+  const pay = mode === "record" ? record : payApproved;
+  const [reason, setReason] = useState("");
+  // Still with the broker admin or academic head in the CS Portal: paying it now goes before them, so say why.
+  const early = mode === "record" && pick?.person.state === "waiting";
+  const waitingFor = pick?.person.approval.overall === "pending_academic_approval" ? "the academic head" : "the broker admin";
   const [payout, setPayout] = useState<Payout>(emptyPayout);
   const [department, setDepartment] = useState(NO_DEPARTMENT);
   const [receipt, setReceipt] = useState<UploadedExpenseFile | null>(null);
@@ -335,7 +356,7 @@ function PayDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: C
   const categoryList = categories.data ?? [];
   // Sales / Mentor Commission › Mentor Commission — a CS.
   const cat = useCategoryChoice(categoryList, EXPENSE_DEFAULTS.csCommission);
-  const reset = () => { setPayout(emptyPayout()); cat.reset(); setDepartment(NO_DEPARTMENT); setReceipt(null); };
+  const reset = () => { setPayout(emptyPayout()); cat.reset(); setDepartment(NO_DEPARTMENT); setReceipt(null); setReason(""); };
   const close = () => { reset(); onClose(); };
 
   const pickFile = async (file: File) => {
@@ -359,11 +380,12 @@ function PayDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: C
   const submit = async () => {
     if (!pick || !receipt) return;
     try {
-      const res = await pay.mutateAsync({
+      const input = {
         kind, period, recipientId: pick.person.recipientId, ...payout, category: cat.value.category, subcategory: cat.value.subcategory || undefined,
         departmentId: department === NO_DEPARTMENT ? "" : department,
         receipt: { name: receipt.name, key: receipt.key, size: receipt.size, mimeType: receipt.mimeType },
-      });
+      };
+      const res = mode === "record" ? await record.mutateAsync({ ...input, reason: reason.trim() }) : await payApproved.mutateAsync(input);
       toast.success(`Paid — ${res.expense.expenseNumber} recorded with the receipt`);
       close();
     } catch (e) {
@@ -376,11 +398,23 @@ function PayDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: C
     <Dialog open={!!pick} onOpenChange={(v) => { if (!v) close(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Mark CS commission paid</DialogTitle>
+          <DialogTitle>{mode === "record" ? "Record CS commission payment" : "Mark CS commission paid"}</DialogTitle>
           <DialogDescription>
-            {pick && o ? `${pick.person.name} · ${periodName(kind, period)} — ${money(o.amountMinor, o.currency)}, as approved by ${o.approvedByName}. Recorded as a paid expense with the receipt${o.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.` : ""}
+            {mode === "record" && pick
+              ? `${pick.person.name} · ${periodName(kind, period)} — ${money(pick.person.amountMinor, pick.person.currency)}. Approved and paid in one step: a paid expense with the receipt, and their credits released in the CS Portal so it can't be paid twice${pick.person.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.`
+              : pick && o ? `${pick.person.name} · ${periodName(kind, period)} — ${money(o.amountMinor, o.currency)}, as approved by ${o.approvedByName}. Recorded as a paid expense with the receipt${o.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.` : ""}
           </DialogDescription>
         </DialogHeader>
+        {early && (
+          <div className="space-y-1.5 rounded-lg border border-warning/30 bg-warning/5 p-3">
+            <p className="flex items-start gap-1.5 text-xs">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+              <span>Still with {waitingFor} in the CS Portal. Recording it now pays it before {waitingFor === "the broker admin" ? "the broker admin and academic head" : "the academic head"} approve — the CS Portal keeps your reason on the release.</span>
+            </p>
+            <Label htmlFor="cs-commission-reason">Why it is paid now *</Label>
+            <Input id="cs-commission-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Leaving this month, paid with the final settlement" />
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-3">
           <PayoutFields value={payout} onChange={setPayout} idPrefix="cs-commission" />
         </div>
@@ -418,8 +452,8 @@ function PayDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: C
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={close}>Cancel</Button>
-          <Button loading={pay.isPending} disabled={!receipt || uploading || !cat.complete || !payoutValid(payout)} onClick={() => void submit()}>
-            <Wallet className="h-4 w-4" /> Mark paid
+          <Button loading={pay.isPending} disabled={!receipt || uploading || !cat.complete || !payoutValid(payout) || (early && reason.trim().length < 5)} onClick={() => void submit()}>
+            <Wallet className="h-4 w-4" /> {mode === "record" ? "Record payment" : "Mark paid"}
           </Button>
         </DialogFooter>
       </DialogContent>

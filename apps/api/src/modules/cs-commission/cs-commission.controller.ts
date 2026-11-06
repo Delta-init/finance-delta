@@ -31,3 +31,8 @@ export const upload = asyncHandler(async (req, res) => {
 export const pay = asyncHandler(async (req, res) => {
   ok(res, await svc.payCsCommission(org(req), uid(req), req.body));
 });
+
+/** Approve and pay in one step — before the CS Portal's approvals too, with a reason (2026-11-06). */
+export const recordPayment = asyncHandler(async (req, res) => {
+  ok(res, await svc.recordCsCommissionPayment(org(req), uid(req), sa(req), req.body));
+});

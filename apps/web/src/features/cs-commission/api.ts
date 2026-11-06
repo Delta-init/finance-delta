@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, PayCsCommissionInput, RevokeCsCommissionInput, UploadedExpenseFile } from "@delta/shared";
+import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, UploadedExpenseFile } from "@delta/shared";
 import { CS_COMMISSION_PERIOD } from "@delta/shared";
 import { api } from "@/lib/api";
 
@@ -46,6 +46,20 @@ export function usePayCsCommission() {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (input: PayCsCommissionInput) => api.post<{ expense: { id: string; expenseNumber: string } }>("cs-commission/pay", input),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ["expenses"] });
+    },
+  });
+}
+
+/** Approve and pay in one step — before the CS Portal's approvals too, with a reason (2026-11-06). */
+export function useRecordCsCommissionPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: RecordCsCommissionPaymentInput) =>
+      api.post<{ expense: { id: string; expenseNumber: string }; approved: boolean }>("cs-commission/record-payment", input),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: KEY });
       void qc.invalidateQueries({ queryKey: ["expenses"] });

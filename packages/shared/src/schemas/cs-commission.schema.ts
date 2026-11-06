@@ -46,7 +46,7 @@ export type ApproveCsCommissionInput = z.infer<typeof approveCsCommissionSchema>
 export const revokeCsCommissionSchema = z.object(who).superRefine(periodFits);
 export type RevokeCsCommissionInput = z.infer<typeof revokeCsCommissionSchema>;
 
-export const payCsCommissionSchema = z.object({
+const payFields = {
   ...who,
   /** The day the money went. */
   paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date it was paid"),
@@ -62,8 +62,19 @@ export const payCsCommissionSchema = z.object({
     size: z.number().int().min(0).optional(),
     mimeType: z.string().max(100).optional(),
   }, { message: "Attach the receipt" }),
-}).superRefine(periodFits);
+};
+export const payCsCommissionSchema = z.object(payFields).superRefine(periodFits);
 export type PayCsCommissionInput = z.infer<typeof payCsCommissionSchema>;
+
+/**
+ * Record payment (the user, 2026-11-06): a manager approves and pays a CS's period in one step — while it still waits
+ * for the CS Portal's broker admin or academic head too, then only with a reason, which goes on the release there.
+ */
+export const recordCsCommissionPaymentSchema = z.object({
+  ...payFields,
+  reason: z.string().trim().max(300).optional().default(""),
+}).superRefine(periodFits);
+export type RecordCsCommissionPaymentInput = z.infer<typeof recordCsCommissionPaymentSchema>;
 
 export type CsCommissionState = "waiting" | "ready" | "approved" | "paid" | "rejected";
 
@@ -93,6 +104,8 @@ export interface CsCommissionPayoutView {
   approvedByName: string;
   approvedAt: string;
   approvalNote: string;
+  /** Approved and paid here before the CS Portal's broker admin and academic head; approvalNote says why (2026-11-06). */
+  beforePortal?: boolean;
   paidByName?: string;
   paidOn?: string;
   paymentMethod?: string;
@@ -123,6 +136,9 @@ export interface CsCommissionPerson {
     releasedAt: string | null;
     releasedBy: string;
     byFinance: boolean;
+    /** Released by finance before the broker admin and academic head, and why (2026-11-06). */
+    override?: boolean;
+    overrideReason?: string;
   };
   state: CsCommissionState;
   payout: CsCommissionPayoutView | null;

@@ -12,7 +12,7 @@
  */
 import http from "node:http";
 import mongoose from "mongoose";
-import { approveCsCommissionSchema, payCsCommissionSchema } from "@delta/shared";
+import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema } from "@delta/shared";
 
 const uri = process.env.MONGODB_URI ?? "";
 if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri)) {
@@ -26,6 +26,7 @@ const { Organization } = await import("../modules/organization/organization.mode
 const { User } = await import("../modules/user/user.model");
 const { Role } = await import("../modules/role/role.model");
 const { Expense } = await import("../modules/expense/expense.model");
+const { CsCommissionPayout } = await import("../modules/cs-commission/cs-commission-payout.model");
 const svc = await import("../modules/cs-commission/cs-commission.service");
 
 let failures = 0, checks = 0;
@@ -39,7 +40,7 @@ const j = (v: unknown) => JSON.stringify(v).slice(0, 400);
 const refusal = async (p: Promise<unknown>) => p.then(() => "", (e: Error & { code?: string }) => `${e.code ?? ""} ${e.message}`);
 
 /* ── A stand-in CS Portal: the period's people and their approval chain, as finance/csCommission.ts answers ── */
-const MEERA = "65a000000000000000000001", BINDU = "65a000000000000000000002", KIRAN = "65a000000000000000000003";
+const MEERA = "65a000000000000000000001", BINDU = "65a000000000000000000002", KIRAN = "65a000000000000000000003", LINA = "65a000000000000000000004";
 const stage = (status = "pending") => ({ status, by: "", at: null });
 const credit = (id: string, usd: number) => ({ id, date: "2026-09-05T10:00:00.000Z", student: "Student", method: "bonus_with", level: 1, position: "Junior", percentage: 10, base_usd: usd * 10, amount_usd: usd, status: "accrued", txn_id: `TX-${id}`, initiator: "Someone" });
 const portal = {
@@ -52,6 +53,8 @@ const portal = {
       approval: { overall_status: "released", broker: stage("approved"), academic: stage("approved"), finance: stage("approved"), released_at: "2026-10-03T09:00:00.000Z", released_by: "Super Admin", by_finance: false } },
     { recipient_id: KIRAN, name: "Mentor Kiran", email: "mentor.kiran@e2e-cs.test", location: "dubai", total_usd: 25, credits: [credit("c4", 25)],
       approval: { overall_status: "pending_broker_approval", broker: stage(), academic: stage(), finance: stage(), released_at: null, released_by: "", by_finance: false } },
+    { recipient_id: LINA, name: "Mentor Lina", email: "mentor.lina@e2e-cs.test", location: "dubai", total_usd: 10, credits: [credit("c5", 10)],
+      approval: { overall_status: "pending_academic_approval", broker: stage("approved"), academic: stage(), finance: stage(), released_at: null, released_by: "", by_finance: false } },
   ] as any[],
 };
 const server = http.createServer((req, res) => {
@@ -70,16 +73,23 @@ const server = http.createServer((req, res) => {
     const refuse = (code: string, message: string) => send(409, { success: false, error: { code, message } });
     if (url.pathname.endsWith("/cs-commission")) return send(200, { success: true, data: { kind: body.kind, period: body.period, ended: true, people: portal.people } });
     if (!who) return refuse("NOTHING_TO_APPROVE", "No commission for this person in the period.");
-    const answer = (already: boolean) => send(200, { success: true, data: { already, total_usd: who.total_usd, credit_ids: who.credits.map((c: any) => c.id), name: who.name, email: who.email, location: who.location } });
+    const answer = (already: boolean, override = false) => send(200, { success: true, data: { already, total_usd: who.total_usd, credit_ids: who.credits.map((c: any) => c.id), name: who.name, email: who.email, location: who.location, finance_override: override } });
     if (url.pathname.endsWith("/approve")) {
-      if (who.approval.overall_status === "released") return answer(true);
-      if (who.approval.overall_status !== "pending_finance_approval") return refuse("NOT_READY", "Waiting for the broker admin in the CS Portal.");
+      if (who.approval.overall_status === "released") return answer(true, !!who.approval.finance_override);
+      if (who.approval.overall_status !== "pending_finance_approval") {
+        // Before the broker admin and academic head (2026-11-06): with force and a reason only, as the CS Portal does.
+        if (!body.force) return refuse("NOT_READY", "Waiting for the broker admin in the CS Portal.");
+        if (!body.reason) return send(400, { success: false, error: { code: "VALIDATION_ERROR", message: "Say why it is paid before the broker admin has approved it." } });
+        who.approval = { ...who.approval, from: who.approval.overall_status, overall_status: "released", by_finance: true, released_by: `${body.by} (Delta finance)`, finance_override: true, override_reason: body.reason };
+        return answer(false, true);
+      }
       who.approval = { ...who.approval, overall_status: "released", by_finance: true, released_by: `${body.by} (Delta finance)` };
       return answer(false);
     }
     if (url.pathname.endsWith("/unapprove")) {
       if (!who.approval.by_finance) return refuse("NOT_FINANCES", "Released in the CS Portal, not by Delta finance — undo it there.");
-      who.approval = { ...who.approval, overall_status: "pending_finance_approval", by_finance: false, released_by: "" };
+      const back = who.approval.finance_override ? who.approval.from : "pending_finance_approval";
+      who.approval = { ...who.approval, overall_status: back, by_finance: false, released_by: "", finance_override: false, override_reason: "", from: undefined };
       return send(200, { success: true, data: { undone: true } });
     }
     send(404, { error: "Not found" });
@@ -119,7 +129,7 @@ check("Meera: USD 100 → AED 367.00, ready (with finance), her two credits", ro
 check("Bindu, a Bangalore team's: USD 40 → INR 4,000.00, ready (a Super Admin released it there)", row(v, BINDU).currency === "INR" && row(v, BINDU).amountMinor === 400000 && row(v, BINDU).state === "ready", j(row(v, BINDU)));
 check("Kiran: still with the broker admin — waiting", row(v, KIRAN).state === "waiting" && row(v, KIRAN).approval.overall === "pending_broker_approval");
 const aed = v.totals.find((t) => t.currency === "AED"), inr = v.totals.find((t) => t.currency === "INR");
-check("totals per currency: AED 458.75 (367 + 91.75), INR 4,000", aed?.amountMinor === 45875 && inr?.amountMinor === 400000, j(v.totals));
+check("totals per currency: AED 495.45 (367 + 91.75 + 36.70), INR 4,000", aed?.amountMinor === 49545 && inr?.amountMinor === 400000, j(v.totals));
 check("Asha pays, doesn't approve; Mona approves", !v.canApprove && v.canPay && (await period(MONA)).canApprove);
 
 step("2. Approved");
@@ -165,6 +175,29 @@ const bexp = await Expense.findById(bp.expense.id).lean<any>();
 check("…from the Bangalore organization: INR 4,000.00", bexp?.currency === "INR" && bexp.totalMinor === 400000 && String(bexp.organizationId) === BLR, j(bexp));
 v = await period();
 check("totals: what is paid of each currency", v.totals.find((t) => t.currency === "AED")?.paidMinor === 36700 && v.totals.find((t) => t.currency === "INR")?.paidMinor === 400000, j(v.totals));
+
+step("4b. Record payment: approved and paid in one step — before the CS Portal's approvals too (2026-11-06)");
+const record = (by: string, who: string, extra: Record<string, unknown> = {}) => svc.recordCsCommissionPayment(ORG, by, false, recordCsCommissionPaymentSchema.parse({
+  kind: "bonus", period: P, recipientId: who, paidOn: "2026-11-06", paymentMethod: "cash", reference: "CASH-CS", category: "sales_commission",
+  receipt: { name: "receipt.pdf", key: receiptKey(), size: 1234, mimeType: "application/pdf" }, ...extra,
+}));
+check("not a manager: refused — it approves too", /tagged Manager/.test(await refusal(record(ASHA, KIRAN, { reason: "Leaving" }))));
+check("Kiran, still with the broker admin, no reason: refused, asking why; nothing approved",
+  /Say why/.test(await refusal(record(MONA, KIRAN))) && !(await CsCommissionPayout.exists({ recipientId: KIRAN })) && portal.people[2].approval.overall_status === "pending_broker_approval");
+const rec = await record(MONA, KIRAN, { reason: "Leaving this week" });
+const recExp = await Expense.findById(rec.expense.id).lean<any>();
+check("with a reason: approved and paid — AED 91.75 cash, the receipt, Mentor Commission", rec.approved && recExp?.totalMinor === 9175 && recExp.paymentMethod === "cash"
+  && recExp.attachments?.[0]?.key === receiptKey() && /Approved by Mona Manager — Leaving this week/.test(recExp.notes), j(recExp));
+check("…the CS Portal released it as finance's, early, with the reason", portal.people[2].approval.overall_status === "released" && portal.people[2].approval.finance_override === true
+  && portal.asked.some((a) => a.path.endsWith("/approve") && a.body?.recipient_id === KIRAN && a.body?.force === true && a.body?.reason === "Leaving this week"));
+v = await period();
+check("…the page: paid, before the CS Portal's approvals, and why", row(v, KIRAN).state === "paid" && row(v, KIRAN).payout?.beforePortal === true
+  && row(v, KIRAN).payout?.approvalNote === "Leaving this week" && row(v, KIRAN).approval.override === true, j(row(v, KIRAN)));
+check("…never twice", /paid already/.test(await refusal(record(MONA, KIRAN, { reason: "Again" }))));
+const badReceipt = await refusal(record(MONA, LINA, { reason: "Early", receipt: { name: "r.pdf", key: "https://evil.example/r.pdf" } }));
+check("paying fails after approving (a receipt not uploaded here): refused, and the approval taken back — here and in the CS Portal",
+  /Upload the receipt here first/.test(badReceipt) && !(await CsCommissionPayout.exists({ recipientId: LINA })) && portal.people[3].approval.overall_status === "pending_academic_approval"
+  && !portal.people[3].approval.finance_override, `${badReceipt} ${j(portal.people[3].approval)}`);
 
 step("5. The CS Portal down, or not yet updated");
 portal.mode = "down";

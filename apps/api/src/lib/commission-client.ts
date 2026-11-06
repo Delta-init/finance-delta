@@ -375,10 +375,15 @@ export interface PortalCsCommissionPerson {
     released_at: string | null;
     released_by: string;
     by_finance: boolean;
+    /** Released by Delta finance before the broker admin and academic head (2026-11-06), and why — from a CS Portal that knows. */
+    finance_override?: boolean;
+    override_reason?: string;
   };
 }
 export interface PortalCsCommissionApproval {
   already: boolean; total_usd: number; credit_ids: string[]; name: string; email: string; location: "dubai" | "bangalore";
+  /** Released before the CS Portal's broker admin and academic head (2026-11-06). */
+  finance_override?: boolean;
 }
 
 /** The CS Portal refused (409 and the like) — `code` says why: NOT_READY, REJECTED, PERIOD_OPEN, NOT_FINANCES, … */
@@ -418,8 +423,8 @@ async function askPortalCsCommission<T>(path: string, body: unknown): Promise<T>
 export const portalCsCommission = (kind: string, period: string) =>
   askPortalCsCommission<{ kind: string; period: string; ended: boolean; people: PortalCsCommissionPerson[] }>("", { kind, period });
 /** Finance's step: the CS's credits for the period released there. Already released → `already`. */
-export const approvePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
-  askPortalCsCommission<PortalCsCommissionApproval>("/approve", { kind, period, recipient_id: recipientId, by });
+export const approvePortalCsCommission = (kind: string, period: string, recipientId: string, by: string, early?: { reason: string }) =>
+  askPortalCsCommission<PortalCsCommissionApproval>("/approve", { kind, period, recipient_id: recipientId, by, ...(early ? { force: true, reason: early.reason } : {}) });
 /** Finance's step taken back — only one finance released. */
 export const unapprovePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
   askPortalCsCommission<{ undone: boolean }>("/unapprove", { kind, period, recipient_id: recipientId, by });

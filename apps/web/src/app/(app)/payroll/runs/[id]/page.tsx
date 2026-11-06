@@ -4,7 +4,7 @@ import { Fragment, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info, Layers,
-  CheckCircle2, Banknote, Undo2, RefreshCw, AlertTriangle,
+  CheckCircle2, Banknote, Undo2, RefreshCw, AlertTriangle, Headset,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { MoneyDisplay } from "@/components/ui/money";
 import {
-  usePayrollRun, useAddAdjustments, usePullCommissions, usePullSlabSalaries, useRemoveAdjustment,
+  usePayrollRun, useAddAdjustments, usePullCommissions, usePullCsCommission, usePullSlabSalaries, useRemoveAdjustment,
   useApproveRun, useUnapproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
 } from "@/features/payroll/api";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
@@ -130,6 +130,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const addAdjustments = useAddAdjustments(id);
   const pullCommissions = usePullCommissions(id);
   const pullSlabs = usePullSlabSalaries(id);
+  const pullCs = usePullCsCommission(id);
   const removeAdjustment = useRemoveAdjustment(id);
   const approve = useApproveRun(id);
   const returnRun = useReturnRun(id);
@@ -141,7 +142,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
 
   // What HRMS actually did, once it has told us. Adding money can move net pay
   // by a different amount, so this is shown rather than assumed.
-  const notes = addAdjustments.data?.notes ?? pullCommissions.data?.notes ?? pullSlabs.data?.notes ?? [];
+  const notes = addAdjustments.data?.notes ?? pullCommissions.data?.notes ?? pullCs.data?.notes ?? pullSlabs.data?.notes ?? [];
 
   const lines = useMemo(() => {
     if (!run) return [];
@@ -448,6 +449,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             <TrendingUp className="mr-1.5 h-3.5 w-3.5" />Pull earned commission
           </Button>
           </>}
+          {/* Its own button (2026-11-06), before approval and after: it only adds — somebody paid becomes part paid. */}
+          {(openForAdjustment || adjustAfterApproval) && (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={pullCs.isPending}
+              onClick={() => pullCs.mutate()}
+              title="Adds every CS commission approved on the CS commission page, not yet paid, to the CS's pay — matched by their CS Portal email"
+            >
+              <Headset className="mr-1.5 h-3.5 w-3.5" />Pull CS commission
+            </Button>
+          )}
         </Card>
       )}
 
@@ -457,9 +470,12 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
       {pullCommissions.data && (
         <p className="text-sm text-foreground-muted">{pullCommissions.data.message}</p>
       )}
-      {(addAdjustments.isError || pullCommissions.isError || pullSlabs.isError || removeAdjustment.isError) && (
+      {pullCs.data && (
+        <p className="text-sm text-foreground-muted">{pullCs.data.message}</p>
+      )}
+      {(addAdjustments.isError || pullCommissions.isError || pullCs.isError || pullSlabs.isError || removeAdjustment.isError) && (
         <Card className="border-danger/20 bg-danger/5 p-4 text-sm text-danger">
-          {((addAdjustments.error ?? pullCommissions.error ?? pullSlabs.error ?? removeAdjustment.error) as Error).message}
+          {((addAdjustments.error ?? pullCommissions.error ?? pullCs.error ?? pullSlabs.error ?? removeAdjustment.error) as Error).message}
         </Card>
       )}
 

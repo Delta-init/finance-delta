@@ -31,6 +31,8 @@ const payoutSchema = new Schema(
     approvedByName: { type: String, default: "" },
     approvedAt: { type: Date, required: true },
     approvalNote: { type: String, default: "" },
+    /** Approved before the CS Portal's broker admin and academic head, through Record payment (2026-11-06). */
+    beforePortal: { type: Boolean, default: false },
     paidById: { type: Schema.Types.ObjectId, ref: "User" },
     paidByName: { type: String },
     paidAt: { type: Date },

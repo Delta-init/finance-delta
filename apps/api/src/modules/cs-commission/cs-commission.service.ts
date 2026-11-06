@@ -2,7 +2,7 @@ import { Types } from "mongoose";
 import {
   CS_AED_PER_USD, CS_INR_PER_USD, EXPENSE_DEFAULTS, computeExpenseTax, hasPermission, resolveCategoryName,
   type ApproveCsCommissionInput, type CsCommissionKind, type CsCommissionPayoutView, type CsCommissionPerson, type CsCommissionPeriod,
-  type CsCommissionState, type PayCsCommissionInput, type RevokeCsCommissionInput,
+  type CsCommissionState, type PayCsCommissionInput, type RecordCsCommissionPaymentInput, type RevokeCsCommissionInput,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import {
@@ -83,6 +83,7 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     return {
       state: p.state, amountMinor: p.amountMinor, currency: p.currency ?? "AED", amountUsd: p.amountUsd ?? 0,
       approvedByName: p.approvedByName ?? "", approvedAt: new Date(p.approvedAt).toISOString(), approvalNote: p.approvalNote ?? "",
+      ...(p.beforePortal ? { beforePortal: true } : {}),
       ...(p.state === "paid" ? {
         paidByName: p.paidByName ?? "", paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : "", paymentMethod: p.paymentMethod ?? "",
         reference: p.reference ?? "",
@@ -106,6 +107,7 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
       approval: {
         overall: p.approval.overall_status, broker: p.approval.broker, academic: p.approval.academic, finance: p.approval.finance,
         releasedAt: p.approval.released_at, releasedBy: p.approval.released_by, byFinance: p.approval.by_finance,
+        ...(p.approval.finance_override ? { override: true, overrideReason: p.approval.override_reason ?? "" } : {}),
       },
       state: stateOf(p, payout),
       payout: payout ? view(payout) : null,
@@ -142,12 +144,12 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
  * A manager approves a CS's period: the CS Portal's Finance step (their credits released there), then the amount
  * frozen here. Only once the broker admin and academic head have approved it there — or a Super Admin released it.
  */
-export async function approveCsCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: ApproveCsCommissionInput) {
+export async function approveCsCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: ApproveCsCommissionInput, early?: { reason: string }) {
   if (!isSuperAdmin && !(await isManager(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager approves commission");
   const key = keyOf(input.kind, input.period, input.recipientId);
   if (await CsCommissionPayout.exists({ key })) throw new AppError("CONFLICT", "It is already approved here");
   const by = await userName(userId);
-  const done = await fromPortal(() => approvePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance"));
+  const done = await fromPortal(() => approvePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance", early));
   if (!(done.total_usd > 0)) throw new AppError("CONFLICT", `Nothing is payable to ${done.name || "them"} for ${periodLabel(input.kind, input.period)}.`);
   const currency = currencyOf(done.location);
   try {
@@ -156,6 +158,7 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
       recipientId: input.recipientId, personName: done.name, email: done.email, location: done.location, currency,
       amountMinor: minorOf(done.total_usd, currency), amountUsd: done.total_usd, creditIds: done.credit_ids, state: "approved",
       approvedById: new Types.ObjectId(userId), approvedByName: by, approvedAt: new Date(), approvalNote: input.note ?? "",
+      beforePortal: done.finance_override === true,
     });
   } catch (err) {
     if ((err as { code?: number }).code === 11000) throw new AppError("CONFLICT", "It is already approved here");
@@ -182,6 +185,35 @@ export async function revokeCsCommission(orgId: string, userId: string, isSuperA
   const r = await CsCommissionPayout.deleteOne({ key, state: "approved", payrollRunId: null });
   if (!r.deletedCount) throw new AppError("CONFLICT", "It is not waiting to be paid — paid already, or not approved");
   return { revoked: true };
+}
+
+/**
+ * Record payment (the user, 2026-11-06: "add a record payment option for this commission, as the CRM commission has"):
+ * a manager approves a CS's period and pays it in one step — the receipt, a paid expense in its method's bank or cash
+ * book — including one still waiting in the CS Portal for its broker admin or academic head: then only with a reason,
+ * which the CS Portal keeps on the release (and shows), since this pays it before them. Its credits are released there
+ * all the same, so it can't be paid twice. If paying fails, the approval is taken back: nothing is left half done.
+ */
+export async function recordCsCommissionPayment(orgId: string, userId: string, isSuperAdmin: boolean, input: RecordCsCommissionPaymentInput) {
+  if (!isSuperAdmin && !(await isManager(orgId, userId))) {
+    throw new AppError("FORBIDDEN", "Only somebody tagged Manager records a payment here — it approves the commission too. Ask a manager to approve it, then mark it paid.");
+  }
+  const key = keyOf(input.kind, input.period, input.recipientId);
+  const existing = await CsCommissionPayout.findOne({ key }).select("state payrollRunNumber").lean<any>();
+  if (existing?.state === "paid") throw new AppError("CONFLICT", "It is paid already");
+  const { reason, ...pay } = input;
+  let approvedHere = false;
+  if (!existing) {
+    await approveCsCommission(orgId, userId, isSuperAdmin, { kind: input.kind, period: input.period, recipientId: input.recipientId, note: reason },
+      { reason: reason || "" });
+    approvedHere = true;
+  }
+  try {
+    return { ...(await payCsCommission(orgId, userId, pay)), approved: approvedHere };
+  } catch (err) {
+    if (approvedHere) await revokeCsCommission(orgId, userId, isSuperAdmin, { kind: input.kind, period: input.period, recipientId: input.recipientId }).catch(() => undefined);
+    throw err;
+  }
 }
 
 /** The receipt, stored before the payment is recorded with it. */

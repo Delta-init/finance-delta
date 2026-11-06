@@ -258,9 +258,7 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
   // The sales CRMs' commission (2026-11-01: "commission through payroll") — approved on the CRM commission page.
   const crm = await stageCrmCommission(orgId, run, actor, user?.name ?? "", staged);
   if (crm.note) notes.push(crm.note);
-  // The CS Portal's commission (2026-11-03) — approved on the CS commission page.
-  const cs = await stageCsCommission(orgId, run, actor, user?.name ?? "", staged);
-  if (cs.note) notes.push(cs.note);
+  // The CS Portal's commission has its own button since 2026-11-06: pullCsCommission.
 
   if (!staged.length) {
     return { pulled: 0, message: notes.join(" ") || "No unpaid commission is outstanding for anybody on this run.", outcomes: [] };
@@ -276,9 +274,6 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
   if (crm.payoutIds.length) {
     await CrmCommissionPayout.updateMany({ _id: { $in: crm.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
   }
-  if (cs.payoutIds.length) {
-    await CsCommissionPayout.updateMany({ _id: { $in: cs.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
-  }
 
   // The commission records themselves are NOT marked paid here. They are paid
   // when the payroll is, and marking them now would report money as paid that
@@ -286,6 +281,43 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
   return {
     pulled: staged.length,
     message: [`${staged.length} commission payment(s) added, ${formatMinor(staged.reduce((a, s) => a + toMinor(s.amount), 0), run.currency)} in total.`, ...notes].join(" "),
+    ...summariseOutcomes(run, result.outcomes),
+  };
+}
+
+/**
+ * Pull CS commission, on its own (the user, 2026-11-06: "a separate pull CS commission option, like pull commission"):
+ * every CS commission a manager approved on the CS commission page, not yet paid, onto the CS's line — matched by their
+ * CS Portal email — and onto their payslip in HRMS. Before approval like Pull commission, and after it too: it only
+ * adds, so somebody already paid becomes part paid, owed it, and their payslip in HRMS says so (afterPayChange). Paid
+ * with the run, which settles it.
+ */
+export async function pullCsCommission(orgId: string, runId: string, actor: { userId: string }) {
+  const run = await loadRun(orgId, runId);
+  requireAdjustable(run);
+  const user = await User.findById(oid(actor.userId)).select("name").lean();
+  const staged: Staged = [];
+  const cs = await stageCsCommission(orgId, run, actor, user?.name ?? "", staged);
+  if (!staged.length) {
+    return { pulled: 0, message: cs.note || "No approved CS commission is waiting for anybody on this run.", outcomes: [], notes: [] as string[] };
+  }
+  const afterApproval = STATUSES_OPEN_AFTER_APPROVAL.includes(run.status);
+  const mine = new Set(staged.map((x) => x.externalId));
+  if (afterApproval) for (const a of run.adjustments) if (mine.has(a.externalId)) (a as unknown as { afterApproval: boolean }).afterApproval = true;
+
+  const touched = run.lines.filter((l) => staged.some((x) => x.employeeId === l.hrmsEmployeeId));
+  const settle = touched.map((l) => settleFor(run, l)).filter((x): x is HrmsSettle => !!x);
+  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged, settle);
+  absorbOutcomes(run, result.outcomes);
+  recalculate(run as unknown as RecalcRun);
+  await afterPayChange(orgId, run, touched.map((l) => String(l._id)));
+  await run.save();
+  // Claimed for this run once HRMS has it on the payslips; paid when the run pays the line (settleCommissions).
+  await CsCommissionPayout.updateMany({ _id: { $in: cs.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
+  const total = staged.reduce((a, x) => a + toMinor(x.amount), 0);
+  return {
+    pulled: staged.length,
+    message: [`${staged.length} CS commission payment(s) added, ${formatMinor(total, run.currency)} in total.`, cs.note].filter(Boolean).join(" "),
     ...summariseOutcomes(run, result.outcomes),
   };
 }

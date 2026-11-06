@@ -274,10 +274,14 @@ async function main() {
       email: "e2e001@e2e.local", location: "dubai", currency: "AED", amountMinor: 999_00, amountUsd: 272.21, creditIds: ["c9"], state: "approved",
       approvedById: new Types.ObjectId(actor.userId), approvedByName: "Mona Manager", approvedAt: new Date() },
   ]);
-  const csPulled = await adjustments.pullCommissions(orgId, runId, actor);
+  // Its own button since 2026-11-06: Pull commission leaves it, Pull CS commission takes it.
+  const notCs = await adjustments.pullCommissions(orgId, runId, actor);
+  check("Pull commission leaves CS commission to its own button", notCs.pulled === 0 && !(await payroll.getRun(orgId, runId)).adjustments.some((a) => a.source === "cs_commission"), notCs.message);
+  const csPulled = await adjustments.pullCsCommission(orgId, runId, actor);
   const csAdj = (await payroll.getRun(orgId, runId)).adjustments.find((a) => a.source === "cs_commission");
-  check("the CS commission pulled too: AED 367 for her bonus month, named for it; the quarter to come left", csPulled.pulled === 1
+  check("Pull CS commission: AED 367 for her bonus month, named for it; the quarter to come left", csPulled.pulled === 1
     && csAdj?.amountMinor === 367_00 && /^CS commission — Bonus, /.test(csAdj.label), `${csPulled.message} | ${csAdj?.label}`);
+  check("…pulled again: nothing more", (await adjustments.pullCsCommission(orgId, runId, actor)).pulled === 0);
   const csMine = await CsCommissionPayout.findOne({ key: `bonus:${seed.month}:cs-aisha` }).lean();
   check("…on this run, still approved", csMine?.state === "approved" && csMine.payrollRunNumber === (await payroll.getRun(orgId, runId)).runNumber
     && !(await CsCommissionPayout.findOne({ key: "deposit:2099-Q1:cs-aisha" }).lean())?.payrollRunId);
@@ -683,6 +687,23 @@ async function main() {
     aishaBack.status === "paid" && aishaBack.payableMinor === aishaBack.amountPaidMinor && finishedCountOf(byBank.paymentId) === 1 && (await slipOf("E2E001")) === "paid",
     `${aishaBack.status} ${await slipOf("E2E001")}`);
   check("…her commission still paid", (await CrmCommissionPayout.findOne({ key: crmKey }).lean())?.state === "paid");
+
+  // Pull CS commission after approval (2026-11-06): only adds — Aisha, paid in full, is part paid for it.
+  await CsCommissionPayout.create({ key: `deposit:${seed.month.slice(0, 4)}-Q1:cs-aisha`, organizationId: org._id, kind: "deposit", period: `${seed.month.slice(0, 4)}-Q1`,
+    lastMonth: seed.month, recipientId: "cs-aisha", personName: "Aisha", email: "e2e001@e2e.local", location: "dubai", currency: "AED", amountMinor: 110_00, amountUsd: 29.97,
+    creditIds: ["c2"], state: "approved", approvedById: new Types.ObjectId(actor.userId), approvedByName: "Mona Manager", approvedAt: new Date() });
+  const csAfter = await adjustments.pullCsCommission(orgId, runId, actor);
+  run = await payroll.getRun(orgId, runId);
+  const aishaCs = run.lines.find((l) => l.id === aishaPaid.id)!;
+  const csItem = run.adjustments.find((a) => a.lineId === aishaPaid.id && a.source === "cs_commission" && a.amountMinor === 110_00);
+  check("Pull CS commission after approval: added to Aisha, paid in full — part paid now, owed it; her payslip issued",
+    csAfter.pulled === 1 && !!csItem?.afterApproval && aishaCs.status === "partially_paid" && aishaCs.payableMinor - aishaCs.amountPaidMinor === 110_00 && (await slipOf("E2E001")) === "issued",
+    `${csAfter.message} ${aishaCs.status}`);
+  check("…the CS commission on this run", (await CsCommissionPayout.findOne({ key: `deposit:${seed.month.slice(0, 4)}-Q1:cs-aisha` }).lean())?.payrollRunNumber === run.runNumber);
+  await adjustments.removeAdjustment(orgId, runId, csItem!.externalId);
+  run = await payroll.getRun(orgId, runId);
+  check("…taken off again: paid in full, the CS commission free to pull or pay", run.lines.find((l) => l.id === aishaPaid.id)!.status === "paid" && (await slipOf("E2E001")) === "paid"
+    && !(await CsCommissionPayout.findOne({ key: `deposit:${seed.month.slice(0, 4)}-Q1:cs-aisha` }).lean())?.payrollRunId);
 
   const fineAdj = run.adjustments.find((a) => a.lineId === e2e003.id && a.label === "Late fine")!;
   await adjustments.removeAdjustment(orgId, runId, fineAdj.externalId);

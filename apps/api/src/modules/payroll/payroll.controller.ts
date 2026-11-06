@@ -41,6 +41,11 @@ export const addAdjustments = asyncHandler(async (req: Request, res: Response) =
   ok(res, await adjustments.addAdjustments(orgId(req), req.params.id!, items, { userId: req.auth!.userId }));
 });
 
+/** The CS Portal's approved commission, on its own button (2026-11-06) — before or after approval. */
+export const pullCsCommission = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await adjustments.pullCsCommission(orgId(req), req.params.id!, { userId: req.auth!.userId }));
+});
+
 export const pullCommissions = asyncHandler(async (req: Request, res: Response) => {
   ok(res, await adjustments.pullCommissions(orgId(req), req.params.id!, { userId: req.auth!.userId }));
 });

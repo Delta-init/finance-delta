@@ -45,9 +45,11 @@ function requireOpen(run: PayrollRunDoc) {
 
 /**
  * Approved, and not yet paid in full: one person's additions and deductions can still change (the user, 2026-11-04:
- * "edit this payroll after the approve also … same as before the approval, for specific people") — only somebody
- * nothing has been paid to yet. A paid payslip is what the bank sent; one paid in part could be taken below what was
- * already paid.
+ * "edit this payroll after the approve also … same as before the approval, for specific people"). A payslip paid in
+ * full is what the bank sent, and stays. Somebody paid in part (the user, 2026-11-06: "add or deduct … need to appear
+ * on the part payment also") can still change — as long as something is left to pay them: a deduction under what is
+ * still owed, an addition taken off only if that holds. Their payslip is closed in HRMS by the payment that pays the
+ * last of it, so pay brought down to what has been paid would leave it open for ever.
  */
 const STATUSES_OPEN_AFTER_APPROVAL = ["approved", "partially_paid"];
 
@@ -60,14 +62,28 @@ function requireAdjustable(run: PayrollRunDoc) {
   }
 }
 
-function requireLineAdjustable(run: PayrollRunDoc, line: PayrollRunDoc["lines"][number]) {
+type RunLineDoc = PayrollRunDoc["lines"][number];
+
+/** Paid something, not all of it. */
+const isPartPaid = (line: RunLineDoc) => line.status !== "paid" && (line.amountPaidMinor ?? 0) > 0;
+
+function requireLineAdjustable(run: PayrollRunDoc, line: RunLineDoc) {
   if (!STATUSES_OPEN_AFTER_APPROVAL.includes(run.status)) return;
-  if (line.status === "paid" || line.status === "partially_paid" || (line.amountPaidMinor ?? 0) > 0) {
-    throw new AppError(
-      "CONFLICT",
-      `${line.name} has been paid${line.status === "paid" ? "" : " in part"} — reverse their payment first to change their pay.`,
-    );
+  if (line.status === "paid" || (isPartPaid(line) && line.payableMinor - line.amountPaidMinor <= 0)) {
+    throw new AppError("CONFLICT", `${line.name} has been paid in full — reverse their payment first to change their pay.`);
   }
+}
+
+/** Somebody paid in part keeps something still to pay, whatever this change does to their pay. */
+function requireStillOwed(run: PayrollRunDoc, line: RunLineDoc, payableAfterMinor: number, what: string) {
+  if (!isPartPaid(line) || payableAfterMinor - line.amountPaidMinor > 0) return;
+  const cur = line.currency || run.currency;
+  const owed = line.payableMinor - line.amountPaidMinor;
+  throw new AppError(
+    "CONFLICT",
+    `${line.name} has been paid ${formatMinor(line.amountPaidMinor, cur)} and is still owed ${formatMinor(owed, cur)}: ${what} would leave nothing to pay them, `
+      + `and only a payment closes their payslip. Keep it under ${formatMinor(owed, cur)}, or reverse their payment first.`,
+  );
 }
 
 async function loadRun(orgId: string, runId: string) {
@@ -147,12 +163,17 @@ export async function addAdjustments(
 
   const user = await User.findById(oid(actor.userId)).select("name").lean();
   const staged: Array<{ externalId: string; employeeId: string; kind: "payment" | "deduction"; label: string; amount: number; notes?: string }> = [];
+  // What these items do to each person's pay, so somebody paid in part is checked against all of theirs at once.
+  const change = new Map<string, number>();
 
   for (const input of inputs) {
     const line = run.lines.find((l) => String(l._id) === input.lineId);
     if (!line) throw new AppError("NOT_FOUND", `No such person on this run: ${input.lineId}`);
     requireLineAdjustable(run, line);
     if (input.amountMinor <= 0) throw new AppError("VALIDATION_ERROR", `"${input.label}" must be a positive amount`);
+    const moved = (change.get(input.lineId) ?? 0) + (input.kind === "addition" ? input.amountMinor : -input.amountMinor);
+    change.set(input.lineId, moved);
+    requireStillOwed(run, line, line.payableMinor + moved, "this deduction");
 
     const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, input.lineId));
 
@@ -191,6 +212,17 @@ export async function addAdjustments(
 
   absorbOutcomes(run, result.outcomes);
   recalculate(run as unknown as RecalcRun);
+
+  // HRMS rebuilds the payslip as it applies an item, and the rebuilt one could still take somebody paid in part down
+  // to what they have been paid. Then the items come back off HRMS and nothing here is saved.
+  const emptied = run.lines.filter((l) => change.has(String(l._id)) && isPartPaid(l) && l.payableMinor - l.amountPaidMinor <= 0);
+  if (emptied.length) {
+    for (const item of staged) await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, item.externalId).catch(() => undefined);
+    throw new AppError(
+      "CONFLICT",
+      `${emptied.map((l) => l.name).join(", ")} would be left with nothing to pay after HRMS worked out the payslip again — nothing was added. Use a smaller amount.`,
+    );
+  }
   await run.save();
 
   return summariseOutcomes(run, result.outcomes);
@@ -515,7 +547,11 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   const index = run.adjustments.findIndex((a) => a.externalId === externalId);
   if (index === -1) throw new AppError("NOT_FOUND", "No such adjustment on this run");
   const line = run.lines.find((l) => String(l._id) === String(run.adjustments[index]!.lineId));
-  if (line) requireLineAdjustable(run, line);
+  if (line) {
+    requireLineAdjustable(run, line);
+    const rest = run.adjustments.filter((_, i) => i !== index) as unknown as RecalcAdjustment[];
+    requireStillOwed(run, line, line.netFromHrmsMinor + lineAdjustmentTotal(rest, line._id), `taking "${run.adjustments[index]!.label}" off`);
+  }
 
   // HRMS first again: if it refuses, this side is untouched and the two stay in
   // step. Removing here first would leave a payslip carrying money the run no

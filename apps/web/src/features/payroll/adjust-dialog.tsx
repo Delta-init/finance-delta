@@ -52,7 +52,11 @@ export function AdjustDialog({
   const currency = currencies[0] ?? runCurrency;
   const mixed = currencies.length > 1;
   const minorEach = toMinor(amount);
-  const valid = label.trim().length > 0 && minorEach > 0 && lines.length > 0 && !mixed;
+  // Somebody paid in part keeps something to pay (2026-11-06): a deduction stays under what is still owed to them.
+  const partPaid = lines.filter((l) => l.amountPaidMinor > 0 && l.status !== "paid");
+  const leastOwed = partPaid.length ? Math.min(...partPaid.map((l) => l.payableMinor - l.amountPaidMinor)) : null;
+  const tooMuch = kind === "deduction" && leastOwed !== null && minorEach >= leastOwed;
+  const valid = label.trim().length > 0 && minorEach > 0 && lines.length > 0 && !mixed && !tooMuch;
 
   function reset() {
     setKind("addition"); setLabel(""); setAmount(""); setNotes("");
@@ -86,6 +90,22 @@ export function AdjustDialog({
                 {lines.slice(0, 3).map((l) => l.name).join(", ")}
                 {lines.length > 3 ? ` and ${lines.length - 3} more` : ""}
               </p>
+            </div>
+          )}
+
+          {partPaid.length > 0 && leastOwed !== null && (
+            <div className="rounded-lg border border-border bg-surface-muted/40 p-2.5 text-xs">
+              {bulk ? (
+                <p>
+                  <span className="font-medium">{partPaid.length} of them paid in part.</span>{" "}
+                  The least still owed to one of them is {formatMoney(leastOwed, currency)}, so a deduction must be under that.
+                </p>
+              ) : (
+                <p>
+                  <span className="font-medium">Paid {formatMoney(partPaid[0]!.amountPaidMinor, currency)} · still owed {formatMoney(leastOwed, currency)}.</span>{" "}
+                  An addition is paid with the rest; a deduction must be under {formatMoney(leastOwed, currency)}, since only a payment closes their payslip.
+                </p>
+              )}
             </div>
           )}
 
@@ -132,6 +152,11 @@ export function AdjustDialog({
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
             />
+            {tooMuch && leastOwed !== null && (
+              <p className="text-xs text-danger">
+                Must be under {formatMoney(leastOwed, currency)} — {bulk ? "somebody selected" : "they"} would be left with nothing to pay.
+              </p>
+            )}
             {bulk && minorEach > 0 && (
               <p className="text-xs text-foreground-muted">
                 {formatMoney(minorEach, currency)} each · {formatMoney(minorEach * lines.length, currency)}{" "}

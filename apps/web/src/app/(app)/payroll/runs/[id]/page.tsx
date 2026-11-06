@@ -172,8 +172,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // After approval, until the run is paid: one person's additions and deductions can still change, for somebody
   // nothing has been paid to yet (the user, 2026-11-04). Pulling slabs or commission stays before approval.
   const adjustAfterApproval = canPay;
+  // After approval: anybody not paid in full — somebody paid in part too, while something is left to pay them (2026-11-06).
   const lineAdjustable = (l: RunLine) =>
-    openForAdjustment || (adjustAfterApproval && (l.status === "pending" || l.status === "on_hold") && !(l.amountPaidMinor > 0));
+    openForAdjustment || (adjustAfterApproval && l.status !== "paid" && (l.amountPaidMinor === 0 || l.payableMinor - l.amountPaidMinor > 0));
   // Approved by mistake: one step back, while nothing of it is paid (2026-11-01).
   const canUndoApproval = run.status === "approved" && run.payments.length === 0 && !(run.totals.amountPaidMinor > 0);
   // Rows are tickable in both stages, for two different jobs: choosing who to
@@ -403,9 +404,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
             <p className="text-foreground-muted">
               {adjustSelected.length > 0
                 ? `${adjustSelected.length} selected — the same item will go on each of their payslips.${
-                    adjustSelected.length < selected.size ? ` ${selected.size - adjustSelected.length} already paid, left out.` : ""}`
+                    adjustSelected.length < selected.size ? ` ${selected.size - adjustSelected.length} paid in full, left out.` : ""}`
                 : adjustAfterApproval
-                  ? "For anybody not paid yet: open their row, or tick several. It is written to their payslip in HRMS, and the run stays approved. Somebody paid, even in part, has their payment reversed first."
+                  ? "For anybody not paid in full: open their row, or tick several. It is written to their payslip in HRMS, and the run stays approved. Somebody paid in part can still get an addition, or a deduction under what is still owed to them. Somebody paid in full has their payment reversed first."
                   : "Everything added here is written to the payslip in HRMS, so the employee sees the same figure that is paid. Tick people below to apply one item to several at once."}
             </p>
           </div>

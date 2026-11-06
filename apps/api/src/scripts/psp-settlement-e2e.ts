@@ -93,6 +93,9 @@ check("three, oldest first, each with its expected fee and day", waiting.length 
   && waiting[0]!.expectedOn === "2026-11-09" && waiting[0]!.invoice?.number === "IN-00001" && waiting[2]!.invoice === null, j(waiting));
 const sum = await psp.pspSummary(org, tabby.id);
 check("the summary: 3,300 in 3, the fees expected", sum.unsettledMinor === 330_000 && sum.unsettledCount === 3 && sum.expectedFeeMinor === waiting.reduce((a, l) => a + l.expectedFeeMinor, 0), j(sum));
+const every = await psp.allPspSummaries(org);
+const mine = every.find((a) => a.accountId === tabby.id);
+check("the dashboard's list: both PSP accounts and no bank, the one holding most first, same figures as its own summary", every.length === 2 && every[0] === mine && !!mine && mine.unsettledMinor === sum.unsettledMinor && mine.expectedFeeMinor === sum.expectedFeeMinor && mine.settlementAccountName === "ADCB" && !!mine.oldestDate && every[1]!.unsettledCount === 0 && every[1]!.oldestDate === null, j(every));
 const upTo = await psp.unsettledLines(org, tabby.id, { to: "2026-11-02" });
 check("…up to a day: only those", upTo.length === 1);
 

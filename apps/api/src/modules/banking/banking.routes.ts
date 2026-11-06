@@ -33,6 +33,8 @@ router.delete("/transfers/:transferId", requirePermission("banking:write"), c.de
 
 // Bank accounts
 router.get("/", requirePermission("banking:read"), c.listAccounts);
+// Every PSP account's unsettled money, for the dashboard (2026-11-06) — before "/:id".
+router.get("/psp/summary", requirePermission("banking:read"), psp.allSummaries);
 router.get("/:id", requirePermission("banking:read"), c.getAccount);
 // A PSP account's settlements (2026-11-06): what waits to be settled, and each settlement — the transfer and fee it made.
 router.get("/:id/psp/unsettled", requirePermission("banking:read"), psp.unsettled);

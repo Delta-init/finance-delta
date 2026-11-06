@@ -15,6 +15,11 @@ export const unsettled = asyncHandler(async (req, res) => {
   ok(res, await svc.unsettledLines(org(req), req.params.id!, { to: typeof req.query.to === "string" ? req.query.to : undefined }));
 });
 
+/** Every PSP account's unsettled money — the dashboard's card. */
+export const allSummaries = asyncHandler(async (req, res) => {
+  ok(res, await svc.allPspSummaries(org(req)));
+});
+
 export const summary = asyncHandler(async (req, res) => {
   ok(res, await svc.pspSummary(org(req), req.params.id!));
 });

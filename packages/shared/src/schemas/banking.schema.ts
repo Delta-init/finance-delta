@@ -148,6 +148,17 @@ export interface PspSummary {
   lateMinor: number;
 }
 
+/** One PSP account and what it holds unsettled — the dashboard's card (2026-11-06). */
+export interface PspAccountSummary extends PspSummary {
+  accountId: string;
+  accountName: string;
+  provider: string;
+  currency: string;
+  settlementAccountName: string;
+  /** The oldest payment waiting, if any. */
+  oldestDate: string | null;
+}
+
 // ── Bank Transaction ──────────────────────────────────────────────────────────
 
 export const bankTransactionStatusSchema = z.enum(["unmatched", "matched", "excluded", "duplicate"]);

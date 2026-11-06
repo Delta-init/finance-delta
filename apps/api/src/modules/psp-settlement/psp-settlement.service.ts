@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import {
   EXPENSE_DEFAULTS, expectedPspFeeMinor,
-  type CreatePspSettlementInput, type PspSettlementDTO, type PspSummary, type PspUnsettledLine,
+  type CreatePspSettlementInput, type PspAccountSummary, type PspSettlementDTO, type PspSummary, type PspUnsettledLine,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { BankAccount } from "../banking/bank-account.model";
@@ -80,6 +80,31 @@ export async function pspSummary(orgId: string, accountId: string): Promise<PspS
     lateCount: late.length,
     lateMinor: late.reduce((a, l) => a + l.amountMinor, 0),
   };
+}
+
+/**
+ * Every open PSP account and what it holds unsettled, the most waiting first — the dashboard's card (2026-11-06).
+ * One account that can't be read is left out rather than failing the rest.
+ */
+export async function allPspSummaries(orgId: string): Promise<PspAccountSummary[]> {
+  const accounts = await BankAccount.find({ organizationId: oid(orgId), accountType: "psp", isActive: { $ne: false }, "psp.settlementAccountId": { $exists: true } })
+    .select("accountName currency psp").lean<Array<{ _id: Types.ObjectId; accountName: string; currency: string; psp: Psp & { settlementAccountName?: string } }>>();
+  const out: PspAccountSummary[] = [];
+  for (const a of accounts) {
+    try {
+      const lines = await unsettledLines(orgId, String(a._id));
+      const late = lines.filter((l) => l.late);
+      out.push({
+        accountId: String(a._id), accountName: a.accountName, provider: a.psp?.provider ?? "", currency: a.currency,
+        settlementAccountName: a.psp?.settlementAccountName ?? "",
+        unsettledMinor: lines.reduce((s, l) => s + l.amountMinor, 0), unsettledCount: lines.length,
+        expectedFeeMinor: lines.reduce((s, l) => s + l.expectedFeeMinor, 0),
+        lateCount: late.length, lateMinor: late.reduce((s, l) => s + l.amountMinor, 0),
+        oldestDate: lines[0]?.date ?? null,
+      });
+    } catch { /* left out */ }
+  }
+  return out.sort((x, y) => y.lateMinor - x.lateMinor || y.unsettledMinor - x.unsettledMinor);
 }
 
 function toDTO(d: PspSettlementDoc): PspSettlementDTO {

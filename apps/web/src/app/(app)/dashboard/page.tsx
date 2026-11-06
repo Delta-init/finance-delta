@@ -6,6 +6,7 @@ import { RecentInvoices } from "@/components/dashboard/recent-invoices";
 import { TopCustomers } from "@/components/dashboard/top-customers";
 import { ExpenseChart } from "@/components/dashboard/expense-chart";
 import { AgingSummary } from "@/components/dashboard/aging-summary";
+import { PspUnsettledCard } from "@/components/dashboard/psp-unsettled";
 import { MyWorkspace, NoAccessYet } from "@/components/dashboard/my-workspace";
 import { PendingApprovals } from "@/components/dashboard/pending-approvals";
 import { InvoiceApprovals } from "@/components/dashboard/invoice-approvals";
@@ -65,6 +66,9 @@ export default async function DashboardPage() {
       {/* Every card, chart and list below opens where its figure came from (2026-10-26). */}
       <DashboardBreakdownProvider>
       <SectionCards />
+
+      {/* What the PSPs still hold for us, per account (2026-11-06). Nothing without PSP accounts or banking access. */}
+      {can("banking:read") && <PspUnsettledCard />}
 
       <div className="grid gap-6 lg:grid-cols-7">
         <div className="lg:col-span-4">

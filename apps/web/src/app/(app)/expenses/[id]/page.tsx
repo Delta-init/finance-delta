@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, User,
-  Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2, Trash2,
+  Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2, Trash2, Filter,
 } from "lucide-react";
 import { formatMoney } from "@delta/shared";
 import {
@@ -50,6 +50,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
 import { LateBadge } from "@/features/late-entries/LateReason";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -498,9 +499,13 @@ export default function ExpenseDetailPage({ params }: { params: Promise<{ id: st
                 {expense.salesperson && (
                   <div>
                     <p className="text-xs text-foreground-muted">Salesperson</p>
-                    <Link href={`/expenses?salespersonId=${expense.salesperson.id}`} className="text-sm font-medium mt-0.5 text-primary hover:underline" title="Their expenses">
-                      {expense.salesperson.name}
-                    </Link>
+                    {/* Their page beside this one (2026-11-07); the funnel lists their expenses. */}
+                    <p className="mt-0.5 flex items-center gap-1.5 text-sm font-medium">
+                      <SalespersonLink userId={expense.salesperson.id} name={expense.salesperson.name} />
+                      <Link href={`/expenses?salespersonId=${expense.salesperson.id}`} className="rounded p-0.5 text-foreground-subtle hover:bg-surface-muted hover:text-foreground" title="Their expenses" aria-label="Their expenses">
+                        <Filter className="h-3.5 w-3.5" />
+                      </Link>
+                    </p>
                   </div>
                 )}
                 {expense.department && (

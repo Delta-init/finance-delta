@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
+import { openPane } from "@/components/split-view/split-view";
 import { useUrlFlag, useUrlPage, useUrlParam, useUrlText } from "@/lib/url-state";
-import { useRouter } from "next/navigation";
 import { Users2, TrendingUp, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -46,7 +46,6 @@ const sortValue: Record<SortKey, (r: PersonRow) => number | string> = {
  * payment.
  */
 export default function SalespeoplePage() {
-  const router = useRouter();
   // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period and page.
   const [page, setPage] = useUrlPage();
   const [sizeParam, setSizeParam] = useUrlParam("size", "25");
@@ -257,7 +256,8 @@ export default function SalespeoplePage() {
           sort={{ key: sortKey, dir: sortDir }}
           onSortChange={onSort}
           isLoading={isLoading} isFetching={isPlaceholderData}
-          onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
+          // Their page beside the list (the split pane, 2026-11-07), over the same period.
+          onRowClick={(r) => openPane("salesperson", r.employeeId, { from, to })}
           detailTitle={(r) => r.name}
           emptyMessage={
             data?.rows.length

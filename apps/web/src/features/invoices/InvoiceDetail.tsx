@@ -57,6 +57,7 @@ import { useBankAccount, useBankAccounts } from "@/features/banking/api";
 import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { InvoiceAttachments } from "@/features/invoices/InvoiceAttachments";
 import { useFileDrop } from "@/components/ui/file-drop";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 /**
  * `preloaded`: the invoice as somebody else read it (2026-10-31: the CRM commission page's pop-up, from any
@@ -386,7 +387,7 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
       {/* Meta grid */}
       <div className="grid gap-4 rounded-lg border border-border bg-surface p-5 sm:grid-cols-2 lg:grid-cols-4">
         <Meta label="Customer" value={invoice.customerName} />
-        <Meta label="Salesperson" value={invoice.salespersonName} />
+        <Meta label="Salesperson" value={<SalespersonLink userId={invoice.salespersonId} name={invoice.salespersonName} />} />
         {invoice.reference && <Meta label="Reference" value={invoice.reference} />}
         <Meta label="Issue date" value={invoice.issueDate} />
         <Meta label="Due date" value={invoice.dueDate} />
@@ -1026,7 +1027,7 @@ function proofName(url: string): string {
   return last.replace(/^proof-\d+-/, "") || "Current receipt";
 }
 
-function Meta({ label, value }: { label: string; value: string }) {
+function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="mb-0.5 text-xs font-medium text-foreground-muted">{label}</p>

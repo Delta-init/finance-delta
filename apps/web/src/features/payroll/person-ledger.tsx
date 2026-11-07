@@ -55,13 +55,14 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "n
  * each expense for them, and each salary advance or one-time payment, in one table. Search, the kind, the dates, the
  * order and the page are the server's to apply and kept in the address; a row opens what it is.
  */
-export function PersonLedgerTab({ employeeId }: { employeeId: string }) {
-  const [page, setPage] = useUrlPage("lpage");
-  const [size, setSize] = useUrlParam("lsize", "25", { page: "lpage", allowed: ["10", "25", "50", "100"] });
-  const [kind, setKind] = useUrlParam<"all" | LedgerKind>("lkind", "all", { page: "lpage", allowed: ["all", ...KINDS.map((k) => k.key)] });
-  const [text, setText, q] = useUrlText("lq", { page: "lpage" });
-  const dates = useUrlDateRange({ fromKey: "lfrom", toKey: "lto", rangeKey: "lrange", page: "lpage" });
-  const [sort, setSort] = useUrlParam<"desc" | "asc">("lsort", "desc", { page: "lpage", allowed: ["asc", "desc"] });
+export function PersonLedgerTab({ employeeId, keyPrefix = "" }: { employeeId: string; /** "p." in the split pane. */ keyPrefix?: string }) {
+  const lk = (key: string) => `${keyPrefix}l${key}`;
+  const [page, setPage] = useUrlPage(lk("page"));
+  const [size, setSize] = useUrlParam(lk("size"), "25", { page: lk("page"), allowed: ["10", "25", "50", "100"] });
+  const [kind, setKind] = useUrlParam<"all" | LedgerKind>(lk("kind"), "all", { page: lk("page"), allowed: ["all", ...KINDS.map((k) => k.key)] });
+  const [text, setText, q] = useUrlText(lk("q"), { page: lk("page") });
+  const dates = useUrlDateRange({ fromKey: lk("from"), toKey: lk("to"), rangeKey: lk("range"), page: lk("page") });
+  const [sort, setSort] = useUrlParam<"desc" | "asc">(lk("sort"), "desc", { page: lk("page"), allowed: ["asc", "desc"] });
   const [open, setOpen] = useState<LedgerRow | null>(null);
 
   const { data, isLoading, isPlaceholderData } = usePersonLedger(employeeId, {

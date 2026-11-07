@@ -47,6 +47,7 @@ const APPROVAL_LABELS: Record<InvoiceApproval, string> = {
   returned: "Sent back",
 };
 import { useCan } from "@/lib/use-can";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
   { header: "Invoice #", value: (inv) => inv.invoiceNumber },
@@ -239,7 +240,7 @@ export function InvoiceManager() {
             key: "salesperson",
             header: "Salesperson",
             sortable: true,
-            cell: (inv: Invoice) => <span className="text-foreground-muted">{inv.salespersonName}</span>,
+            cell: (inv: Invoice) => <SalespersonLink userId={inv.salespersonId} name={inv.salespersonName} />,
           },
         ]),
     { key: "tags", header: "Tags", cell: (inv) => <TagList tags={inv.tags} /> },

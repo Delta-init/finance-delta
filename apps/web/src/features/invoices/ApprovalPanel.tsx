@@ -17,6 +17,7 @@ import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useApproveInvoice, useReturnInvoice, useResubmitInvoice } from "@/features/invoices/api";
 import { EnrolmentDetailsDialog } from "@/features/invoices/EnrolmentDetailsDialog";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 const MODE_LABELS: Record<string, string> = { online: "Online", offline: "Offline", hybrid: "Hybrid" };
 
@@ -92,7 +93,7 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
           {/* Who raised it, and who the enrolment is credited to. The same
               person unless somebody entered it on a colleague's behalf, which
               is the only reason the second line is ever shown. */}
-          <Detail label="Raised by" value={invoice.salespersonName} />
+          <Detail label="Raised by" value={<SalespersonLink userId={invoice.salespersonId} name={invoice.salespersonName} />} />
           {e.meetingBy ? <Detail label="Salesperson" value={e.meetingBy} /> : null}
           {e.declaredPaidMinor ? (
             <Detail
@@ -230,7 +231,7 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="text-xs text-foreground-muted">{label}</p>

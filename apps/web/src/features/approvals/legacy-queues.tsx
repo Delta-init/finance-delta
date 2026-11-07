@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -134,7 +135,7 @@ function InvoiceQueue() {
       ),
     },
     { key: "number", header: "Number", cell: (inv) => inv.invoiceNumber },
-    { key: "salesperson", header: "Raised by", cell: (inv) => inv.salespersonName },
+    { key: "salesperson", header: "Raised by", cell: (inv) => <SalespersonLink userId={inv.salespersonId} name={inv.salespersonName} /> },
     {
       key: "waiting",
       header: "Submitted",

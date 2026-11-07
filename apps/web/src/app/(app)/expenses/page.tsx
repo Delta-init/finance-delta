@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag } from "lucide-react";
+import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag, Filter } from "lucide-react";
 import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS, expensePaymentMethodSchema, paymentMethodLabel } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 const STATUS_TONE: Record<string, NonNullable<BadgeProps["tone"]>> = {
   draft: "neutral",
@@ -235,19 +236,24 @@ export default function ExpensesPage() {
       ),
     },
     {
-      // Who the expense is for, when it is for a salesperson (2026-10-21) — a click lists just theirs.
+      // Who the expense is for, when it is for a salesperson (2026-10-21): the name opens their page beside the list
+      // (2026-11-07); the funnel lists just theirs.
       key: "salesperson",
       header: "Salesperson",
       cell: (e) =>
         e.salesperson ? (
-          <button
-            type="button"
-            onClick={(ev) => { ev.stopPropagation(); setSalesperson(e.salesperson!.id); }}
-            className="text-left hover:underline"
-            title={`Only ${e.salesperson.name}'s expenses`}
-          >
-            {e.salesperson.name}
-          </button>
+          <span className="inline-flex items-center gap-1.5">
+            <SalespersonLink userId={e.salesperson.id} name={e.salesperson.name} className="text-left" />
+            <button
+              type="button"
+              onClick={(ev) => { ev.stopPropagation(); setSalesperson(e.salesperson!.id); }}
+              className="rounded p-0.5 text-foreground-subtle hover:bg-surface-muted hover:text-foreground"
+              title={`Only ${e.salesperson.name}'s expenses`}
+              aria-label={`Only ${e.salesperson.name}'s expenses`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+            </button>
+          </span>
         ) : (
           <span className="text-foreground-subtle">—</span>
         ),

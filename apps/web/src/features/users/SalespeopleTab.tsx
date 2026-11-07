@@ -16,6 +16,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 import { useRoles } from "@/features/roles/api";
 import { useAllDepartments } from "@/features/departments/api";
 import {
@@ -113,7 +114,7 @@ export function SalespeopleTab() {
               {data && payroll.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-foreground-muted">No payroll salespeople match.</td></tr>}
               {payroll.map((p) => (
                 <tr key={p.id} className="border-t border-border">
-                  <td className="py-2 pr-3"><span className="font-medium">{p.name}</span><span className="block text-xs text-foreground-muted">{p.email}</span></td>
+                  <td className="py-2 pr-3"><SalespersonLink userId={p.id} name={p.name} className="font-medium" /><span className="block text-xs text-foreground-muted">{p.email}</span></td>
                   <td className="py-2 pr-3">{p.department?.name ?? "—"}</td>
                   <td className="py-2 pr-3 tabular-nums">{p.invoices || "—"}</td>
                   <td className="py-2 pr-3">{day(p.lastSaleAt)}</td>

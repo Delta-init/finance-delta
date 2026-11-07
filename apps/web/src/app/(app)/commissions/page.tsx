@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { MoneyDisplay } from "@/components/ui/money";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useCommissionReport, useCommissionStructures, useCommissionRecords } from "@/features/commissions/api";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -148,7 +149,7 @@ export default function CommissionsPage() {
               <tbody className="divide-y divide-border">
                 {report.rows.map((row) => (
                   <tr key={row.salespersonId} className="bg-surface hover:bg-surface-muted/50">
-                    <td className="px-4 py-3 font-medium text-foreground">{row.salespersonName}</td>
+                    <td className="px-4 py-3 font-medium text-foreground"><SalespersonLink userId={row.salespersonId} name={row.salespersonName} /></td>
                     <td className="px-4 py-3 text-right text-foreground-muted">{row.invoiceCount}</td>
                     <td className="px-4 py-3 text-right">
                       <MoneyDisplay minor={row.earnedMinor + row.paidMinor} />

@@ -1,9 +1,9 @@
 "use client";
 
 import { use } from "react";
+import { openPane } from "@/components/split-view/split-view";
 import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowLeft, Building2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -20,7 +20,6 @@ const today = () => new Date().toISOString().slice(0, 10);
 /** Everyone in one department, and what each of them earned and cost. */
 export default function DepartmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
   // In the address bar (2026-10-22), read back as the department list links here — so a refresh or a shared link keeps the same period and page.
   const [from, setFrom] = useUrlParam("from", monthStart());
   const [to, setTo] = useUrlParam("to", today());
@@ -98,7 +97,8 @@ export default function DepartmentPage({ params }: { params: Promise<{ id: strin
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           isLoading={isLoading} isFetching={isPlaceholderData}
-          onRowClick={(r) => router.push(`/reports/salesperson/${r.employeeId}?from=${from}&to=${to}`)}
+          // Their page beside the list (the split pane, 2026-11-07), over the same period.
+          onRowClick={(r) => openPane("salesperson", r.employeeId, { from, to })}
           detailTitle={(r) => r.name}
           emptyMessage="Nobody is mapped to this department."
         />

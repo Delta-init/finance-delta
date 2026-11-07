@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { SiteHeader } from "@/components/dashboard/site-header";
 import { OrgPickerModal } from "@/components/org-picker/OrgPickerModal";
 import { RootPortalHistoryBridge } from "@/components/root-portal-history-bridge";
+import { SplitShell } from "@/components/split-view/split-view";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -32,7 +33,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       />
       <SidebarInset>
         <SiteHeader />
-        <main className="flex-1 overflow-y-auto bg-background">{children}</main>
+        {/* The page, and a record opened beside it (the split pane, 2026-11-07). */}
+        <SplitShell>{children}</SplitShell>
       </SidebarInset>
     </SidebarProvider>
   );

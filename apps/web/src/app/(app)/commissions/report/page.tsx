@@ -8,6 +8,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { useCommissionReport } from "@/features/commissions/api";
 import type { CommissionReportRow } from "@delta/shared";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -24,7 +25,7 @@ export default function CommissionReportPage() {
       key: "salespersonName",
       header: "Salesperson",
       sortable: true,
-      cell: (r) => <span className="font-medium text-foreground">{r.salespersonName}</span>,
+      cell: (r) => <SalespersonLink userId={r.salespersonId} name={r.salespersonName} className="font-medium" />,
     },
     {
       key: "invoiceCount",

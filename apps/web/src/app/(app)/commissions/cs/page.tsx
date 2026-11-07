@@ -2,8 +2,8 @@
 
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, Search, Upload, Wallet, X } from "lucide-react";
-import { EXPENSE_DEFAULTS, type CsCommissionKind, type CsCommissionPerson, type CsCommissionStage, type UploadedExpenseFile } from "@delta/shared";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, Search, Split, Upload, Users, Wallet, X } from "lucide-react";
+import { EXPENSE_DEFAULTS, type CsCommissionKind, type CsCommissionPerson, type CsCommissionPool, type CsCommissionPoolShare, type CsCommissionStage, type UploadedExpenseFile } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useFileDrop } from "@/components/ui/file-drop";
-import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, useCsCommissionInvoice, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission } from "@/features/cs-commission/api";
+import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, useCsCommissionInvoice, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission, useSplitCsCommissionPool } from "@/features/cs-commission/api";
 import { InvoiceDetail } from "@/features/invoices/InvoiceDetail";
 import { useOrganization } from "@/features/organization/api";
 
@@ -47,6 +47,9 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 type Pick = { person: CsCommissionPerson };
+/** What someone is owed for the period: their own credits, and their share of the pools not split yet (2026-11-07). */
+const dueMinor = (p: CsCommissionPerson) => p.amountMinor + (p.poolMinor ?? 0);
+const dueUsd = (p: CsCommissionPerson) => p.totalUsd + (p.poolUsd ?? 0);
 
 export default function CsCommissionPage() {
   const [kind, setKind] = useState<CsCommissionKind>("bonus");
@@ -58,6 +61,8 @@ export default function CsCommissionPage() {
   const [paying, setPaying] = useState<Pick | null>(null);
   // Approve and pay in one step (2026-11-06) — before the CS Portal's approvals too, with a reason.
   const [recording, setRecording] = useState<Pick | null>(null);
+  // A Senior/Junior pool to split (2026-11-07).
+  const [splitting, setSplitting] = useState<CsCommissionPool | null>(null);
   const years = Array.from({ length: 4 }, (_, i) => String(dubaiNow().getUTCFullYear() - i));
   const [qYear, qNum] = quarter.split("-");
 
@@ -123,6 +128,9 @@ export default function CsCommissionPage() {
               </Card>
             ))}
           </div>
+          {!!data.pools?.length && (
+            <PoolsCard pools={data.pools} kind={kind} period={period} ended={data.ended} canSplit={data.canApprove && data.canPay} onSplit={setSplitting} />
+          )}
           <CsTable people={data.people} kind={kind} period={period} ended={data.ended} canApprove={data.canApprove} canPay={data.canPay}
             onApprove={(person) => setApproving({ person })} onPay={(person) => setPaying({ person })} onRecord={(person) => setRecording({ person })} />
         </>
@@ -131,7 +139,90 @@ export default function CsCommissionPage() {
       <ApproveDialog pick={approving} kind={kind} period={period} onClose={() => setApproving(null)} />
       <PayDialog pick={paying} kind={kind} period={period} onClose={() => setPaying(null)} />
       <PayDialog pick={recording} kind={kind} period={period} onClose={() => setRecording(null)} mode="record" />
+      <SplitPoolDialog pool={splitting} kind={kind} period={period} onClose={() => setSplitting(null)} />
     </div>
+  );
+}
+
+/**
+ * The Senior/Junior pools not split yet (the user, 2026-11-07: "why are the junior and senior mentors not visible
+ * here"): a plan position flagged Pool pays its share into the Chief's pool, which the CS Portal splits equally among
+ * its members once the period ends (its Distribute button) — until then the Juniors and Seniors had nothing of their
+ * own, so they weren't here. Their shares are on their rows now; splitting gives each one their own commission there.
+ */
+function PoolsCard({ pools, kind, period, ended, canSplit, onSplit }: {
+  pools: CsCommissionPool[]; kind: CsCommissionKind; period: string; ended: boolean; canSplit: boolean; onSplit: (p: CsCommissionPool) => void;
+}) {
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <p className="flex items-center gap-2 text-sm font-semibold"><Users className="h-4 w-4" /> Senior / Junior pools not split yet</p>
+        <p className="mt-0.5 text-xs text-foreground-muted">
+          Juniors&rsquo; and Seniors&rsquo; share of each {kind === "bonus" ? "bonus" : "deposit"} goes into their Chief&rsquo;s pool, split equally among its members once
+          the {kind === "bonus" ? "month" : "quarter"} ends. Their shares are shown on their rows below; splitting gives each one their own commission in the CS Portal,
+          for the broker admin and academic head to approve as usual.
+        </p>
+      </div>
+      <div className="divide-y divide-border rounded-lg border border-border">
+        {pools.map((g) => (
+          <div key={`${g.groupId}:${g.method}`} className="flex flex-wrap items-center gap-3 px-3 py-2.5 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">{g.groupName || "Pool"} <span className="font-normal text-foreground-muted">· {METHOD[g.method] ?? g.method}</span></p>
+              <p className="text-xs text-foreground-muted">{g.members.map((m) => m.name).join(", ")} — {money(g.shareMinor, g.currency)} each</p>
+            </div>
+            <div className="text-right font-numeric">
+              <p className="font-semibold">{money(g.totalMinor, g.currency)}</p>
+              <p className="text-xs text-foreground-muted">{usd(g.totalUsd)}</p>
+            </div>
+            {!ended ? (
+              <span className="text-xs text-foreground-muted">Split once {periodName(kind, period)} ends</span>
+            ) : canSplit ? (
+              <Button size="sm" variant="outline" onClick={() => onSplit(g)}><Split className="h-3.5 w-3.5" /> Split the pool</Button>
+            ) : (
+              <span className="text-xs text-foreground-muted">A manager splits it</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function SplitPoolDialog({ pool, kind, period, onClose }: { pool: CsCommissionPool | null; kind: CsCommissionKind; period: string; onClose: () => void }) {
+  const split = useSplitCsCommissionPool();
+  const submit = async () => {
+    if (!pool) return;
+    try {
+      await split.mutateAsync({ kind, period, poolGroupId: pool.groupId, method: pool.method });
+      toast.success(`${pool.groupName || "The pool"} split — each member has their share in the CS Portal now`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not split the pool");
+    }
+  };
+  return (
+    <Dialog open={!!pool} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Split the pool</DialogTitle>
+          <DialogDescription>
+            {pool ? `${pool.groupName || "This pool"} — ${METHOD[pool.method] ?? pool.method}, ${periodName(kind, period)}: ${money(pool.totalMinor, pool.currency)} (${usd(pool.totalUsd)}) shared equally between ${pool.members.length} — ${money(pool.shareMinor, pool.currency)} each, as the CS Portal's Distribute splits it. Each gets it as their own commission there, for the broker admin and academic head to approve. A split can't be undone.` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {pool && (
+          <ul className="space-y-1 text-sm">
+            {pool.members.map((m) => (
+              <li key={m.id} className="flex justify-between gap-3"><span>{m.name}</span><span className="font-numeric">{money(pool.shareMinor, pool.currency)}</span></li>
+            ))}
+          </ul>
+        )}
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          {/* Just this pool — the bonus with and without MT5 are two, split one at a time, as the CS Portal splits them. */}
+          <Button loading={split.isPending} onClick={() => void submit()}><Split className="h-4 w-4" /> Split it</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -182,14 +273,23 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                         {isOpen ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0" /> : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0" />}
                         <span>
                           <span className="font-medium">{p.name || "—"}</span>
+                          {!!p.pool?.length && <Badge tone="primary" className="ml-2 align-middle">Sen/Jun pool</Badge>}
                           <span className="block text-xs text-foreground-muted">{p.location === "bangalore" ? "Bangalore" : "Dubai"}{p.email ? ` · ${p.email}` : ""}</span>
                         </span>
                       </button>
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{p.credits.length}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {p.credits.length}
+                      {!!p.pool?.length && <span className="block text-xs text-foreground-muted">+ pool</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-right font-numeric font-semibold">
-                      {money(p.payout ? p.payout.amountMinor : p.amountMinor, p.currency)}
-                      <span className="block text-xs font-normal text-foreground-muted">{usd(p.payout ? p.payout.amountUsd : p.totalUsd)}</span>
+                      {money(p.payout ? p.payout.amountMinor : dueMinor(p), p.currency)}
+                      <span className="block text-xs font-normal text-foreground-muted">{usd(p.payout ? p.payout.amountUsd : dueUsd(p))}</span>
+                      {!p.payout && (p.poolMinor ?? 0) > 0 && (
+                        <span className="block text-xs font-normal text-warning" title="Their share of their Chief's Senior/Junior pool — split when the period has ended">
+                          incl. {money(p.poolMinor ?? 0, p.currency)} pool share, not split yet
+                        </span>
+                      )}
                       {p.payout && p.payout.amountUsd !== p.totalUsd && p.credits.length > 0 && (
                         <span className="block text-xs font-normal text-warning" title="The CS Portal's figure changed after it was approved">CS Portal counts {usd(p.totalUsd)} now</span>
                       )}
@@ -206,7 +306,7 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                     </td>
                     <td className="px-4 py-2.5"><StatusCell p={p} /></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                      {(p.state === "waiting" || p.state === "ready") && ended && p.amountMinor > 0 && canApprove && (
+                      {(p.state === "waiting" || p.state === "ready") && ended && dueMinor(p) > 0 && canApprove && (
                         <div className="flex justify-end gap-2">
                           {p.state === "ready" && (
                             <Button size="sm" variant={canPay ? "outline" : undefined} onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
@@ -232,10 +332,13 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                   {isOpen && (
                     <tr className="border-t border-border bg-surface-muted/30">
                       <td colSpan={6} className="px-4 py-3">
-                        {!p.credits.length ? (
+                        {!p.credits.length && !p.pool?.length ? (
                           <p className="text-xs text-foreground-muted">No credits in the CS Portal for this period now.</p>
                         ) : (
-                          <CreditsBreakdown p={p} onInvoice={setInvoiceId} />
+                          <div className="space-y-4">
+                            {p.credits.length > 0 && <CreditsBreakdown p={p} onInvoice={setInvoiceId} />}
+                            {(p.pool ?? []).map((g) => <PoolBreakdown key={`${g.groupId}:${g.method}`} g={g} currency={p.currency} />)}
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -290,11 +393,12 @@ function CreditsBreakdown({ p, onInvoice }: { p: CsCommissionPerson; onInvoice: 
                   : <span className="text-foreground-muted">—</span>}
               </td>
               <td className="py-1 pr-3">{METHOD[c.method] ?? c.method}{c.initiator ? <span className="text-foreground-muted"> · by {c.initiator}</span> : null}</td>
-              <td className="py-1 pr-3">{c.level}{c.position ? ` · ${c.position}` : ""}</td>
+              {/* Their share of a split Senior/Junior pool (2026-11-07): no bonus or deposit of its own behind it. */}
+              <td className="py-1 pr-3">{c.fromPool ? <Badge tone="primary">Pool share</Badge> : <>{c.level}{c.position ? ` · ${c.position}` : ""}</>}</td>
               <td className="py-1 pr-3 text-right font-numeric">
-                {inCur(c.baseMinor, c.baseUsd)}<span className="block text-[11px] text-foreground-muted">{usd(c.baseUsd)}</span>
+                {c.fromPool ? <span className="text-foreground-muted">—</span> : <>{inCur(c.baseMinor, c.baseUsd)}<span className="block text-[11px] text-foreground-muted">{usd(c.baseUsd)}</span></>}
               </td>
-              <td className="py-1 pr-3 text-right tabular-nums">{c.percentage}%</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{c.fromPool ? "—" : `${c.percentage}%`}</td>
               <td className="py-1 text-right font-numeric font-medium">
                 {inCur(c.amountMinor, c.amountUsd)}<span className="block text-[11px] font-normal text-foreground-muted">{usd(c.amountUsd)}</span>
               </td>
@@ -310,6 +414,38 @@ function CreditsBreakdown({ p, onInvoice }: { p: CsCommissionPerson; onInvoice: 
             </tr>
           </tfoot>
         )}
+      </table>
+    </div>
+  );
+}
+
+/** Someone's share of a pool not split yet, and the accruals in it (2026-11-07). */
+function PoolBreakdown({ g, currency }: { g: CsCommissionPoolShare; currency: string }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs">
+        <span className="font-medium">{g.groupName || "Pool"}</span> · {METHOD[g.method] ?? g.method} — {money(g.totalMinor, currency)} between {g.members.length} ({g.members.join(", ")}):
+        {" "}<span className="font-medium">their share {money(g.shareMinor, currency)}</span> <span className="text-warning">· not split yet</span>
+      </p>
+      <table className="w-full text-xs">
+        <thead className="text-left text-foreground-muted">
+          <tr>
+            <th className="py-1 pr-3 font-medium">Date</th><th className="py-1 pr-3 font-medium">Student</th><th className="py-1 pr-3 font-medium">Held by</th>
+            <th className="py-1 pr-3 font-medium">Level</th><th className="py-1 pr-3 text-right font-medium">%</th><th className="py-1 text-right font-medium">Into the pool</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.credits.map((c) => (
+            <tr key={c.id} className="border-t border-border/60">
+              <td className="py-1 pr-3">{c.date.slice(0, 10)}</td>
+              <td className="py-1 pr-3">{c.student || "—"}</td>
+              <td className="py-1 pr-3">{c.heldBy || "—"}</td>
+              <td className="py-1 pr-3">{c.level}{c.position ? ` · ${c.position}` : ""}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{c.percentage}%</td>
+              <td className="py-1 text-right font-numeric">{money(c.amountMinor, currency)}<span className="block text-[11px] text-foreground-muted">{usd(c.amountUsd)}</span></td>
+            </tr>
+          ))}
+        </tbody>
       </table>
     </div>
   );
@@ -386,7 +522,7 @@ function ApproveDialog({ pick, kind, period, onClose }: { pick: Pick | null; kin
         <DialogHeader>
           <DialogTitle>Approve CS commission</DialogTitle>
           <DialogDescription>
-            {p ? `${p.name} · ${kind === "bonus" ? "Bonus" : "Deposit"} · ${periodName(kind, period)} — ${money(p.amountMinor, p.currency)} (${usd(p.totalUsd)}, ${p.credits.length} credit${p.credits.length === 1 ? "" : "s"}). This is the CS Portal's Finance step: their credits are released there, and the amount is frozen here for accounts to pay.` : ""}
+            {p ? `${p.name} · ${kind === "bonus" ? "Bonus" : "Deposit"} · ${periodName(kind, period)} — ${money(dueMinor(p), p.currency)} (${usd(dueUsd(p))}, ${p.credits.length} credit${p.credits.length === 1 ? "" : "s"}${(p.poolMinor ?? 0) > 0 ? ` and ${money(p.poolMinor ?? 0, p.currency)} from their pool, which is split first` : ""}). This is the CS Portal's Finance step: their credits are released there, and the amount is frozen here for accounts to pay.` : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -465,7 +601,7 @@ function PayDialog({ pick, kind, period, onClose, mode = "pay" }: { pick: Pick |
           <DialogTitle>{mode === "record" ? "Record CS commission payment" : "Mark CS commission paid"}</DialogTitle>
           <DialogDescription>
             {mode === "record" && pick
-              ? `${pick.person.name} · ${periodName(kind, period)} — ${money(pick.person.amountMinor, pick.person.currency)}. Approved and paid in one step: a paid expense with the receipt, and their credits released in the CS Portal so it can't be paid twice${pick.person.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.`
+              ? `${pick.person.name} · ${periodName(kind, period)} — ${money(dueMinor(pick.person), pick.person.currency)}${(pick.person.poolMinor ?? 0) > 0 ? `, of which ${money(pick.person.poolMinor ?? 0, pick.person.currency)} is their pool share (the pool is split first, for every member)` : ""}. Approved and paid in one step: a paid expense with the receipt, and their credits released in the CS Portal so it can't be paid twice${pick.person.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.`
               : pick && o ? `${pick.person.name} · ${periodName(kind, period)} — ${money(o.amountMinor, o.currency)}, as approved by ${o.approvedByName}. Recorded as a paid expense with the receipt${o.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.` : ""}
           </DialogDescription>
         </DialogHeader>

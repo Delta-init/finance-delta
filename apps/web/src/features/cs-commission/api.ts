@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, Invoice, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, UploadedExpenseFile } from "@delta/shared";
+import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, Invoice, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, SplitCsCommissionPoolInput, UploadedExpenseFile } from "@delta/shared";
 import { CS_COMMISSION_PERIOD } from "@delta/shared";
 import { api } from "@/lib/api";
 
@@ -64,6 +64,17 @@ export function useRecordCsCommissionPayment() {
       void qc.invalidateQueries({ queryKey: KEY });
       void qc.invalidateQueries({ queryKey: ["expenses"] });
     },
+  });
+}
+
+/** A Senior/Junior pool split in the CS Portal, as its Distribute does (2026-11-07). */
+export function useSplitCsCommissionPool() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: SplitCsCommissionPoolInput) =>
+      api.post<{ split: Array<{ method: string; totalUsd: number; members: number; shareUsd: number }> }>("cs-commission/split-pool", input),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
   });
 }
 

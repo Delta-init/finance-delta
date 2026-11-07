@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, revokeCsCommissionSchema } from "@delta/shared";
+import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, revokeCsCommissionSchema, splitCsCommissionPoolSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -20,5 +20,7 @@ router.post("/revoke", requirePermission("commission:read"), validateBody(revoke
 router.post("/uploads", requirePermission("commission:write"), parseUpload, c.upload);
 router.post("/pay", requirePermission("commission:write"), validateBody(payCsCommissionSchema), c.pay);
 router.post("/record-payment", requirePermission("commission:write"), validateBody(recordCsCommissionPaymentSchema), c.recordPayment);
+// A Senior/Junior pool split (2026-11-07): a manager with commission:write — it pays every member a share there.
+router.post("/split-pool", requirePermission("commission:write"), validateBody(splitCsCommissionPoolSchema), c.splitPool);
 
 export default router;

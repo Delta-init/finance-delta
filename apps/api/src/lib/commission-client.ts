@@ -363,11 +363,16 @@ export interface PortalCsCommissionPerson {
   email: string;
   location: "dubai" | "bangalore";
   total_usd: number;
+  /** Their share of the pools not split yet — from a CS Portal that knows (2026-11-07). */
+  pool_usd?: number;
+  pool?: PortalCsPoolShare[];
   credits: Array<{
     id: string; date: string; student: string; method: string; level: number; position: string; percentage: number;
     base_usd: number; amount_usd: number; status: string; txn_id: string; initiator: string;
     /** The funding request it came from (2026-11-07) — from a CS Portal that sends it. */
     funding_id?: string;
+    /** A share of a split Senior/Junior pool (2026-11-07). */
+    from_pool?: boolean;
   }>;
   approval: {
     overall_status: string;
@@ -381,6 +386,16 @@ export interface PortalCsCommissionPerson {
     finance_override?: boolean;
     override_reason?: string;
   };
+}
+/** A Senior/Junior pool of the period not split yet, and someone's share of it (CS Portal 2026-11-07). */
+export interface PortalCsPoolShare {
+  group_id: string; group_name: string; method: string; total_usd: number; share_usd: number;
+  members: Array<{ id: string; name: string }>;
+  credits: Array<{ id: string; date: string; student: string; method: string; level: number; position: string; percentage: number; base_usd: number; amount_usd: number; held_by: string; txn_id: string; initiator: string; funding_id: string }>;
+}
+export interface PortalCsPool {
+  group_id: string; group_name: string; method: string; total_usd: number; share_usd: number;
+  members: Array<{ id: string; name: string; location: "dubai" | "bangalore" }>;
 }
 export interface PortalCsCommissionApproval {
   already: boolean; total_usd: number; credit_ids: string[]; name: string; email: string; location: "dubai" | "bangalore";
@@ -423,10 +438,14 @@ async function askPortalCsCommission<T>(path: string, body: unknown): Promise<T>
 
 /** A period's CS commission: each staff member's credits and where their approval has got. */
 export const portalCsCommission = (kind: string, period: string) =>
-  askPortalCsCommission<{ kind: string; period: string; ended: boolean; people: PortalCsCommissionPerson[] }>("", { kind, period });
+  askPortalCsCommission<{ kind: string; period: string; ended: boolean; people: PortalCsCommissionPerson[]; pools?: PortalCsPool[] }>("", { kind, period });
 /** Finance's step: the CS's credits for the period released there. Already released → `already`. */
 export const approvePortalCsCommission = (kind: string, period: string, recipientId: string, by: string, early?: { reason: string }) =>
   askPortalCsCommission<PortalCsCommissionApproval>("/approve", { kind, period, recipient_id: recipientId, by, ...(early ? { force: true, reason: early.reason } : {}) });
+/** A Senior/Junior pool split, as the CS Portal's Distribute splits it — once the period has ended (2026-11-07). */
+export const splitPortalCsPool = (kind: string, period: string, poolGroupId: string, method: string | undefined, by: string) =>
+  askPortalCsCommission<{ split: Array<{ group_id: string; method: string; pool_total: number; members: number; share_each: number }> }>(
+    "/split-pool", { kind, period, pool_group_id: poolGroupId, ...(method ? { method } : {}), by });
 /** Finance's step taken back — only one finance released. */
 export const unapprovePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
   askPortalCsCommission<{ undone: boolean }>("/unapprove", { kind, period, recipient_id: recipientId, by });

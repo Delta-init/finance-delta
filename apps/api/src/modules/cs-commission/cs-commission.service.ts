@@ -3,10 +3,11 @@ import {
   CS_AED_PER_USD, CS_INR_PER_USD, EXPENSE_DEFAULTS, computeExpenseTax, hasPermission, resolveCategoryName,
   type ApproveCsCommissionInput, type CsCommissionKind, type CsCommissionPayoutView, type CsCommissionPerson, type CsCommissionPeriod,
   type CsCommissionState, type PayCsCommissionInput, type RecordCsCommissionPaymentInput, type RevokeCsCommissionInput,
+  type CsCommissionPool, type CsCommissionPoolShare, type SplitCsCommissionPoolInput,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import {
-  CsCommissionRefusedError, approvePortalCsCommission, portalCsCommission, unapprovePortalCsCommission, type PortalCsCommissionPerson,
+  CsCommissionRefusedError, approvePortalCsCommission, portalCsCommission, splitPortalCsPool, unapprovePortalCsCommission, type PortalCsCommissionPerson,
 } from "../../lib/commission-client";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -133,14 +134,27 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
   const people: CsCommissionPerson[] = portal.people.map((p) => {
     const payout = byRecipient.get(p.recipient_id) ?? null;
     const currency = currencyOf(p.location);
+    // Their share of the Senior/Junior pools not split yet (2026-11-07): Juniors and Seniors are paid through their
+    // Chief's pool, split when the period has ended — until then this is what splitting would pay them.
+    const pool: CsCommissionPoolShare[] = (p.pool ?? []).map((g) => ({
+      groupId: g.group_id, groupName: g.group_name, method: g.method, totalUsd: g.total_usd, totalMinor: minorOf(g.total_usd, currency),
+      members: g.members.map((m) => m.name), shareUsd: g.share_usd, shareMinor: minorOf(g.share_usd, currency),
+      credits: g.credits.map((c) => ({
+        id: c.id, date: c.date, student: c.student, method: c.method, level: c.level, position: c.position, percentage: c.percentage,
+        amountUsd: c.amount_usd, amountMinor: minorOf(c.amount_usd, currency), heldBy: c.held_by,
+      })),
+    }));
     return {
       recipientId: p.recipient_id, name: p.name, email: p.email, location: p.location, currency, totalUsd: p.total_usd,
       amountMinor: minorOf(p.total_usd, currency),
+      // Converted with their own credits as one sum, so the two together never come out a fils off the whole.
+      poolUsd: p.pool_usd ?? 0, poolMinor: minorOf(p.total_usd + (p.pool_usd ?? 0), currency) - minorOf(p.total_usd, currency), pool,
       credits: p.credits.map((c) => ({
         id: c.id, date: c.date, student: c.student, method: c.method, level: c.level, position: c.position, percentage: c.percentage,
         baseUsd: c.base_usd, amountUsd: c.amount_usd, baseMinor: minorOf(c.base_usd, currency), amountMinor: minorOf(c.amount_usd, currency),
         status: c.status, txnId: c.txn_id, initiator: c.initiator, fundingId: c.funding_id ?? "",
-        invoice: invoiceOf({ fundingId: c.funding_id ?? "", student: c.student, baseUsd: c.base_usd }),
+        invoice: c.from_pool ? null : invoiceOf({ fundingId: c.funding_id ?? "", student: c.student, baseUsd: c.base_usd }),
+        ...(c.from_pool ? { fromPool: true } : {}),
       })),
       approval: {
         overall: p.approval.overall_status, broker: p.approval.broker, academic: p.approval.academic, finance: p.approval.finance,
@@ -157,7 +171,7 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     const empty = { status: "", by: "", at: null };
     people.push({
       recipientId: String(p.recipientId), name: p.personName ?? "", email: p.email ?? "", location: p.location ?? "dubai", currency: p.currency === "INR" ? "INR" : "AED",
-      totalUsd: 0, amountMinor: 0, credits: [],
+      totalUsd: 0, amountMinor: 0, credits: [], poolUsd: 0, poolMinor: 0, pool: [],
       approval: { overall: "", broker: empty, academic: empty, finance: empty, releasedAt: null, releasedBy: "", byFinance: false },
       state: p.state, payout: view(p),
     });
@@ -166,13 +180,21 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
   const totals = new Map<string, { currency: string; amountMinor: number; approvedMinor: number; paidMinor: number }>();
   for (const p of people) {
     const t = totals.get(p.currency) ?? { currency: p.currency, amountMinor: 0, approvedMinor: 0, paidMinor: 0 };
-    t.amountMinor += p.amountMinor;
+    // What the period comes to: the pools' shares too, before they're split.
+    t.amountMinor += p.amountMinor + (p.poolMinor ?? 0);
     if (p.payout?.state === "approved") t.approvedMinor += p.payout.amountMinor;
     if (p.payout?.state === "paid") t.paidMinor += p.payout.amountMinor;
     totals.set(p.currency, t);
   }
+  const pools: CsCommissionPool[] = (portal.pools ?? []).map((g) => {
+    const currency = currencyOf(g.members[0]?.location ?? "dubai");
+    return {
+      groupId: g.group_id, groupName: g.group_name, method: g.method, currency, totalUsd: g.total_usd, totalMinor: minorOf(g.total_usd, currency),
+      shareUsd: g.share_usd, shareMinor: minorOf(g.share_usd, currency), members: g.members,
+    };
+  });
   return {
-    kind, period, ended: portal.ended, people, totals: [...totals.values()],
+    kind, period, ended: portal.ended, people, totals: [...totals.values()], pools,
     canApprove: isSuperAdmin || (await isManager(orgId, userId)),
     canPay: isSuperAdmin || hasPermission(permissions, "commission:write"),
   };
@@ -203,6 +225,20 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
     throw err;
   }
   return { approved: true, alreadyReleased: done.already };
+}
+
+/**
+ * Split a Senior/Junior pool (the user, 2026-11-07: "why are the junior and senior mentors not visible here"): one
+ * Chief's pool of an ended period shared equally among its members in the CS Portal, as its Distribute button does —
+ * each then has the share as their own commission there, approved by the broker admin and academic head as usual.
+ * A manager, with commission:write (the route). It can't be undone, here or there.
+ */
+export async function splitCsCommissionPool(orgId: string, userId: string, isSuperAdmin: boolean, input: SplitCsCommissionPoolInput) {
+  if (!isSuperAdmin && !(await isManager(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager splits a pool");
+  const by = (await userName(userId)) || "Finance";
+  const done = await fromPortal(() => splitPortalCsPool(input.kind, input.period, input.poolGroupId, input.method, by));
+  if (!done.split.length) throw new AppError("CONFLICT", "Nothing in that pool to split — split already, or empty.");
+  return { split: done.split.map((g) => ({ method: g.method, totalUsd: g.pool_total, members: g.members, shareUsd: g.share_each })) };
 }
 
 /**

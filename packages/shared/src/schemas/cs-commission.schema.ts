@@ -76,7 +76,64 @@ export const recordCsCommissionPaymentSchema = z.object({
 }).superRefine(periodFits);
 export type RecordCsCommissionPaymentInput = z.infer<typeof recordCsCommissionPaymentSchema>;
 
+/**
+ * Split a Senior/Junior pool (the user, 2026-11-07: "why are the junior and senior mentors not visible here"): one
+ * Chief's pool of the period, shared equally among its members as the CS Portal's Distribute does — once it has ended.
+ */
+export const splitCsCommissionPoolSchema = z.object({
+  kind: z.enum(CS_COMMISSION_KINDS),
+  period: z.string().trim().max(10),
+  poolGroupId: z.string().trim().min(1, "Which pool").max(64),
+  /** Its kind of bonus (with / without MT5 are separate pools); without it, every pool of the group. */
+  method: z.string().trim().max(20).optional(),
+}).superRefine(periodFits);
+export type SplitCsCommissionPoolInput = z.infer<typeof splitCsCommissionPoolSchema>;
+
 export type CsCommissionState = "waiting" | "ready" | "approved" | "paid" | "rejected";
+
+/** One accrual in a Senior/Junior pool: a bonus or deposit's Junior or Senior share, paid into the Chief's pool. */
+export interface CsCommissionPoolCredit {
+  id: string;
+  date: string;
+  student: string;
+  method: string;
+  level: number;
+  position: string;
+  percentage: number;
+  amountUsd: number;
+  amountMinor: number;
+  /** Who held the pooled position on it. */
+  heldBy: string;
+}
+
+/**
+ * Someone's share of a Senior/Junior pool not split yet (2026-11-07): a plan position flagged Pool pays the Chief's
+ * pool, split equally among its members when the period has ended — until then this is what splitting would pay them.
+ */
+export interface CsCommissionPoolShare {
+  groupId: string;
+  groupName: string;
+  method: string;
+  totalUsd: number;
+  totalMinor: number;
+  members: string[];
+  shareUsd: number;
+  shareMinor: number;
+  credits: CsCommissionPoolCredit[];
+}
+
+/** A pool of the period not split yet, for the page's Split. */
+export interface CsCommissionPool {
+  groupId: string;
+  groupName: string;
+  method: string;
+  currency: "AED" | "INR";
+  totalUsd: number;
+  totalMinor: number;
+  shareUsd: number;
+  shareMinor: number;
+  members: Array<{ id: string; name: string; location: "dubai" | "bangalore" }>;
+}
 
 export interface CsCommissionCredit {
   id: string;
@@ -99,6 +156,8 @@ export interface CsCommissionCredit {
   fundingId: string;
   /** The finance invoice its course payment went on, if it was one (2026-11-07) — opens in a pop-up. */
   invoice: { id: string; number: string; orgId: string } | null;
+  /** Their share of a split Senior/Junior pool, not a credit on one bonus or deposit (2026-11-07). */
+  fromPool?: boolean;
 }
 
 export interface CsCommissionStage { status: string; by: string; at: string | null }
@@ -135,6 +194,10 @@ export interface CsCommissionPerson {
   /** The total in `currency`, minor units. */
   amountMinor: number;
   credits: CsCommissionCredit[];
+  /** Their share of the Senior/Junior pools not split yet, USD and minor units of `currency` (2026-11-07) — from a finance API that knows. */
+  poolUsd?: number;
+  poolMinor?: number;
+  pool?: CsCommissionPoolShare[];
   approval: {
     overall: string;
     broker: CsCommissionStage;
@@ -159,6 +222,8 @@ export interface CsCommissionPeriod {
   people: CsCommissionPerson[];
   /** Per currency: what the period comes to, and what is approved and paid of it. */
   totals: Array<{ currency: string; amountMinor: number; approvedMinor: number; paidMinor: number }>;
+  /** The Senior/Junior pools not split yet (2026-11-07) — from a finance API that knows. */
+  pools?: CsCommissionPool[];
   canApprove: boolean;
   canPay: boolean;
 }

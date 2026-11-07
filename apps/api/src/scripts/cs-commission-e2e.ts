@@ -45,6 +45,8 @@ const stage = (status = "pending") => ({ status, by: "", at: null });
 const credit = (id: string, usd: number) => ({ id, date: "2026-09-05T10:00:00.000Z", student: "Student", method: "bonus_with", level: 1, position: "Junior", percentage: 10, base_usd: usd * 10, amount_usd: usd, status: "accrued", txn_id: `TX-${id}`, initiator: "Someone", funding_id: `F-${id}` });
 const portal = {
   mode: "ok" as "ok" | "old" | "down",
+  /** The Senior/Junior pools not split yet (2026-11-07). */
+  pools: [] as any[],
   asked: [] as Array<{ path: string; signed: boolean; body: any }>,
   people: [
     { recipient_id: MEERA, name: "Mentor Meera", email: "mentor.meera@e2e-cs.test", location: "dubai", total_usd: 100, credits: [credit("c1", 60), credit("c2", 40)],
@@ -71,7 +73,13 @@ const server = http.createServer((req, res) => {
     if (!signed) return send(401, { success: false, error: { code: "UNAUTHORISED", message: "Bad secret" } });
     const who = portal.people.find((p) => p.recipient_id === body.recipient_id);
     const refuse = (code: string, message: string) => send(409, { success: false, error: { code, message } });
-    if (url.pathname.endsWith("/cs-commission")) return send(200, { success: true, data: { kind: body.kind, period: body.period, ended: true, people: portal.people } });
+    if (url.pathname.endsWith("/cs-commission")) return send(200, { success: true, data: { kind: body.kind, period: body.period, ended: true, people: portal.people, pools: portal.pools } });
+    if (url.pathname.endsWith("/split-pool")) {
+      const g = portal.pools.find((x) => x.group_id === body.pool_group_id);
+      if (!g) return send(200, { success: true, data: { split: [] } });
+      portal.pools = portal.pools.filter((x) => x !== g);
+      return send(200, { success: true, data: { split: [{ group_id: g.group_id, method: g.method, pool_total: g.total_usd, members: g.members.length, share_each: g.share_usd }] } });
+    }
     if (!who) return refuse("NOTHING_TO_APPROVE", "No commission for this person in the period.");
     const answer = (already: boolean, override = false) => send(200, { success: true, data: { already, total_usd: who.total_usd, credit_ids: who.credits.map((c: any) => c.id), name: who.name, email: who.email, location: who.location, finance_override: override } });
     if (url.pathname.endsWith("/approve")) {
@@ -239,6 +247,31 @@ const badReceipt = await refusal(record(MONA, LINA, { reason: "Early", receipt: 
 check("paying fails after approving (a receipt not uploaded here): refused, and the approval taken back — here and in the CS Portal",
   /Upload the receipt here first/.test(badReceipt) && !(await CsCommissionPayout.exists({ recipientId: LINA })) && portal.people[3].approval.overall_status === "pending_academic_approval"
   && !portal.people[3].approval.finance_override, `${badReceipt} ${j(portal.people[3].approval)}`);
+
+step("4b. The Senior/Junior pools (2026-11-07)");
+const SAM = "65a000000000000000000005", CHIEF = "65a0000000000000000000c1";
+const before = (await period()).totals.find((t) => t.currency === "AED")!.amountMinor;
+const accrual = (id: string, usd: number, heldBy: string) => ({ id, date: "2026-09-07T10:00:00.000Z", student: "Student", method: "bonus_with", level: 3, position: "Junior", percentage: 1, base_usd: usd * 100, amount_usd: usd, held_by: heldBy, txn_id: `TX-${id}`, initiator: "Someone", funding_id: `F-${id}` });
+const members = [{ id: SAM, name: "Senior Sam" }, { id: KIRAN, name: "Mentor Kiran" }];
+const share = { group_id: CHIEF, group_name: "Chief Cara SEN/JUN POOL", method: "bonus_with", total_usd: 15, share_usd: 7.5, members, credits: [accrual("p1", 10, "Mentor Kiran"), accrual("p2", 5, "Senior Sam")] };
+portal.people.push({ recipient_id: SAM, name: "Senior Sam", email: "senior.sam@e2e-cs.test", location: "dubai", total_usd: 0, pool_usd: 7.5, pool: [share], credits: [],
+  approval: { overall_status: "pending_broker_approval", broker: stage(), academic: stage(), finance: stage(), released_at: null, released_by: "", by_finance: false } });
+portal.pools = [{ group_id: CHIEF, group_name: "Chief Cara SEN/JUN POOL", method: "bonus_with", total_usd: 15, share_usd: 7.5, members: members.map((m) => ({ ...m, location: "dubai" })) }];
+v = await period();
+const sam = row(v, SAM);
+check("Sam, a Senior with nothing of his own yet: listed with his share of the pool — AED 27.53 (USD 7.50), its accruals",
+  !!sam && sam.amountMinor === 0 && sam.poolUsd === 7.5 && sam.poolMinor === 2753 && sam.pool?.[0]?.shareMinor === 2753 && sam.pool[0].members.join() === "Senior Sam,Mentor Kiran"
+  && sam.pool[0].credits.length === 2 && sam.pool[0].credits[0]!.heldBy === "Mentor Kiran" && sam.pool[0].credits[0]!.amountMinor === 3670, j(sam));
+check("…waiting in the CS Portal (to be recorded early, with a reason, or approved once split)", sam.state === "waiting");
+check("…the period's AED total counts the share", v.totals.find((t) => t.currency === "AED")!.amountMinor === before + 2753, j(v.totals));
+check("…the pool itself: Chief Cara's, AED 55.05 between two", v.pools?.length === 1 && v.pools[0]!.totalMinor === 5505 && v.pools[0]!.currency === "AED" && v.pools[0]!.members.length === 2, j(v.pools));
+const split = (by: string) => svc.splitCsCommissionPool(ORG, by, false, { kind: "bonus", period: P, poolGroupId: CHIEF, method: "bonus_with" });
+check("split by somebody not a manager: refused", /FORBIDDEN/.test(await refusal(split(ASHA))) && portal.pools.length === 1);
+const done = await split(MONA);
+const asked = portal.asked.at(-1)!;
+check("split by a manager: the CS Portal asked, signed, for that pool, as her", done.split.length === 1 && done.split[0]!.shareUsd === 7.5 && done.split[0]!.members === 2
+  && asked.path.endsWith("/split-pool") && asked.signed && asked.body.pool_group_id === CHIEF && asked.body.method === "bonus_with" && asked.body.by === "Mona Manager" && asked.body.period === P, j({ done, asked }));
+check("…again: nothing left, said so", /CONFLICT.*Nothing in that pool/.test(await refusal(split(MONA))));
 
 step("5. The CS Portal down, or not yet updated");
 portal.mode = "down";

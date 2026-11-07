@@ -30,6 +30,27 @@ const reconciliationSessionSchema = new Schema(
      */
     adjustmentTransactionId: { type: String },
     notes: { type: String, default: "" },
+    /**
+     * The bank statement uploaded to check it against (the user, 2026-11-07): the file, kept as evidence; its lines,
+     * so "Check again" needs no new upload; the pairs recorded since (a line with the bank charge recorded for its
+     * difference); and the last check, as the page shows it.
+     */
+    statementFile: {
+      type: new Schema({ name: String, key: String, url: String, uploadedAt: Date }, { _id: false }),
+      default: undefined,
+    },
+    statementFileName: { type: String, default: "" },
+    statementLines: {
+      type: [new Schema({
+        date: String, description: String, reference: String, amountMinor: Number, balanceMinor: { type: Number, default: null },
+      }, { _id: false })],
+      default: undefined,
+    },
+    statementPairs: {
+      type: [new Schema({ index: Number, bookLineIds: [Types.ObjectId] }, { _id: false })],
+      default: undefined,
+    },
+    statementCheck: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: true },
 );

@@ -203,3 +203,32 @@ export const completeReconciliation = asyncHandler(async (req: Request, res: Res
   const completedByName = user?.name ?? "Unknown";
   ok(res, await svc.completeReconciliation(org(req), req.params.sessionId!, completedByName));
 });
+
+// ── Reconciling by uploading the statement (2026-11-07) ──────────────────────────────────────────────────────────
+
+/** POST /bank-accounts/:id/reconciliations/:sessionId/statement/file — the statement file, kept as evidence. */
+export const uploadStatementFile = asyncHandler(async (req, res) => {
+  if (!req.file) throw new AppError("VALIDATION_ERROR", "No file was uploaded");
+  const { uploadStatementFile } = await import("./statement-reconcile.service");
+  ok(res, await uploadStatementFile(org(req), req.params.id!, req.params.sessionId!, {
+    buffer: req.file.buffer, originalName: req.file.originalName, mimeType: req.file.mimeType,
+  }));
+});
+
+/** POST …/statement/check { lines?, fileName? } — checked against the books; what matched is ticked. */
+export const checkStatement = asyncHandler(async (req, res) => {
+  const { checkStatement } = await import("./statement-reconcile.service");
+  ok(res, await checkStatement(org(req), req.params.id!, req.params.sessionId!, req.body));
+});
+
+/** POST …/statement/lines/:index/charge — an amount that differs: its difference recorded as a bank charge. */
+export const recordStatementDifference = asyncHandler(async (req, res) => {
+  const { recordStatementDifference } = await import("./statement-reconcile.service");
+  ok(res, await recordStatementDifference(org(req), req.params.id!, req.params.sessionId!, Number(req.params.index), req.auth!.userId));
+});
+
+/** POST …/statement/lines/:index/add { category?, subcategory? } — a line the books lack, put in them. */
+export const addStatementLine = asyncHandler(async (req, res) => {
+  const { addStatementLineToBooks } = await import("./statement-reconcile.service");
+  ok(res, await addStatementLineToBooks(org(req), req.params.id!, req.params.sessionId!, Number(req.params.index), req.auth!.userId, req.body));
+});

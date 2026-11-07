@@ -447,8 +447,81 @@ export const reconciliationSessionSchema = z.object({
   createdAt: z.string(),
   /** The account's latest completed reconciliation — the only one that can be reopened or deleted (2026-10-23). */
   undoable: z.boolean().optional(),
+  /** The bank statement uploaded to check it against (2026-11-07), and the last check. */
+  statementFile: z.object({ name: z.string(), url: z.string() }).optional(),
+  statementCheck: z.any().optional(),
 });
-export type ReconciliationSession = z.infer<typeof reconciliationSessionSchema>;
+export type ReconciliationSession = z.infer<typeof reconciliationSessionSchema> & { statementCheck?: StatementCheck };
+
+/* ── A bank statement uploaded to reconcile against (the user, 2026-11-07: "upload the statement on the form; we
+   check it ourselves — if it is right it reconciles, otherwise how much and which transaction is not correct") ── */
+
+/** One statement line, read from the file in the browser: money in positive, money out negative. */
+export const statementLineInputSchema = z.object({
+  date: isoDay,
+  description: z.string().max(300).optional().default(""),
+  reference: z.string().max(120).optional().default(""),
+  amountMinor: z.number().int().refine((v) => v !== 0, "A line of nothing"),
+  balanceMinor: z.number().int().nullable().optional(),
+});
+export type StatementLineInput = z.infer<typeof statementLineInputSchema>;
+
+/** Check the session against these lines — or, left out, against the statement uploaded last ("Check again"). */
+export const checkStatementSchema = z.object({
+  lines: z.array(statementLineInputSchema).min(1, "The statement has no lines").max(5000).optional(),
+  fileName: z.string().max(200).optional().default(""),
+});
+export type CheckStatementInput = z.infer<typeof checkStatementSchema>;
+
+/** A statement line not in the books, put in them: money out as an expense (its category), money in as an entry. */
+export const addStatementLineSchema = z.object({
+  category: z.string().max(60).optional(),
+  subcategory: z.string().max(60).optional(),
+});
+export type AddStatementLineInput = z.infer<typeof addStatementLineSchema>;
+
+export interface StatementCheckBookLine { id: string; date: string; description: string; reference: string; amountMinor: number }
+
+export interface StatementCheckLine {
+  index: number;
+  date: string;
+  description: string;
+  reference: string;
+  amountMinor: number;
+  balanceMinor: number | null;
+  status: "matched" | "amount_differs" | "not_in_books";
+  /** The book line(s) it is paired with: one, or a line and the bank charge recorded for its difference. */
+  bookLines: StatementCheckBookLine[];
+  /** Statement minus books, where the amount differs. */
+  differenceMinor?: number;
+}
+
+export interface StatementCheck {
+  checkedAt: string;
+  fileName: string;
+  /** How many days apart a statement line and its book line may be. */
+  windowDays: number;
+  lines: StatementCheckLine[];
+  /** Lines in the books, in the period, the statement doesn't have. */
+  notOnStatement: StatementCheckBookLine[];
+  summary: {
+    statementLines: number;
+    matched: number;
+    amountDiffers: number;
+    notInBooks: number;
+    notOnStatement: number;
+    /** What the statement brings in and takes out. */
+    inMinor: number;
+    outMinor: number;
+    /** Adding up what doesn't agree: the differences, what is missing from the books, less what the statement lacks. */
+    unexplainedMinor: number;
+    /** The statement file's own closing balance, when it has a balance column, and whether it is the one typed in. */
+    fileClosingMinor: number | null;
+    closingAgrees: boolean | null;
+  };
+  /** Every statement line matched, nothing left over, the difference nil: it can be reconciled in one go. */
+  allMatch: boolean;
+}
 
 /** The balance a period starts from: the last reconciliation's closing balance when it ends the day before, else the book's. */
 export interface ReconciliationOpening {

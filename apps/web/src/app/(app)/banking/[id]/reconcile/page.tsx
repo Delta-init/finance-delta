@@ -4,7 +4,7 @@ import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
-import { type BankTransaction } from "@delta/shared";
+import { type BankTransaction, type ReconciliationSession } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,7 @@ import {
   useCompleteReconciliation,
   useReconciliations,
 } from "@/features/banking/api";
+import { StatementCheckPanel } from "@/features/banking/StatementCheckPanel";
 
 /*
  * A reconciliation covers a period (the user, 2026-10-23: "reconcile by a specific date — this month, this week,
@@ -105,7 +106,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
   }
 
   if (openSession) {
-    return <ActiveReconciliation accountId={id} session={openSession} />;
+    return <ActiveReconciliation accountId={id} session={openSession} byStatement={!!account && account.accountType !== "petty_cash"} />;
   }
 
   return (
@@ -233,9 +234,12 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
 function ActiveReconciliation({
   accountId,
   session,
+  byStatement,
 }: {
   accountId: string;
-  session: { id: string; statementBalanceMinor: number; openingBookBalanceMinor: number; closingBookBalanceMinor: number; differenceMinor: number; currency: string; statementDate: string; reconciledTransactionIds: string[]; statementDates?: Record<string, string>; periodFrom?: string; periodTo?: string; status: string };
+  session: ReconciliationSession;
+  /** A bank or card account: its statement can be uploaded and checked (2026-11-07) — not a petty cash tin. */
+  byStatement: boolean;
 }) {
   const router = useRouter();
   // The period's unreconciled lines — all of them — and what is ticked; earlier ones only when asked (2026-10-23).
@@ -275,11 +279,18 @@ function ActiveReconciliation({
   /** What is ticked, with the statement dates given for those lines. */
   function progress() {
     const statementDates: Record<string, string> = {};
-    for (const tx of transactions) {
-      const d = dates[tx.id];
-      if (selected.has(tx.id) && d && d !== tx.date) statementDates[tx.id] = d;
+    const own = new Map(transactions.map((tx) => [tx.id, tx.date]));
+    // A ticked line not listed yet (the statement check just ticked it) keeps the day the check gave it.
+    for (const [id, d] of Object.entries(dates)) {
+      if (selected.has(id) && d && d !== own.get(id)) statementDates[id] = d;
     }
     return { reconciledTransactionIds: Array.from(selected), statementDates };
+  }
+
+  /** What the statement check left ticked, and the statement's day for each, onto the list. */
+  function tookCheck(s: ReconciliationSession) {
+    setSelected(new Set(s.reconciledTransactionIds));
+    setDates(s.statementDates ?? {});
   }
 
   async function handleSave() {
@@ -291,8 +302,10 @@ function ActiveReconciliation({
     }
   }
 
-  async function handleComplete() {
-    if (!isBalanced) {
+  async function handleComplete(partial = false) {
+    // "Reconcile the matched lines" (2026-11-07): what the statement matched is reconciled though the rest is left
+    // over — the difference recorded with it, the rest open for the next one.
+    if (!isBalanced && !partial) {
       toast.error("Cannot complete — difference must be zero");
       return;
     }
@@ -359,6 +372,16 @@ function ActiveReconciliation({
           <p className="text-xs mt-1 text-foreground-muted">{isBalanced ? "Balanced!" : difference > 0 ? "Under by" : "Over by"}</p>
         </div>
       </div>
+
+      {byStatement && (
+        <StatementCheckPanel
+          accountId={accountId}
+          session={session}
+          onChecked={tookCheck}
+          onReconcile={(partial) => void handleComplete(partial)}
+          reconciling={updateReconciliation.isPending || completeReconciliation.isPending}
+        />
+      )}
 
       {/* Transaction list */}
       <div className="rounded-lg border border-border bg-surface overflow-hidden">
@@ -460,7 +483,7 @@ function ActiveReconciliation({
           {updateReconciliation.isPending ? "Saving…" : "Save Progress"}
         </Button>
         <Button
-          onClick={handleComplete}
+          onClick={() => void handleComplete()}
           disabled={!isBalanced || completeReconciliation.isPending}
         >
           <CheckCircle2 className="h-4 w-4" />

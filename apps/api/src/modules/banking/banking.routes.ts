@@ -15,10 +15,12 @@ import {
   createTransferSchema,
   updateTransferSchema,
   createPspSettlementSchema,
+  checkStatementSchema,
+  addStatementLineSchema,
 } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
-import { parseUpload } from "../../middleware/upload";
+import { parseUpload, parseStatementUpload } from "../../middleware/upload";
 import { validateBody } from "../../middleware/validate";
 import * as c from "./banking.controller";
 import * as psp from "../psp-settlement/psp-settlement.controller";
@@ -87,6 +89,11 @@ router.get("/:id/reconciliations/:sessionId/lines", requirePermission("banking:r
 router.get("/:id/reconciliations/:sessionId", requirePermission("banking:read"), c.getReconciliation);
 router.patch("/:id/reconciliations/:sessionId", requirePermission("banking:reconcile"), validateBody(updateReconciliationSchema), c.updateReconciliation);
 router.post("/:id/reconciliations/:sessionId/complete", requirePermission("banking:reconcile"), c.completeReconciliation);
+// Reconciling by uploading the statement (2026-11-07).
+router.post("/:id/reconciliations/:sessionId/statement/file", requirePermission("banking:reconcile"), parseStatementUpload, c.uploadStatementFile);
+router.post("/:id/reconciliations/:sessionId/statement/check", requirePermission("banking:reconcile"), validateBody(checkStatementSchema), c.checkStatement);
+router.post("/:id/reconciliations/:sessionId/statement/lines/:index/charge", requirePermission("banking:reconcile"), c.recordStatementDifference);
+router.post("/:id/reconciliations/:sessionId/statement/lines/:index/add", requirePermission("banking:reconcile"), validateBody(addStatementLineSchema), c.addStatementLine);
 router.patch("/:id/reconciliations/:sessionId/details", requirePermission("banking:reconcile"), validateBody(editReconciliationSchema), c.editReconciliation);
 router.post("/:id/reconciliations/:sessionId/reopen", requirePermission("banking:reconcile"), c.reopenReconciliation);
 router.delete("/:id/reconciliations/:sessionId", requirePermission("banking:reconcile"), c.deleteReconciliation);

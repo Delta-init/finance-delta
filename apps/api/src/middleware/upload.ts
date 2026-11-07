@@ -40,6 +40,30 @@ export function parseUpload(
   res: Response,
   next: NextFunction,
 ): void {
+  parseUploadOf(ALLOWED_MIME, "Upload JPEG, PNG, WebP, GIF, or PDF.")(req, res, next);
+}
+
+/**
+ * A bank statement (2026-11-07): the CSV or Excel file it was read from, or the bank's PDF — kept with the
+ * reconciliation as evidence. Browsers name a CSV text/csv or application/vnd.ms-excel, an Excel file by its own type.
+ */
+const STATEMENT_MIME = new Set([
+  "text/csv", "text/plain", "application/csv", "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/pdf",
+]);
+export const parseStatementUpload = parseUploadOf(STATEMENT_MIME, "Upload the statement as CSV, Excel or PDF.");
+
+function parseUploadOf(allowed: Set<string>, hint: string) {
+  return (req: Request, res: Response, next: NextFunction) => parseUploadWith(allowed, hint, req, res, next);
+}
+
+function parseUploadWith(
+  allowed: Set<string>,
+  hint: string,
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
   const ct = req.headers["content-type"] ?? "";
   if (!ct.includes("multipart/form-data")) {
     return next();
@@ -83,12 +107,12 @@ export function parseUpload(
     }
 
     const { filename, mimeType } = info;
-    if (!ALLOWED_MIME.has(mimeType)) {
+    if (!allowed.has(mimeType)) {
       stream.resume();
       done(
         new AppError(
           "VALIDATION_ERROR",
-          `File type "${mimeType}" is not allowed. Upload JPEG, PNG, WebP, GIF, or PDF.`,
+          `File type "${mimeType}" is not allowed. ${hint}`,
         ),
       );
       return;

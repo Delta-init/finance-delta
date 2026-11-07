@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import type {
+  StatementCheck,
   CreateBankAccountInput,
   UpdateBankAccountInput,
   BankAccount as BankAccountDTO,
@@ -269,6 +270,11 @@ function sessionToDTO(doc: ReconciliationSessionDoc): ReconciliationSessionDTO {
     completedByName: (doc.completedByName as string | undefined) ?? undefined,
     notes: (doc.notes as string) ?? "",
     createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
+    // The statement uploaded to check it against, and the last check (2026-11-07).
+    ...((doc as unknown as { statementFile?: { name?: string; url?: string } }).statementFile?.url
+      ? { statementFile: { name: (doc as unknown as { statementFile: { name?: string } }).statementFile.name ?? "Statement", url: (doc as unknown as { statementFile: { url: string } }).statementFile.url } }
+      : {}),
+    ...((doc as unknown as { statementCheck?: StatementCheck }).statementCheck ? { statementCheck: (doc as unknown as { statementCheck: StatementCheck }).statementCheck } : {}),
   };
 }
 

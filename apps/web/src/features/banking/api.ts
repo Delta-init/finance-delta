@@ -19,6 +19,9 @@ import type {
   CashCountInput,
   CreateTransferInput,
   UpdateTransferInput,
+  StatementCheck,
+  CheckStatementInput,
+  AddStatementLineInput,
 } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
@@ -425,5 +428,53 @@ export function useRemoveTransactionAttachment(accountId: string, txId: string) 
         `bank-accounts/${accountId}/transactions/${txId}/attachments/${encodeURIComponent(key)}`,
       ),
     onSuccess: () => refreshAccount(qc),
+  });
+}
+
+// ── Reconciling by uploading the statement (2026-11-07) ──────────────────────────────────────────────────────────
+
+type StatementResult = { check: StatementCheck; session: ReconciliationSession };
+
+/** The statement file itself, kept with the reconciliation as evidence. */
+export function useUploadStatementFile(accountId: string, sessionId: string) {
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.postForm<{ name: string; url: string }>(`bank-accounts/${accountId}/reconciliations/${sessionId}/statement/file`, form);
+    },
+  });
+}
+
+/** Checked against the books — the lines read from the file, or, without them, the statement uploaded last. */
+export function useCheckStatement(accountId: string, sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: CheckStatementInput | Record<string, never>) =>
+      api.post<StatementResult>(`bank-accounts/${accountId}/reconciliations/${sessionId}/statement/check`, input),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** An amount that differs: its difference recorded as a bank charge, and paired. */
+export function useStatementCharge(accountId: string, sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (index: number) => api.post<StatementResult>(`bank-accounts/${accountId}/reconciliations/${sessionId}/statement/lines/${index}/charge`, {}),
+    onSuccess: () => { refreshAccount(qc); void qc.invalidateQueries({ queryKey: ["expenses"] }); },
+  });
+}
+
+/** A line the books lack, put in them. */
+export function useStatementAdd(accountId: string, sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ index, input }: { index: number; input: AddStatementLineInput }) =>
+      api.post<StatementResult>(`bank-accounts/${accountId}/reconciliations/${sessionId}/statement/lines/${index}/add`, input),
+    onSuccess: () => { refreshAccount(qc); void qc.invalidateQueries({ queryKey: ["expenses"] }); },
   });
 }

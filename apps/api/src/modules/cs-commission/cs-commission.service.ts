@@ -103,7 +103,8 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
   // the student and what they paid that day — a course payment's commission is on the AED paid, at 3.67 — when exactly
   // one of their course payments here has it ("still not showing the invoice", 2026-11-07: the transaction id it
   // used to try is not kept on the record here, so nothing matched). None, or two alike: no invoice, never a guess.
-  const credits = portal.people.flatMap((p) => p.credits);
+  // The pools' accruals too (2026-11-07): each is a % of one bonus or deposit, with its invoice like a CS's credit.
+  const credits = [...portal.people.flatMap((p) => p.credits), ...portal.people.flatMap((p) => (p.pool ?? []).flatMap((g) => g.credits))];
   const fundingIds = [...new Set(credits.map((c) => c.funding_id ?? "").filter(Boolean))];
   const unnamed = [...new Set(credits.filter((c) => !c.funding_id && c.student).map((c) => c.student.trim()))];
   const requests = fundingIds.length || unnamed.length
@@ -139,9 +140,13 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     const pool: CsCommissionPoolShare[] = (p.pool ?? []).map((g) => ({
       groupId: g.group_id, groupName: g.group_name, method: g.method, totalUsd: g.total_usd, totalMinor: minorOf(g.total_usd, currency),
       members: g.members.map((m) => m.name), shareUsd: g.share_usd, shareMinor: minorOf(g.share_usd, currency),
+      memberShares: g.members.filter((m) => m.share_usd !== undefined)
+        .map((m) => ({ name: m.name, shareUsd: m.share_usd ?? 0, shareMinor: minorOf(m.share_usd ?? 0, currency) })),
       credits: g.credits.map((c) => ({
         id: c.id, date: c.date, student: c.student, method: c.method, level: c.level, position: c.position, percentage: c.percentage,
         amountUsd: c.amount_usd, amountMinor: minorOf(c.amount_usd, currency), heldBy: c.held_by,
+        baseUsd: c.base_usd, baseMinor: minorOf(c.base_usd, currency), txnId: c.txn_id, initiator: c.initiator, fundingId: c.funding_id ?? "",
+        invoice: invoiceOf({ fundingId: c.funding_id ?? "", student: c.student, baseUsd: c.base_usd }),
       })),
     }));
     return {
@@ -190,7 +195,8 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     const currency = currencyOf(g.members[0]?.location ?? "dubai");
     return {
       groupId: g.group_id, groupName: g.group_name, method: g.method, currency, totalUsd: g.total_usd, totalMinor: minorOf(g.total_usd, currency),
-      shareUsd: g.share_usd, shareMinor: minorOf(g.share_usd, currency), members: g.members,
+      shareUsd: g.share_usd, shareMinor: minorOf(g.share_usd, currency),
+      members: g.members.map((m) => ({ ...m, ...(m.share_usd !== undefined ? { shareUsd: m.share_usd, shareMinor: minorOf(m.share_usd, currency) } : {}) })),
     };
   });
   return {
@@ -229,7 +235,8 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
 
 /**
  * Split a Senior/Junior pool (the user, 2026-11-07: "why are the junior and senior mentors not visible here"): one
- * Chief's pool of an ended period shared equally among its members in the CS Portal, as its Distribute button does —
+ * Chief's pool of an ended period paid out in the CS Portal, as its Distribute button does — each member their own share,
+ * what their position's % put in (2026-11-07; it was equal) —
  * each then has the share as their own commission there, approved by the broker admin and academic head as usual.
  * A manager, with commission:write (the route). It can't be undone, here or there.
  */
@@ -238,7 +245,8 @@ export async function splitCsCommissionPool(orgId: string, userId: string, isSup
   const by = (await userName(userId)) || "Finance";
   const done = await fromPortal(() => splitPortalCsPool(input.kind, input.period, input.poolGroupId, input.method, by));
   if (!done.split.length) throw new AppError("CONFLICT", "Nothing in that pool to split — split already, or empty.");
-  return { split: done.split.map((g) => ({ method: g.method, totalUsd: g.pool_total, members: g.members, shareUsd: g.share_each })) };
+  return { split: done.split.map((g) => ({ method: g.method, totalUsd: g.pool_total, members: g.members, shareUsd: g.share_each,
+    shares: (g.shares ?? []).map((s) => ({ name: s.name, shareUsd: s.share_usd })) })) };
 }
 
 /**

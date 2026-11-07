@@ -104,6 +104,13 @@ export interface CsCommissionPoolCredit {
   amountMinor: number;
   /** Who held the pooled position on it. */
   heldBy: string;
+  /** The bonus or deposit it is a % of, and where it came from (2026-11-07) — from a finance API that sends them. */
+  baseUsd?: number;
+  baseMinor?: number;
+  txnId?: string;
+  initiator?: string;
+  fundingId?: string;
+  invoice?: { id: string; number: string; orgId: string } | null;
 }
 
 /**
@@ -119,6 +126,8 @@ export interface CsCommissionPoolShare {
   members: string[];
   shareUsd: number;
   shareMinor: number;
+  /** Each member's own share — what their position's % put in (2026-11-07: each is paid their own, not an equal part). */
+  memberShares?: Array<{ name: string; shareUsd: number; shareMinor: number }>;
   credits: CsCommissionPoolCredit[];
 }
 
@@ -132,7 +141,7 @@ export interface CsCommissionPool {
   totalMinor: number;
   shareUsd: number;
   shareMinor: number;
-  members: Array<{ id: string; name: string; location: "dubai" | "bangalore" }>;
+  members: Array<{ id: string; name: string; location: "dubai" | "bangalore"; shareUsd?: number; shareMinor?: number }>;
 }
 
 export interface CsCommissionCredit {

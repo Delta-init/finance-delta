@@ -390,12 +390,13 @@ export interface PortalCsCommissionPerson {
 /** A Senior/Junior pool of the period not split yet, and someone's share of it (CS Portal 2026-11-07). */
 export interface PortalCsPoolShare {
   group_id: string; group_name: string; method: string; total_usd: number; share_usd: number;
-  members: Array<{ id: string; name: string }>;
+  /** share_usd: each member's own share, from a CS Portal that pays it so (2026-11-07). */
+  members: Array<{ id: string; name: string; share_usd?: number }>;
   credits: Array<{ id: string; date: string; student: string; method: string; level: number; position: string; percentage: number; base_usd: number; amount_usd: number; held_by: string; txn_id: string; initiator: string; funding_id: string }>;
 }
 export interface PortalCsPool {
   group_id: string; group_name: string; method: string; total_usd: number; share_usd: number;
-  members: Array<{ id: string; name: string; location: "dubai" | "bangalore" }>;
+  members: Array<{ id: string; name: string; location: "dubai" | "bangalore"; share_usd?: number }>;
 }
 export interface PortalCsCommissionApproval {
   already: boolean; total_usd: number; credit_ids: string[]; name: string; email: string; location: "dubai" | "bangalore";
@@ -444,7 +445,7 @@ export const approvePortalCsCommission = (kind: string, period: string, recipien
   askPortalCsCommission<PortalCsCommissionApproval>("/approve", { kind, period, recipient_id: recipientId, by, ...(early ? { force: true, reason: early.reason } : {}) });
 /** A Senior/Junior pool split, as the CS Portal's Distribute splits it — once the period has ended (2026-11-07). */
 export const splitPortalCsPool = (kind: string, period: string, poolGroupId: string, method: string | undefined, by: string) =>
-  askPortalCsCommission<{ split: Array<{ group_id: string; method: string; pool_total: number; members: number; share_each: number }> }>(
+  askPortalCsCommission<{ split: Array<{ group_id: string; method: string; pool_total: number; members: number; share_each: number; shares?: Array<{ id: string; name: string; share_usd: number }> }> }>(
     "/split-pool", { kind, period, pool_group_id: poolGroupId, ...(method ? { method } : {}), by });
 /** Finance's step taken back — only one finance released. */
 export const unapprovePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>

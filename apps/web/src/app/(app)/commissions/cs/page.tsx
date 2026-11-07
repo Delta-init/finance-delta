@@ -146,9 +146,9 @@ export default function CsCommissionPage() {
 
 /**
  * The Senior/Junior pools not split yet (the user, 2026-11-07: "why are the junior and senior mentors not visible
- * here"): a plan position flagged Pool pays its share into the Chief's pool, which the CS Portal splits equally among
- * its members once the period ends (its Distribute button) — until then the Juniors and Seniors had nothing of their
- * own, so they weren't here. Their shares are on their rows now; splitting gives each one their own commission there.
+ * here"): a plan position flagged Pool pays its share into the Chief's pool, which the CS Portal pays out once the
+ * period ends (its Distribute button) — each member their own share, what their % put in (2026-11-07, "B, by own
+ * share"; it was equal). Their shares are on their rows; splitting gives each one their own commission there.
  */
 function PoolsCard({ pools, kind, period, ended, canSplit, onSplit }: {
   pools: CsCommissionPool[]; kind: CsCommissionKind; period: string; ended: boolean; canSplit: boolean; onSplit: (p: CsCommissionPool) => void;
@@ -158,8 +158,8 @@ function PoolsCard({ pools, kind, period, ended, canSplit, onSplit }: {
       <div>
         <p className="flex items-center gap-2 text-sm font-semibold"><Users className="h-4 w-4" /> Senior / Junior pools not split yet</p>
         <p className="mt-0.5 text-xs text-foreground-muted">
-          Juniors&rsquo; and Seniors&rsquo; share of each {kind === "bonus" ? "bonus" : "deposit"} goes into their Chief&rsquo;s pool, split equally among its members once
-          the {kind === "bonus" ? "month" : "quarter"} ends. Their shares are shown on their rows below; splitting gives each one their own commission in the CS Portal,
+          Juniors&rsquo; and Seniors&rsquo; share of each {kind === "bonus" ? "bonus" : "deposit"} goes into their Chief&rsquo;s pool, paid out once
+          the {kind === "bonus" ? "month" : "quarter"} ends — each their own share, what their position&rsquo;s % put in. Their shares are shown on their rows below; splitting gives each one their own commission in the CS Portal,
           for the broker admin and academic head to approve as usual.
         </p>
       </div>
@@ -168,7 +168,7 @@ function PoolsCard({ pools, kind, period, ended, canSplit, onSplit }: {
           <div key={`${g.groupId}:${g.method}`} className="flex flex-wrap items-center gap-3 px-3 py-2.5 text-sm">
             <div className="min-w-0 flex-1">
               <p className="font-medium">{g.groupName || "Pool"} <span className="font-normal text-foreground-muted">· {METHOD[g.method] ?? g.method}</span></p>
-              <p className="text-xs text-foreground-muted">{g.members.map((m) => m.name).join(", ")} — {money(g.shareMinor, g.currency)} each</p>
+              <p className="text-xs text-foreground-muted">{g.members.map((m) => `${m.name} ${money(m.shareMinor ?? g.shareMinor, g.currency)}`).join(" · ")}</p>
             </div>
             <div className="text-right font-numeric">
               <p className="font-semibold">{money(g.totalMinor, g.currency)}</p>
@@ -206,13 +206,13 @@ function SplitPoolDialog({ pool, kind, period, onClose }: { pool: CsCommissionPo
         <DialogHeader>
           <DialogTitle>Split the pool</DialogTitle>
           <DialogDescription>
-            {pool ? `${pool.groupName || "This pool"} — ${METHOD[pool.method] ?? pool.method}, ${periodName(kind, period)}: ${money(pool.totalMinor, pool.currency)} (${usd(pool.totalUsd)}) shared equally between ${pool.members.length} — ${money(pool.shareMinor, pool.currency)} each, as the CS Portal's Distribute splits it. Each gets it as their own commission there, for the broker admin and academic head to approve. A split can't be undone.` : ""}
+            {pool ? `${pool.groupName || "This pool"} — ${METHOD[pool.method] ?? pool.method}, ${periodName(kind, period)}: ${money(pool.totalMinor, pool.currency)} (${usd(pool.totalUsd)}) paid out to its ${pool.members.length} members, each their own share — what their position's % put in — as the CS Portal's Distribute does. Each gets it as their own commission there, for the broker admin and academic head to approve. A split can't be undone.` : ""}
           </DialogDescription>
         </DialogHeader>
         {pool && (
           <ul className="space-y-1 text-sm">
             {pool.members.map((m) => (
-              <li key={m.id} className="flex justify-between gap-3"><span>{m.name}</span><span className="font-numeric">{money(pool.shareMinor, pool.currency)}</span></li>
+              <li key={m.id} className="flex justify-between gap-3"><span>{m.name}</span><span className="font-numeric">{money(m.shareMinor ?? pool.shareMinor, pool.currency)}</span></li>
             ))}
           </ul>
         )}
@@ -337,7 +337,7 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                         ) : (
                           <div className="space-y-4">
                             {p.credits.length > 0 && <CreditsBreakdown p={p} onInvoice={setInvoiceId} />}
-                            {(p.pool ?? []).map((g) => <PoolBreakdown key={`${g.groupId}:${g.method}`} g={g} currency={p.currency} />)}
+                            {(p.pool ?? []).map((g) => <PoolBreakdown key={`${g.groupId}:${g.method}`} g={g} currency={p.currency} who={p.name} onInvoice={setInvoiceId} />)}
                           </div>
                         )}
                       </td>
@@ -419,32 +419,64 @@ function CreditsBreakdown({ p, onInvoice }: { p: CsCommissionPerson; onInvoice: 
   );
 }
 
-/** Someone's share of a pool not split yet, and the accruals in it (2026-11-07). */
-function PoolBreakdown({ g, currency }: { g: CsCommissionPoolShare; currency: string }) {
+/**
+ * Someone's share of a pool not split yet, and the bonuses in it (2026-11-07, "show it like the funding requests"):
+ * one row per bonus or deposit — when, the student, its invoice, what it was and who raised it, the amount it is a %
+ * of — and each member's % of it and what that put in; this person's own in bold. Their share is their own accruals.
+ */
+function PoolBreakdown({ g, currency, who, onInvoice }: { g: CsCommissionPoolShare; currency: string; who: string; onInvoice: (id: string) => void }) {
+  const rows = new Map<string, { first: CsCommissionPoolShare["credits"][number]; parts: CsCommissionPoolShare["credits"]; intoMinor: number; intoUsd: number }>();
+  for (const c of g.credits) {
+    const key = c.fundingId || c.txnId || `${c.date.slice(0, 10)}|${c.student}|${c.baseUsd ?? ""}`;
+    const r = rows.get(key) ?? { first: c, parts: [], intoMinor: 0, intoUsd: 0 };
+    r.parts.push(c);
+    r.intoMinor += c.amountMinor;
+    r.intoUsd += c.amountUsd;
+    rows.set(key, r);
+  }
+  const mine = g.memberShares?.find((m) => m.name === who);
   return (
     <div className="space-y-1.5">
       <p className="text-xs">
-        <span className="font-medium">{g.groupName || "Pool"}</span> · {METHOD[g.method] ?? g.method} — {money(g.totalMinor, currency)} between {g.members.length} ({g.members.join(", ")}):
-        {" "}<span className="font-medium">their share {money(g.shareMinor, currency)}</span> <span className="text-warning">· not split yet</span>
+        <span className="font-medium">{g.groupName || "Pool"}</span> · {METHOD[g.method] ?? g.method} — {money(g.totalMinor, currency)} in the pool from {rows.size} {rows.size === 1 ? "payment" : "payments"}
+        {" "}({(g.memberShares ?? g.members.map((name) => ({ name, shareMinor: g.shareMinor }))).map((m) => `${m.name} ${money(m.shareMinor, currency)}`).join(" · ")}):
+        {" "}<span className="font-medium">their own share {money(mine?.shareMinor ?? g.shareMinor, currency)}</span> <span className="text-warning">· not split yet</span>
       </p>
       <table className="w-full text-xs">
         <thead className="text-left text-foreground-muted">
           <tr>
-            <th className="py-1 pr-3 font-medium">Date</th><th className="py-1 pr-3 font-medium">Student</th><th className="py-1 pr-3 font-medium">Held by</th>
-            <th className="py-1 pr-3 font-medium">Level</th><th className="py-1 pr-3 text-right font-medium">%</th><th className="py-1 text-right font-medium">Into the pool</th>
+            <th className="py-1 pr-3 font-medium">Date</th><th className="py-1 pr-3 font-medium">Student</th><th className="py-1 pr-3 font-medium">Invoice</th>
+            <th className="py-1 pr-3 font-medium">For</th><th className="py-1 pr-3 text-right font-medium">On</th>
+            <th className="py-1 pr-3 font-medium">Shares (level · %)</th><th className="py-1 text-right font-medium">Into the pool</th>
           </tr>
         </thead>
         <tbody>
-          {g.credits.map((c) => (
-            <tr key={c.id} className="border-t border-border/60">
-              <td className="py-1 pr-3">{c.date.slice(0, 10)}</td>
-              <td className="py-1 pr-3">{c.student || "—"}</td>
-              <td className="py-1 pr-3">{c.heldBy || "—"}</td>
-              <td className="py-1 pr-3">{c.level}{c.position ? ` · ${c.position}` : ""}</td>
-              <td className="py-1 pr-3 text-right tabular-nums">{c.percentage}%</td>
-              <td className="py-1 text-right font-numeric">{money(c.amountMinor, currency)}<span className="block text-[11px] text-foreground-muted">{usd(c.amountUsd)}</span></td>
-            </tr>
-          ))}
+          {[...rows.entries()].map(([key, r]) => {
+            const c = r.first;
+            return (
+              <tr key={key} className="border-t border-border/60 align-top">
+                <td className="py-1 pr-3">{c.date.slice(0, 10)}</td>
+                <td className="py-1 pr-3">{c.student || "—"}{c.txnId ? <span className="text-foreground-muted"> · {c.txnId}</span> : null}</td>
+                <td className="py-1 pr-3">
+                  {c.invoice
+                    ? <button type="button" onClick={() => onInvoice(c.invoice!.id)} className="text-primary hover:underline">{c.invoice.number || "Invoice"}</button>
+                    : <span className="text-foreground-muted">—</span>}
+                </td>
+                <td className="py-1 pr-3">{METHOD[c.method] ?? c.method}{c.initiator ? <span className="text-foreground-muted"> · by {c.initiator}</span> : null}</td>
+                <td className="py-1 pr-3 text-right font-numeric">
+                  {c.baseMinor !== undefined ? <>{money(c.baseMinor, currency)}<span className="block text-[11px] text-foreground-muted">{usd(c.baseUsd ?? 0)}</span></> : <span className="text-foreground-muted">—</span>}
+                </td>
+                <td className="py-1 pr-3">
+                  {r.parts.map((x) => (
+                    <span key={x.id} className={`block ${x.heldBy === who ? "font-semibold" : ""}`}>
+                      {x.heldBy || "—"} <span className="text-foreground-muted">({x.position || `L${x.level}`} · {x.percentage}%)</span> {money(x.amountMinor, currency)}
+                    </span>
+                  ))}
+                </td>
+                <td className="py-1 text-right font-numeric">{money(r.intoMinor, currency)}<span className="block text-[11px] text-foreground-muted">{usd(r.intoUsd)}</span></td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

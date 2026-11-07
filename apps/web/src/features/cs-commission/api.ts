@@ -73,7 +73,7 @@ export function useSplitCsCommissionPool() {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (input: SplitCsCommissionPoolInput) =>
-      api.post<{ split: Array<{ method: string; totalUsd: number; members: number; shareUsd: number }> }>("cs-commission/split-pool", input),
+      api.post<{ split: Array<{ method: string; totalUsd: number; members: number; shareUsd: number; shares?: Array<{ name: string; shareUsd: number }> }> }>("cs-commission/split-pool", input),
     onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
   });
 }

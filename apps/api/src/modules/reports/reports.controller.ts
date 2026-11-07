@@ -72,7 +72,7 @@ export const dailyReport = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", monthStartStr());
   const to = dateParam(req, "to", todayStr());
   const departmentId = objectIdParam(req, "departmentId");
-  ok(res, await svc.getDailyReport(org(req), from, to, departmentId));
+  ok(res, await svc.getDailyReport(org(req), from, to, departmentId, currencyParam(req)));
 });
 
 /** The records behind a Daily Report figure (2026-10-21): ?kind=income|expense|revenue&from&to&departmentId. */
@@ -82,7 +82,7 @@ export const dailyBreakdown = asyncHandler(async (req, res) => {
   const from = dateParam(req, "from", monthStartStr());
   const to = dateParam(req, "to", todayStr());
   const departmentId = objectIdParam(req, "departmentId");
-  ok(res, await svc.getDailyBreakdown(org(req), kind as "income" | "expense" | "revenue", from, to, departmentId));
+  ok(res, await svc.getDailyBreakdown(org(req), kind as "income" | "expense" | "revenue", from, to, departmentId, currencyParam(req)));
 });
 
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────
@@ -174,7 +174,14 @@ function analysisQuery(req: Request, allowed: readonly string[], basis: string, 
     filters: analysisFilters(req.query as Record<string, unknown>, allowed),
     pnlOnly: req.query.pnl === "1" || req.query.pnl === "true",
     search: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : "",
+    currency: currencyParam(req),
   };
+}
+
+/** ?currency=INR — which currency's figures a report gives (2026-11-07); anything else: the organization's. */
+function currencyParam(req: Request): string {
+  const c = req.query.currency;
+  return typeof c === "string" && /^[A-Za-z]{3}$/.test(c) ? c.toUpperCase() : "";
 }
 
 /** GET /reports/expense-analysis?from&to&basis=expense|paid&groupBy=category&<dimension>=<key>…&pnl=1&q= */

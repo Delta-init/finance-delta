@@ -75,6 +75,21 @@ export interface AnalysisQuery {
   filters: Record<string, string>;
   pnlOnly?: boolean;
   search?: string;
+  /** Which currency's figures to give (2026-11-07); blank: the organization's. */
+  currency?: string;
+}
+
+/** The currencies among some rows, the organization's first, then the most used. */
+export function currenciesOf<T>(rows: T[], curOf: (r: T) => string, base: string): string[] {
+  const n = new Map<string, number>();
+  for (const r of rows) n.set(curOf(r), (n.get(curOf(r)) ?? 0) + 1);
+  return [...n.keys()].sort((a, b) => (a === base ? -1 : b === base ? 1 : (n.get(b)! - n.get(a)!) || a.localeCompare(b)));
+}
+
+/** The one asked for if there is some of it, else the organization's, else the first there is. */
+export function pickCurrency(currencies: string[], want: string | undefined, base: string): string {
+  const w = (want ?? "").toUpperCase();
+  return currencies.includes(w) ? w : currencies.includes(base) ? base : currencies[0] ?? base;
 }
 
 function finish(
@@ -115,19 +130,31 @@ function finish(
     }
     return [...by.values()].sort((a, b) => (dim === "month" ? b.key.localeCompare(a.key) : b.amountMinor - a.amountMinor || a.name.localeCompare(b.name)));
   };
-  const groups = group(kept, q.groupBy);
-  if (q.groupBy === "category") {
-    for (const g of groups) g.sub = group(kept.filter((r) => (r.dims.category ?? NONE) === g.key), "subcategory");
-  }
-  const months = group(kept, "month").map((g) => ({ month: g.key, amountMinor: g.amountMinor, count: g.count })).sort((a, b) => a.month.localeCompare(b.month));
+  // Never two currencies added together (the user, 2026-11-07: an INR 50,000 expense counted as AED 50,000): every
+  // currency's totals for the cards; the rest is one currency's — the one asked for, else the organization's.
+  const curOf = (r: AnalysisRecord) => (r.currency || currency).toUpperCase();
+  const currencies = currenciesOf(kept, curOf, currency);
+  const chosen = pickCurrency(currencies, q.currency, currency);
+  const byCurrency = currencies.map((c) => {
+    const rows = kept.filter((r) => curOf(r) === c);
+    return { currency: c, amountMinor: rows.reduce((s, r) => s + r.amountMinor, 0), count: rows.length, ...extraTotals(rows) };
+  });
+  const shown = kept.filter((r) => curOf(r) === chosen);
 
-  kept.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
+  const groups = group(shown, q.groupBy);
+  if (q.groupBy === "category") {
+    for (const g of groups) g.sub = group(shown.filter((r) => (r.dims.category ?? NONE) === g.key), "subcategory");
+  }
+  const months = group(shown, "month").map((g) => ({ month: g.key, amountMinor: g.amountMinor, count: g.count })).sort((a, b) => a.month.localeCompare(b.month));
+
+  shown.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
   return {
-    kind, from: q.from, to: q.to, currency, basis: q.basis, groupBy: q.groupBy,
-    totals: { amountMinor: kept.reduce((s, r) => s + r.amountMinor, 0), count: kept.length, ...extraTotals(kept) },
+    kind, from: q.from, to: q.to, currency: chosen, basis: q.basis, groupBy: q.groupBy,
+    totals: { amountMinor: shown.reduce((s, r) => s + r.amountMinor, 0), count: shown.length, ...extraTotals(shown) },
     groups, months, options,
-    records: kept.slice(0, MAX_RECORDS),
-    capped: kept.length > MAX_RECORDS,
+    records: shown.slice(0, MAX_RECORDS),
+    capped: shown.length > MAX_RECORDS,
+    currencies, byCurrency,
   };
 }
 
@@ -162,7 +189,7 @@ export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promi
     [dateField]: { ...(q.from ? { $gte: startOf(q.from) } : { $ne: null }), ...(q.to ? { $lte: endOf(q.to) } : {}) },
     ...pnl,
   })
-    .select("expenseNumber category categoryName subcategory subcategoryName description expenseDate paidOn totalMinor submittedById submittedByName salespersonId salespersonName departmentId paymentMethod bankAccountId paymentAccount source status")
+    .select("expenseNumber category categoryName subcategory subcategoryName description expenseDate paidOn totalMinor currency submittedById submittedByName salespersonId salespersonName departmentId paymentMethod bankAccountId paymentAccount source status")
     .lean();
 
   const names = new Names();
@@ -180,7 +207,7 @@ export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promi
     const dept = e.departmentId ? String(e.departmentId) : NONE;
     return {
       id: String(e._id), date, number: e.expenseNumber, title: categoryLabel(catName, e.subcategoryName) || "Expense", detail: e.description ?? "",
-      amountMinor: e.totalMinor ?? 0, href: `/expenses/${e._id}`,
+      amountMinor: e.totalMinor ?? 0, currency: String(e.currency || currency).toUpperCase(), href: `/expenses/${e._id}`,
       dims: {
         category: names.set("category", cat, catName || "Uncategorised"),
         subcategory: names.set("subcategory", sub, e.subcategory ? (e.subcategoryName || e.subcategory) : `${catName} — no subcategory`),
@@ -264,7 +291,6 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
   };
 
   const records: AnalysisRecord[] = [];
-  let invoicedMinor = 0, creditMinor = 0, outstandingMinor = 0, collectedMinor = 0;
   const byId = new Map(invoices.map((i) => [String(i._id), i]));
   if (q.basis === "invoiced") {
     for (const inv of invoices) {
@@ -326,7 +352,10 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
     }
   }
 
+  // Worked out afresh for each set of records it is given — every currency's, then the one shown (2026-11-07) — so
+  // nothing is carried from one call into the next.
   return finish("revenue", q, currency, records, names, REVENUE_DIMENSION_KEYS, (kept) => {
+    let invoicedMinor = 0, creditMinor = 0, outstandingMinor = 0, collectedMinor = 0;
     if (q.basis === "invoiced") {
       invoicedMinor = kept.filter((r) => r.amountMinor >= 0 && !r.id.startsWith("cn:")).reduce((s, r) => s + r.amountMinor, 0);
       creditMinor = -kept.filter((r) => r.id.startsWith("cn:")).reduce((s, r) => s + r.amountMinor, 0);

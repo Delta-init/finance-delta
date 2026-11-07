@@ -55,22 +55,25 @@ export function useInvoiceSummary(
   });
 }
 
-export function useDailyReport(from: string, to: string, departmentId?: string) {
+export function useDailyReport(from: string, to: string, departmentId?: string, currency?: string) {
   const qs = new URLSearchParams({ from, to });
   if (departmentId) qs.set("departmentId", departmentId);
+  // Which currency's days (2026-11-07); blank: the organization's.
+  if (currency) qs.set("currency", currency);
   return useQuery({
-    queryKey: [...KEY, "daily", from, to, departmentId ?? ""],
+    queryKey: [...KEY, "daily", from, to, departmentId ?? "", currency ?? ""],
     queryFn: () => api.get<DailyReport>(`reports/daily?${qs.toString()}`),
     enabled: !!from && !!to,
   });
 }
 
 /** Where a Daily Report figure came from (2026-10-21) — only once somebody clicks one. */
-export function useDailyBreakdown(q: { kind: DailyBreakdownKind; from: string; to: string; departmentId?: string } | null) {
+export function useDailyBreakdown(q: { kind: DailyBreakdownKind; from: string; to: string; departmentId?: string; currency?: string } | null) {
   const qs = new URLSearchParams(q ? { kind: q.kind, from: q.from, to: q.to } : {});
   if (q?.departmentId) qs.set("departmentId", q.departmentId);
+  if (q?.currency) qs.set("currency", q.currency);
   return useQuery({
-    queryKey: [...KEY, "daily-breakdown", q?.kind ?? "", q?.from ?? "", q?.to ?? "", q?.departmentId ?? ""],
+    queryKey: [...KEY, "daily-breakdown", q?.kind ?? "", q?.from ?? "", q?.to ?? "", q?.departmentId ?? "", q?.currency ?? ""],
     queryFn: () => api.get<DailyBreakdown>(`reports/daily/breakdown?${qs.toString()}`),
     enabled: !!q,
     retry: false,

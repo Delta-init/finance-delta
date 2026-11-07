@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api";
 import { useDailyBreakdown } from "./api";
 
 /** What was clicked: a figure (or net) over a day or the report's range, with its department scope. */
-export type DailyPick = { kind: DailyBreakdownKind | "net"; from: string; to: string; departmentId?: string; label: string };
+export type DailyPick = { kind: DailyBreakdownKind | "net"; from: string; to: string; departmentId?: string; label: string; /** One currency's records (2026-11-07). */ currency?: string };
 
 const KIND_TITLE: Record<DailyBreakdownKind, string> = { income: "Income received", expense: "Expenses", revenue: "Revenue (invoiced)" };
 
@@ -58,7 +58,7 @@ export function DailyBreakdownDialog({ pick, onClose, money }: {
 }
 
 function KindBreakdown({ kind, pick, money, showTitle }: { kind: DailyBreakdownKind; pick: DailyPick; money: (m: number) => string; showTitle: boolean }) {
-  const { data, isLoading, error } = useDailyBreakdown({ kind, from: pick.from, to: pick.to, departmentId: pick.departmentId });
+  const { data, isLoading, error } = useDailyBreakdown({ kind, from: pick.from, to: pick.to, departmentId: pick.departmentId, currency: pick.currency });
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></div>;
   if (error || !data) {
     return (

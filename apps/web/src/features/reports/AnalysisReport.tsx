@@ -66,12 +66,18 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   const [groupBy, setGroupBy] = useUrlParam("by", groupBys[0]!, { allowed: groupBys });
   const [pnl, setPnl] = useUrlParam("pnl", "0");
   const [q, setQ] = useUrlParam("q", "");
+  // Which currency the table, chart and records show, when the period has more than one (2026-11-07).
+  const [cur, setCur] = useUrlParam("cur", "");
   const [typed, setTyped] = useState(q);
   const filters: Record<string, string> = Object.fromEntries(config.filters.filter((d) => !hidden.includes(d)).map((d) => [d, search.get(`f_${d}`) ?? ""] as [string, string]).filter(([, v]) => v));
 
-  const params: Record<string, string> = { from: period.from, to: period.to, basis, groupBy, q, ...(config.pnl && pnl === "1" ? { pnl: "1" } : {}), ...filters };
+  const params: Record<string, string> = { from: period.from, to: period.to, basis, groupBy, q, currency: cur, ...(config.pnl && pnl === "1" ? { pnl: "1" } : {}), ...filters };
   const { data, isLoading, isPlaceholderData: refreshing, error } = useAnalysisReport(config.kind, params);
   const currency = data?.currency ?? "AED";
+  // Every currency's cards, never added together (the user, 2026-11-07: an INR expense showed as AED) — from an API
+  // older than that, the one currency it gives.
+  const perCurrency = data ? (data.byCurrency?.length ? data.byCurrency : [{ ...data.totals, currency }]) : [];
+  const cardsByCurrency = data ? perCurrency.map((t) => ({ currency: t.currency, cards: config.cards({ ...data, currency: t.currency, totals: t }) })) : [];
   // A group clicked: its records, by the dimension it groups (a subcategory under a category).
   const [open, setOpen] = useState<{ g: AnalysisGroup; dim: string } | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -104,6 +110,16 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
             </button>
           ))}
         </div>
+        {(data?.currencies?.length ?? 0) > 1 && (
+          <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="tablist" aria-label="Currency">
+            {data!.currencies!.map((c) => (
+              <button key={c} type="button" role="tab" aria-selected={currency === c} onClick={() => { setCur(c); setExpanded(null); }}
+                className={cn("rounded-md px-2.5 py-1.5 text-xs font-medium sm:text-sm", currency === c ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground-muted hover:text-foreground")}>
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span className="text-sm text-foreground-muted">Group by</span>
           <Select value={groupBy} onValueChange={(v) => { setGroupBy(v); setExpanded(null); }}>
@@ -167,13 +183,22 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
           <div className={cn("grid grid-cols-2 gap-3 transition-opacity lg:grid-cols-4", refreshing && "opacity-60")} aria-busy={refreshing}>
             {isLoading || !data
               ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-24" />)
-              : config.cards(data).map((c) => (
-                <Card key={c.label}><CardContent className="p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{c.label}</p>
-                  {c.minor === undefined
-                    ? <p className="mt-1 text-2xl font-bold">{c.hint}</p>
-                    : <MoneyDisplay minor={c.minor} currency={currency} className={cn("mt-1 block text-2xl font-bold", c.tone)} />}
-                  {c.minor !== undefined && c.hint && <p className="mt-0.5 text-xs text-foreground-muted">{c.hint}</p>}
+              : (cardsByCurrency[0]?.cards ?? []).map((first, i) => (
+                // A line per currency, the organization's first, as the Expenses list's cards (2026-11-07).
+                <Card key={first.label}><CardContent className="space-y-1.5 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{first.label}</p>
+                  {cardsByCurrency.map(({ currency: cc, cards }) => {
+                    const c = cards[i]!;
+                    const many = cardsByCurrency.length > 1;
+                    return (
+                      <div key={cc} className={cn(many && "flex flex-wrap items-baseline justify-between gap-x-2")}>
+                        {c.minor === undefined
+                          ? <p className={cn("font-bold", many ? "text-lg" : "mt-1 text-2xl")}>{c.hint}</p>
+                          : <MoneyDisplay minor={c.minor} currency={cc} className={cn("block font-bold tabular-nums", many ? "text-lg" : "mt-1 text-2xl", c.tone)} />}
+                        {c.minor !== undefined && c.hint && <p className={cn("text-xs text-foreground-muted", !many && "mt-0.5")}>{c.hint}</p>}
+                      </div>
+                    );
+                  })}
                 </CardContent></Card>
               ))}
           </div>

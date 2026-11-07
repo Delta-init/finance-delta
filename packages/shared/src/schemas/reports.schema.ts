@@ -72,6 +72,7 @@ export type DailyReportRow = {
 export type DailyReport = {
   from: string;
   to: string;
+  /** The currency the rows and totals are in (2026-11-07: never two added together) — picked with ?currency=. */
   currency: string;
   departmentId: string | null;
   rows: DailyReportRow[];
@@ -81,6 +82,9 @@ export type DailyReport = {
     revenueMinor: number;
     netMinor: number;
   };
+  /** Every currency in the period, the organization's first, and its totals — for the cards. */
+  currencies?: string[];
+  byCurrency?: Array<DailyReport["totals"] & { currency: string }>;
 };
 
 /**
@@ -116,10 +120,15 @@ export type DailyBreakdown = {
   from: string;
   to: string;
   departmentId: string | null;
+  /** The currency its totals, groups and records are in (2026-11-07). */
+  currency?: string;
   totalMinor: number;
   count: number;
   groups: DailyBreakdownGroup[];
   records: DailyBreakdownRecord[];
+  /** Every currency in it, the organization's first, with its total. */
+  currencies?: string[];
+  byCurrency?: Array<{ currency: string; totalMinor: number; count: number }>;
 };
 
 // ── Dashboard breakdowns (the user, 2026-10-26) ──────────────────────────────
@@ -178,8 +187,10 @@ export type AnalysisRecord = {
   number: string;
   title: string;
   detail: string;
-  /** In the organization's currency; a credit note is negative. */
+  /** In `currency`; a credit note is negative. */
   amountMinor: number;
+  /** Its own currency (2026-11-07) — the report never adds two currencies together. Absent: the report's. */
+  currency?: string;
   /** Revenue under Invoiced: paid on this invoice so far, and still owed on it (2026-10-30: a part-paid invoice showed only its total). */
   collectedMinor?: number;
   owedMinor?: number;
@@ -226,6 +237,13 @@ export type AnalysisReport = {
   months: { month: string; amountMinor: number; count: number }[];
   options: Record<string, AnalysisOption[]>;
   records: AnalysisRecord[];
+  /**
+   * Every currency the filters matched, the organization's first (the user, 2026-11-07: "INR shows as AED — a separate
+   * view for INR, like the expense cards"): the cards show each; totals, groups, months and records are `currency`'s,
+   * picked with ?currency=.
+   */
+  currencies?: string[];
+  byCurrency?: Array<AnalysisReport["totals"] & { currency: string }>;
   /** More records matched than are listed (the newest are). */
   capped: boolean;
 };

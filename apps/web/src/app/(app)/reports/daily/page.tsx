@@ -37,7 +37,7 @@ function fmt(currency: string, minor: number) {
 }
 
 export default function DailyReportPage() {
-  const { currency, convert } = useCurrency();
+  const { currency, convert, baseCurrency } = useCurrency();
   // In the address bar (2026-10-22), so a refresh or a shared link keeps the same period and page.
   const [from, setFrom] = useUrlParam("from", monthStart());
   const [to, setTo] = useUrlParam("to", today());
@@ -46,20 +46,28 @@ export default function DailyReportPage() {
   const [view, setView] = useUrlParam<DailyView>("view", "day", { allowed: DAILY_VIEWS });
 
   const { data: departments } = useAllDepartments();
+  // Which currency the days show, when the period has more than one (2026-11-07: an INR expense counted as AED).
+  const [cur, setCur] = useUrlParam("cur", "");
   const { data, isLoading } = useDailyReport(
     from,
     to,
     departmentId === ALL ? undefined : departmentId,
+    cur || undefined,
   );
+  const shown = data?.currency ?? baseCurrency;
+  // The organization's currency follows the display currency, as before; another is shown as it is.
+  const moneyIn = (c: string, minor: number) => (c === baseCurrency ? fmt(currency, convert(minor)) : fmt(c, minor));
+  const money = (minor: number) => moneyIn(shown, minor);
+  const perCurrency = data?.byCurrency?.length ? data.byCurrency : null;
 
   const rows = data?.rows ?? [];
   // A figure clicked: where it came from (2026-10-21).
   const [pick, setPick] = useState<DailyPick | null>(null);
   const scope = departmentId === ALL ? undefined : departmentId;
   const deptName = departments?.find((d) => d.id === departmentId)?.name;
-  const pickRange = (kind: DailyPick["kind"]) => setPick({ kind, from, to, departmentId: scope, label: `${from} — ${to}${deptName ? ` · ${deptName}` : ""}` });
+  const pickRange = (kind: DailyPick["kind"]) => setPick({ kind, from, to, departmentId: scope, currency: shown, label: `${from} — ${to}${deptName ? ` · ${deptName}` : ""} · ${shown}` });
   const pickPeriod = (kind: DailyPick["kind"], p: PeriodRow) =>
-    setPick({ kind, from: p.from, to: p.to, departmentId: scope, label: `${p.label}${p.note ? ` ${p.note}` : ""}${deptName ? ` · ${deptName}` : ""}` });
+    setPick({ kind, from: p.from, to: p.to, departmentId: scope, currency: shown, label: `${p.label}${p.note ? ` ${p.note}` : ""}${deptName ? ` · ${deptName}` : ""} · ${shown}` });
   const periods = groupDaily(rows, view, from, to);
   // A week or a month opened up: its own days, by day.
   const drillInto = (p: PeriodRow) => { setFrom(p.from); setTo(p.to); setView("day"); };
@@ -134,6 +142,16 @@ export default function DailyReportPage() {
             </button>
           ))}
         </div>
+        {(data?.currencies?.length ?? 0) > 1 && (
+          <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm" role="tablist" aria-label="Currency">
+            {data!.currencies!.map((c) => (
+              <button key={c} type="button" role="tab" aria-selected={shown === c} onClick={() => setCur(c)}
+                className={`rounded-md px-3 py-1.5 font-medium transition-colors ${shown === c ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground-muted hover:text-foreground"}`}>
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
         {departmentId !== ALL && (
           <span className="text-xs text-foreground-subtle">
             Income & revenue scoped to this department; expenses are org-wide.
@@ -159,9 +177,23 @@ export default function DailyReportPage() {
                 <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
                   <Icon className="h-3.5 w-3.5" /> {label}
                 </p>
-                <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
-                  {fmt(currency, convert(value))}
-                </p>
+                {perCurrency && perCurrency.length > 1 ? (
+                  // A line per currency, never added together (2026-11-07); the table below is the switched one's.
+                  <div className="mt-2 space-y-0.5">
+                    {perCurrency.map((t) => {
+                      const v = kind === "income" ? t.incomeMinor : kind === "expense" ? t.expenseMinor : kind === "revenue" ? t.revenueMinor : t.netMinor;
+                      return (
+                        <p key={t.currency} className={`font-numeric font-bold ${t.currency === shown ? "text-xl" : "text-base opacity-80"} ${kind === "net" ? (v >= 0 ? "text-success" : "text-danger") : className}`}>
+                          {moneyIn(t.currency, v)}
+                        </p>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
+                    {money(value)}
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-foreground-subtle">Click for the breakdown</p>
               </Card>
             </button>
@@ -227,16 +259,16 @@ export default function DailyReportPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric text-success">
-                        {r.incomeMinor ? <CellButton onClick={() => pickPeriod("income", r)}>{fmt(currency, convert(r.incomeMinor))}</CellButton> : "—"}
+                        {r.incomeMinor ? <CellButton onClick={() => pickPeriod("income", r)}>{money(r.incomeMinor)}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric text-danger">
-                        {r.expenseMinor ? <CellButton onClick={() => pickPeriod("expense", r)}>{fmt(currency, convert(r.expenseMinor))}</CellButton> : "—"}
+                        {r.expenseMinor ? <CellButton onClick={() => pickPeriod("expense", r)}>{money(r.expenseMinor)}</CellButton> : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-numeric">
-                        {r.revenueMinor ? <CellButton onClick={() => pickPeriod("revenue", r)}>{fmt(currency, convert(r.revenueMinor))}</CellButton> : "—"}
+                        {r.revenueMinor ? <CellButton onClick={() => pickPeriod("revenue", r)}>{money(r.revenueMinor)}</CellButton> : "—"}
                       </td>
                       <td className={`px-4 py-3 text-right font-numeric font-semibold ${r.netMinor >= 0 ? "text-success" : "text-danger"}`}>
-                        <CellButton onClick={() => pickPeriod("net", r)}>{fmt(currency, convert(r.netMinor))}</CellButton>
+                        <CellButton onClick={() => pickPeriod("net", r)}>{money(r.netMinor)}</CellButton>
                       </td>
                     </tr>
                   ))}
@@ -244,11 +276,11 @@ export default function DailyReportPage() {
                 <tfoot>
                   <tr className="border-t border-border bg-surface-muted/50 font-semibold">
                     <td className="px-4 py-3">Total</td>
-                    <td className="px-4 py-3 text-right font-numeric text-success">{fmt(currency, convert(totals.incomeMinor))}</td>
-                    <td className="px-4 py-3 text-right font-numeric text-danger">{fmt(currency, convert(totals.expenseMinor))}</td>
-                    <td className="px-4 py-3 text-right font-numeric">{fmt(currency, convert(totals.revenueMinor))}</td>
+                    <td className="px-4 py-3 text-right font-numeric text-success">{money(totals.incomeMinor)}</td>
+                    <td className="px-4 py-3 text-right font-numeric text-danger">{money(totals.expenseMinor)}</td>
+                    <td className="px-4 py-3 text-right font-numeric">{money(totals.revenueMinor)}</td>
                     <td className={`px-4 py-3 text-right font-numeric ${totals.netMinor >= 0 ? "text-success" : "text-danger"}`}>
-                      {fmt(currency, convert(totals.netMinor))}
+                      {money(totals.netMinor)}
                     </td>
                   </tr>
                 </tfoot>
@@ -258,7 +290,7 @@ export default function DailyReportPage() {
         </CardContent>
       </Card>
 
-      <DailyBreakdownDialog pick={pick} onClose={() => setPick(null)} money={(m) => fmt(currency, convert(m))} />
+      <DailyBreakdownDialog pick={pick} onClose={() => setPick(null)} money={money} />
     </div>
   );
 }

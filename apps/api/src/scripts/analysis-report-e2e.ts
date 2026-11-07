@@ -111,6 +111,18 @@ same("…and the trend oldest first", r.months.map((m) => m.month), ["2026-09", 
 let why = await refused(getExpenseAnalysis(org, { ...OCT, basis: "whenever", groupBy: "category", filters: {} }), /basis/);
 check("a basis that isn't one is refused", !why, why);
 
+step("4b. Another currency: never added in, a view of its own (2026-11-07)");
+await db.collection("expenses").insertOne(exp({ currency: "INR", totalMinor: 5_000_000, paidOn: at("2026-10-08"), paymentMethod: "bank_transfer" })); // 010 INR 50,000
+r = await getExpenseAnalysis(org, { ...OCT, basis: "expense", groupBy: "category", filters: {} });
+same("the organization's currency as before: AED 870.00 over 4, the INR expense not added in", [r.currency, r.totals.amountMinor, r.totals.count, r.records.some((x) => x.number === "EXP-010")], ["AED", 87_000, 4, false]);
+same("…both currencies listed, AED first", r.currencies, ["AED", "INR"]);
+same("…each one's own cards: INR 50,000 over 1, paid", r.byCurrency?.map((t) => [t.currency, t.amountMinor, t.count, t.paidMinor]), [["AED", 87_000, 4, 82_000], ["INR", 5_000_000, 1, 5_000_000]]);
+r = await getExpenseAnalysis(org, { ...OCT, basis: "expense", groupBy: "category", filters: {}, currency: "INR" });
+same("INR asked for: its totals, groups and records only, in INR", [r.currency, r.totals.amountMinor, r.records.map((x) => [x.number, x.currency]), r.groups.map((g) => [g.name, g.amountMinor])],
+  ["INR", 5_000_000, [["EXP-010", "INR"]], [["Advertising & Marketing", 5_000_000]]]);
+same("a currency with nothing in it: the organization's", (await getExpenseAnalysis(org, { ...OCT, basis: "expense", groupBy: "category", filters: {}, currency: "USD" })).currency, "AED");
+await db.collection("expenses").deleteOne({ expenseNumber: "EXP-010" });
+
 step("5. Revenue: invoiced, less credit notes");
 const CUST = new Types.ObjectId(), CUST2 = new Types.ObjectId();
 let inum = 0;

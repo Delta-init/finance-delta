@@ -127,5 +127,21 @@ check("Sales: Anna's payments and invoices only, = the report", incSales.totalMi
 check("expenses stay organization-wide, as the report", (await reports.getDailyBreakdown(ORG, "expense", D1, D2, String(sales._id))).totalMinor === dailySales.totals.expenseMinor);
 
 console.log(`\n${checks - failures}/${checks} passed`);
+/* ── 5 ── */
+step("5. Another currency: never added in, a view of its own (2026-11-07)");
+await Expense.collection.insertOne({
+  organizationId: org._id, expenseNumber: "EXP-6", category: "other", categoryName: "Ads", description: "Ads spend", expenseDate: at(D1),
+  amountMinor: 5_000_000, totalMinor: 5_000_000, currency: "INR", submittedById: anna._id, submittedByName: "Anna", status: "approved", createdAt: new Date(), updatedAt: new Date(),
+});
+const both = await reports.getDailyReport(ORG, D1, D2);
+check("the report as before in AED: the INR expense not added in", both.currency === "AED" && both.totals.expenseMinor === 22_000, j(both.totals));
+check("…both currencies, each one's totals", j(both.currencies) === j(["AED", "INR"]) && both.byCurrency?.find((t) => t.currency === "INR")?.expenseMinor === 5_000_000, j(both.byCurrency));
+const inr = await reports.getDailyReport(ORG, D1, D2, undefined, "INR");
+check("INR asked for: its days only", inr.currency === "INR" && inr.totals.expenseMinor === 5_000_000 && inr.totals.incomeMinor === 0 && inr.rows.length === 1 && inr.rows[0]!.date === D1, j(inr));
+const bdAed = await reports.getDailyBreakdown(ORG, "expense", D1, D2);
+const bdInr = await reports.getDailyBreakdown(ORG, "expense", D1, D2, undefined, "INR");
+check("the breakdown likewise: AED's as before, INR's own", bdAed.currency === "AED" && bdAed.totalMinor === 22_000 && bdInr.currency === "INR" && bdInr.totalMinor === 5_000_000
+  && j(bdInr.records.map((r) => r.number)) === j(["EXP-6"]) && bdAed.byCurrency?.find((t) => t.currency === "INR")?.totalMinor === 5_000_000, j({ a: bdAed.totalMinor, i: bdInr.totalMinor }));
+
 await mongoose.disconnect();
 process.exit(failures ? 1 : 0);

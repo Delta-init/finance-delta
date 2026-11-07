@@ -267,20 +267,26 @@ export async function getDailyReport(
   from: string,
   to: string,
   departmentId?: string,
-  currency = "AED",
+  /** Which currency's days and totals (2026-11-07); blank: the organization's. */
+  want = "",
 ): Promise<DailyReport> {
   const fromDate = startOf(from);
   const toDate = endOf(to);
+  const base = await baseCurrencyOf(orgId);
 
   // Optional department scope: invoices whose salesperson belongs to it.
   const salespersonFilter = await departmentSalespeople(orgId, departmentId);
 
-  const rowMap = new Map<string, DailyReportRow>();
-  const row = (date: string): DailyReportRow => {
-    let r = rowMap.get(date);
+  // Per currency, never added together (the user, 2026-11-07: an INR expense counted as AED).
+  const byCur = new Map<string, Map<string, DailyReportRow>>();
+  const row = (cur: string, date: string): DailyReportRow => {
+    const c = String(cur || base).toUpperCase();
+    let days = byCur.get(c);
+    if (!days) byCur.set(c, (days = new Map()));
+    let r = days.get(date);
     if (!r) {
       r = { date, incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 };
-      rowMap.set(date, r);
+      days.set(date, r);
     }
     return r;
   };
@@ -289,7 +295,7 @@ export async function getDailyReport(
     organizationId: oid(orgId),
     status: { $nin: ["draft", "void"] },
   })
-    .select("salespersonId issueDate totalMinor payments")
+    .select("salespersonId issueDate totalMinor currency payments")
     .lean();
 
   for (const inv of invoices) {
@@ -297,6 +303,7 @@ export async function getDailyReport(
       salespersonId?: Types.ObjectId;
       issueDate?: Date;
       totalMinor?: number;
+      currency?: string;
       payments?: { amountMinor: number; paidOn: Date }[];
     };
     if (salespersonFilter && !salespersonFilter.has(String(d.salespersonId))) continue;
@@ -304,13 +311,13 @@ export async function getDailyReport(
     if (d.issueDate) {
       const issued = new Date(d.issueDate);
       if (issued >= fromDate && issued <= toDate) {
-        row(dateOnly(issued)).revenueMinor += d.totalMinor ?? 0;
+        row(d.currency ?? base, dateOnly(issued)).revenueMinor += d.totalMinor ?? 0;
       }
     }
     for (const p of d.payments ?? []) {
       const paidOn = new Date(p.paidOn);
       if (paidOn >= fromDate && paidOn <= toDate) {
-        row(dateOnly(paidOn)).incomeMinor += p.amountMinor ?? 0;
+        row(d.currency ?? base, dateOnly(paidOn)).incomeMinor += p.amountMinor ?? 0;
       }
     }
   }
@@ -324,18 +331,17 @@ export async function getDailyReport(
     "source.kind": { $ne: "bill" },
     ...(await pnlExpenseFilter(orgId)),
   })
-    .select("expenseDate totalMinor")
+    .select("expenseDate totalMinor currency")
     .lean();
 
-  for (const e of expenses as unknown as { expenseDate: Date; totalMinor?: number }[]) {
-    row(dateOnly(new Date(e.expenseDate))).expenseMinor += e.totalMinor ?? 0;
+  for (const e of expenses as unknown as { expenseDate: Date; totalMinor?: number; currency?: string }[]) {
+    row(e.currency ?? base, dateOnly(new Date(e.expenseDate))).expenseMinor += e.totalMinor ?? 0;
   }
 
-  const rows = [...rowMap.values()]
+  const rowsOf = (c: string) => [...(byCur.get(c)?.values() ?? [])]
     .map((r) => ({ ...r, netMinor: r.incomeMinor - r.expenseMinor }))
     .sort((a, b) => b.date.localeCompare(a.date));
-
-  const totals = rows.reduce(
+  const totalsOf = (rows: DailyReportRow[]) => rows.reduce(
     (acc, r) => {
       acc.incomeMinor += r.incomeMinor;
       acc.expenseMinor += r.expenseMinor;
@@ -345,8 +351,21 @@ export async function getDailyReport(
     },
     { incomeMinor: 0, expenseMinor: 0, revenueMinor: 0, netMinor: 0 },
   );
+  const counted = new Map([...byCur.entries()].map(([c, days]) => [c, days.size]));
+  const currencies = [...byCur.keys()].sort((a, b) => (a === base ? -1 : b === base ? 1 : (counted.get(b)! - counted.get(a)!) || a.localeCompare(b)));
+  const currency = currencies.includes(want.toUpperCase()) ? want.toUpperCase() : currencies.includes(base) ? base : currencies[0] ?? base;
+  const rows = rowsOf(currency);
+  const totals = totalsOf(rows);
+  const byCurrency = currencies.map((c) => ({ currency: c, ...totalsOf(rowsOf(c)) }));
 
-  return { from, to, currency, departmentId: departmentId ?? null, rows, totals };
+  return { from, to, currency, departmentId: departmentId ?? null, rows, totals, currencies, byCurrency };
+}
+
+/** The organization's own currency. */
+async function baseCurrencyOf(orgId: string): Promise<string> {
+  const { Organization } = await import("../organization/organization.model");
+  const org = await Organization.findById(orgId).select("baseCurrency").lean<{ baseCurrency?: string } | null>();
+  return String(org?.baseCurrency ?? "AED").toUpperCase();
 }
 
 /** The salespeople of a department — the Daily Report's department scope for income and revenue; null for all. */
@@ -384,9 +403,12 @@ export async function getDailyBreakdown(
   from: string,
   to: string,
   departmentId?: string,
+  /** Which currency's records (2026-11-07); blank: the organization's. */
+  want = "",
 ): Promise<DailyBreakdown> {
   const fromDate = startOf(from);
   const toDate = endOf(to);
+  const base = await baseCurrencyOf(orgId);
   const records: DailyBreakdownRecord[] = [];
 
   if (kind === "income" || kind === "revenue") {
@@ -446,10 +468,22 @@ export async function getDailyBreakdown(
     }
   }
 
-  records.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
+  // One currency at a time, as the report (2026-11-07): every currency's total for the switch.
+  for (const r of records) r.currency = String(r.currency || base).toUpperCase();
+  const n = new Map<string, number>();
+  for (const r of records) n.set(r.currency, (n.get(r.currency) ?? 0) + 1);
+  const currencies = [...n.keys()].sort((a, b) => (a === base ? -1 : b === base ? 1 : (n.get(b)! - n.get(a)!) || a.localeCompare(b)));
+  const currency = currencies.includes(want.toUpperCase()) ? want.toUpperCase() : currencies.includes(base) ? base : currencies[0] ?? base;
+  const byCurrency = currencies.map((c) => {
+    const rs = records.filter((r) => r.currency === c);
+    return { currency: c, totalMinor: rs.reduce((t, r) => t + r.amountMinor, 0), count: rs.length };
+  });
+  const shown = records.filter((r) => r.currency === currency);
+
+  shown.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
   const groups: DailyBreakdownGroup[] = DAILY_GROUPS[kind].map(({ key, label }) => {
     const by = new Map<string, { name: string; count: number; amountMinor: number }>();
-    for (const r of records) {
+    for (const r of shown) {
       const name = r.groups[key] ?? "—";
       const g = by.get(name) ?? { name, count: 0, amountMinor: 0 };
       g.count++;
@@ -459,8 +493,9 @@ export async function getDailyBreakdown(
     return { key, label, items: [...by.values()].sort((a, b) => b.amountMinor - a.amountMinor) };
   });
   return {
-    kind, from, to, departmentId: departmentId ?? null,
-    totalMinor: records.reduce((t, r) => t + r.amountMinor, 0), count: records.length, groups, records,
+    kind, from, to, departmentId: departmentId ?? null, currency,
+    totalMinor: shown.reduce((t, r) => t + r.amountMinor, 0), count: shown.length, groups, records: shown,
+    currencies, byCurrency,
   };
 }
 

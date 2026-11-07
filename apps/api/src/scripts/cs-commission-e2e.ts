@@ -142,21 +142,32 @@ const invoiceDoc = (number: string, source: string) => ({
 });
 const [invA, invB, invC] = [invoiceDoc("IN-CS-1", "tetra-course"), invoiceDoc("IN-CS-2", "tetra-course"), invoiceDoc("IN-CRM-1", "crm")];
 await mongoose.connection.db!.collection("invoices").insertMany([invA, invB, invC]);
-const deposit = (externalId: string, txn: string, invoiceId: unknown, number: string) => ({
-  organizationId: org._id, externalId, type: "BONUS", status: "approved", amountMinor: 54496, currency: "USD", student: { name: "Student" },
-  decision: { transactionId: txn }, courseInvoice: { invoiceId, invoiceNumber: number }, createdAt: new Date(), updatedAt: new Date(),
+const deposit = (externalId: string, paidTodayAed: number, invoiceId: unknown, number: string, student = "Student") => ({
+  organizationId: org._id, externalId, type: "BONUS", status: "approved", amountMinor: 54496, currency: "USD", student: { name: student },
+  coursePayment: { paidTodayAed }, courseInvoice: { invoiceId, invoiceNumber: number }, createdAt: new Date(), updatedAt: new Date(),
 });
 await mongoose.connection.db!.collection("tetradeposits").insertMany([
-  deposit("F-c1", "", invA._id, "IN-CS-1"),
-  // Found by its transaction id, the CS Portal not saying which request (an older CS Portal).
-  deposit("SOMETHING-ELSE", "TX-c2", invB._id, "IN-CS-2"),
+  deposit("F-c1", 2202, invA._id, "IN-CS-1"),
+  // c2 (USD 400 on, AED 1,468): found by its student and what they paid, the CS Portal not saying which request.
+  deposit("SOMETHING-ELSE", 1468, invB._id, "IN-CS-2", "student"),
+  // Another of the same student's payments, another amount: not it.
+  deposit("OTHER-AMOUNT", 3000, invC._id, "IN-CRM-1"),
 ]);
+const c2 = portal.people[0].credits[1];
+delete c2.funding_id;
 v = await period();
 const mc = (id: string) => row(v, MEERA).credits.find((c) => c.id === id)!;
 check("Meera's credits in AED at 3.67: on AED 2,202.00, commission AED 220.20 — the USD kept beside", mc("c1").baseMinor === 220200 && mc("c1").amountMinor === 22020 && mc("c1").amountUsd === 60, j(mc("c1")));
 check("…Bindu's in INR at 100", row(v, BINDU).credits[0]!.amountMinor === 400000, j(row(v, BINDU).credits[0]));
 check("the course invoice behind a credit: by its funding request", mc("c1").invoice?.number === "IN-CS-1" && mc("c1").invoice?.id === String(invA._id) && mc("c1").fundingId === "F-c1", j(mc("c1").invoice));
-check("…or by its transaction id, the CS Portal not saying", mc("c2").invoice?.number === "IN-CS-2", j(mc("c2").invoice));
+check("…or, the CS Portal not saying which request, by the student (whatever its case) and what they paid that day", mc("c2").invoice?.number === "IN-CS-2", j(mc("c2").invoice));
+await mongoose.connection.db!.collection("tetradeposits").insertOne(deposit("TWIN", 1468, invA._id, "IN-CS-1"));
+v = await period();
+check("…two of their payments alike: no invoice rather than a guess", mc("c2").invoice === null, j(mc("c2").invoice));
+await mongoose.connection.db!.collection("tetradeposits").deleteOne({ externalId: "TWIN" });
+c2.funding_id = "F-c2";
+v = await period();
+check("…a request the CS Portal names that isn't here: none — not matched another way", mc("c2").invoice === null, j(mc("c2").invoice));
 check("…none where there is none", row(v, KIRAN).credits[0]!.invoice === null);
 const pop = await svc.csCommissionInvoice(String(invA._id));
 check("the pop-up: the whole invoice, from its organization", pop.invoice.invoiceNumber === "IN-CS-1" && pop.orgId === ORG && pop.orgName === "Delta HQ E2E", j({ n: pop.invoice.invoiceNumber, o: pop.orgName }));

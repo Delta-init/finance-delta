@@ -98,15 +98,20 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
   };
 
   // Each credit's course invoice (the user, 2026-11-07: "click the invoice and see it, as the CRM commission's") — by
-  // the funding request it came from (finance's bonus record of it), else by its transaction id and student.
+  // the funding request it came from (finance's bonus record of it). A CS Portal that doesn't say which request: by
+  // the student and what they paid that day — a course payment's commission is on the AED paid, at 3.67 — when exactly
+  // one of their course payments here has it ("still not showing the invoice", 2026-11-07: the transaction id it
+  // used to try is not kept on the record here, so nothing matched). None, or two alike: no invoice, never a guess.
   const credits = portal.people.flatMap((p) => p.credits);
   const fundingIds = [...new Set(credits.map((c) => c.funding_id ?? "").filter(Boolean))];
-  const txnIds = [...new Set(credits.map((c) => c.txn_id).filter(Boolean))];
-  const requests = fundingIds.length || txnIds.length
+  const unnamed = [...new Set(credits.filter((c) => !c.funding_id && c.student).map((c) => c.student.trim()))];
+  const requests = fundingIds.length || unnamed.length
     ? await TetraDepositModel.find({ $or: [
       ...(fundingIds.length ? [{ externalId: { $in: fundingIds } }] : []),
-      ...(txnIds.length ? [{ "decision.transactionId": { $in: txnIds } }] : []),
-    ], "courseInvoice.invoiceId": { $exists: true } }).select("externalId decision.transactionId student.name courseInvoice.invoiceId").lean<any[]>()
+      ...(unnamed.length ? [{ "student.name": { $in: unnamed } }] : []),
+    ], "courseInvoice.invoiceId": { $exists: true } })
+      .collation({ locale: "en", strength: 2 })
+      .select("externalId student.name coursePayment.paidTodayAed courseInvoice.invoiceId").lean<any[]>()
     : [];
   const invoiceIds = [...new Set(requests.map((r) => String(r.courseInvoice?.invoiceId ?? "")).filter(Boolean))];
   const invoices = invoiceIds.length
@@ -114,11 +119,13 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     : [];
   const invoiceById = new Map(invoices.map((i) => [String(i._id), { id: String(i._id), number: String(i.invoiceNumber ?? ""), orgId: String(i.organizationId) }]));
   const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
-  const invoiceOf = (c: { fundingId: string; txnId: string; student: string }) => {
+  const invoiceOf = (c: { fundingId: string; student: string; baseUsd: number }) => {
     let r = c.fundingId ? requests.find((x) => x.externalId === c.fundingId) : undefined;
-    if (!r && c.txnId) {
-      const same = requests.filter((x) => x.decision?.transactionId === c.txnId);
-      r = same.length === 1 ? same[0] : same.find((x) => norm(String(x.student?.name ?? "")) === norm(c.student));
+    if (!r && !c.fundingId && c.student) {
+      const paidAed = (Number(c.baseUsd) || 0) * CS_AED_PER_USD;
+      const same = requests.filter((x) => norm(String(x.student?.name ?? "")) === norm(c.student)
+        && Math.abs((Number(x.coursePayment?.paidTodayAed) || -1e9) - paidAed) < 1.5);
+      r = same.length === 1 ? same[0] : undefined;
     }
     return r ? invoiceById.get(String(r.courseInvoice?.invoiceId)) ?? null : null;
   };
@@ -133,7 +140,7 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
         id: c.id, date: c.date, student: c.student, method: c.method, level: c.level, position: c.position, percentage: c.percentage,
         baseUsd: c.base_usd, amountUsd: c.amount_usd, baseMinor: minorOf(c.base_usd, currency), amountMinor: minorOf(c.amount_usd, currency),
         status: c.status, txnId: c.txn_id, initiator: c.initiator, fundingId: c.funding_id ?? "",
-        invoice: invoiceOf({ fundingId: c.funding_id ?? "", txnId: c.txn_id, student: c.student }),
+        invoice: invoiceOf({ fundingId: c.funding_id ?? "", student: c.student, baseUsd: c.base_usd }),
       })),
       approval: {
         overall: p.approval.overall_status, broker: p.approval.broker, academic: p.approval.academic, finance: p.approval.finance,

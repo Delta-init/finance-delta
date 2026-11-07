@@ -119,6 +119,8 @@ const paymentSubSchema = new Schema(
     bankAmountMinor: { type: Number, default: null },
     bankCurrency: { type: String, default: "" },
     bankNote: { type: String, default: "" },
+    /** The day the bank statement shows it: typed in, or from reconciling its line (2026-11-07). */
+    statementDate: { type: Date, default: null },
     /** Typed in late: waiting for a manager, or what one decided (late-entry.service.ts). */
     lateEntry: { type: recordLateSchema, default: null },
   },

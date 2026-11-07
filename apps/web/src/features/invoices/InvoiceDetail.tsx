@@ -28,6 +28,8 @@ const paymentFormSchema = z.object({
   bankAmount: z.string().default(""),
   charges: z.coerce.number().min(0).default(0),
   emi: emiDetailInputSchema.optional(),
+  /** The day the bank statement shows it (2026-11-07); "" for none. */
+  statementDate: z.string().default(""),
 });
 type PaymentFormValues = z.infer<typeof paymentFormSchema>;
 import { Button } from "@/components/ui/button";
@@ -668,6 +670,7 @@ export function PaymentDialog({
       amount: balanceMinor / 100,
       paidOn: new Date().toISOString().slice(0, 10),
       reference: "",
+      statementDate: "",
       notes: "",
       accountName: "",
     },
@@ -690,6 +693,7 @@ export function PaymentDialog({
         bankAmount: editing.bankAmountMinor && editing.bankCurrency && editing.bankCurrency !== currency ? String(editing.bankAmountMinor / 100) : "",
         charges: (editing.chargesMinor ?? 0) / 100,
         emi: editing.emi ? { ...editing.emi } : undefined,
+        statementDate: editing.statementDate ?? "",
       });
       setAccountTouched(true);
     } else {
@@ -698,6 +702,7 @@ export function PaymentDialog({
         amount: balanceMinor / 100,
         paidOn: new Date().toISOString().slice(0, 10),
         reference: "",
+        statementDate: "",
         notes: "",
         accountName: "",
         bankAccountId: methodAccount("bank_transfer"),
@@ -715,6 +720,8 @@ export function PaymentDialog({
   // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
   const lateDate = useLateDate(watch("paidOn"), editing?.paidOn);
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
+  // The bank statement's day for it (2026-11-07): into an account that sends statements, not a petty cash tin.
+  const offersStatementDate = !!pickedAccount && pickedAccount.accountType !== "petty_cash";
   const foreignAccount = pickedAccount && pickedAccount.currency !== currency ? pickedAccount : null;
   // The organization's settings can arrive after the form opened: a new payment takes its method's account then.
   useEffect(() => {
@@ -768,6 +775,9 @@ export function PaymentDialog({
       chargesMinor: Math.round((data.charges || 0) * 100),
       ...(data.method === "easebuzz_emi" && data.emi ? { emi: data.emi } : {}),
       ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
+      // Its statement date (2026-11-07): into a bank, and given or changed.
+      ...(offersStatementDate && (editing ? (data.statementDate || "") !== (editing.statementDate ?? "") : !!data.statementDate)
+        ? { statementDate: data.statementDate || null } : {}),
     };
     try {
       if (editing) {
@@ -911,6 +921,14 @@ export function PaymentDialog({
               </label>
               <Input {...register("reference")} placeholder="Cheque #, txn ID…" />
             </div>
+            {offersStatementDate && (
+              <div className="col-span-2">
+                <label htmlFor="payment-statement-date" className="mb-1 block text-xs font-medium text-foreground-muted">
+                  Statement date <span className="text-foreground-subtle">(optional — the day {pickedAccount?.accountName}&rsquo;s statement shows it)</span>
+                </label>
+                <Input id="payment-statement-date" type="date" {...register("statementDate")} />
+              </div>
+            )}
             <div className="col-span-2">
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Notes <span className="text-foreground-subtle">(optional)</span>

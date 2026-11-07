@@ -185,7 +185,10 @@ export const createExpenseSchema = z.object({
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
 
 // Paying is its own step once saved (Mark as paid / unpaid), so an edit does not take a paid date.
-export const updateExpenseSchema = createExpenseSchema.partial().omit({ paidOn: true });
+export const updateExpenseSchema = createExpenseSchema.partial().omit({ paidOn: true }).extend({
+  /** The day the bank statement shows it, typed while editing (2026-11-07); null takes it off. Its bank line gets it too. */
+  statementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date").nullable().optional(),
+});
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 
 export const rejectExpenseSchema = z.object({

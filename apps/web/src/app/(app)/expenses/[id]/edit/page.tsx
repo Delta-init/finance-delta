@@ -59,6 +59,9 @@ export default function EditExpensePage({ params }: { params: Promise<{ id: stri
     bankAccountId: expense.bankAccountId || "__none__",
     paymentMethod: expense.paymentMethod,
     reference: expense.reference || "",
+    // The day the bank statement shows it (2026-11-07) — typed while editing; offered once it is paid.
+    statementDate: expense.statementDate ?? "",
+    paidOn: expense.paidOn ?? "",
     isRecurring: expense.isRecurring,
     recurrenceFrequency: expense.recurrence?.frequency,
     recurrenceNextDate: expense.recurrence?.nextDate,

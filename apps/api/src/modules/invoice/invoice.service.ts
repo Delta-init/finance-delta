@@ -309,6 +309,7 @@ export function toDTO(doc: InvoiceDoc): InvoiceDTO {
           : undefined,
         proofUrl: pm.proofUrl || undefined,
         ...(pm.receiptNumber ? { receiptNumber: pm.receiptNumber } : {}),
+        ...((pm as unknown as { statementDate?: Date | null }).statementDate ? { statementDate: dateOnly((pm as unknown as { statementDate: Date }).statementDate) } : {}),
         ...(pm.taxInvoice?.number ? {
           taxInvoice: {
             number: pm.taxInvoice.number, netMinor: pm.taxInvoice.netMinor ?? 0, taxMinor: pm.taxInvoice.taxMinor ?? 0,
@@ -2010,6 +2011,15 @@ export async function voidInvoice(orgId: string, id: string): Promise<InvoiceDTO
   return toDTO(doc);
 }
 
+/** A payment's typed statement date onto its line in Banking, as it is now (2026-11-07). */
+async function stampPaymentStatementDate(orgId: string, invoiceId: unknown, paymentId: string): Promise<void> {
+  const inv = await Invoice.findOne({ _id: invoiceId, organizationId: orgId }).select("payments._id payments.bankTransactionId payments.statementDate").lean<any>();
+  const pm = (inv?.payments ?? []).find((x: any) => String(x._id) === paymentId);
+  if (!pm?.bankTransactionId) return;
+  const { stampLineStatementDate } = await import("../banking/banking.service");
+  await stampLineStatementDate(orgId, pm.bankTransactionId, pm.statementDate ?? null);
+}
+
 export async function updatePayment(
   orgId: string,
   id: string,
@@ -2060,9 +2070,20 @@ export async function updatePayment(
   // Its date moved too far back: it waits for a manager again, out of its account meanwhile.
   const lateNow = await lateForDate(orgId, late, input.paidOn, p.paidOn as Date, p.lateEntry as never);
   if (moves || lateNow.pending) await assertLineMovable(orgId, p as never);
+  // Its statement date typed in (2026-11-07): not on a line a reconciliation dated — that one is its reconciliation's.
+  const typedStatement = input.statementDate === undefined ? undefined : input.statementDate || null;
+  if (typedStatement !== undefined) {
+    const { reconciledStatementDate } = await import("../banking/banking.service");
+    const fixed = await reconciledStatementDate(orgId, p.bankTransactionId);
+    const had = p.statementDate ? new Date(p.statementDate as Date).toISOString().slice(0, 10) : null;
+    if (fixed && (typedStatement ?? null) !== had && typedStatement !== fixed) {
+      throw new AppError("CONFLICT", `Its line in Banking was reconciled with the statement date ${fixed} — reopen that reconciliation to change it.`);
+    }
+  }
   // Its receipt replaced — stored only once nothing above refused the edit. The old file is left in storage.
   if (file) replaceProof(doc, p, await storeProof(orgId, id, file));
   if (lateNow.next !== undefined) p.lateEntry = lateNow.next;
+  if (typedStatement !== undefined) p.statementDate = typedStatement ? new Date(`${typedStatement}T00:00:00.000Z`) : null;
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
@@ -2096,6 +2117,7 @@ export async function updatePayment(
   if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, p));
   else if (lateNow.withdraw) await withdrawLateFor(orgId, "invoice_payment", doc._id, paymentId);
   await syncPaymentLine(doc as never, paymentId);
+  await stampPaymentStatementDate(orgId, doc._id, paymentId);
   await doc.populate("tagIds", "name color");
   void syncLmsAccess(doc);
   feeUpdate(doc._id, "payment edited");
@@ -2302,6 +2324,7 @@ export async function recordPayment(
     proofKey,
     ...(from?.externalRef ? { externalRef: from.externalRef } : {}),
     ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
+    ...(input.statementDate ? { statementDate: new Date(`${input.statementDate}T00:00:00.000Z`) } : {}),
   };
   stampAccount(payment, account, doc.currency ?? "AED");
   const lateNow = await lateForDate(orgId, late, input.paidOn, null, null);
@@ -2323,6 +2346,7 @@ export async function recordPayment(
   const added = ((doc.payments as unknown as { _id: unknown }[]) ?? []).at(-1);
   if (added && lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, added));
   if (added) await syncPaymentLine(doc as never, added._id);
+  if (added && input.statementDate) await stampPaymentStatementDate(orgId, doc._id, String(added._id));
   await doc.populate("tagIds", "name color");
   // More of an enrolment paid opens more of its course in the LMS.
   void syncLmsAccess(doc);

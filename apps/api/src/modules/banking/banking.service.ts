@@ -1254,14 +1254,45 @@ export async function updateReconciliation(
 async function writeStatementDates(orgId: string, ids: Types.ObjectId[], given: Map<string, Date> | undefined): Promise<void> {
   if (!ids.length) return;
   const org = new Types.ObjectId(orgId);
-  const lines = await BankTransaction.find({ _id: { $in: ids }, organizationId: org }).select("date").lean<{ _id: Types.ObjectId; date: Date }[]>();
+  const lines = await BankTransaction.find({ _id: { $in: ids }, organizationId: org }).select("date statementDate").lean<{ _id: Types.ObjectId; date: Date; statementDate?: Date | null }[]>();
   if (!lines.length) return;
-  const dayOf = (l: { _id: Types.ObjectId; date: Date }) => given?.get(String(l._id)) ?? new Date(`${dateOnly(l.date)}T00:00:00.000Z`);
+  // The reconciliation's own date for it, else one typed in on its expense or payment beforehand (2026-11-07), else its date.
+  const dayOf = (l: { _id: Types.ObjectId; date: Date; statementDate?: Date | null }) =>
+    given?.get(String(l._id)) ?? l.statementDate ?? new Date(`${dateOnly(l.date)}T00:00:00.000Z`);
   await BankTransaction.bulkWrite(lines.map((l) => ({ updateOne: { filter: { _id: l._id }, update: { $set: { statementDate: dayOf(l) } } } })));
   const { Expense } = await import("../expense/expense.model");
   await Expense.bulkWrite(lines.map((l) => ({
     updateMany: { filter: { organizationId: org, bankTransactionId: l._id }, update: { $set: { statementDate: dayOf(l) } } },
   })));
+  // An invoice payment's line: the payment shows it too (2026-11-07).
+  const { Invoice } = await import("../invoice/invoice.model");
+  await Invoice.bulkWrite(lines.map((l) => ({
+    updateMany: {
+      filter: { organizationId: org, "payments.bankTransactionId": l._id },
+      update: { $set: { "payments.$[p].statementDate": dayOf(l) } },
+      arrayFilters: [{ "p.bankTransactionId": l._id }],
+    },
+  })));
+}
+
+/**
+ * A statement date typed on an expense or a payment, put on its line in Banking (2026-11-07) — so reconciling that
+ * line starts from it. A reconciled line keeps what its reconciliation gave it.
+ */
+export async function stampLineStatementDate(orgId: string, lineId: unknown, date: Date | null): Promise<void> {
+  if (!lineId) return;
+  await BankTransaction.updateOne(
+    { _id: lineId, organizationId: new Types.ObjectId(orgId), isReconciled: { $ne: true } },
+    { $set: { statementDate: date } },
+  );
+}
+
+/** A reconciled line's statement date, to refuse changing it anywhere but its reconciliation. Null: not reconciled. */
+export async function reconciledStatementDate(orgId: string, lineId: unknown): Promise<string | null> {
+  if (!lineId) return null;
+  const l = await BankTransaction.findOne({ _id: lineId, organizationId: new Types.ObjectId(orgId), isReconciled: true })
+    .select("statementDate date").lean<{ statementDate?: Date | null; date: Date } | null>();
+  return l ? dateOnly(l.statementDate ?? l.date) : null;
 }
 
 export async function completeReconciliation(

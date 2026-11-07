@@ -28,7 +28,7 @@ const { Expense } = await import("../modules/expense/expense.model");
 const { BankTransaction } = await import("../modules/banking/bank-transaction.model");
 const ex = await import("../modules/expense/expense.service");
 const banking = await import("../modules/banking/banking.service");
-const { createExpenseSchema, expenseQuerySchema, updateReconciliationSchema } = await import("@delta/shared");
+const { createExpenseSchema, expenseQuerySchema, updateReconciliationSchema, updateExpenseSchema } = await import("@delta/shared");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -127,6 +127,33 @@ await BankTransaction.updateOne({ _id: oldLine }, { $set: { isReconciled: true, 
 const todo = await BankTransaction.find({ accountId: bank, isReconciled: true, statementDate: null }).select("_id").lean();
 check("a line reconciled before: the one without a statement date", todo.length === 1 && String(todo[0]?._id) === oldLine, j(todo));
 check("…petty cash lines are never asked", (await BankTransaction.countDocuments({ accountId: petty, statementDate: { $ne: null } })) === 0);
+
+step("5. Typed while editing, before reconciling (2026-11-07)");
+const zoom = await expense("Card — Zoom", 4_200, { paymentMethod: "card", bankAccountId: String(bank), paidOn: D0 });
+const zoomLine = await lineOf(zoom.id);
+const edited = await ex.updateExpense(org, zoom.id, updateExpenseSchema.parse({ statementDate: D2 }), { all: true } as never);
+check("the Edit form's statement date: on the expense, and on its bank line", edited.statementDate === D2
+  && (await BankTransaction.findById(zoomLine).lean<any>())?.statementDate?.toISOString().slice(0, 10) === D2, j(edited));
+// An invoice payment into the same account, its statement date typed on the payment (the payment dialog's field).
+const { Invoice } = await import("../modules/invoice/invoice.model");
+const payLine = await BankTransaction.create({ organizationId: ORG, accountId: bank, accountName: "Delta Bank", currency: "AED", date: new Date(`${D1}T00:00:00.000Z`),
+  description: "IN-1 · payment", reference: "IN-1", amountMinor: 50_000, type: "credit", runningBalanceMinor: 0, status: "matched" });
+const invId = new Types.ObjectId(), payId = new Types.ObjectId();
+await Invoice.collection.insertOne({ _id: invId, organizationId: ORG, invoiceNumber: "IN-1", status: "paid", currency: "AED", totalMinor: 50_000,
+  payments: [{ _id: payId, method: "bank_transfer", amountMinor: 50_000, paidOn: new Date(`${D1}T00:00:00.000Z`), bankAccountId: bank, bankTransactionId: payLine._id, statementDate: null }] } as never);
+await banking.stampLineStatementDate(org, payLine._id, new Date(`${D2}T00:00:00.000Z`));
+check("a payment's typed date goes on its line too", (await BankTransaction.findById(payLine._id).lean<any>())?.statementDate?.toISOString().slice(0, 10) === D2);
+const s5 = await banking.startReconciliation(org, String(bank), { statementDate: D3, statementBalanceMinor: 0, notes: "" } as never);
+await banking.updateReconciliation(org, s5.id, updateReconciliationSchema.parse({ reconciledTransactionIds: [zoomLine, String(payLine._id)] }));
+await banking.completeReconciliation(org, s5.id, "Accountant");
+check("reconciled without a date of its own: the typed one stands (" + D2 + "), not the line's day", (await raw(zoom.id)).statementDate?.toISOString().slice(0, 10) === D2
+  && (await BankTransaction.findById(zoomLine).lean<any>())?.statementDate?.toISOString().slice(0, 10) === D2);
+const pay = ((await Invoice.findById(invId).lean<any>())?.payments ?? [])[0];
+check("…and the invoice payment shows its statement date from the reconciliation", pay?.statementDate?.toISOString().slice(0, 10) === D2, j(pay));
+why = await refused(ex.updateExpense(org, zoom.id, updateExpenseSchema.parse({ statementDate: D1 }), { all: true } as never), /reconciled with the statement date/);
+check("once reconciled, another date on the Edit form is refused — reopen the reconciliation", !why, why);
+check("…the same date again is fine", (await ex.updateExpense(org, zoom.id, updateExpenseSchema.parse({ statementDate: D2, description: "Card — Zoom (team)" }), { all: true } as never)).description === "Card — Zoom (team)");
+check("…the reconciled line's date is the reconciliation's, wherever asked", (await banking.reconciledStatementDate(org, zoomLine)) === D2 && (await banking.reconciledStatementDate(org, laterLine)) === null);
 
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();

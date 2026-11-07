@@ -737,6 +737,16 @@ export async function updateExpense(
   if (doc.isModified(["amountMinor", "taxPct", "taxMinor", "totalMinor", "currency", "expenseDate", "paidOn", "paymentMethod", "bankAccountId"])) {
     await refusePayrollExpense(orgId, doc, "given another amount, date, method or account");
   }
+  // Its statement date typed while editing (2026-11-07): not on a line a reconciliation dated — that one is its own.
+  const typedStatement = (input as { statementDate?: string | null }).statementDate;
+  if (typedStatement !== undefined) {
+    const { reconciledStatementDate } = await import("../banking/banking.service");
+    const fixed = await reconciledStatementDate(orgId, d.bankTransactionId);
+    const had = d.statementDate ? new Date(d.statementDate as Date).toISOString().slice(0, 10) : null;
+    if (fixed && (typedStatement ?? null) !== had && typedStatement !== fixed) {
+      throw new AppError("CONFLICT", `Its line in Banking was reconciled with the statement date ${fixed} — reopen that reconciliation to change it.`);
+    }
+  }
   // Its line in the bank follows — unless a bank statement was reconciled against it.
   if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
   // Waiting for a manager again, a paid one leaves its account until it is approved.
@@ -745,7 +755,21 @@ export async function updateExpense(
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, lateInfo(doc));
   else if (lateNow?.withdraw) await withdrawLateFor(orgId, "expense", doc._id);
   if (droppedKeys.length) await deleteUnusedFiles(orgId, droppedKeys, doc._id);
+  if (typedStatement !== undefined) {
+    // After its line is in step — a new line (or none) would have cleared it.
+    await syncExpenseLine(orgId, doc._id);
+    await applyExpenseStatementDate(orgId, doc._id, typedStatement ?? null);
+  }
   return syncedDTO(orgId, doc._id);
+}
+
+/** The statement date on the expense and on its line in Banking, unless a reconciliation dated that line (2026-11-07). */
+async function applyExpenseStatementDate(orgId: string, id: unknown, day: string | null): Promise<void> {
+  const date = day ? new Date(`${day}T00:00:00.000Z`) : null;
+  const doc = await Expense.findOneAndUpdate({ _id: id, organizationId: orgId }, { $set: { statementDate: date } }, { new: true })
+    .select("bankTransactionId").lean<{ bankTransactionId?: unknown } | null>();
+  const { stampLineStatementDate } = await import("../banking/banking.service");
+  await stampLineStatementDate(orgId, doc?.bankTransactionId, date);
 }
 
 /** What the managers are shown of it. */
@@ -1017,7 +1041,7 @@ export async function setExpenseStatementDate(orgId: string, id: string, input: 
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).select("status").lean<{ _id: Types.ObjectId; status: string }>();
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (["voided", "rejected"].includes(doc.status)) throw new AppError("CONFLICT", "A voided or rejected expense has no statement date");
-  await Expense.updateOne({ _id: doc._id }, { $set: { statementDate: input.statementDate ? new Date(input.statementDate) : null } });
+  await applyExpenseStatementDate(orgId, doc._id, input.statementDate ?? null);
   const fresh = await Expense.findOne({ _id: doc._id, organizationId: orgId }).populate("departmentId", "name");
   return toDTO(fresh as unknown as ExpenseDoc);
 }

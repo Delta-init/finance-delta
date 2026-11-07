@@ -63,6 +63,10 @@ const formSchema = z.object({
   bankAccountId: z.string().default(NO_ACCOUNT),
   paymentMethod: z.enum(["bank_transfer", "cash", "cheque", "card", "online"]).optional(),
   reference: z.string().optional(),
+  /** The day the bank statement shows it, on an edit of a paid one (2026-11-07); "" for none. */
+  statementDate: z.string().optional(),
+  /** Its paid day, only to decide whether the statement date is offered. */
+  paidOn: z.string().optional(),
   requiresApproval: z.boolean().default(false),
   isRecurring: z.boolean().default(false),
   recurrenceFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
@@ -226,6 +230,8 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
   const [paidOnTyped, setPaidOnTyped] = useState("");
   const needsApproval = watch("requiresApproval");
   const offersPaidNow = !isEdit && !!pickedAccount && !needsApproval;
+  // The bank statement's day for it (2026-11-07): on an edit of one paid from an account that sends statements.
+  const offersStatementDate = isEdit && !!initialValues?.paidOn && !!pickedAccount && pickedAccount.accountType !== "petty_cash";
   const paidOn = paidOnTyped || watch("expenseDate");
   // What was typed before there was a list to pick from — kept while no account is picked.
   const typedAccount = (initialValues?.bankAccountId ?? NO_ACCOUNT) === NO_ACCOUNT ? (initialValues?.paymentAccount ?? "").trim() : "";
@@ -301,7 +307,10 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
 
     try {
       if (isEdit && expenseId) {
-        await updateExpense.mutateAsync(input);
+        // Its statement date, when it is offered and was changed (2026-11-07): put on its bank line too.
+        const typed = values.statementDate ?? "";
+        const statement = offersStatementDate && typed !== (initialValues?.statementDate ?? "") ? { statementDate: typed || null } : {};
+        await updateExpense.mutateAsync({ ...input, ...statement });
         toast.success("Expense updated");
         router.push(`/expenses/${expenseId}`);
       } else {
@@ -586,6 +595,15 @@ export function ExpenseForm({ mode, expenseId, initialValues }: ExpenseFormProps
             <Label>Reference</Label>
             <Input {...register("reference")} placeholder="Receipt #, invoice #, etc." />
           </div>
+          {offersStatementDate && (
+            <div className="space-y-1.5">
+              <Label htmlFor="expense-statement-date">Statement date</Label>
+              <Input id="expense-statement-date" type="date" {...register("statementDate")} />
+              <p className="text-xs text-foreground-muted">
+                The day {pickedAccount?.accountName}&rsquo;s statement shows it. Reconciling the account starts from it; once reconciled, it is the reconciliation&rsquo;s.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Project / Cost Centre */}

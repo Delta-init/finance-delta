@@ -138,6 +138,12 @@ export const recordPaymentSchema = z.object({
   bankAmountMinor: z.coerce.number().int().positive().optional(),
   /** Why it is typed in late — asked for when its date is more than the organization's late-entry days back. */
   lateReason: lateReasonSchema,
+  /**
+   * The day the bank statement shows it (the user, 2026-11-07: "mark the settlement date while editing, not only on
+   * reconcile") — put on its line in Banking too; "" or null takes it off. A reconciled line keeps the date its
+   * reconciliation gave it.
+   */
+  statementDate: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date")]).nullable().optional(),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 
@@ -531,6 +537,8 @@ export const paymentSchema = z.object({
   proofUrl: z.string().optional(),
   /** The receipt's number (RCT-00001), on a payment one was issued for — a course payment from CS Portal. */
   receiptNumber: z.string().optional(),
+  /** The day the bank statement shows it — typed in, or from reconciling its line (2026-11-07). */
+  statementDate: z.string().optional(),
   /** The Banking account it went into, what landed there in its currency, whether its line is in, or why not. */
   bankAccountId: z.string().optional(),
   bankAmountMinor: z.number().optional(),

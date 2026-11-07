@@ -2,7 +2,7 @@
 
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, Upload, Wallet, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, Search, Upload, Wallet, X } from "lucide-react";
 import { EXPENSE_DEFAULTS, type CsCommissionKind, type CsCommissionPerson, type CsCommissionStage, type UploadedExpenseFile } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,9 @@ import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useFileDrop } from "@/components/ui/file-drop";
-import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission } from "@/features/cs-commission/api";
+import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, useCsCommissionInvoice, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission } from "@/features/cs-commission/api";
+import { InvoiceDetail } from "@/features/invoices/InvoiceDetail";
+import { useOrganization } from "@/features/organization/api";
 
 /*
  * The CS Portal's commission (the user, 2026-11-03: "CS commission in finance, beside the CRM commission, in AED").
@@ -140,6 +142,8 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
   onApprove: (p: CsCommissionPerson) => void; onPay: (p: CsCommissionPerson) => void; onRecord: (p: CsCommissionPerson) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  // A credit's course invoice, in a pop-up (2026-11-07).
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const revoke = useRevokeCsCommission();
   const takeBack = async (p: CsCommissionPerson) => {
     try {
@@ -231,28 +235,7 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                         {!p.credits.length ? (
                           <p className="text-xs text-foreground-muted">No credits in the CS Portal for this period now.</p>
                         ) : (
-                          <table className="w-full text-xs">
-                            <thead className="text-left text-foreground-muted">
-                              <tr>
-                                <th className="py-1 pr-3 font-medium">Date</th><th className="py-1 pr-3 font-medium">Student</th><th className="py-1 pr-3 font-medium">For</th>
-                                <th className="py-1 pr-3 font-medium">Level</th><th className="py-1 pr-3 text-right font-medium">On</th>
-                                <th className="py-1 pr-3 text-right font-medium">%</th><th className="py-1 text-right font-medium">Commission</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {p.credits.map((c) => (
-                                <tr key={c.id} className="border-t border-border/60">
-                                  <td className="py-1 pr-3">{c.date.slice(0, 10)}</td>
-                                  <td className="py-1 pr-3">{c.student || "—"}{c.txnId ? <span className="text-foreground-muted"> · {c.txnId}</span> : null}</td>
-                                  <td className="py-1 pr-3">{METHOD[c.method] ?? c.method}{c.initiator ? <span className="text-foreground-muted"> · by {c.initiator}</span> : null}</td>
-                                  <td className="py-1 pr-3">{c.level}{c.position ? ` · ${c.position}` : ""}</td>
-                                  <td className="py-1 pr-3 text-right font-numeric">{usd(c.baseUsd)}</td>
-                                  <td className="py-1 pr-3 text-right tabular-nums">{c.percentage}%</td>
-                                  <td className="py-1 text-right font-numeric">{usd(c.amountUsd)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          <CreditsBreakdown p={p} onInvoice={setInvoiceId} />
                         )}
                       </td>
                     </tr>
@@ -263,7 +246,88 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
           </tbody>
         </table>
       </div>
+      <CsInvoicePopup id={invoiceId} onClose={() => setInvoiceId(null)} />
     </Card>
+  );
+}
+
+/**
+ * A CS's credits for the period (the user, 2026-11-07: "show it in AED, and click the invoice to see it, like the CRM
+ * commission breakdown"): in the CS's currency at the CS Portal's rate, the USD beside it; the course invoice behind a
+ * credit opens in a pop-up; a search over student, invoice and transaction, on what the page has.
+ */
+function CreditsBreakdown({ p, onInvoice }: { p: CsCommissionPerson; onInvoice: (id: string) => void }) {
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
+  const shown = p.credits.filter((c) => !needle || [c.student, c.txnId, c.invoice?.number, c.initiator, METHOD[c.method] ?? c.method]
+    .some((v) => (v ?? "").toLowerCase().includes(needle)));
+  const total = shown.reduce((t, c) => t + (c.amountMinor ?? 0), 0);
+  const cur = p.currency;
+  // From a finance API older than the AED figures: the USD at the CS Portal's rate, as the totals are.
+  const inCur = (minor: number | undefined, usdValue: number) => money(minor ?? Math.round(usdValue * (cur === "INR" ? 100 : 3.67) * 100), cur);
+  return (
+    <div className="space-y-2">
+      <div className="relative w-64 max-w-full">
+        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search student, invoice, transaction…" className="h-8 pl-7 text-xs" />
+      </div>
+      <table className="w-full text-xs">
+        <thead className="text-left text-foreground-muted">
+          <tr>
+            <th className="py-1 pr-3 font-medium">Date</th><th className="py-1 pr-3 font-medium">Student</th><th className="py-1 pr-3 font-medium">Invoice</th>
+            <th className="py-1 pr-3 font-medium">For</th><th className="py-1 pr-3 font-medium">Level</th><th className="py-1 pr-3 text-right font-medium">On</th>
+            <th className="py-1 pr-3 text-right font-medium">%</th><th className="py-1 text-right font-medium">Commission</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((c) => (
+            <tr key={c.id} className="border-t border-border/60 align-top">
+              <td className="py-1 pr-3">{c.date.slice(0, 10)}</td>
+              <td className="py-1 pr-3">{c.student || "—"}{c.txnId ? <span className="text-foreground-muted"> · {c.txnId}</span> : null}</td>
+              <td className="py-1 pr-3">
+                {c.invoice
+                  ? <button type="button" onClick={() => onInvoice(c.invoice!.id)} className="text-primary hover:underline">{c.invoice.number || "Invoice"}</button>
+                  : <span className="text-foreground-muted">—</span>}
+              </td>
+              <td className="py-1 pr-3">{METHOD[c.method] ?? c.method}{c.initiator ? <span className="text-foreground-muted"> · by {c.initiator}</span> : null}</td>
+              <td className="py-1 pr-3">{c.level}{c.position ? ` · ${c.position}` : ""}</td>
+              <td className="py-1 pr-3 text-right font-numeric">
+                {inCur(c.baseMinor, c.baseUsd)}<span className="block text-[11px] text-foreground-muted">{usd(c.baseUsd)}</span>
+              </td>
+              <td className="py-1 pr-3 text-right tabular-nums">{c.percentage}%</td>
+              <td className="py-1 text-right font-numeric font-medium">
+                {inCur(c.amountMinor, c.amountUsd)}<span className="block text-[11px] font-normal text-foreground-muted">{usd(c.amountUsd)}</span>
+              </td>
+            </tr>
+          ))}
+          {!shown.length && <tr><td colSpan={8} className="py-3 text-center text-foreground-muted">Nothing matches.</td></tr>}
+        </tbody>
+        {needle && shown.length > 0 && (
+          <tfoot>
+            <tr className="border-t border-border font-medium">
+              <td colSpan={7} className="py-1 pr-3">{shown.length} of {p.credits.length} credits</td>
+              <td className="py-1 text-right font-numeric">{money(total, cur)}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+/** A credit's course invoice, whole and read-only, as the invoice page shows it (2026-11-07). */
+function CsInvoicePopup({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const { data, isLoading, error } = useCsCommissionInvoice(id);
+  const { data: org } = useOrganization();
+  return (
+    <Dialog open={!!id} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-0">
+        <DialogHeader className="sr-only"><DialogTitle>Invoice</DialogTitle></DialogHeader>
+        {isLoading ? <p className="p-6 text-sm text-foreground-muted">Loading…</p>
+          : error || !data ? <p className="p-6 text-sm text-danger">{error instanceof ApiError ? error.message : "The invoice could not be loaded."}</p>
+          : <InvoiceDetail id={id!} preloaded={{ invoice: data.invoice, orgName: data.orgName, sameOrg: !!org && data.orgId === org.id }} />}
+      </DialogContent>
+    </Dialog>
   );
 }
 

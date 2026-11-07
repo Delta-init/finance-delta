@@ -42,7 +42,7 @@ const refusal = async (p: Promise<unknown>) => p.then(() => "", (e: Error & { co
 /* ── A stand-in CS Portal: the period's people and their approval chain, as finance/csCommission.ts answers ── */
 const MEERA = "65a000000000000000000001", BINDU = "65a000000000000000000002", KIRAN = "65a000000000000000000003", LINA = "65a000000000000000000004";
 const stage = (status = "pending") => ({ status, by: "", at: null });
-const credit = (id: string, usd: number) => ({ id, date: "2026-09-05T10:00:00.000Z", student: "Student", method: "bonus_with", level: 1, position: "Junior", percentage: 10, base_usd: usd * 10, amount_usd: usd, status: "accrued", txn_id: `TX-${id}`, initiator: "Someone" });
+const credit = (id: string, usd: number) => ({ id, date: "2026-09-05T10:00:00.000Z", student: "Student", method: "bonus_with", level: 1, position: "Junior", percentage: 10, base_usd: usd * 10, amount_usd: usd, status: "accrued", txn_id: `TX-${id}`, initiator: "Someone", funding_id: `F-${id}` });
 const portal = {
   mode: "ok" as "ok" | "old" | "down",
   asked: [] as Array<{ path: string; signed: boolean; body: any }>,
@@ -131,6 +131,36 @@ check("Kiran: still with the broker admin — waiting", row(v, KIRAN).state === 
 const aed = v.totals.find((t) => t.currency === "AED"), inr = v.totals.find((t) => t.currency === "INR");
 check("totals per currency: AED 495.45 (367 + 91.75 + 36.70), INR 4,000", aed?.amountMinor === 49545 && inr?.amountMinor === 400000, j(v.totals));
 check("Asha pays, doesn't approve; Mona approves", !v.canApprove && v.canPay && (await period(MONA)).canApprove);
+
+step("1b. Each credit in the CS's currency, and the course invoice behind it (2026-11-07)");
+const custId = new mongoose.Types.ObjectId();
+await mongoose.connection.db!.collection("customers").insertOne({ _id: custId, organizationId: org._id, name: "Student", email: "student@e2e-cs.test", createdAt: new Date(), updatedAt: new Date() });
+const invoiceDoc = (number: string, source: string) => ({
+  _id: new mongoose.Types.ObjectId(), organizationId: org._id, invoiceNumber: number, customerId: custId, customerName: "Student", salespersonId: new mongoose.Types.ObjectId(ASHA), salespersonName: "Asha Accounts", status: "paid", currency: "AED",
+  issueDate: new Date("2026-09-05"), dueDate: new Date("2026-09-05"), lineItems: [], subtotalMinor: 220200, discountMinor: 0, taxTotalMinor: 0, totalMinor: 220200,
+  amountPaidMinor: 220200, balanceMinor: 0, payments: [], external: { source, externalId: number }, createdAt: new Date(), updatedAt: new Date(),
+});
+const [invA, invB, invC] = [invoiceDoc("IN-CS-1", "tetra-course"), invoiceDoc("IN-CS-2", "tetra-course"), invoiceDoc("IN-CRM-1", "crm")];
+await mongoose.connection.db!.collection("invoices").insertMany([invA, invB, invC]);
+const deposit = (externalId: string, txn: string, invoiceId: unknown, number: string) => ({
+  organizationId: org._id, externalId, type: "BONUS", status: "approved", amountMinor: 54496, currency: "USD", student: { name: "Student" },
+  decision: { transactionId: txn }, courseInvoice: { invoiceId, invoiceNumber: number }, createdAt: new Date(), updatedAt: new Date(),
+});
+await mongoose.connection.db!.collection("tetradeposits").insertMany([
+  deposit("F-c1", "", invA._id, "IN-CS-1"),
+  // Found by its transaction id, the CS Portal not saying which request (an older CS Portal).
+  deposit("SOMETHING-ELSE", "TX-c2", invB._id, "IN-CS-2"),
+]);
+v = await period();
+const mc = (id: string) => row(v, MEERA).credits.find((c) => c.id === id)!;
+check("Meera's credits in AED at 3.67: on AED 2,202.00, commission AED 220.20 — the USD kept beside", mc("c1").baseMinor === 220200 && mc("c1").amountMinor === 22020 && mc("c1").amountUsd === 60, j(mc("c1")));
+check("…Bindu's in INR at 100", row(v, BINDU).credits[0]!.amountMinor === 400000, j(row(v, BINDU).credits[0]));
+check("the course invoice behind a credit: by its funding request", mc("c1").invoice?.number === "IN-CS-1" && mc("c1").invoice?.id === String(invA._id) && mc("c1").fundingId === "F-c1", j(mc("c1").invoice));
+check("…or by its transaction id, the CS Portal not saying", mc("c2").invoice?.number === "IN-CS-2", j(mc("c2").invoice));
+check("…none where there is none", row(v, KIRAN).credits[0]!.invoice === null);
+const pop = await svc.csCommissionInvoice(String(invA._id));
+check("the pop-up: the whole invoice, from its organization", pop.invoice.invoiceNumber === "IN-CS-1" && pop.orgId === ORG && pop.orgName === "Delta HQ E2E", j({ n: pop.invoice.invoiceNumber, o: pop.orgName }));
+check("…not any other invoice", /not found/i.test(await refusal(svc.csCommissionInvoice(String(invC._id)))) && /not found/i.test(await refusal(svc.csCommissionInvoice("nope"))));
 
 step("2. Approved");
 check("not a manager: refused", /tagged Manager/.test(await refusal(approve(ASHA, MEERA))));

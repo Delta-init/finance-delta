@@ -36,3 +36,8 @@ export const pay = asyncHandler(async (req, res) => {
 export const recordPayment = asyncHandler(async (req, res) => {
   ok(res, await svc.recordCsCommissionPayment(org(req), uid(req), sa(req), req.body));
 });
+
+/** A credit's course invoice, read-only, for the pop-up (2026-11-07). */
+export const invoice = asyncHandler(async (req, res) => {
+  ok(res, await svc.csCommissionInvoice(String(req.params.id ?? "")));
+});

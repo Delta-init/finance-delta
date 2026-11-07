@@ -366,6 +366,8 @@ export interface PortalCsCommissionPerson {
   credits: Array<{
     id: string; date: string; student: string; method: string; level: number; position: string; percentage: number;
     base_usd: number; amount_usd: number; status: string; txn_id: string; initiator: string;
+    /** The funding request it came from (2026-11-07) — from a CS Portal that sends it. */
+    funding_id?: string;
   }>;
   approval: {
     overall_status: string;

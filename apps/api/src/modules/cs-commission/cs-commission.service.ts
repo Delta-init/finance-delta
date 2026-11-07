@@ -18,6 +18,9 @@ import { nextNumber } from "../sequence/sequence.service";
 import { isManager } from "../late-entry/late-entry.service";
 import type { ParsedFile } from "../../middleware/upload";
 import { CsCommissionPayout } from "./cs-commission-payout.model";
+import { Invoice } from "../invoice/invoice.model";
+import { TetraDepositModel } from "../tetra-deposit/tetra-deposit.model";
+import { COURSE_INVOICE_SOURCE } from "../tetra-deposit/course-invoice";
 
 /*
  * The CS Portal's commission in finance (the user, 2026-11-03) — see cs-commission.schema.ts. A period's commission
@@ -94,6 +97,32 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
     };
   };
 
+  // Each credit's course invoice (the user, 2026-11-07: "click the invoice and see it, as the CRM commission's") — by
+  // the funding request it came from (finance's bonus record of it), else by its transaction id and student.
+  const credits = portal.people.flatMap((p) => p.credits);
+  const fundingIds = [...new Set(credits.map((c) => c.funding_id ?? "").filter(Boolean))];
+  const txnIds = [...new Set(credits.map((c) => c.txn_id).filter(Boolean))];
+  const requests = fundingIds.length || txnIds.length
+    ? await TetraDepositModel.find({ $or: [
+      ...(fundingIds.length ? [{ externalId: { $in: fundingIds } }] : []),
+      ...(txnIds.length ? [{ "decision.transactionId": { $in: txnIds } }] : []),
+    ], "courseInvoice.invoiceId": { $exists: true } }).select("externalId decision.transactionId student.name courseInvoice.invoiceId").lean<any[]>()
+    : [];
+  const invoiceIds = [...new Set(requests.map((r) => String(r.courseInvoice?.invoiceId ?? "")).filter(Boolean))];
+  const invoices = invoiceIds.length
+    ? await Invoice.find({ _id: { $in: invoiceIds } }).select("invoiceNumber organizationId").lean<any[]>()
+    : [];
+  const invoiceById = new Map(invoices.map((i) => [String(i._id), { id: String(i._id), number: String(i.invoiceNumber ?? ""), orgId: String(i.organizationId) }]));
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  const invoiceOf = (c: { fundingId: string; txnId: string; student: string }) => {
+    let r = c.fundingId ? requests.find((x) => x.externalId === c.fundingId) : undefined;
+    if (!r && c.txnId) {
+      const same = requests.filter((x) => x.decision?.transactionId === c.txnId);
+      r = same.length === 1 ? same[0] : same.find((x) => norm(String(x.student?.name ?? "")) === norm(c.student));
+    }
+    return r ? invoiceById.get(String(r.courseInvoice?.invoiceId)) ?? null : null;
+  };
+
   const people: CsCommissionPerson[] = portal.people.map((p) => {
     const payout = byRecipient.get(p.recipient_id) ?? null;
     const currency = currencyOf(p.location);
@@ -102,7 +131,9 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
       amountMinor: minorOf(p.total_usd, currency),
       credits: p.credits.map((c) => ({
         id: c.id, date: c.date, student: c.student, method: c.method, level: c.level, position: c.position, percentage: c.percentage,
-        baseUsd: c.base_usd, amountUsd: c.amount_usd, status: c.status, txnId: c.txn_id, initiator: c.initiator,
+        baseUsd: c.base_usd, amountUsd: c.amount_usd, baseMinor: minorOf(c.base_usd, currency), amountMinor: minorOf(c.amount_usd, currency),
+        status: c.status, txnId: c.txn_id, initiator: c.initiator, fundingId: c.funding_id ?? "",
+        invoice: invoiceOf({ fundingId: c.funding_id ?? "", txnId: c.txn_id, student: c.student }),
       })),
       approval: {
         overall: p.approval.overall_status, broker: p.approval.broker, academic: p.approval.academic, finance: p.approval.finance,
@@ -165,6 +196,20 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
     throw err;
   }
   return { approved: true, alreadyReleased: done.already };
+}
+
+/**
+ * A credit's course invoice, whole, for the CS commission page's pop-up (the user, 2026-11-07: "click the invoice and
+ * see it, like the CRM commission breakdown") — from any organization, as the page reads every CS; only an invoice a
+ * CS Portal course payment made, nothing else. Read-only.
+ */
+export async function csCommissionInvoice(id: string) {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Invoice not found");
+  const inv = await Invoice.findById(id).select("organizationId external.source").lean<any>();
+  if (!inv || inv.external?.source !== COURSE_INVOICE_SOURCE) throw new AppError("NOT_FOUND", "Invoice not found");
+  const { getInvoice } = await import("../invoice/invoice.service");
+  const org = await Organization.findById(inv.organizationId).select("name").lean<{ name?: string } | null>();
+  return { invoice: await getInvoice(String(inv.organizationId), id, { all: true }), orgId: String(inv.organizationId), orgName: org?.name ?? "" };
 }
 
 /** A manager takes an approval back — only before it is paid; the CS Portal's Finance step goes back with it. */

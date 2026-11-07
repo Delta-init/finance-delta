@@ -14,6 +14,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requirePermission("commission:read"), c.period);
+router.get("/invoices/:id", requirePermission("commission:read"), c.invoice);
 router.post("/approve", requirePermission("commission:read"), validateBody(approveCsCommissionSchema), c.approve);
 router.post("/revoke", requirePermission("commission:read"), validateBody(revokeCsCommissionSchema), c.revoke);
 router.post("/uploads", requirePermission("commission:write"), parseUpload, c.upload);

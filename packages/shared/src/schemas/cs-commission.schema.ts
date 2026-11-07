@@ -89,9 +89,16 @@ export interface CsCommissionCredit {
   percentage: number;
   baseUsd: number;
   amountUsd: number;
+  /** The same in the CS's currency (AED, INR for Bangalore) at the CS Portal's rate, minor units (2026-11-07). */
+  baseMinor: number;
+  amountMinor: number;
   status: string;
   txnId: string;
   initiator: string;
+  /** The CS Portal funding request it came from, when the CS Portal says. */
+  fundingId: string;
+  /** The finance invoice its course payment went on, if it was one (2026-11-07) — opens in a pop-up. */
+  invoice: { id: string; number: string; orgId: string } | null;
 }
 
 export interface CsCommissionStage { status: string; by: string; at: string | null }

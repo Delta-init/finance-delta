@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, UploadedExpenseFile } from "@delta/shared";
+import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, Invoice, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, UploadedExpenseFile } from "@delta/shared";
 import { CS_COMMISSION_PERIOD } from "@delta/shared";
 import { api } from "@/lib/api";
 
@@ -64,5 +64,15 @@ export function useRecordCsCommissionPayment() {
       void qc.invalidateQueries({ queryKey: KEY });
       void qc.invalidateQueries({ queryKey: ["expenses"] });
     },
+  });
+}
+
+/** A credit's course invoice, read-only, for the pop-up (2026-11-07). */
+export function useCsCommissionInvoice(id: string | null) {
+  return useQuery({
+    queryKey: [...KEY, "invoice", id],
+    queryFn: () => api.get<{ invoice: Invoice; orgId: string; orgName: string }>(`cs-commission/invoices/${id}`),
+    enabled: !!id,
+    retry: false,
   });
 }

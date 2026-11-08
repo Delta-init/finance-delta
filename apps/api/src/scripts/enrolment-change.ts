@@ -19,6 +19,10 @@
  *     [--email] [--write]
  *   bun src/scripts/enrolment-change.ts --undo <file>
  *
+ * --org <name | code | id>: whose invoice, when more than one organization has that number (each numbers its own:
+ * 2026-11-08, IN-00031 is both a Delta Banglore enrolment and a void Delta International invoice). Without it, two of
+ * the same number are refused rather than one picked.
+ *
  * Without --item it lists the catalogue's items whose name has the words of --course in it, to choose from.
  */
 import mongoose, { Types } from "mongoose";
@@ -31,6 +35,8 @@ export type Upload = (key: string, file: { buffer: Buffer; mimeType: string; ori
 export interface NewPayment { amountMinor: number; method: string; paidOn: string; reference: string; file: string }
 export interface ChangeOpts {
   invoice: string; course: string; item?: string; priceMinor: number;
+  /** Whose invoice (name, code or id), when several organizations have that number. */
+  org?: string;
   /** With item "none": the LMS courses the line opens, as the CRM maps the course (a course with no catalogue item). */
   lms?: string[];
   proof?: string; payments: NewPayment[]; email: boolean; write: boolean; undoFile?: string;
@@ -64,19 +70,29 @@ export function parsePay(v: string): NewPayment {
 }
 
 async function models() {
-  const [{ Invoice }, { Item }, { Customer }, { LmsProvision }] = await Promise.all([
+  const [{ Invoice }, { Item }, { Customer }, { LmsProvision }, { Organization }] = await Promise.all([
     import("../modules/invoice/invoice.model"), import("../modules/inventory/item.model"),
     import("../modules/customer/customer.model"), import("../modules/integrations/lms-provision.model"),
+    import("../modules/organization/organization.model"),
   ]);
-  return { Invoice, Item, Customer, LmsProvision } as Record<string, mongoose.Model<any>>;
+  return { Invoice, Item, Customer, LmsProvision, Organization } as Record<string, mongoose.Model<any>>;
 }
 
 const BEFORE_FIELDS = ["lineItems", "subtotalMinor", "discountTotalMinor", "taxBreakdown", "taxTotalMinor", "roundOffMinor", "totalMinor", "balanceMinor", "amountPaidMinor", "status", "enrolment", "payments"] as const;
 
 export async function changeEnrolment(o: ChangeOpts): Promise<{ lines: string[]; undoFile?: string; items?: string[] }> {
   const M = await models();
-  const inv: any = await M.Invoice!.findOne({ invoiceNumber: o.invoice.trim() }).lean();
-  if (!inv) throw new Error(`No invoice ${o.invoice}`);
+  // Each organization numbers its own invoices: the one meant, by --org when the number is in more than one.
+  const same: any[] = await M.Invoice!.find({ invoiceNumber: o.invoice.trim() }).lean();
+  const orgs: any[] = await M.Organization!.find({ _id: { $in: same.map((i) => i.organizationId) } }).select("name code").lean();
+  const orgName = (id: unknown) => orgs.find((x) => String(x._id) === String(id))?.name ?? String(id);
+  const wanted = o.org?.trim().toLowerCase();
+  const matches = wanted
+    ? same.filter((i) => { const g = orgs.find((x) => String(x._id) === String(i.organizationId)); return [g?.name, g?.code, String(i.organizationId)].some((v) => String(v ?? "").toLowerCase() === wanted); })
+    : same;
+  if (matches.length > 1) throw new Error(`${o.invoice} is in ${matches.length} organizations (${matches.map((i) => `${orgName(i.organizationId)}, ${i.status}`).join("; ")}) — say which with --org <name>`);
+  const inv: any = matches[0];
+  if (!inv) throw new Error(same.length ? `No invoice ${o.invoice} in ${o.org} — it is in ${same.map((i) => orgName(i.organizationId)).join(", ")}` : `No invoice ${o.invoice}`);
   const orgId = String(inv.organizationId);
   if (!inv.enrolment) throw new Error(`${o.invoice} is not an enrolment`);
   const approval = inv.approval?.state;
@@ -272,7 +288,7 @@ if (import.meta.main) {
     } else {
       const write = argv.includes("--write");
       const r = await changeEnrolment({
-        invoice: arg("--invoice"), course: arg("--course"), item: arg("--item") || undefined, lms: arg("--lms") ? arg("--lms").split(",") : undefined,
+        invoice: arg("--invoice"), org: arg("--org") || undefined, course: arg("--course"), item: arg("--item") || undefined, lms: arg("--lms") ? arg("--lms").split(",") : undefined,
         priceMinor: Math.round(Number(arg("--price")) * 100), proof: arg("--proof") || undefined,
         payments: args("--pay").map(parsePay), email: argv.includes("--email"), write,
       });

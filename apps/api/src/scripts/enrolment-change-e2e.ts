@@ -130,6 +130,16 @@ check("…with --lms: a plain line at 5,500 (no item), the enrolment's courses f
   && JSON.stringify(plain.enrolment.courses) === JSON.stringify([{ name: NEW, lmsCourseSlugs: [MBT, DWT] }])
   && ((await db.collection("lmsprovisions").findOne({ invoiceId: INV })) as any).extraCourses.some((e: any) => e.slug === DWT), show({ l: plain.lineItems[0], c: plain.enrolment.courses }));
 
+step("5. The same number in two organizations (2026-11-08)");
+const ORG2 = new Types.ObjectId();
+await db.collection("organizations").insertOne({ _id: ORG2, name: "Delta Other", code: "OTHER", baseCurrency: "AED" });
+await db.collection("invoices").insertOne({ _id: new Types.ObjectId(), organizationId: ORG2, invoiceNumber: "IN-00001", status: "void", currency: "AED", totalMinor: 1000, lineItems: [], payments: [] });
+check("two IN-00001s and no --org: refused, naming both", (await refused(changeEnrolment({ ...base, payments: [], proof: undefined, item: "none", lms: [MBT], write: false }), /in 2 organizations.*Delta HQ.*Delta Other.*--org/)) === "");
+r = await changeEnrolment({ ...base, payments: [], proof: undefined, item: "none", lms: [MBT], org: "delta hq", write: false });
+check("…--org by name: the Delta HQ one", r.lines[0]?.startsWith("IN-00001 · Test Student") === true, show(r.lines[0]));
+check("…--org by code: the other one (void: not an enrolment — refused)", (await refused(changeEnrolment({ ...base, payments: [], proof: undefined, item: "none", lms: [MBT], org: "other", write: false }), /not an enrolment/)) === "");
+check("…--org that has no such invoice: refused", (await refused(changeEnrolment({ ...base, payments: [], proof: undefined, item: "none", lms: [MBT], org: "Nowhere", write: false }), /No invoice IN-00001 in Nowhere/)) === "");
+
 await new Promise((r) => setTimeout(r, 500));
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

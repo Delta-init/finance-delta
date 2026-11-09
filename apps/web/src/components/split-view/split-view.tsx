@@ -5,13 +5,14 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ExternalLink, X } from "lucide-react";
+import { NO_SUBCATEGORY } from "@delta/shared";
 import { cn } from "@/lib/utils";
 
 /*
  * A split screen (the user, 2026-11-07: "click on it and the page opens there — split screen"): a record opens in a
  * pane beside the page it was clicked on, which stays where it was. The pane is in the address (`?pane=kind:id`, its
  * own settings under `p.`), so a refresh, Back or a shared link keeps it; a link inside it opens on the left and keeps
- * the pane; "Open full page" leaves for the record's own page. On a phone it covers the screen. Salespeople first —
+ * the pane; "Open full page" leaves for the record's own page. On a phone it covers the screen. Salespeople, and a category budget's expenses —
  * another kind is a line in PANES.
  */
 
@@ -21,6 +22,13 @@ export const PANE_KEY = "pane";
 export const PANE_PREFIX = "p.";
 
 const PersonDetail = dynamic(() => import("@/features/people/PersonDetail").then((m) => m.PersonDetail), {
+  loading: () => <p className="p-6 text-sm text-foreground-muted">Loading…</p>,
+});
+
+const ExpenseListPane = dynamic(() => import("@/features/expenses/ExpenseListPane").then((m) => m.ExpenseListPane), {
+  loading: () => <p className="p-6 text-sm text-foreground-muted">Loading…</p>,
+});
+const ExpensePane = dynamic(() => import("@/features/expenses/ExpenseListPane").then((m) => m.ExpensePane), {
   loading: () => <p className="p-6 text-sm text-foreground-muted">Loading…</p>,
 });
 
@@ -35,6 +43,27 @@ const PANES = {
       return `/reports/salesperson/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`;
     },
     render: (id: string) => <PersonDetail id={id} keyPrefix={PANE_PREFIX} embedded />,
+  },
+  /* A category budget's breakdown (2026-11-09): what a category (p.sub: one subcategory) spent from p.from to p.to,
+     in p.currency — and one of those expenses. The full page is the Expenses list with the same filters. */
+  expenses: {
+    label: "Expenses",
+    href: (id: string, q: URLSearchParams) => {
+      const p = new URLSearchParams({ category: id, status: "approved" });
+      const sub = q.get(PANE_PREFIX + "sub");
+      if (sub && sub !== NO_SUBCATEGORY) p.set("subcategory", sub);
+      const from = q.get(PANE_PREFIX + "from"), to = q.get(PANE_PREFIX + "to");
+      if (from || to) p.set("range", "custom");
+      if (from) p.set("from", from);
+      if (to) p.set("to", to);
+      return `/expenses?${p}`;
+    },
+    render: (id: string) => <ExpenseListPane category={id} />,
+  },
+  expense: {
+    label: "Expense",
+    href: (id: string) => `/expenses/${encodeURIComponent(id)}`,
+    render: (id: string) => <ExpensePane id={id} onClose={closePane} />,
   },
 } satisfies Record<string, { label: string; href: (id: string, q: URLSearchParams) => string; render: (id: string) => ReactNode }>;
 export type PaneKind = keyof typeof PANES;

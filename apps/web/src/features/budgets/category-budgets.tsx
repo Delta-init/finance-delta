@@ -3,7 +3,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { CategoryBudgetLine, CategoryBudgetRow } from "@delta/shared";
-import { toMinor } from "@delta/shared";
+import { NO_SUBCATEGORY, toMinor } from "@delta/shared";
+import { openPane } from "@/components/split-view/split-view";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,28 @@ const WHOLE = "__whole";
 /** What the dialog opens on: a category (and subcategory) already picked, or nothing. */
 export type CategoryBudgetTarget = { category: string; subcategory: string; currency: string } | null;
 
+/** The days a period covers: a month (YYYY-MM) or a year (YYYY), first and last. */
+function daysOf(period: string): { from: string; to: string } {
+  if (/^\d{4}$/.test(period)) return { from: `${period}-01-01`, to: `${period}-12-31` };
+  const [y, m] = period.split("-").map(Number);
+  const last = new Date(Date.UTC(y!, m!, 0)).getUTCDate();
+  return { from: `${period}-01`, to: `${period}-${String(last).padStart(2, "0")}` };
+}
+
+/**
+ * "N expenses" — opens them in the split pane beside the table (the user, 2026-11-09: "to check the breakdown"), the
+ * same ones its Spent counts. Plain text with none, or for someone who can't read every expense.
+ */
+function ExpensesLink({ count, open, className = "" }: { count: number; open: (() => void) | null; className?: string }) {
+  const label = `${count} ${count === 1 ? "expense" : "expenses"}`;
+  if (!open || count === 0) return <span className={`text-xs text-foreground-muted ${className}`}>{label}</span>;
+  return (
+    <button type="button" onClick={open} title="Open them beside the table" className={`text-xs text-primary hover:underline ${className}`}>
+      {label}
+    </button>
+  );
+}
+
 function UsedBar({ spent, allocated }: { spent: number; allocated: number }) {
   if (allocated <= 0) return <div className="text-right text-xs text-foreground-muted">—</div>;
   const pct = Math.round((spent / allocated) * 100);
@@ -48,14 +71,20 @@ function Left({ line }: { line: Pick<CategoryBudgetLine, "budgeted" | "available
   return <MoneyDisplay minor={line.availableMinor} currency={line.currency} className={line.availableMinor < 0 ? "font-semibold text-red-600" : "font-semibold"} />;
 }
 
-export function CategoryBudgetView({ rows, loading, period, canManage, onSet }: {
+export function CategoryBudgetView({ rows, loading, period, canManage, canOpen, onSet }: {
   rows: CategoryBudgetRow[];
   loading: boolean;
   /** YYYY-MM, or YYYY for the whole year. */
   period: string;
   canManage: boolean;
+  /** May open the expenses behind a figure in the split pane (expense:read). */
+  canOpen: boolean;
   onSet: (target: CategoryBudgetTarget) => void;
 }) {
+  const { from, to } = daysOf(period);
+  // A subcategory's slug, NO_SUBCATEGORY for the ones filed with none, "" for the whole category.
+  const opener = (category: string, sub: string, currency: string) =>
+    canOpen ? () => openPane("expenses", category, { sub, from, to, currency }) : null;
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setOpen((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const label = /^\d{4}$/.test(period) ? period : periodLabel(period);
@@ -131,14 +160,18 @@ export function CategoryBudgetView({ rows, loading, period, canManage, onSet }: 
                             {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
                             {r.categoryName}
                           </button>
-                          <span className="ml-6 text-xs text-foreground-muted">{r.expenses} {r.expenses === 1 ? "expense" : "expenses"}</span>
+                          <ExpensesLink count={r.expenses} open={opener(r.category, "", r.currency)} className="ml-6" />
                         </td>
                         <td className="px-4 py-3 text-foreground-muted">{r.currency}</td>
                         <td className="px-4 py-3 text-right">
                           {r.budgeted ? <MoneyDisplay minor={r.allocatedMinor} currency={r.currency} /> : <span className="text-xs text-foreground-muted">No budget</span>}
                           {r.budgetFrom === "subcategories" && <span className="block text-[11px] text-foreground-muted">from its subcategories</span>}
                         </td>
-                        <td className="px-4 py-3 text-right"><MoneyDisplay minor={r.spentMinor} currency={r.currency} /></td>
+                        <td className="px-4 py-3 text-right">
+                          {canOpen && r.expenses > 0
+                            ? <button type="button" onClick={opener(r.category, "", r.currency)!} title="Open these expenses beside the table" className="hover:text-primary hover:underline"><MoneyDisplay minor={r.spentMinor} currency={r.currency} /></button>
+                            : <MoneyDisplay minor={r.spentMinor} currency={r.currency} />}
+                        </td>
                         <td className="px-4 py-3 text-right"><Left line={{ ...r, currency: r.currency }} /></td>
                         <td className="px-4 py-3"><UsedBar spent={r.spentMinor} allocated={r.budgeted ? r.allocatedMinor : 0} /></td>
                         {canManage && (
@@ -155,11 +188,15 @@ export function CategoryBudgetView({ rows, loading, period, canManage, onSet }: 
                         <tr key={`${key}|${s.subcategory}`} className="bg-surface-muted/20 hover:bg-surface-muted/40">
                           <td className="px-4 py-2 pl-10">
                             <span className={s.subcategory ? "" : "italic text-foreground-muted"}>{s.name}</span>
-                            <span className="ml-2 text-xs text-foreground-muted">{s.expenses} {s.expenses === 1 ? "expense" : "expenses"}</span>
+                            <ExpensesLink count={s.expenses} open={opener(r.category, s.subcategory || NO_SUBCATEGORY, r.currency)} className="ml-2" />
                           </td>
                           <td className="px-4 py-2 text-foreground-muted">{r.currency}</td>
                           <td className="px-4 py-2 text-right">{s.budgeted ? <MoneyDisplay minor={s.allocatedMinor} currency={r.currency} /> : <span className="text-xs text-foreground-muted">—</span>}</td>
-                          <td className="px-4 py-2 text-right"><MoneyDisplay minor={s.spentMinor} currency={r.currency} /></td>
+                          <td className="px-4 py-2 text-right">
+                            {canOpen && s.expenses > 0
+                              ? <button type="button" onClick={opener(r.category, s.subcategory || NO_SUBCATEGORY, r.currency)!} title="Open these expenses beside the table" className="hover:text-primary hover:underline"><MoneyDisplay minor={s.spentMinor} currency={r.currency} /></button>
+                              : <MoneyDisplay minor={s.spentMinor} currency={r.currency} />}
+                          </td>
                           <td className="px-4 py-2 text-right"><Left line={{ ...s, currency: r.currency }} /></td>
                           <td className="px-4 py-2"><UsedBar spent={s.spentMinor} allocated={s.budgeted ? s.allocatedMinor : 0} /></td>
                           {canManage && (

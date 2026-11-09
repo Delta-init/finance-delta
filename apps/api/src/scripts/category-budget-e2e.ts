@@ -9,6 +9,7 @@
  *   - a year adds up the months;
  *   - refused: what isn't spending, an unknown category or subcategory, a bad amount or month;
  *   - who: budget:manage sets, budget:read sees, a department's own reader neither;
+ *   - the expenses list the split pane shows (currency, no subcategory, P&L only) adds up to each Spent;
  *   - the department allocations untouched.
  *
  * Run through scripts/category-budget-e2e.sh (throwaway mongod and API). Refuses anything but a scratch database.
@@ -132,6 +133,34 @@ async function main() {
   check("Loan / Financing: the interest only (500) — the principal isn't spending, nor listed", loan?.spentMinor === 50_000 && !lineOf(loan, "loan_principal"), j(loan));
   check("travel spent in rupees: its own INR row", rowOf(rows, "travel_transport", "INR")?.spentMinor === 5_000_000 && rowOf(rows, "travel_transport")?.spentMinor === 0, j(rows.filter((r) => r.category === "travel_transport")));
   check("no other currency rows where nothing was spent", rows.filter((r) => r.currency !== "AED").length === 1, j(rows.filter((r) => r.currency !== "AED")));
+
+  step("The breakdown behind Spent — what the split pane lists (2026-11-09)");
+  const pane = async (q: string) => {
+    const base = `status=approved&dateFrom=2026-10-01&dateTo=2026-10-31&pnl=true&${q}`;
+    const [list, sum] = await Promise.all([
+      request("GET", `/expenses?${base}&pageSize=100`, undefined, accountant),
+      request("GET", `/expenses/summary?${base}`, undefined, accountant),
+    ]);
+    const items: any[] = list.body?.data ?? [];
+    return {
+      ok: list.status === 200 && sum.status === 200, total: list.body?.meta?.total, items,
+      sumMinor: items.reduce((t, e) => t + e.totalMinor, 0), summary: sum.body?.data?.byCurrency ?? [],
+    };
+  };
+  const rentList = await pane("category=rent_utilities&currency=AED");
+  check("Rent & Utilities: 3 expenses, 32,300 — the row's Spent", rentList.ok && rentList.total === 3 && rentList.sumMinor === rent?.spentMinor, j({ total: rentList.total, sum: rentList.sumMinor }));
+  check("…and the cards above it say the same", rentList.summary.length === 1 && rentList.summary[0].totalMinor === rent?.spentMinor && rentList.summary[0].count === 3, j(rentList.summary));
+  for (const l of (rent?.subcategories ?? []).filter((x: any) => x.expenses > 0)) {
+    const one = await pane(`category=rent_utilities&currency=AED&subcategory=${l.subcategory || "_none"}`);
+    check(`…${l.name}: ${l.expenses} — its line's Spent`, one.total === l.expenses && one.sumMinor === l.spentMinor, j({ line: l, total: one.total, sum: one.sumMinor }));
+  }
+  const loanPnl = await pane("category=loan_financing&currency=AED");
+  const loanAll = await request("GET", "/expenses?status=approved&category=loan_financing&dateFrom=2026-10-01&dateTo=2026-10-31&pageSize=100", undefined, accountant);
+  check("Loan / Financing with pnl: only the interest — the principal left out, as Spent does", loanPnl.total === 1 && loanPnl.sumMinor === loan?.spentMinor && loanAll.body?.meta?.total === 2, j({ pnl: loanPnl.total, all: loanAll.body?.meta?.total }));
+  const inr = await pane("category=travel_transport&currency=INR");
+  const aed = await pane("category=travel_transport&currency=AED");
+  check("a currency: the rupee flight in INR only", inr.total === 1 && inr.sumMinor === 5_000_000 && aed.total === 0, j({ inr: inr.total, aed: aed.total }));
+  check("without the new filters the list is as it was", (await request("GET", "/expenses?category=rent_utilities&pageSize=100", undefined, accountant)).body?.meta?.total === 5);
 
   step("Budgets — a whole category, and subcategories");
   const r1 = await set({ category: "rent_utilities", allocatedMinor: 4_000_000, note: "Rent and bills" });

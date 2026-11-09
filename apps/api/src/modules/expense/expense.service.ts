@@ -16,7 +16,7 @@ import type {
   UploadedExpenseFile,
   ExpenseBankLine,
 } from "@delta/shared";
-import { EXPENSE_CATEGORY_LABELS, computeExpenseTax, lateEntryCutoff, resolveCategoryName } from "@delta/shared";
+import { EXPENSE_CATEGORY_LABELS, NO_SUBCATEGORY, computeExpenseTax, lateEntryCutoff, resolveCategoryName } from "@delta/shared";
 import { throughDay } from "../../lib/day-range";
 import { AppError } from "../../lib/http";
 import { assertOwned, scopeFilter, type Scope } from "../../lib/ownership";
@@ -31,7 +31,7 @@ import { Expense, type ExpenseDoc } from "./expense.model";
 import { billOfExpense } from "../bill/bill-expense";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
-import { resolveExpenseCategory } from "../expense-category/expense-category.service";
+import { pnlExpenseFilter, resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { BankTransaction } from "../banking/bank-transaction.model";
 import { paymentAccountsOf } from "../invoice/payment-bank";
@@ -265,7 +265,12 @@ async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scop
   if (or) and.push({ $or: or });
   if (query.status) and.push({ status: query.status });
   if (query.category) and.push({ category: query.category });
-  if (query.subcategory) and.push({ subcategory: query.subcategory });
+  // None at all (an older expense) — or one of them.
+  if (query.subcategory === NO_SUBCATEGORY) and.push({ $or: [{ subcategory: null }, { subcategory: "" }] });
+  else if (query.subcategory) and.push({ subcategory: query.subcategory });
+  // A category budget's breakdown (2026-11-09): its currency, and only what the budget counts as spending.
+  if (query.currency) and.push({ currency: query.currency.toUpperCase() });
+  if (query.pnl) { const pnl = await pnlExpenseFilter(orgId); if (Object.keys(pnl).length) and.push(pnl); }
   if (query.submittedById) and.push({ submittedById: new Types.ObjectId(query.submittedById) });
   if (query.dateFrom) and.push({ expenseDate: { $gte: new Date(query.dateFrom) } });
   if (query.dateTo) and.push({ expenseDate: throughDay(query.dateTo) });

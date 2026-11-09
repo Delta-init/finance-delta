@@ -179,7 +179,7 @@ export default function BudgetsPage() {
       </tbody></table></div></Card>
     </section>
 
-    {view === "category" && <CategoryBudgetView rows={categoryRows} loading={categoryLoading} period={month === "all" ? year : month} canManage={can.can("budget:manage")} onSet={openCategory} />}
+    {view === "category" && <CategoryBudgetView rows={categoryRows} loading={categoryLoading} period={month === "all" ? year : month} canManage={can.can("budget:manage")} canOpen={can.can("expense:read")} onSet={openCategory} />}
 
     {view === "department" && <>{summaryLoading ? <div className="py-16 text-center text-sm text-foreground-muted">Loading budget data…</div> : currencyTotals.length > 0 && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {currencyTotals.map(([currency, total]) => <Card key={currency} className="p-4"><p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{month === "all" ? `${year} · ${currency}` : `${periodLabel(month)} · ${currency}`}</p><p className="mt-1 text-xl font-semibold"><MoneyDisplay minor={total.available} currency={currency} /></p><p className="mt-1 text-xs text-foreground-muted">Available · <MoneyDisplay minor={total.allocation} currency={currency} /> allocated · <MoneyDisplay minor={total.additions} currency={currency} /> top-ups · <MoneyDisplay minor={total.drawn} currency={currency} /> drawn · <MoneyDisplay minor={total.expenses} currency={currency} /> approved expenses</p></Card>)}

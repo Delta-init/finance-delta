@@ -164,8 +164,14 @@ export const expenseQuerySchema = listQuerySchema.extend({
   /** Its bank statement date between these days (YYYY-MM-DD, both included) — only expenses that have one. */
   statementFrom: z.string().optional(),
   statementTo: z.string().optional(),
+  /* A category budget's breakdown in the split pane (2026-11-09), to match its Spent: one currency; with
+     `subcategory` = NO_SUBCATEGORY, the expenses filed with none; `pnl`, only what counts in the profit and loss. */
+  currency: z.string().length(3).optional(),
+  pnl: queryBool,
 });
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
+/** The `subcategory` filter for an expense filed with no subcategory — no slug starts with "_". */
+export const NO_SUBCATEGORY = "_none";
 
 import { bankAccountTypeSchema, bankTransactionStatusSchema } from "./banking.schema";
 

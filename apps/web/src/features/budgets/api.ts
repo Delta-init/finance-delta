@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BudgetAllocation, BudgetSummaryRow, CreateFundingRequestInput, FundingRequest, ReviewFundingRequestInput, UpsertBudgetAllocationInput } from "@delta/shared";
+import type { BudgetAllocation, BudgetSummaryRow, CategoryBudget, CategoryBudgetRow, CreateFundingRequestInput, FundingRequest, ReviewFundingRequestInput, UpsertBudgetAllocationInput, UpsertCategoryBudgetInput } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 import { APPROVALS_KEY } from "@/features/approvals/api";
 
@@ -39,4 +39,18 @@ export function useCreateFundingRequest() {
 export function useReviewFundingRequest(id: string) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (input: ReviewFundingRequestInput) => api.post<FundingRequest>(`budgets/requests/${id}/review`, input), onSuccess: () => invalidate(qc) });
+}
+
+/* Budgets by expense category (2026-11-09) — no department. */
+export function useCategoryBudget(params: QueryParams, enabled = true) {
+  return useQuery({ queryKey: [...KEY, "categories", params], queryFn: () => api.getList<CategoryBudgetRow>("budgets/categories", params), enabled });
+}
+
+export function useCategoryAllocations(params: QueryParams, enabled = true) {
+  return useQuery({ queryKey: [...KEY, "category-allocations", params], queryFn: () => api.getList<CategoryBudget>("budgets/category-allocations", params), enabled });
+}
+
+export function useSaveCategoryAllocation() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (input: UpsertCategoryBudgetInput) => api.patch<CategoryBudget>("budgets/category-allocations", input), onSuccess: () => invalidate(qc) });
 }

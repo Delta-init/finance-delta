@@ -1,8 +1,9 @@
 import type { Request } from "express";
-import { hasPermission, budgetQuerySchema, upsertBudgetAllocationSchema, createFundingRequestSchema, reviewFundingRequestSchema } from "@delta/shared";
+import { hasPermission, budgetQuerySchema, categoryBudgetQuerySchema, upsertBudgetAllocationSchema, upsertCategoryBudgetSchema, createFundingRequestSchema, reviewFundingRequestSchema } from "@delta/shared";
 import { asyncHandler, created, ok } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as service from "./budget.service";
+import * as categories from "./category-budget.service";
 
 const org = (req: Request) => req.auth!.organizationId;
 const user = (req: Request) => req.auth!.userId;
@@ -37,4 +38,18 @@ export const allocations = asyncHandler(async (req, res) => {
   const query = parseQuery(budgetQuerySchema, req.query);
   const year = query.year ?? new Date().getUTCFullYear();
   ok(res, await service.listAllocations(org(req), year, query.departmentId));
+});
+
+/* Budgets by expense category (2026-11-09): no department. */
+export const categoryBudget = asyncHandler(async (req, res) => {
+  ok(res, await categories.getCategoryBudget(org(req), parseQuery(categoryBudgetQuerySchema, req.query)));
+});
+
+export const categoryAllocations = asyncHandler(async (req, res) => {
+  const query = parseQuery(categoryBudgetQuerySchema, req.query);
+  ok(res, await categories.listCategoryBudgets(org(req), query.year ?? new Date().getUTCFullYear()));
+});
+
+export const saveCategoryAllocation = asyncHandler(async (req, res) => {
+  ok(res, await categories.upsertCategoryBudget(org(req), user(req), upsertCategoryBudgetSchema.parse(req.body)));
 });

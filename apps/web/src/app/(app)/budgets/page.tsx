@@ -17,7 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCan } from "@/lib/use-can";
 import { useCurrency } from "@/lib/currency-context";
 import { useAllDepartments } from "@/features/departments/api";
-import { useBudgetAllocations, useBudgetSummary, useCreateFundingRequest, useFundingRequests, useSaveBudgetAllocation } from "@/features/budgets/api";
+import { useBudgetAllocations, useBudgetSummary, useCategoryBudget, useCreateFundingRequest, useFundingRequests, useSaveBudgetAllocation } from "@/features/budgets/api";
+import { CategoryBudgetDialog, CategoryBudgetView, type CategoryBudgetTarget } from "@/features/budgets/category-budgets";
 import { FundingRequestTags, FundingReviewDialog, FundingStatusPill, periodLabel } from "@/features/budgets/review-dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -105,10 +106,20 @@ export default function BudgetsPage() {
   const [allocationTarget, setAllocationTarget] = useState<BudgetSummaryRow | undefined>();
   const [reviewTarget, setReviewTarget] = useState<FundingRequest | null>(null);
   const [deptFilter, setDeptFilter] = useState("all");
+  /* By expense category (2026-11-09: "category-wise, no department to pick"), first — or by department, as before.
+     Company-wide spending, so the category view is for whoever sees every department's budget. */
+  const seesAll = can.can("budget:read") || can.can("budget:manage") || can.can("budget:approve");
+  const [viewParam, setView] = useUrlParam("view", "category", { allowed: ["category", "department"] });
+  // Nothing until the session says who this is — else the department view flashes up (and loads) for a moment.
+  const view = !can.ready ? null : seesAll ? viewParam : "department";
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [categoryTarget, setCategoryTarget] = useState<CategoryBudgetTarget>(null);
   const { data: departments = [] } = useAllDepartments();
-  const query = { year: Number(year), month: month === "all" ? undefined : month, departmentId: deptFilter === "all" ? undefined : deptFilter };
-  const { data: summaryResult, isLoading: summaryLoading } = useBudgetSummary(query);
-  const { data: allocationsResult } = useBudgetAllocations({ year: Number(year), departmentId: deptFilter === "all" ? undefined : deptFilter }, can.can("budget:manage"));
+  const query = { year: Number(year), month: month === "all" ? undefined : month, departmentId: view === "department" && deptFilter !== "all" ? deptFilter : undefined };
+  const { data: summaryResult, isLoading: summaryLoading } = useBudgetSummary(query, view === "department");
+  const { data: allocationsResult } = useBudgetAllocations({ year: Number(year), departmentId: deptFilter === "all" ? undefined : deptFilter }, view === "department" && can.can("budget:manage"));
+  const { data: categoryResult, isLoading: categoryLoading } = useCategoryBudget({ year: Number(year), month: month === "all" ? undefined : month }, view === "category");
+  const categoryRows = categoryResult?.data ?? [];
   const { data: requestsResult, isLoading: requestsLoading } = useFundingRequests(query);
   const summary = summaryResult?.data ?? [];
   const allocations = allocationsResult?.data ?? [];
@@ -149,15 +160,17 @@ export default function BudgetsPage() {
 
   const openAllocation = (row?: BudgetSummaryRow) => { setAllocationTarget(row); setAllocationOpen(true); };
   const closeAllocation = (open: boolean) => { setAllocationOpen(open); if (!open) setAllocationTarget(undefined); };
+  const openCategory = (target: CategoryBudgetTarget) => { setCategoryTarget(target); setCategoryOpen(true); };
 
   return <div className="space-y-6 p-6">
-    <PageHeader icon={WalletCards} title="Budgets & Funds" description="Set monthly department allocations, review additional funding requests, and track approved expenses." action={can.can("budget:request") ? <Button onClick={() => setRequestOpen(true)}><Plus className="h-4 w-4" />Request funds</Button> : undefined} />
+    <PageHeader icon={WalletCards} title="Budgets & Funds" description="Set monthly budgets by expense category or by department, review additional funding requests, and track approved expenses." action={can.can("budget:request") ? <Button onClick={() => setRequestOpen(true)}><Plus className="h-4 w-4" />Request funds</Button> : undefined} />
 
     <Card className="flex flex-wrap items-end gap-3 p-4">
+      {seesAll && <div className="space-y-1.5"><Label className="text-xs">View</Label><div className="flex h-10 items-center rounded-md border border-border p-0.5">{(["category", "department"] as const).map((v) => <button key={v} type="button" onClick={() => setView(v)} aria-pressed={view === v} className={`h-full rounded px-3 text-sm ${view === v ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:text-foreground"}`}>{v === "category" ? "By category" : "By department"}</button>)}</div></div>}
       <div className="space-y-1.5"><Label className="text-xs">Calendar year</Label><Select value={year} onValueChange={(value) => { setYear(value); if (month !== "all") setMonth(`${value}-${month.slice(5)}`); }}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 7 }, (_, i) => now.getFullYear() - 3 + i).map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent></Select></div>
       <div className="space-y-1.5"><Label className="text-xs">Month</Label><Select value={month} onValueChange={setMonth}><SelectTrigger className="w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Full year</SelectItem>{MONTHS.map((label, index) => <SelectItem key={index} value={`${year}-${String(index + 1).padStart(2, "0")}`}>{label}</SelectItem>)}</SelectContent></Select></div>
-      {can.can("budget:read") && <div className="space-y-1.5"><Label className="text-xs">Department</Label><Select value={deptFilter} onValueChange={setDeptFilter}><SelectTrigger className="w-52"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All departments</SelectItem>{departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent></Select></div>}
-      {can.can("budget:manage") && <Button variant="outline" className="ml-auto" onClick={() => openAllocation()}><Plus className="h-4 w-4" />Set allocation</Button>}
+      {view === "department" && can.can("budget:read") && <div className="space-y-1.5"><Label className="text-xs">Department</Label><Select value={deptFilter} onValueChange={setDeptFilter}><SelectTrigger className="w-52"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All departments</SelectItem>{departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent></Select></div>}
+      {can.can("budget:manage") && <Button variant="outline" className="ml-auto" onClick={() => view === "category" ? openCategory(null) : openAllocation()}><Plus className="h-4 w-4" />{view === "category" ? "Set budget" : "Set allocation"}</Button>}
     </Card>
 
     <section className="space-y-3"><div><h2 className="text-base font-semibold">Funding requests</h2><p className="text-sm text-foreground-muted">An approved top-up adds to the department&apos;s month; an approved drawdown (from Media ERP) comes off it. Pending requests change nothing.</p></div>
@@ -166,7 +179,9 @@ export default function BudgetsPage() {
       </tbody></table></div></Card>
     </section>
 
-    {summaryLoading ? <div className="py-16 text-center text-sm text-foreground-muted">Loading budget data…</div> : currencyTotals.length > 0 && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    {view === "category" && <CategoryBudgetView rows={categoryRows} loading={categoryLoading} period={month === "all" ? year : month} canManage={can.can("budget:manage")} onSet={openCategory} />}
+
+    {view === "department" && <>{summaryLoading ? <div className="py-16 text-center text-sm text-foreground-muted">Loading budget data…</div> : currencyTotals.length > 0 && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {currencyTotals.map(([currency, total]) => <Card key={currency} className="p-4"><p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{month === "all" ? `${year} · ${currency}` : `${periodLabel(month)} · ${currency}`}</p><p className="mt-1 text-xl font-semibold"><MoneyDisplay minor={total.available} currency={currency} /></p><p className="mt-1 text-xs text-foreground-muted">Available · <MoneyDisplay minor={total.allocation} currency={currency} /> allocated · <MoneyDisplay minor={total.additions} currency={currency} /> top-ups · <MoneyDisplay minor={total.drawn} currency={currency} /> drawn · <MoneyDisplay minor={total.expenses} currency={currency} /> approved expenses</p></Card>)}
     </div>}
 
@@ -174,11 +189,12 @@ export default function BudgetsPage() {
       <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[960px] text-sm"><thead><tr className="border-b bg-surface-muted/60 text-left text-xs uppercase tracking-wide text-foreground-muted"><th className="px-4 py-3">Department</th><th className="px-4 py-3">Period</th><th className="px-4 py-3">Currency</th><th className="px-4 py-3 text-right">Allocated</th><th className="px-4 py-3 text-right">Top-ups</th><th className="px-4 py-3 text-right">Drawn</th><th className="px-4 py-3 text-right">Approved expenses</th><th className="px-4 py-3 text-right">Available</th>{can.can("budget:manage") && <th className="px-4 py-3 text-right">Action</th>}</tr></thead><tbody className="divide-y divide-border">
         {rows.length === 0 ? <tr><td colSpan={can.can("budget:manage") ? 9 : 8} className="px-4 py-12 text-center text-foreground-muted">No budget or expense activity for this period.</td></tr> : rows.map((row) => <tr key={`${row.departmentId}-${row.period}-${row.currency}`} className="hover:bg-surface-muted/40"><td className="px-4 py-3 font-medium">{row.departmentName}</td><td className="px-4 py-3 text-foreground-muted">{periodLabel(row.period)}</td><td className="px-4 py-3">{row.currency}</td><td className="px-4 py-3 text-right"><MoneyDisplay minor={row.allocatedMinor} currency={row.currency} /></td><td className="px-4 py-3 text-right"><MoneyDisplay minor={row.approvedRequestsMinor} currency={row.currency} /></td><td className="px-4 py-3 text-right"><MoneyDisplay minor={row.approvedDrawdownsMinor} currency={row.currency} /></td><td className="px-4 py-3 text-right"><MoneyDisplay minor={row.approvedExpensesMinor} currency={row.currency} /></td><td className={`px-4 py-3 text-right font-semibold ${row.availableMinor < 0 ? "text-red-600" : ""}`}><MoneyDisplay minor={row.availableMinor} currency={row.currency} /></td>{can.can("budget:manage") && <td className="px-4 py-3 text-right"><Button size="sm" variant="ghost" onClick={() => openAllocation(row)}>{row.allocatedMinor ? "Adjust" : "Allocate"}</Button></td>}</tr>)}
       </tbody></table></div></Card>
-    </section>
+    </section></>}
 
 
     <FundingRequestDialog open={requestOpen} onOpenChange={setRequestOpen} currency={baseCurrency} defaultPeriod={month === "all" ? currentPeriod : month} />
     <AllocationDialog open={allocationOpen} onOpenChange={closeAllocation} initial={allocationTarget} period={currentPeriod} currency={allocationTarget?.currency ?? baseCurrency} departments={departments} history={allocationTarget ? allocations.find((a) => a.departmentId === allocationTarget.departmentId && a.period === allocationTarget.period && a.currency === allocationTarget.currency)?.changes ?? [] : []} />
+    <CategoryBudgetDialog open={categoryOpen} onOpenChange={(open) => { setCategoryOpen(open); if (!open) setCategoryTarget(null); }} target={categoryTarget} period={currentPeriod} currency={categoryTarget?.currency ?? baseCurrency} categories={categoryRows} />
     <FundingReviewDialog request={reviewTarget} onClose={() => setReviewTarget(null)} />
   </div>;
 }

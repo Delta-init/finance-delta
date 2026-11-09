@@ -137,3 +137,75 @@ export const fundingRequestSchema = z.object({
   reviewNote: z.string().optional(),
 });
 export type FundingRequest = z.infer<typeof fundingRequestSchema>;
+
+/*
+ * Budgets by expense category (the user, 2026-11-09: "category-wise, without picking a department"). A month's
+ * amount for a category of the expense taxonomy, or for one of its subcategories — set with no department, and
+ * measured against every approved expense filed there that month, whatever its department. Kept apart from the
+ * department allocations, which Media ERP's drawdowns and the Root report go on reading.
+ */
+const slugSchema = z.string().trim().min(1).max(80).regex(/^[a-z0-9_]+$/, "Invalid category");
+
+export const categoryBudgetQuerySchema = z.object({
+  year: z.coerce.number().int().min(2000).max(2200).optional(),
+  month: periodSchema.optional(),
+});
+export type CategoryBudgetQuery = z.infer<typeof categoryBudgetQuerySchema>;
+
+/** Setting it to 0 takes the budget off again. `subcategory` empty: the whole category. */
+export const upsertCategoryBudgetSchema = z.object({
+  category: slugSchema,
+  subcategory: z.union([slugSchema, z.literal("")]).optional().default(""),
+  period: periodSchema,
+  currency: z.string().length(3).default("AED").transform((v) => v.toUpperCase()),
+  allocatedMinor: z.number().int().min(0).max(9_000_000_000_000),
+  note: z.string().max(500).optional().default(""),
+});
+export type UpsertCategoryBudgetInput = z.infer<typeof upsertCategoryBudgetSchema>;
+
+/** A subcategory's month (or year): its own budget if one is set, and what was spent there. */
+export const categoryBudgetLineSchema = z.object({
+  subcategory: z.string(), // "" — expenses filed with no subcategory (older ones)
+  name: z.string(),
+  budgeted: z.boolean(),
+  allocatedMinor: z.number(),
+  spentMinor: z.number(),
+  availableMinor: z.number(),
+  expenses: z.number(),
+});
+export type CategoryBudgetLine = z.infer<typeof categoryBudgetLineSchema>;
+
+/**
+ * A category's month (or year, when no month is asked for) in one currency. Its budget is its own, when set; else
+ * what its subcategories' budgets add up to (`budgetFrom`). Spent: approved expenses dated then, in the P&L only.
+ */
+export const categoryBudgetRowSchema = z.object({
+  category: z.string(),
+  categoryName: z.string(),
+  currency: z.string(),
+  period: z.string(), // YYYY-MM, or YYYY for a whole year
+  budgeted: z.boolean(),
+  budgetFrom: z.enum(["category", "subcategories", "none"]),
+  allocatedMinor: z.number(),
+  spentMinor: z.number(),
+  availableMinor: z.number(),
+  expenses: z.number(),
+  subcategories: z.array(categoryBudgetLineSchema),
+});
+export type CategoryBudgetRow = z.infer<typeof categoryBudgetRowSchema>;
+
+export const categoryBudgetSchema = z.object({
+  id: z.string(),
+  category: z.string(),
+  categoryName: z.string(),
+  subcategory: z.string(),
+  subcategoryName: z.string(),
+  period: periodSchema,
+  currency: z.string(),
+  allocatedMinor: z.number(),
+  note: z.string(),
+  updatedByName: z.string(),
+  updatedAt: z.string(),
+  changes: z.array(budgetAllocationChangeSchema).default([]),
+});
+export type CategoryBudget = z.infer<typeof categoryBudgetSchema>;

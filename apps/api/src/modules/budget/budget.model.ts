@@ -70,3 +70,31 @@ fundingRequestSchema.index(
 
 export type FundingRequestDoc = InferSchemaType<typeof fundingRequestSchema> & { _id: Types.ObjectId; createdAt: Date };
 export const FundingRequestModel = model("FundingRequest", fundingRequestSchema);
+
+/**
+ * A month's budget for an expense category, or one of its subcategories (2026-11-09) — no department. `subcategory`
+ * "" is the whole category. 0 is no budget. Every change is kept, as for the department allocations.
+ */
+const categoryBudgetSchema = new Schema({
+  organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
+  category: { type: String, required: true },
+  subcategory: { type: String, default: "" },
+  period: { type: String, required: true }, // YYYY-MM
+  currency: { type: String, required: true, uppercase: true },
+  allocatedMinor: { type: Number, required: true, min: 0 },
+  note: { type: String, default: "" },
+  updatedById: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  updatedByName: { type: String, required: true },
+  changes: [{
+    allocatedMinor: { type: Number, required: true },
+    note: { type: String, default: "" },
+    changedById: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    changedByName: { type: String, required: true },
+    changedAt: { type: Date, required: true },
+  }],
+}, { timestamps: true });
+categoryBudgetSchema.index({ organizationId: 1, category: 1, subcategory: 1, period: 1, currency: 1 }, { unique: true });
+categoryBudgetSchema.index({ organizationId: 1, period: 1 });
+
+export type CategoryBudgetDoc = InferSchemaType<typeof categoryBudgetSchema> & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
+export const CategoryBudgetModel = model("CategoryBudget", categoryBudgetSchema);

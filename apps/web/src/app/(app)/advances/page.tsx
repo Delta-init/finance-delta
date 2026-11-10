@@ -43,8 +43,9 @@ const isTab = (v: string | null): v is Tab => TABS.some((t) => t.key === v);
  *  - Rejected: refused by HR or by finance, and why.
  *  - All: every one, newest first.
  *
- * The amount and the recovery are HR's — HRMS takes exactly that back from the
- * employee's pay, on that schedule — so nothing here changes them. "Mark paid"
+ * The recovery schedule is HR's. The amount is what was asked unless finance
+ * pays a different one (2026-11-10): HRMS keeps the asked amount, and takes back
+ * what was paid, over HR's months — more than asked needs a note. "Mark paid"
  * records the payout as a paid expense — the date, the method and the bank
  * reference — and tells HRMS, which shows it Paid and starts the recovery.
  */
@@ -174,10 +175,14 @@ function RecordRow({ r }: { r: SalaryAdvanceRecord }) {
           <h3 className="font-semibold">{r.employee?.name ?? "Employee"}</h3>
           <Badge tone={st.tone}>{hrRefused ? "Rejected by HR" : financeRefused ? "Rejected by finance" : st.label}</Badge>
           {r.overLimit && <Badge tone="warning">Over one month&apos;s salary</Badge>}
+          {r.requestedAmount != null && <Badge tone="warning">Amount changed by finance</Badge>}
         </div>
         {facts.length > 0 && <p className="text-sm text-foreground-muted">{facts.join(" · ")}</p>}
         {r.reason && <p className="text-sm">{r.reason}</p>}
         <div className="flex flex-wrap gap-x-5 gap-y-1 pt-1 text-xs text-foreground-muted">
+          {r.requestedAmount != null && (
+            <span>Asked for <span className="text-foreground"><MoneyDisplay minor={Math.round(r.requestedAmount * 100)} currency={r.currency} /></span>, paid <span className="text-foreground"><MoneyDisplay minor={Math.round(r.amount * 100)} currency={r.currency} /></span></span>
+          )}
           <span>Asked <span className="text-foreground">{day(r.createdAt)}</span>{r.raisedBy?.name ? <> by HR (<span className="text-foreground">{r.raisedBy.name}</span>)</> : null}</span>
           {r.neededBy && <span>Needed by <span className="text-foreground">{day(r.neededBy)}</span></span>}
           {r.hrReviewedBy?.name && r.status !== "pending" && (
@@ -200,6 +205,9 @@ function RecordRow({ r }: { r: SalaryAdvanceRecord }) {
       </div>
       <div className="shrink-0 sm:text-right">
         <MoneyDisplay minor={Math.round(r.amount * 100)} currency={r.currency} className="text-base font-semibold" />
+        {r.requestedAmount != null && (
+          <p className="text-xs text-foreground-muted line-through"><MoneyDisplay minor={Math.round(r.requestedAmount * 100)} currency={r.currency} /></p>
+        )}
       </div>
     </div>
   );
@@ -214,6 +222,8 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
   const [department, setDepartment] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [payout, setPayout] = useState<Payout>(emptyPayout);
+  // What is paid (2026-11-10) — the amount asked unless finance changes it; HRMS recovers this.
+  const [amountText, setAmountText] = useState(() => r.amount.toFixed(2));
 
   // Employee Advances Receivable › Salary Advances when this org has it — money the employee pays back, not a cost.
   const categoryList = categories.data ?? [];
@@ -226,7 +236,16 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
   const made = r.expense && r.expense.status !== "voided" ? r.expense : null;
   const voided = r.expense?.status === "voided" ? r.expense : null;
   const id = (field: string) => `advance-${r._id}-${field}`;
-  const perMonthMinor = Math.round((r.amount * 100) / Math.max(1, r.months));
+  const askedMinor = Math.round(r.amount * 100);
+  const typed = Number(amountText);
+  const paidMinor = amountText.trim() && Number.isFinite(typed) ? Math.round(typed * 100) : 0;
+  const amountValid = paidMinor > 0;
+  const changed = amountValid && paidMinor !== askedMinor;
+  const over = changed && paidMinor > askedMinor;
+  const needsReason = over && !note.trim();
+  // An HRMS from before 2026-11-10 doesn't say requestedAmount and would recover the amount asked.
+  const canChange = "requestedAmount" in r;
+  const perMonthMinor = Math.round((amountValid ? paidMinor : askedMinor) / Math.max(1, r.months));
 
   const onApprove = async () => {
     const res = await approve.mutateAsync({
@@ -234,6 +253,7 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
       hrmsOrgId: r.hrmsOrgId,
       note: note.trim(),
       ...payout,
+      ...(!made && changed ? { amountMinor: paidMinor } : {}),
       ...(made ? {} : { category: cat.value.category, subcategory: cat.value.subcategory || undefined, departmentId: chosenDepartment === NO_DEPARTMENT ? "" : chosenDepartment }),
     });
     toast.success(`Paid — ${res.expense.expenseNumber} recorded, and HRMS will recover it from pay`);
@@ -268,8 +288,11 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
           </div>
         </div>
         <div className="shrink-0 sm:text-right">
-          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Advance</p>
-          <MoneyDisplay minor={Math.round(r.amount * 100)} currency={r.currency} className="text-lg font-semibold" />
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{changed && !made ? "Paying" : "Advance"}</p>
+          <MoneyDisplay minor={changed && !made ? paidMinor : askedMinor} currency={r.currency} className="text-lg font-semibold" />
+          {changed && !made && (
+            <p className="text-xs text-foreground-muted">Asked <MoneyDisplay minor={askedMinor} currency={r.currency} className="line-through" /></p>
+          )}
         </div>
       </div>
 
@@ -292,6 +315,20 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
       <div className="space-y-4 border-t border-border bg-surface-muted/50 p-5">
         {!made && !voided && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor={id("amount")}>Amount paid ({r.currency})</Label>
+              <Input id={id("amount")} type="number" inputMode="decimal" min={0.01} step="0.01" value={amountText}
+                disabled={!canChange} onChange={(e) => setAmountText(e.target.value)} aria-invalid={!amountValid || needsReason} />
+              <p className={`text-xs ${!amountValid || needsReason ? "text-danger" : changed ? "text-warning" : "text-foreground-muted"}`}>
+                {!canChange
+                  ? "HRMS needs updating before the amount can be changed."
+                  : !amountValid
+                    ? "Enter the amount paid."
+                    : changed
+                      ? <>Changed from <MoneyDisplay minor={askedMinor} currency={r.currency} />{over ? " — more than asked: say why in the note." : "."} HRMS recovers this amount.</>
+                      : "What was asked. Change it if a different amount is paid."}
+              </p>
+            </div>
             <PayoutFields value={payout} onChange={setPayout} idPrefix={id("payout")} />
             <CategoryPicker categories={categoryList} value={cat.value} onChange={cat.set} idPrefix={id("expense")} loading={categories.isLoading} />
             <div className="space-y-1.5">
@@ -309,13 +346,13 @@ function AdvanceCard({ advance: r }: { advance: SalaryAdvanceRequest }) {
 
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
           <div className="min-w-0 flex-1 space-y-1.5">
-            <Label htmlFor={id("note")}>Note (optional)</Label>
+            <Label htmlFor={id("note")}>{over && !made ? "Note — why more than asked" : "Note (optional)"}</Label>
             <Input id={id("note")} value={note} maxLength={500} placeholder="Sent to the employee and HR with the decision"
               onChange={(e) => setNote(e.target.value)} />
           </div>
           <div className="flex shrink-0 gap-2">
             {!voided && (
-              <Button onClick={() => void onApprove().catch(() => undefined)} disabled={busy || (!made && (!cat.complete || !payoutValid(payout)))}>
+              <Button onClick={() => void onApprove().catch(() => undefined)} disabled={busy || (!made && (!cat.complete || !payoutValid(payout) || !amountValid || needsReason))}>
                 {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : made ? <Send className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                 {made ? "Send to HRMS" : "Mark paid"}
               </Button>

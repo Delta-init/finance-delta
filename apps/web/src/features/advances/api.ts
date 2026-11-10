@@ -21,6 +21,8 @@ export interface SalaryAdvanceRequest {
   employee?: { _id: string; name: string; employeeCode?: string; designation?: string; department?: { _id: string; name: string } | null } | null;
   hrReviewedBy?: { _id: string; name: string } | null;
   hrNote?: string;
+  /** Present (null) from an HRMS that takes a changed amount (2026-11-10); missing from an older one. */
+  requestedAmount?: number | null;
   createdAt: string;
   suggestedDepartmentId: string | null;
   expense: { id: string; expenseNumber: string; status: string } | null;
@@ -55,6 +57,8 @@ export interface SalaryAdvanceRecord {
   paymentMethod?: string;
   raisedBy?: { _id: string; name: string } | null;
   overLimit?: boolean;
+  /** What was asked, when finance paid a different amount (2026-11-10); `amount` is then what was paid. */
+  requestedAmount?: number | null;
   createdAt: string;
   /** The expense finance recorded when it paid it out. */
   expense: { id: string; expenseNumber: string; status: string } | null;

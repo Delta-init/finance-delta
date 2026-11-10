@@ -4,11 +4,10 @@ import { expensePaymentMethodSchema } from "./expense.schema";
 /**
  * Finance's decision on a salary advance HR has approved in HRMS.
  *
- * The amount is HR's and is not changed here: HRMS recovers exactly what was
- * approved, from the employee's pay, on the schedule HR set — an advance paid
- * out at a different figure would be recovered at the wrong one. What finance
- * settles is how the payout is booked: the expense category and, optionally,
- * the department it counts against.
+ * Finance may pay a different amount than was asked (2026-11-10): HRMS then keeps
+ * the asked one and recovers what was paid, over HR's months — more than asked
+ * needs a note. Finance also settles how the payout is booked: the expense
+ * category and, optionally, the department it counts against.
  */
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
@@ -29,6 +28,8 @@ export const approveAdvanceSchema = z.object({
   paymentMethod: expensePaymentMethodSchema,
   /** The bank or cheque reference, kept on the expense. */
   reference: optionalText(120),
+  /** What was paid, in minor units, when it isn't what was asked (2026-11-10). Left out = the amount asked. */
+  amountMinor: z.number().int("Enter the amount paid").positive("The amount paid must be more than 0").optional(),
 });
 export type ApproveAdvanceInput = z.infer<typeof approveAdvanceSchema>;
 export type ApproveAdvanceBody = z.input<typeof approveAdvanceSchema>;

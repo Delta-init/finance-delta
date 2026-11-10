@@ -124,10 +124,12 @@ async function requireRow(orgId: string, hrmsOrgId: string, id: string): Promise
   return row;
 }
 
-function notesFor(row: HrmsSalaryAdvance, note: string): string {
-  const per = (row.amount / Math.max(1, row.months)).toFixed(2);
+function notesFor(row: HrmsSalaryAdvance, note: string, paidMinor: number): string {
+  const asked = Math.round(row.amount * 100);
+  const per = (paidMinor / 100 / Math.max(1, row.months)).toFixed(2);
   return [
     "Salary advance approved from HRMS.",
+    paidMinor !== asked ? `Paid ${row.currency} ${(paidMinor / 100).toFixed(2)} of ${row.currency} ${row.amount.toFixed(2)} asked — changed by finance.` : "",
     row.employee?.name ? `Employee: ${row.employee.name}${row.employee.employeeCode ? ` (${row.employee.employeeCode})` : ""}` : "",
     row.reason ? `Why: ${row.reason}` : "",
     `Recovered from pay: ${row.currency} ${per} a month × ${row.months}, from ${row.startMonth}.`,
@@ -149,7 +151,8 @@ async function makeExpense(orgId: string, userId: string, hrmsOrgId: string, row
   }
   const currency = (row.currency || "AED").toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new AppError("VALIDATION_ERROR", `HR's currency "${row.currency}" is not a currency code.`);
-  const amountMinor = Math.round(row.amount * 100);
+  // What finance paid (2026-11-10) — the amount asked unless changed; checked in approve().
+  const amountMinor = input.amountMinor ?? Math.round(row.amount * 100);
   if (!(amountMinor > 0)) throw new AppError("VALIDATION_ERROR", "This advance has no amount.");
 
   const { netMinor, taxMinor, totalMinor } = computeExpenseTax(amountMinor, 0, false);
@@ -184,7 +187,7 @@ async function makeExpense(orgId: string, userId: string, hrmsOrgId: string, row
       paymentMethod: input.paymentMethod,
       reference: input.reference || "",
       departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
-      notes: notesFor(row, input.note),
+      notes: notesFor(row, input.note, amountMinor),
       source: { kind: "hrms_advance", key, hrmsOrgId, requestId: row._id, round: 0 },
     });
   } catch (err) {
@@ -208,19 +211,37 @@ export async function approve(orgId: string, userId: string, id: string, input: 
   if (expense?.status === "voided") {
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this advance and then voided. Reject the advance instead.`);
   }
+  // A different amount than was asked (2026-11-10): more needs a note, and HRMS must be one that recovers what was
+  // paid — an older one would take back the asked amount, so nothing is recorded until it is.
+  const askedMinor = Math.round(row.amount * 100);
+  if (!expense && input.amountMinor != null && input.amountMinor !== askedMinor) {
+    if (input.amountMinor > askedMinor && !input.note.trim()) {
+      throw new AppError("VALIDATION_ERROR", `Paying more than the ${row.currency} ${row.amount.toFixed(2)} asked for needs a note saying why.`);
+    }
+    if (!("requestedAmount" in row)) {
+      throw new AppError("UNAVAILABLE", "HRMS needs updating before an advance can be paid at a different amount. Pay the amount asked, or wait for the update.");
+    }
+  }
   expense ??= await makeExpense(orgId, userId, input.hrmsOrgId, row, input);
+  // What the expense says was paid is what HRMS recovers — the same on a resend.
+  const paidMinor = expense.totalMinor;
   // In its method's bank account, as money out (2026-10-16).
   await placeExpenseInBank(orgId, expense._id);
 
   if (!expense.source?.deliveredAt) {
     try {
-      await hrmsClient.approveAdvance(input.hrmsOrgId, id, {
+      const answer = await hrmsClient.approveAdvance(input.hrmsOrgId, id, {
         reference: expense.expenseNumber,
         note: input.note || undefined,
         // What the expense says, so the two systems agree even on a resend.
         paidOn: expense.paidOn ? new Date(expense.paidOn).toISOString().slice(0, 10) : input.paidOn,
         method: expense.paymentMethod ?? input.paymentMethod,
+        ...(paidMinor !== askedMinor ? { amount: paidMinor / 100 } : {}),
       });
+      const took = Math.round(Number(answer?.amount) * 100);
+      if (answer && Number.isFinite(took) && took !== paidMinor) {
+        throw new Error(`HRMS recorded ${row.currency} ${(took / 100).toFixed(2)}, not the ${(paidMinor / 100).toFixed(2)} paid — fix it in HRMS`);
+      }
     } catch (err) {
       const now = await Expense.findById(expense._id).select("source").lean();
       if (!now?.source?.deliveredAt) {

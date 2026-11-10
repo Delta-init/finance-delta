@@ -333,6 +333,11 @@ export interface HrmsSalaryAdvance {
   hrReviewedBy?: { _id: string; name: string } | null;
   hrReviewedAt?: string | null;
   hrNote?: string;
+  /**
+   * What was asked, when finance paid a different amount (`amount` is then what was paid); null when paid as asked.
+   * Absent from an HRMS older than 2026-11-10, which can't take a changed amount.
+   */
+  requestedAmount?: number | null;
   createdAt: string;
 }
 
@@ -625,7 +630,8 @@ export const hrmsClient = {
   },
 
   /** Finance agreed to pay it: HRMS starts recovering it from the employee's pay. */
-  async approveAdvance(organizationId: string, id: string, opts: { reference?: string; note?: string; paidOn?: string; method?: string } = {}) {
+  /** `amount` (major units): what finance paid, when it isn't what was asked (2026-11-10). */
+  async approveAdvance(organizationId: string, id: string, opts: { reference?: string; note?: string; paidOn?: string; method?: string; amount?: number } = {}) {
     return (
       await request<HrmsSalaryAdvance>("POST", `/advances/requests/${id}/approve`, {
         query: { organizationId },

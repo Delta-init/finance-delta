@@ -1,7 +1,6 @@
 import {
   S3Client,
   PutObjectCommand,
-  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { env } from "../config/env";
 
@@ -80,12 +79,10 @@ export function publicUrlFor(key: string): string {
     : `https://${env.R2_BUCKET_NAME}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
 }
 
-/** Delete a previously uploaded key from R2. Silently ignores missing keys. */
-export async function deleteFile(key: string): Promise<void> {
-  if (!client || !key) return;
-  try {
-    await client.send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET_NAME, Key: key }));
-  } catch {
-    // ignore missing
-  }
-}
+/*
+ * Nothing here deletes a stored object (the user, 2026-11-10: "no auto removal needed in the storage"). A file taken
+ * off an invoice, a bill, an expense or a bank line stays in storage; only that record's link to it goes. The same
+ * file is often linked from elsewhere — a sales CRM's lead, the CS Portal's course fees and MT5 Approvals — and
+ * deleting it there left their receipts dead (six close receipts, 20–29 Oct 2026). Storage is cheap; a dead receipt
+ * in front of an approver is not.
+ */

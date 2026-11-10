@@ -622,21 +622,11 @@ export async function removeTransactionAttachment(
   const idx = list.findIndex((a) => a.key === key);
   if (idx === -1) throw new AppError("NOT_FOUND", "Receipt not found");
 
-  const [removed] = list.splice(idx, 1);
+  list.splice(idx, 1);
   tx.set("attachments", list);
   await tx.save();
-
-  // The row going is what was asked for; the object staying is untidiness, not
-  // a reason to fail and leave the row behind.
-  if (removed?.key) {
-    try {
-      const { deleteFile } = await import("../../lib/storage");
-      await deleteFile(removed.key);
-    } catch (err) {
-      const { logger } = await import("../../lib/logger");
-      logger.error({ err, key: removed.key }, "Removed a receipt but could not delete the object");
-    }
-  }
+  // The file stays in storage (2026-11-10): only this line's link to it goes — nothing in finance deletes a stored
+  // file (lib/storage.ts).
   return txToDTO(tx as unknown as BankTransactionDoc);
 }
 

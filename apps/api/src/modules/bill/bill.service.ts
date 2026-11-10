@@ -492,10 +492,8 @@ export async function removeBillAttachment(orgId: string, id: string, attId: str
   }).attachments;
   const target = arr.id(attId);
   if (!target) throw new AppError("NOT_FOUND", "Attachment not found");
-  if (target.key) {
-    const { deleteFile } = await import("../../lib/storage");
-    await deleteFile(target.key);
-  }
+  // The file stays in storage (2026-11-10): only this bill's link to it goes — nothing in finance deletes a stored
+  // file (lib/storage.ts).
   arr.pull(attId);
   await doc.save();
   return toDTO(doc as unknown as BillDoc);

@@ -695,15 +695,12 @@ export async function updateExpense(
         }
       : undefined;
   }
-  // Kept whole — key, size, type — so a later delete still finds the file (they used to lose the key here).
-  let droppedKeys: string[] = [];
+  // Kept whole — key, size, type. One taken off stays in storage (2026-11-10): nothing in finance deletes a stored
+  // file (lib/storage.ts).
   if (input.attachments !== undefined) {
     // Plain copies: Mongoose subdocuments would carry their own fields along.
     const before = JSON.parse(JSON.stringify(d.attachments ?? [])) as StoredAttachment[];
-    const next = await resolveAttachments(orgId, input.attachments, before);
-    const kept = new Set(next.map((a) => a.key).filter(Boolean));
-    droppedKeys = before.map((a) => a.key).filter((k): k is string => !!k && !kept.has(k));
-    d.attachments = next;
+    d.attachments = await resolveAttachments(orgId, input.attachments, before);
   }
 
   if (
@@ -759,7 +756,6 @@ export async function updateExpense(
   await doc.save();
   if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, lateInfo(doc));
   else if (lateNow?.withdraw) await withdrawLateFor(orgId, "expense", doc._id);
-  if (droppedKeys.length) await deleteUnusedFiles(orgId, droppedKeys, doc._id);
   if (typedStatement !== undefined) {
     // After its line is in step — a new line (or none) would have cleared it.
     await syncExpenseLine(orgId, doc._id);
@@ -917,17 +913,13 @@ export async function deleteExpense(
 export async function removeExpense(orgId: string, id: string): Promise<string> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
-  const keys = ((doc as unknown as { attachments?: { key?: string }[] }).attachments ?? []).map((a) => a.key).filter(Boolean) as string[];
   // Its line in the bank goes with it — not once a bank statement was reconciled against it.
   const line = (doc as unknown as { bankTransactionId?: unknown }).bankTransactionId;
   await assertDebitMovable(orgId, line);
   await doc.deleteOne();
   if (line) await syncDebitLine(orgId, line, null);
   await withdrawLateFor(orgId, "expense", doc._id);
-  if (keys.length) {
-    // A recurring expense's copies share its files: only one nothing else holds goes.
-    await deleteUnusedFiles(orgId, keys, doc._id);
-  }
+  // Its files stay in storage (2026-11-10): nothing in finance deletes a stored file (lib/storage.ts).
   return doc.expenseNumber;
 }
 
@@ -1134,15 +1126,6 @@ async function resolveAttachments(orgId: string, input: ExpenseAttachmentInput[]
   return out;
 }
 
-/** Deletes the stored files that no expense of this organization holds any more (copies of a recurring one share them). */
-async function deleteUnusedFiles(orgId: string, keys: string[], exceptId: unknown): Promise<void> {
-  const held = await Expense.find({ organizationId: orgId, _id: { $ne: exceptId }, "attachments.key": { $in: keys } })
-    .select("attachments.key").lean<{ attachments?: { key?: string }[] }[]>();
-  const stillUsed = new Set(held.flatMap((e) => (e.attachments ?? []).map((a) => a.key)));
-  const { deleteFile } = await import("../../lib/storage");
-  await Promise.all(keys.filter((k) => !stillUsed.has(k)).map((k) => deleteFile(k).catch(() => undefined)));
-}
-
 /**
  * A claim only takes receipts while it is still the claimant's.
  *
@@ -1216,12 +1199,8 @@ export async function removeAttachment(
 
   list.splice(idx, 1);
   await doc.save();
-
-  // After the record, so a storage failure cannot leave the row pointing at an
-  // object that is gone. An orphaned object costs storage; a row pointing at
-  // nothing is a broken link in front of somebody.
-  const { deleteFile } = await import("../../lib/storage");
-  await deleteFile(key).catch(() => undefined);
+  // The file stays in storage (2026-11-10): only this expense's link to it goes — nothing in finance deletes a stored
+  // file (lib/storage.ts).
 
   return toDTO(doc as unknown as ExpenseDoc);
 }

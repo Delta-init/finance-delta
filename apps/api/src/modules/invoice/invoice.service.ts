@@ -1299,9 +1299,6 @@ export async function restoreInvoice(orgId: string, id: string): Promise<Invoice
   return toDTO(doc);
 }
 
-/** Files other apps link to as well — removed from an invoice, never deleted from storage. */
-export const keepsSharedFile = (key: string): boolean => key.startsWith("enrolment-receipts/");
-
 /** Ten is plenty for an ID, a form and a payment slip, and stops a runaway loop. */
 const MAX_ATTACHMENTS = 10;
 
@@ -1360,24 +1357,12 @@ export async function removeAttachment(
   const idx = list.findIndex((a) => a.key === key);
   if (idx === -1) throw new AppError("NOT_FOUND", "Document not found");
 
-  const [removed] = list.splice(idx, 1);
+  list.splice(idx, 1);
   doc.set("attachments", list);
   await doc.save();
-
-  // The row going is what the caller asked for; the object not going is a
-  // tidiness problem, not a reason to fail and leave the row behind.
-  // A sales CRM's receipt from the close (enrolment-receipts/) stays in storage:
-  // the CRM's lead and the CS Portal link the same file, and deleting it left
-  // their receipts dead (2026-10-30). Only this invoice's link to it goes.
-  if (removed?.key && !keepsSharedFile(removed.key)) {
-    try {
-      const { deleteFile } = await import("../../lib/storage");
-      await deleteFile(removed.key);
-    } catch (err) {
-      const { logger } = await import("../../lib/logger");
-      logger.error({ err, key: removed.key }, "Removed an invoice document but could not delete the object");
-    }
-  }
+  // The file stays in storage (2026-11-10): only this invoice's link to it goes. Other apps link the same files —
+  // the sales CRM's lead and the CS Portal show close and balance receipts, the CS Portal finance's payment slips —
+  // and deleting one left their links dead. Nothing in finance deletes a stored file (lib/storage.ts).
   return toDTO(doc as unknown as InvoiceDoc);
 }
 

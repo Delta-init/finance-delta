@@ -47,7 +47,7 @@ const F = "https://files.e2e.test";
 const GONE = new Set<string>(), UNSURE = new Set<string>();
 const exists = async (url: string) => (UNSURE.has(url) ? null : !GONE.has(url));
 const file = (key: string, extra: Record<string, unknown> = {}) => ({ name: key.split("/").pop()!.replace(/^\d{13}-/, ""), url: `${F}/${key}`, key, size: 10, mimeType: "image/jpeg", ...extra });
-const gone = (f: { url: string }) => { GONE.add(f.url); return f; };
+const gone = <T extends { url: string }>(f: T): T => { GONE.add(f.url); return f; };
 const ORG = new Types.ObjectId();
 let n = 0;
 const inv = (o: Record<string, unknown>) => ({
@@ -60,7 +60,8 @@ const enrol = (declared: { method: string; receipt?: unknown }[]) => ({ course: 
 // A: the screenshot's case — the close receipt gone, a clearer copy attached since.
 const aDead = gone(file("enrolment-receipts/lead-a/1793292590525-WhatsApp_Image.jpeg"));
 const aNew = file("invoices/org/a/1793400000000-image.png", { uploadedAt: new Date("2026-11-01") });
-const A = inv({ attachments: [aNew], payments: [pay("tamara", aDead)], enrolment: enrol([{ method: "tamara", receipt: aDead }]) });
+const aPay = pay("tamara", aDead);
+const A = inv({ attachments: [aNew], payments: [aPay], enrolment: enrol([{ method: "tamara", receipt: aDead }]) });
 // B: the dead close receipt still among the documents, a replacement after it, and an older unrelated document.
 const bDead = gone(file("enrolment-receipts/lead-b/1793000000000-receipt.jpeg"));
 const bOld = file("invoices/org/b/1792000000000-id-card.png");
@@ -108,7 +109,7 @@ res = await relinkDeadReceipts({ write: true, exists, undoFile: join(dir, "undo.
 const a = await raw(A), b = await raw(B), c = await raw(C), d = await raw(D), e = await raw(E);
 check("A: the payment's proof is the replacement", a.payments[0].proofUrl === aNew.url && a.payments[0].proofKey === aNew.key, show(a.payments));
 check("A: …and the declared payment's receipt", a.enrolment.declaredPayments[0].receipt.url === aNew.url && a.enrolment.declaredPayments[0].receipt.key === aNew.key, show(a.enrolment.declaredPayments));
-check("A: the payment keeps its id, amount and date", String(a.payments[0]._id) === String(A.payments[0]!._id) && a.payments[0].amountMinor === 225_000 && a.payments[0].paidOn instanceof Date);
+check("A: the payment keeps its id, amount and date", String(a.payments[0]._id) === String(aPay._id) && a.payments[0].amountMinor === 225_000 && a.payments[0].paidOn instanceof Date);
 check("B: the dead document taken off, the others kept", JSON.stringify(b.attachments.map((x: any) => x.key)) === JSON.stringify([bOld.key, bNew.key]) && b.payments[0].proofUrl === bNew.url, show(b.attachments));
 check("C, D, E untouched", JSON.stringify(c) === JSON.stringify(before[String(C._id)]) && JSON.stringify(d) === JSON.stringify(before[String(D._id)]) && JSON.stringify(e) === JSON.stringify(before[String(E._id)]));
 check("the CS Portal told about A and B", JSON.stringify(queued.sort()) === JSON.stringify([String(A._id), String(B._id)].sort()), show(queued));

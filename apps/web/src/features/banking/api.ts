@@ -23,8 +23,9 @@ import type {
   CheckStatementInput,
   AddStatementLineInput,
   BulkDeleteTransactionsResult,
+  ExpenseCandidates,
 } from "@delta/shared";
-import { api, type QueryParams } from "@/lib/api";
+import { api, qs, type QueryParams } from "@/lib/api";
 
 const ACCOUNTS_KEY = ["bank-accounts"] as const;
 const txKey = (accountId: string) => [...ACCOUNTS_KEY, accountId, "transactions"] as const;
@@ -172,6 +173,27 @@ export function useDeleteBankTransaction(accountId: string) {
   });
 }
 
+/** The expenses a money-out line could be (2026-11-11: "Bank and expenses required matching only"). */
+export function useExpenseCandidates(accountId: string, txId: string | null, opts: { wide: boolean; q: string }) {
+  return useQuery({
+    queryKey: ["bank-accounts", accountId, "expense-candidates", txId, opts],
+    queryFn: () => api.get<ExpenseCandidates>(`bank-accounts/${accountId}/transactions/${txId}/expense-candidates${qs({ wide: opts.wide ? "1" : undefined, q: opts.q || undefined })}`),
+    enabled: !!txId,
+    staleTime: 0,
+  });
+}
+
+/** The line matched to an expense: the expense paid through it, nothing added. */
+export function useMatchToExpense(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: ({ txId, expenseId }: { txId: string; expenseId: string }) =>
+      api.post<{ expense: { id: string; expenseNumber: string } }>(`bank-accounts/${accountId}/transactions/${txId}/match-expense`, { expenseId }),
+    onSuccess: () => { refreshAccount(qc); void qc.invalidateQueries({ queryKey: ["expenses"] }); },
+  });
+}
+
 /** Several lines deleted at once (2026-11-11) — the server says which stayed, and why. */
 export function useBulkDeleteBankTransactions(accountId: string) {
   const qc = useQueryClient();
@@ -191,7 +213,7 @@ export function usePreviewImport(accountId: string) {
   return useMutation({
     meta: { skipToast: true },
     mutationFn: (input: PreviewImportInput) =>
-      api.post<{ total: number; duplicates: number[]; newCount: number }>(
+      api.post<{ total: number; duplicates: number[]; newCount: number; inBooks?: { index: number; label: string }[] }>(
         `bank-accounts/${accountId}/transactions/import-preview`,
         input,
       ),

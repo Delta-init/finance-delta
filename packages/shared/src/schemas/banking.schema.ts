@@ -302,6 +302,15 @@ export const bulkImportTransactionsSchema = z.object({
 });
 export type BulkImportTransactionsInput = z.infer<typeof bulkImportTransactionsSchema>;
 
+/** A money-out line matched to an expense (2026-11-11: "Bank and expenses required matching only"). */
+export const matchExpenseSchema = z.object({ expenseId: z.string().trim().min(1, "Choose the expense") });
+export type MatchExpenseInput = z.infer<typeof matchExpenseSchema>;
+export interface ExpenseCandidate {
+  id: string; expenseNumber: string; description: string; expenseDate: string; totalMinor: number; currency: string;
+  status: string; category: string; paid: boolean; sameAmount: boolean; daysApart: number;
+}
+export interface ExpenseCandidates { line: { amountMinor: number; date: string; currency: string }; candidates: ExpenseCandidate[] }
+
 /** Several lines deleted at once (2026-11-11) — each by the same rules as one on its own. */
 export const bulkDeleteTransactionsSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1, "Pick at least one line").max(500, "At most 500 lines at a time"),

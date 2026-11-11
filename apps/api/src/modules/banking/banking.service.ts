@@ -812,11 +812,56 @@ function lineKey(tx: {
  * Lets the wizard say "12 of these 40 are already here" while the import can
  * still be called off, rather than reporting it once it is too late.
  */
+/**
+ * A statement line already in the books (the user, 2026-11-11: "If we create or mapped record payment that comes in
+ * Bank"): recording a payment, a bill payment or a paid expense puts its own line in the account, worded by finance
+ * ("INV-00012 · Client · Bank transfer"), so the bank's copy of the same money never matched it by wording and was
+ * imported as a second line — the balance counted it twice. Now a statement line with the same amount within 3 days
+ * of such a line (one a record made or was linked to, not itself imported) is taken as that line: each book line takes
+ * one statement line, the nearest in date first.
+ */
+const BOOK_WINDOW_DAYS = 3;
+async function inBooksOf(
+  orgId: string,
+  accountId: Types.ObjectId,
+  lines: { date: string; amountMinor: number }[],
+  skip: Set<number>,
+): Promise<Map<number, { id: Types.ObjectId; label: string; externalId?: string }>> {
+  const found = new Map<number, { id: Types.ObjectId; label: string; externalId?: string }>();
+  const wanted = lines.map((l, i) => ({ ...l, i })).filter((l) => !skip.has(l.i) && /^\d{4}-\d{2}-\d{2}$/.test(l.date));
+  if (!wanted.length) return found;
+  const days = wanted.map((l) => Date.parse(`${l.date}T12:00:00.000Z`));
+  const DAY = 86_400_000;
+  const book = await BankTransaction.find({
+    organizationId: new Types.ObjectId(orgId),
+    accountId,
+    source: "manual",
+    "matches.0": { $exists: true },
+    date: { $gte: new Date(Math.min(...days) - (BOOK_WINDOW_DAYS + 1) * DAY), $lte: new Date(Math.max(...days) + (BOOK_WINDOW_DAYS + 1) * DAY) },
+  }).select("date amountMinor matches externalId").lean<any[]>();
+  const taken = new Set<string>();
+  for (const l of wanted) {
+    const at = Date.parse(`${l.date}T12:00:00.000Z`);
+    let best: any = null, bestGap = Infinity;
+    for (const b of book) {
+      if (taken.has(String(b._id)) || b.amountMinor !== l.amountMinor) continue;
+      const bDay = Date.parse(`${new Date(b.date).toISOString().slice(0, 10)}T12:00:00.000Z`);
+      const gap = Math.abs(bDay - at) / DAY;
+      if (gap <= BOOK_WINDOW_DAYS && gap < bestGap) { best = b; bestGap = gap; }
+    }
+    if (!best) continue;
+    taken.add(String(best._id));
+    const m = best.matches[0] ?? {};
+    found.set(l.i, { id: best._id, label: `${m.type ?? "record"} ${m.referenceNumber ?? ""}`.trim(), externalId: best.externalId || undefined });
+  }
+  return found;
+}
+
 export async function previewImport(
   orgId: string,
   accountId: string,
   input: PreviewImportInput,
-): Promise<{ total: number; duplicates: number[]; newCount: number }> {
+): Promise<{ total: number; duplicates: number[]; newCount: number; inBooks: { index: number; label: string }[] }> {
   const account = await BankAccount.findOne({
     _id: new Types.ObjectId(accountId),
     organizationId: new Types.ObjectId(orgId),
@@ -839,11 +884,16 @@ export async function previewImport(
     if (seen.has(fp) || withinBatch.has(fp)) duplicates.push(i);
     withinBatch.add(fp);
   });
+  // Already in the books through a payment or expense (2026-11-11): left out the same way.
+  const books = await inBooksOf(orgId, account._id, input.transactions, new Set(duplicates));
+  const inBooks = [...books.entries()].map(([index, b]) => ({ index, label: b.label })).sort((a, b) => a.index - b.index);
+  const all = [...new Set([...duplicates, ...inBooks.map((b) => b.index)])].sort((a, b) => a - b);
 
   return {
     total: input.transactions.length,
-    duplicates,
-    newCount: input.transactions.length - duplicates.length,
+    duplicates: all,
+    newCount: input.transactions.length - all.length,
+    inBooks,
   };
 }
 
@@ -865,19 +915,37 @@ export async function bulkImportTransactions(
     input.transactions.map((t) => t.externalId).filter((v): v is string => Boolean(v)),
   );
   const withinBatch = new Set<string>();
+  const fingerprinted = new Set<number>();
+  {
+    const probe = new Set<string>();
+    input.transactions.forEach((tx, i) => {
+      const fp = lineKey(tx);
+      if (seen.has(fp) || probe.has(fp)) fingerprinted.add(i);
+      probe.add(fp);
+    });
+  }
+  // Already in the books through a payment or expense (2026-11-11): a duplicate like any other.
+  const books = await inBooksOf(orgId, account._id, input.transactions, fingerprinted);
 
   const toInsert: typeof input.transactions = [];
   let skipped = 0;
-  for (const tx of input.transactions) {
+  for (const [i, tx] of input.transactions.entries()) {
     const fp = lineKey(tx);
-    const duplicate = seen.has(fp) || withinBatch.has(fp);
+    const book = books.get(i);
+    const fpDuplicate = seen.has(fp) || withinBatch.has(fp);
+    const duplicate = fpDuplicate || Boolean(book);
     withinBatch.add(fp);
+    // Left out for its book line: the bank's own reference goes on that line, so a later import knows it for sure.
+    if (book && input.onDuplicate === "skip" && tx.externalId && !book.externalId) {
+      const clash = await BankTransaction.exists({ accountId: account._id, externalId: tx.externalId });
+      if (!clash) await BankTransaction.updateOne({ _id: book.id }, { $set: { externalId: tx.externalId } });
+    }
 
     // A matching bank reference is not a resemblance, it is the same
     // transaction — the bank issues one per transaction. "Import anyway" is
     // offered for lines that merely look alike, and does not apply here.
     // Letting it through would also collide with the unique index.
-    const definite = duplicate && Boolean(tx.externalId);
+    const definite = fpDuplicate && Boolean(tx.externalId);
 
     if (duplicate && (definite || input.onDuplicate === "skip")) {
       skipped++;

@@ -763,6 +763,11 @@ export function PaymentDialog({
       setError("amount", { message: overBalanceMessage });
       return;
     }
+    // Every payment shows in Banking (the user, 2026-11-11): an account is chosen whenever there is one.
+    if (accounts.length > 0 && !accounts.some((a) => a.id === data.bankAccountId)) {
+      toast.error("Choose the account the money went into — the payment shows in Banking");
+      return;
+    }
     const input: RecordPaymentInput = {
       method: data.method,
       amountMinor: Math.round(data.amount * 100),
@@ -889,10 +894,10 @@ export function PaymentDialog({
               <label className="mb-1 block text-xs font-medium text-foreground-muted">Account</label>
               {/* The Banking account it went into — its method's to start with (Settings → Where payments go). The
                   payment shows in that account's cash book and balance; changed here, it moves (2026-10-16). */}
-              <Select value={bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={accounts.length > 0 && bankAccountId === NO_ACCOUNT ? "" : bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
+                <SelectTrigger><SelectValue placeholder="Choose the account" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>
+                  {accounts.length === 0 && <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>}
                   {accounts.map((a) => (
                     <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== currency ? ` (${a.currency})` : ""}</SelectItem>
                   ))}

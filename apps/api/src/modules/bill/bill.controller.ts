@@ -3,6 +3,7 @@ import { billQuerySchema } from "@delta/shared";
 import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as svc from "./bill.service";
+import { assertAccountChosen } from "../banking/account-chosen";
 
 const org = (req: Request) => req.auth!.organizationId;
 /** Who is typing it, and why it is late when it is (late-entry.service.ts). */
@@ -35,10 +36,12 @@ export const reject = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
+  await assertAccountChosen(org(req), req.body?.bankAccountId);
   ok(res, await svc.recordBillPayment(org(req), req.params.id!, req.body, late(req)));
 });
 
 export const updatePayment = asyncHandler(async (req, res) => {
+  await assertAccountChosen(org(req), req.body?.bankAccountId);
   ok(res, await svc.updateBillPayment(org(req), req.params.id!, req.params.paymentId!, req.body, late(req)));
 });
 

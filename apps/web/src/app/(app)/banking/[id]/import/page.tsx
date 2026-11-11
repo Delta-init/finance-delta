@@ -194,6 +194,8 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
   const [meta, setMeta] = useState<StatementMeta>({});
 
   const [duplicates, setDuplicates] = useState<Set<number>>(new Set());
+  // Lines already in the books through a payment or an expense (2026-11-11) — what each is in the books as.
+  const [inBooks, setInBooks] = useState<Map<number, string>>(new Map());
   const [onDuplicate, setOnDuplicate] = useState<"skip" | "import">("skip");
   const [result, setResult] = useState<{ count: number; skipped: number } | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping>(EMPTY_MAPPING);
@@ -363,8 +365,10 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
         })),
       });
       setDuplicates(new Set(res.duplicates));
+      setInBooks(new Map((res.inBooks ?? []).map((b) => [b.index, b.label])));
     } catch {
       setDuplicates(new Set());
+      setInBooks(new Map());
       toast.error("Could not check for duplicates — the import will still skip them");
     }
     setStep("preview");
@@ -688,6 +692,12 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
           {duplicates.size > 0 && (
             <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4">
               <p className="text-sm font-medium">{duplicates.size} of these are already on the account</p>
+              {inBooks.size > 0 && (
+                <p className="text-xs text-foreground-muted">
+                  {inBooks.size} {inBooks.size === 1 ? "is" : "are"} the money of a payment or expense already recorded — the same amount
+                  within 3 days of its line here — so importing {inBooks.size === 1 ? "it" : "them"} would count it twice.
+                </p>
+              )}
               <p className="text-xs text-foreground-muted">
                 {asIndex(mapping.externalId) >= 0
                   ? "Matched on the bank's own transaction ID, so these are the same transactions, not merely similar ones. They will be left out."
@@ -747,7 +757,7 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
                           {row.description}
                           {dup && (
                             <span className="ml-2 inline-flex items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
-                              <Copy className="h-2.5 w-2.5" /> already here
+                              <Copy className="h-2.5 w-2.5" /> {inBooks.has(i) ? `in the books as ${inBooks.get(i)}` : "already here"}
                             </span>
                           )}
                         </td>

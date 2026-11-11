@@ -1013,6 +1013,37 @@ export async function recordProcurementPayment(orgId: string, id: string, input:
  * often filled in when the claim was created, describing how it was meant to be
  * paid, and clearing them here would throw away something this never set.
  */
+/**
+ * An expense paid through a line already in a Banking account (the user, 2026-11-11: "Bank and expenses required
+ * matching only") — a statement line imported, or one typed in the cash book: the expense becomes paid on that line's
+ * day from that account, and that line is its line, so the money is counted once. Same amount and currency only.
+ */
+export async function adoptBankLine(
+  orgId: string,
+  id: string,
+  line: { id: string; accountId: string; accountName: string; date: Date; amountMinor: number; currency: string },
+): Promise<ExpenseDTO> {
+  const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
+  if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
+  refuseBillExpense(doc);
+  const d = doc as unknown as Record<string, any>;
+  if (["voided", "rejected"].includes(String(d.status))) throw new AppError("CONFLICT", `A ${d.status} expense can't be matched`);
+  if (awaitingPayment(doc)) throw new AppError("CONFLICT", `${d.expenseNumber} is an approved purchase — record its payment with the receipt`);
+  await refusePayrollExpense(orgId, doc, "matched");
+  assertNotWaiting(doc, "matched");
+  if (d.bankTransactionId) throw new AppError("CONFLICT", `${d.expenseNumber} is in Banking already (${d.paymentAccount || "its account"}) — match the line to another expense, or change this one`);
+  if (String(d.currency ?? "") !== line.currency) throw new AppError("CONFLICT", `${d.expenseNumber} is in ${d.currency}, the line in ${line.currency}`);
+  if (Number(d.totalMinor ?? 0) !== line.amountMinor) {
+    throw new AppError("CONFLICT", `${d.expenseNumber} is ${(Number(d.totalMinor ?? 0) / 100).toFixed(2)} and the line ${(line.amountMinor / 100).toFixed(2)} — the amounts have to agree`);
+  }
+  d.paidOn = line.date;
+  d.bankAccountId = new Types.ObjectId(line.accountId);
+  d.paymentAccount = line.accountName;
+  d.bankTransactionId = new Types.ObjectId(line.id);
+  await doc.save();
+  return syncedDTO(orgId, doc._id);
+}
+
 export async function markExpenseUnpaid(orgId: string, id: string): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");

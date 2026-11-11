@@ -167,6 +167,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   async function onPaymentSubmit(values: RecordBillPaymentInput) {
+    // Every payment shows in Banking (the user, 2026-11-11): an account is chosen whenever there is one.
+    if (accounts.length > 0 && !accounts.some((a) => a.id === values.bankAccountId)) {
+      toast.error("Choose the account it was paid from — the payment shows in Banking");
+      return;
+    }
     const payload: RecordBillPaymentInput = { ...values };
     const picked = accounts.find((a) => a.id === values.bankAccountId);
     payload.bankAccountId = picked ? picked.id : "";
@@ -697,10 +702,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Account / Bank</Label>
-                <Select value={bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={accounts.length > 0 && bankAccountId === NO_ACCOUNT ? "" : bankAccountId} onValueChange={(v) => { setValue("bankAccountId", v); setAccountTouched(true); }}>
+                  <SelectTrigger><SelectValue placeholder="Choose the account" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>
+                    {accounts.length === 0 && <SelectItem value={NO_ACCOUNT}>Not in a bank account</SelectItem>}
                     {accounts.map((a) => (
                       <SelectItem key={a.id} value={a.id}>{a.accountName}{a.currency !== bill.currency ? ` (${a.currency})` : ""}</SelectItem>
                     ))}

@@ -5,6 +5,7 @@ import { parseQuery } from "../../middleware/validate";
 import { resolveScope } from "../../lib/ownership";
 import * as invoiceService from "./invoice.service";
 import { autoCalculate } from "../commission/commission.service";
+import { assertAccountChosen } from "../banking/account-chosen";
 
 const orgId = (req: Request) => req.auth!.organizationId;
 
@@ -78,12 +79,14 @@ export const voidInvoice = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
+  await assertAccountChosen(orgId(req), req.body?.bankAccountId);
   const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body, req.file, undefined, { userId: req.auth!.userId, reason: req.body?.lateReason });
   void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
   created(res, payment);
 });
 
 export const updatePayment = asyncHandler(async (req, res) => {
+  await assertAccountChosen(orgId(req), req.body?.bankAccountId);
   const invoice = await invoiceService.updatePayment(orgId(req), req.params.id!, req.params.paymentId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }, req.file);
   void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
   ok(res, invoice);

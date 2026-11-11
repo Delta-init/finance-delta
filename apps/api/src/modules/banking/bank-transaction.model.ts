@@ -28,6 +28,12 @@ const bankTransactionSchema = new Schema(
     type: { type: String, enum: ["credit", "debit"], required: true },
     runningBalanceMinor: { type: Number, required: true },
     source: { type: String, enum: ["manual", "import"], required: true, default: "manual" },
+    /**
+     * A line that was already here — imported from a statement, or typed — taken on by an expense matched to it (the
+     * user, 2026-11-11: "Bank and expenses required matching only"). The expense keeps it in step, but never deletes
+     * or rewords it: unpaid, voided or changed so it no longer fits, the expense lets it go (unmatched) instead.
+     */
+    adopted: { type: Boolean, default: false },
     importBatchId: { type: String },
     /**
      * The bank's own reference for this transaction, where the statement

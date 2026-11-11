@@ -15,6 +15,7 @@ import {
   TrendingDown,
   CheckCircle2,
   CircleDot,
+  Link2,
   Ban,
   Copy,
   Pencil,
@@ -68,6 +69,7 @@ import { ReconciliationsTab } from "@/features/banking/ReconciliationsTab";
 import { OpeningBalanceDialog } from "@/features/banking/OpeningBalanceDialog";
 import { useCan } from "@/lib/use-can";
 import { DateField } from "@/components/ui/date-field";
+import { MatchExpenseDialog } from "@/features/banking/MatchExpenseDialog";
 import { toDmy } from "@/lib/dates";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
@@ -107,6 +109,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkDeleteTransactionsResult | null>(null);
   const bulkDelete = useBulkDeleteBankTransactions(id);
+  // Matched to an expense, and only an expense (2026-11-11).
+  const [matching, setMatching] = useState<BankTransaction | null>(null);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [deleting, setDeleting] = useState<BankTransaction | null>(null);
   // A transfer with another of the organization's accounts (2026-10-22): made here, or a line of one corrected or
@@ -219,6 +223,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           onAction={handleTxAction}
           onEdit={(t) => (t.transfer ? openTransfer(t) : setEditing(t))}
           onDelete={(t) => (t.transfer ? openTransfer(t) : setDeleting(t))}
+          onMatchExpense={canWrite ? setMatching : undefined}
         />
       ),
     },
@@ -534,6 +539,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
       </>)}
 
       <TransferDialog account={account} line={transferLine} open={transferOpen} onClose={() => setTransferOpen(false)} />
+      {matching && <MatchExpenseDialog accountId={id} tx={matching} onClose={() => setMatching(null)} />}
 
       <EditTransactionDialog
         tx={editing}
@@ -598,12 +604,14 @@ function TxActions({
   onAction,
   onEdit,
   onDelete,
+  onMatchExpense,
 }: {
   tx: BankTransaction;
   accountId: string;
   onAction: (action: () => Promise<unknown>, msg: string) => Promise<void>;
   onEdit: (tx: BankTransaction) => void;
   onDelete: (tx: BankTransaction) => void;
+  onMatchExpense?: (tx: BankTransaction) => void;
 }) {
   const exclude = useExcludeTransaction(accountId, tx.id);
   const markDup = useMarkDuplicate(accountId, tx.id);
@@ -661,6 +669,18 @@ function TxActions({
 
           </button>
 
+        </Tooltip>
+      )}
+      {/* Money out matched to an expense — only an expense (2026-11-11). */}
+      {onMatchExpense && tx.status === "unmatched" && tx.amountMinor < 0 && !tx.transfer && (
+        <Tooltip label="Match to an expense">
+          <button
+            onClick={(e) => { e.stopPropagation(); onMatchExpense(tx); }}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground-muted hover:bg-surface-muted hover:text-primary"
+            aria-label="Match to an expense"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </button>
         </Tooltip>
       )}
       {tx.status === "matched" && (

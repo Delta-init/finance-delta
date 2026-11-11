@@ -11,7 +11,7 @@ import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
-import { LinkRowDialog } from "@/features/banking/LinkRowDialog";
+import { MatchExpenseDialog } from "@/features/banking/MatchExpenseDialog";
 import { CashCountDialog } from "@/features/banking/CashCountDialog";
 import { CashEntryDialog } from "@/features/banking/CashEntryDialog";
 import { TransferDialog } from "@/features/banking/TransferDialog";
@@ -375,14 +375,15 @@ export function CashBook({ account }: { account: BankAccount }) {
                         document the button went, and an entry linked to the
                         wrong expense could only be deleted and typed again.
                         The server has always been able to undo it. */}
-                    {canWrite && !tx.transfer && (
+                    {/* Money out matched to an expense — only an expense (2026-11-11); money in isn't matched here. */}
+                    {canWrite && !tx.transfer && (tx.matches.length > 0 || tx.amountMinor < 0) && (
                       tx.matches.length === 0 ? (
                         <button
                           type="button"
                           onClick={() => setLinking(tx)}
                           className="mr-2 text-foreground-subtle hover:text-primary"
-                          aria-label={`Link ${tx.description} to a document`}
-                          title="Link to a document"
+                          aria-label={`Match ${tx.description} to an expense`}
+                          title="Match to an expense"
                         >
                           <Link2 className="h-3.5 w-3.5" />
                         </button>
@@ -506,13 +507,7 @@ export function CashBook({ account }: { account: BankAccount }) {
       )}
 
       {linking && (
-        <LinkRowDialog
-          accountId={account.id}
-          tx={linking}
-          currency={account.currency}
-          open
-          onClose={() => setLinking(null)}
-        />
+        <MatchExpenseDialog accountId={account.id} tx={linking} onClose={() => setLinking(null)} />
       )}
 
       {total > PAGE_SIZE && (

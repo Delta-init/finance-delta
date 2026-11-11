@@ -52,14 +52,19 @@ export async function debitAccount(orgId: string, id: string, currency: string):
  */
 export async function syncDebitLine(orgId: string, haveId: unknown, want: WantedDebit | null): Promise<Types.ObjectId | null> {
   const have = haveId ? await BankTransaction.findOne({ _id: oid(haveId), organizationId: oid(orgId) }).lean<any>() : null;
+  // A line it took on (an imported statement line, or one typed — matched to it, 2026-11-11) is the bank's, not its own.
+  const borrowed = !!have && (have.adopted === true || have.source === "import");
   if (have && want && String(have.accountId) === want.accountId && have.amountMinor === -want.amountMinor
     && new Date(have.date).getTime() === want.date.getTime()) {
-    if (have.description !== want.description || have.reference !== want.reference) {
+    if (!borrowed && (have.description !== want.description || have.reference !== want.reference)) {
       await BankTransaction.updateOne({ _id: have._id }, { $set: { description: want.description, reference: want.reference } });
     }
     return have._id;
   }
-  if (have) {
+  if (have && borrowed) {
+    // Let go, not deleted: it stays in the account as it was, unmatched.
+    await BankTransaction.updateOne({ _id: have._id }, { $set: { status: "unmatched", matches: [], adopted: false } });
+  } else if (have) {
     await BankTransaction.deleteOne({ _id: have._id });
     await recalculateRunningBalances(orgId, have.accountId);
   }

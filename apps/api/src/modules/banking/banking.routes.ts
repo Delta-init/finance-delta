@@ -7,6 +7,7 @@ import {
   bulkImportTransactionsSchema,
   previewImportSchema,
   bulkDeleteTransactionsSchema,
+  matchExpenseSchema,
   matchTransactionSchema,
   cashCountSchema,
   updateCashCountSchema,
@@ -76,6 +77,9 @@ router.delete(
   c.removeTransactionAttachment,
 );
 router.post("/:id/transactions/:txId/match", requirePermission("banking:write"), validateBody(matchTransactionSchema), c.matchTransaction);
+// Matched to an expense only (2026-11-11): the expenses it could be, and the match itself (the expense paid through it).
+router.get("/:id/transactions/:txId/expense-candidates", requirePermission("banking:read"), c.expenseCandidates);
+router.post("/:id/transactions/:txId/match-expense", requirePermission("banking:write"), validateBody(matchExpenseSchema), c.matchToExpense);
 router.post("/:id/transactions/:txId/unmatch", requirePermission("banking:write"), c.unmatchTransaction);
 router.post("/:id/transactions/:txId/exclude", requirePermission("banking:write"), c.excludeTransaction);
 router.post("/:id/transactions/:txId/duplicate", requirePermission("banking:write"), c.markDuplicate);

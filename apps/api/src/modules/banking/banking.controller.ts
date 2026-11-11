@@ -6,6 +6,7 @@ import {
 import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import * as svc from "./banking.service";
+import * as matchExpense from "./match-expense";
 
 const org = (req: Request) => req.auth!.organizationId;
 const uid = (req: Request) => req.auth!.userId;
@@ -49,6 +50,15 @@ export const createTransaction = asyncHandler(async (req, res) => {
 export const bulkImport = asyncHandler(async (req, res) => {
   const result = await svc.bulkImportTransactions(org(req), req.params.id!, req.body);
   created(res, result);
+});
+
+export const expenseCandidates = asyncHandler(async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  ok(res, await matchExpense.expenseCandidates(org(req), req.params.id!, req.params.txId!, { wide: q.wide === "1" || q.wide === "true", q: q.q }));
+});
+
+export const matchToExpense = asyncHandler(async (req, res) => {
+  ok(res, await matchExpense.matchLineToExpense(org(req), req.params.id!, req.params.txId!, (req.body as { expenseId: string }).expenseId));
 });
 
 export const bulkDelete = asyncHandler(async (req, res) => {

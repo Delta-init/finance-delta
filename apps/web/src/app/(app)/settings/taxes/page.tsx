@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/page-header";
 import { toast } from "@/lib/toast";
 import { ApiError } from "@/lib/api";
 import { useTaxConfig, useUpsertTaxConfig } from "@/features/organization/api";
+import { TdsSettings } from "@/features/tds/TdsSettings";
 
 const APPLIES_LABELS = { sales: "Sales only", purchases: "Purchases only", both: "Both" };
 const CODE_OPTIONS = ["VAT", "GST", "TDS", "WHT", "OTHER"];
@@ -240,6 +241,9 @@ export default function TaxSettingsPage() {
           Save Tax Settings
         </Button>
       </div>
+
+      {/* TDS on vendor bills — Bangalore (INR books) only (2026-11-11); nothing shows elsewhere. */}
+      <TdsSettings />
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { useVendors, useCreateVendor, useUpdateVendor, useDeleteVendor } from "@
 import { useCurrency } from "@/lib/currency-context";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
+import { VendorTdsFields } from "@/features/tds/VendorTdsFields";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -42,11 +43,11 @@ const VENDOR_EXPORT_COLUMNS: ExportColumn<Vendor>[] = [
 ];
 
 function defaultValues(currency: string): CreateVendorInput {
-  return { name: "", email: "", phone: "", companyName: "", currency, vatNumber: "", billingAddress: { street: "", city: "", state: "", zip: "", country: "" }, tagIds: [] };
+  return { name: "", email: "", phone: "", companyName: "", currency, vatNumber: "", billingAddress: { street: "", city: "", state: "", zip: "", country: "" }, tagIds: [], pan: "", tdsSection: "" };
 }
 
 function toFormValues(v: Vendor): CreateVendorInput {
-  return { name: v.name, email: v.email, phone: v.phone, companyName: v.companyName, currency: v.currency, vatNumber: v.vatNumber, billingAddress: v.billingAddress ?? {}, tagIds: v.tags.map((t) => t.id) };
+  return { name: v.name, email: v.email, phone: v.phone, companyName: v.companyName, currency: v.currency, vatNumber: v.vatNumber, billingAddress: v.billingAddress ?? {}, tagIds: v.tags.map((t) => t.id), pan: v.pan ?? "", tdsSection: v.tdsSection ?? "" };
 }
 
 export default function VendorsPage() {
@@ -145,6 +146,7 @@ export default function VendorsPage() {
             <div className="space-y-1.5"><Label>Company Name</Label><Input {...register("companyName")} /></div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>VAT / TRN Number</Label><Input {...register("vatNumber")} /></div>
+              <VendorTdsFields register={register} />
               <div className="space-y-1.5">
                 <Label>Currency</Label>
                 <Select value={watch("currency") ?? orgCurrency} onValueChange={(v) => setValue("currency", v)}>

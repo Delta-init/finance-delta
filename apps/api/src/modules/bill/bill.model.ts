@@ -87,6 +87,11 @@ const billSchema = new Schema(
     payments: { type: [billPaymentSchema], default: [] },
     attachments: { type: [billAttachmentSchema], default: [] },
     lateEntry: { type: recordLateSchema, default: null },
+    /** TDS deducted (Bangalore, 2026-11-11) — what it was worked out on and the TDS; the balance is the total less it. */
+    tds: {
+      type: new Schema({ section: String, label: String, ratePct: Number, baseMinor: Number, amountMinor: Number }, { _id: false }),
+      default: null,
+    },
     notes: { type: String, default: "" },
     paymentTerms: { type: String, default: "" },
     /**

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { billTdsSchema } from "./tds.schema";
 import { emiDetailInputSchema, emiDetailSchema } from "./emi.schema";
 import { lateReasonSchema, recordLateEntrySchema } from "./late-entry.schema";
 
@@ -67,6 +68,11 @@ export const createBillSchema = z.object({
    */
   category: z.string().min(1, "Choose the bill's category").max(60),
   subcategory: z.string().max(60).optional(),
+  /**
+   * TDS (Bangalore, 2026-11-11): the section deducted under — "" for none; not given on a new bill, the vendor's own
+   * section. Only where the organization offers TDS (tds.schema.ts).
+   */
+  tdsSection: z.string().max(20).optional(),
 });
 export type CreateBillInput = z.infer<typeof createBillSchema>;
 
@@ -132,6 +138,8 @@ export const billSchema = z.object({
   attachments: z.array(billAttachmentSchema).default([]),
   /** Typed in late: waiting for a manager, or what one decided. */
   lateEntry: recordLateEntrySchema.optional(),
+  /** TDS deducted (Bangalore, 2026-11-11) — the balance is the total less it. */
+  tds: billTdsSchema.nullable().optional(),
   notes: z.string(),
   paymentTerms: z.string(),
   /** What it is for (2026-10-23); absent on bills from before. */

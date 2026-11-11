@@ -18,6 +18,8 @@ function toDTO(doc: VendorDoc): VendorDTO {
     companyName: (doc.companyName as string) ?? "",
     currency: (doc.currency as string) ?? "AED",
     vatNumber: (d.vatNumber as string) ?? "",
+    pan: (d.pan as string) ?? "",
+    tdsSection: (d.tdsSection as string) ?? "",
     billingAddress: (() => {
       const a = (d.billingAddress ?? {}) as Record<string, string>;
       return { street: a.street ?? "", city: a.city ?? "", state: a.state ?? "", zip: a.zip ?? "", country: a.country ?? "" };
@@ -77,6 +79,8 @@ export async function createVendor(orgId: string, input: CreateVendorInput): Pro
     companyName: input.companyName ?? "",
     currency,
     vatNumber: input.vatNumber ?? "",
+    pan: (input.pan ?? "").toUpperCase(),
+    tdsSection: input.tdsSection ?? "",
     billingAddress: input.billingAddress ?? {},
     tagIds,
   });
@@ -98,6 +102,8 @@ export async function updateVendor(orgId: string, id: string, input: UpdateVendo
 
   const d = doc as unknown as Record<string, unknown>;
   if (input.vatNumber !== undefined) d.vatNumber = input.vatNumber;
+  if (input.pan !== undefined) d.pan = input.pan.toUpperCase();
+  if (input.tdsSection !== undefined) d.tdsSection = input.tdsSection;
   if (input.billingAddress !== undefined) d.billingAddress = input.billingAddress;
 
   await doc.save();

@@ -24,6 +24,7 @@ import { toast } from "@/lib/toast";
 import { useVendor, useUpdateVendor } from "@/features/vendors/api";
 import { useBills } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
+import { VendorTdsFields } from "@/features/tds/VendorTdsFields";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 
@@ -46,7 +47,7 @@ function toFormValues(v: Vendor): CreateVendorInput {
   return {
     name: v.name, email: v.email, phone: v.phone, companyName: v.companyName,
     currency: v.currency, vatNumber: v.vatNumber, billingAddress: v.billingAddress ?? {},
-    tagIds: v.tags.map((t) => t.id),
+    tagIds: v.tags.map((t) => t.id), pan: v.pan ?? "", tdsSection: v.tdsSection ?? "",
   };
 }
 
@@ -128,6 +129,12 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <div className="flex items-center gap-2 text-sm">
                 <Landmark className="h-4 w-4 text-foreground-muted shrink-0" />
                 <span>VAT: {vendor.vatNumber}</span>
+              </div>
+            )}
+            {(vendor.pan || vendor.tdsSection) && (
+              <div className="flex items-center gap-2 text-sm">
+                <Landmark className="h-4 w-4 text-foreground-muted shrink-0" />
+                <span>{[vendor.pan && `PAN: ${vendor.pan}`, vendor.tdsSection && `TDS ${vendor.tdsSection}`].filter(Boolean).join(" · ")}</span>
               </div>
             )}
             <div className="space-y-0.5">
@@ -212,6 +219,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
             <div className="space-y-1.5"><Label>Company Name</Label><Input {...register("companyName")} /></div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label>VAT / TRN</Label><Input {...register("vatNumber")} /></div>
+              <VendorTdsFields register={register} />
               <div className="space-y-1.5">
                 <Label>Currency</Label>
                 <Select value={watch("currency") ?? orgCurrency} onValueChange={(v) => setValue("currency", v)}>

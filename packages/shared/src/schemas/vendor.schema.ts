@@ -18,6 +18,9 @@ export const createVendorSchema = z.object({
   vatNumber: z.string().max(50).optional().default(""),
   billingAddress: addressSchema.optional().default({}),
   tagIds: z.array(z.string()).optional().default([]),
+  /** India (Bangalore, 2026-11-11): the vendor's PAN, and the TDS section their bills are usually deducted under. */
+  pan: z.string().trim().max(20).optional().default(""),
+  tdsSection: z.string().max(20).optional().default(""),
 });
 export type CreateVendorInput = z.infer<typeof createVendorSchema>;
 
@@ -35,6 +38,8 @@ export const vendorSchema = z.object({
   companyName: z.string(),
   currency: z.string(),
   vatNumber: z.string(),
+  pan: z.string().default(""),
+  tdsSection: z.string().default(""),
   billingAddress: addressSchema,
   status: z.enum(["active", "archived"]),
   tags: z.array(tagRefSchema).default([]),

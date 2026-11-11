@@ -402,6 +402,19 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 <span>Total</span>
                 <MoneyDisplay minor={bill.totalMinor} currency={bill.currency} className="w-28 text-right" />
               </div>
+              {/* TDS deducted (Bangalore, 2026-11-11): owed to the government, so the vendor is paid the rest. */}
+              {bill.tds && (
+                <>
+                  <div className="flex justify-end gap-12 text-sm">
+                    <span className="text-foreground-muted" title={bill.tds.label}>TDS {bill.tds.section} @ {bill.tds.ratePct}% on {formatMoney(bill.tds.baseMinor, bill.currency)}</span>
+                    <span className="w-28 text-right">−{formatMoney(bill.tds.amountMinor, bill.currency)}</span>
+                  </div>
+                  <div className="flex justify-end gap-12 text-sm font-semibold">
+                    <span>Payable to vendor</span>
+                    <MoneyDisplay minor={bill.totalMinor - bill.tds.amountMinor} currency={bill.currency} className="w-28 text-right" />
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

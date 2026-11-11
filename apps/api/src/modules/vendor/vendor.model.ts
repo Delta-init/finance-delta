@@ -21,6 +21,9 @@ const vendorSchema = new Schema(
     companyName: { type: String, default: "" },
     currency: { type: String, default: "AED" },
     vatNumber: { type: String, default: "" },
+    /** India (Bangalore, 2026-11-11): PAN, and the TDS section their bills are usually deducted under. */
+    pan: { type: String, default: "" },
+    tdsSection: { type: String, default: "" },
     billingAddress: { type: addressSchema, default: () => ({}) },
     status: { type: String, enum: ["active", "archived"], default: "active" },
     tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],

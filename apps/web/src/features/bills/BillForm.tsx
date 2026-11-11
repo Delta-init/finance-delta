@@ -7,7 +7,7 @@ import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, Plus, Trash2, Paperclip, Upload, FileText } from "lucide-react";
-import { formatMoney, toMinor } from "@delta/shared";
+import { formatMoney, tdsMinorOf, toMinor } from "@delta/shared";
 import type { CreateBillInput } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,8 @@ import { useCurrency } from "@/lib/currency-context";
 import { useFileDrop } from "@/components/ui/file-drop";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { CategoryPicker, choiceComplete } from "@/features/expense-categories/CategoryPicker";
+import { useTdsConfig } from "@/features/tds/api";
+import { useVendor } from "@/features/vendors/api";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
 const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Due on receipt"];
@@ -47,6 +49,8 @@ const formSchema = z.object({
   // What the bill is for (2026-10-23) — required; its expense is filed under it.
   category: z.string().min(1, "Choose the bill's category"),
   subcategory: z.string().optional().default(""),
+  // TDS (Bangalore, 2026-11-11): the section deducted under, "" none — the vendor's own to start with.
+  tdsSection: z.string().optional(),
 });
 export type BillFormValues = z.infer<typeof formSchema>;
 
@@ -116,6 +120,15 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const { data: categories, isLoading: categoriesLoading } = useExpenseCategories();
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
+  // TDS (Bangalore, 2026-11-11): offered where the organization keeps INR books; a new bill takes its vendor's section.
+  const { data: tdsCfg } = useTdsConfig();
+  const tdsOn = !!tdsCfg?.enabled;
+  const vendorId = watch("vendorId");
+  const { data: pickedVendor } = useVendor(tdsOn && vendorId ? vendorId : undefined);
+  const tdsSection = watch("tdsSection");
+  useEffect(() => {
+    if (tdsOn && !isEdit && pickedVendor) setValue("tdsSection", pickedVendor.tdsSection ?? "");
+  }, [tdsOn, isEdit, pickedVendor?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // A bill dated in the past no longer asks for a reason or a manager (the user, 2026-11-11).
 
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -162,6 +175,8 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
 
   // The same figure the API will compute, so the warning and the refusal agree.
   const nextTotalMinor = toMinor(totals.subtotal + totals.tax);
+  const tdsChosen = tdsOn && tdsSection ? tdsCfg?.sections.find((s) => s.code === tdsSection) : undefined;
+  const tdsMinor = tdsChosen ? tdsMinorOf(toMinor(totals.subtotal), tdsChosen.ratePct) : 0;
   const belowPaid = amountPaidMinor > 0 && nextTotalMinor < amountPaidMinor;
 
   async function onSubmit(values: BillFormValues) {
@@ -180,6 +195,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
       requiresApproval: values.requiresApproval,
       category: values.category,
       ...(values.subcategory ? { subcategory: values.subcategory } : {}),
+      ...(tdsOn && values.tdsSection !== undefined ? { tdsSection: values.tdsSection } : {}),
       lineItems: values.lineItems.map((l) => ({
         description: l.description,
         quantity: l.quantity,
@@ -359,6 +375,30 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
                 <span className="font-semibold">Total</span>
                 <span className="font-semibold">{formatMoney(toMinor(totals.subtotal + totals.tax), currency)}</span>
               </div>
+              {tdsOn && (
+                <div className="space-y-1.5 border-t border-border pt-1.5">
+                  <label className="block text-xs text-foreground-muted" htmlFor="bill-tds">TDS section</label>
+                  <select id="bill-tds" value={tdsSection ?? ""} onChange={(e) => setValue("tdsSection", e.target.value)}
+                    className="h-8 w-full rounded-md border border-border bg-surface px-2 text-xs">
+                    <option value="">No TDS</option>
+                    {tdsCfg!.sections.filter((s) => s.active || s.code === tdsSection).map((s) => (
+                      <option key={s.code} value={s.code}>{s.code} — {s.ratePct}%</option>
+                    ))}
+                  </select>
+                  {tdsMinor > 0 && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-foreground-muted">TDS {tdsChosen!.code} @ {tdsChosen!.ratePct}% (before GST)</span>
+                        <span className="font-medium">−{formatMoney(tdsMinor, currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Payable to vendor</span>
+                        <span className="font-semibold">{formatMoney(nextTotalMinor - tdsMinor, currency)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               {/* Only when money has already gone out, which is the only time
                   the total is not free to be anything. */}
               {amountPaidMinor > 0 && (

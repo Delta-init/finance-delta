@@ -11,6 +11,7 @@ import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/mone
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { isLatePending, lateView } from "../late-entry/late-entry.model";
 import { withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
+import { billTdsFor, tdsOf } from "../tds/tds.service";
 import { syncBillExpense } from "./bill-expense";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { User } from "../user/user.model";
@@ -114,6 +115,7 @@ function toDTO(doc: BillDoc): BillDTO {
       };
     }),
     lateEntry: released(d.lateEntry),
+    tds: billTdsView(d.tds),
     notes: (doc.notes as string) ?? "",
     paymentTerms: (d.paymentTerms as string) ?? "",
     ...(d.category
@@ -167,6 +169,12 @@ export async function getBill(orgId: string, id: string): Promise<BillDTO> {
    in Late Bills ( date of bill in past )") — expenses, invoice payments and bank lines still do. One asked before
    that and still waiting is let go: shown as nothing, and it no longer holds the bill back
    (scripts/release-late-bills.ts withdraws them for good). */
+/** A bill's TDS as the screen reads it (2026-11-11), or none. */
+function billTdsView(v: unknown) {
+  const t = v as { section?: string; label?: string; ratePct?: number; baseMinor?: number; amountMinor?: number } | null | undefined;
+  if (!t || !(Number(t.amountMinor) > 0)) return null;
+  return { section: String(t.section ?? ""), label: String(t.label ?? ""), ratePct: Number(t.ratePct ?? 0), baseMinor: Number(t.baseMinor ?? 0), amountMinor: Number(t.amountMinor) };
+}
 function released(v: unknown) {
   return isLatePending(v) ? undefined : lateView(v);
 }
@@ -184,6 +192,8 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
   }, 0);
   const totalMinor = lines.reduce((s, l) => s + l.lineTotalMinor, 0);
   const billNumber = await nextNumber(orgId, "bill", "BILL-");
+  // TDS (Bangalore, 2026-11-11): the section named, else the vendor's own; worked out before GST, off what is owed.
+  const tds = await billTdsFor(orgId, input.tdsSection !== undefined ? input.tdsSection : String((vendor as any).tdsSection ?? ""), totalMinor - taxTotalMinor, !!input.tdsSection);
 
   // What it is for, checked against the organization's categories (2026-10-23) — its expense is filed under it.
   const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
@@ -204,8 +214,9 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
     subtotalMinor,
     taxTotalMinor,
     totalMinor,
-    balanceMinor: totalMinor,
+    balanceMinor: totalMinor - (tds?.amountMinor ?? 0),
     amountPaidMinor: 0,
+    tds,
     notes: input.notes ?? "",
     paymentTerms: input.paymentTerms ?? "",
     status,
@@ -295,6 +306,20 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
     if (paid > 0) doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   }
 
+  // TDS worked out again on what the bill is now (2026-11-11): its section as given, else the one it had.
+  if (input.lineItems || input.tdsSection !== undefined) {
+    const d = doc as any;
+    const code = input.tdsSection !== undefined ? input.tdsSection : String(d.tds?.section ?? "");
+    const tds = await billTdsFor(orgId, code, Number(d.totalMinor ?? 0) - Number(d.taxTotalMinor ?? 0), input.tdsSection !== undefined && !!input.tdsSection);
+    const paid = Number(d.amountPaidMinor ?? 0);
+    const payable = Number(d.totalMinor ?? 0) - (tds?.amountMinor ?? 0);
+    if (paid > payable) {
+      throw new AppError("CONFLICT", `${formatMinor(paid, d.currency)} is paid already — more than the ${formatMinor(payable, d.currency)} left after TDS. Remove a payment first.`);
+    }
+    d.tds = tds;
+    d.balanceMinor = payable - paid;
+    if (paid > 0) d.status = d.balanceMinor <= 0 ? "paid" : "partially_paid";
+  }
   await doc.save();
   if (letGo) await withdrawLateFor(orgId, "bill", doc._id);
   await syncBillExpense(orgId, doc._id);
@@ -509,8 +534,9 @@ export async function updateBillPayment(
     .filter((p) => p._id.toString() !== paymentId)
     .reduce((s, p) => s + (p.amountMinor ?? 0), 0);
   const newPaid = others + input.amountMinor;
-  if (newPaid > ((doc.totalMinor as number) ?? 0)) {
-    throw new AppError("CONFLICT", `Total payments would exceed the bill total of ${(doc.totalMinor as number) ?? 0}`);
+  // Less its TDS (2026-11-11): that part is paid to the government, not the vendor.
+  if (newPaid > ((doc.totalMinor as number) ?? 0) - tdsOf(doc)) {
+    throw new AppError("CONFLICT", `Total payments would exceed what is owed to the vendor, ${((doc.totalMinor as number) ?? 0) - tdsOf(doc)}`);
   }
 
   const p = pm as Record<string, unknown>;
@@ -544,7 +570,7 @@ export async function updateBillPayment(
       : undefined;
 
   doc.amountPaidMinor = newPaid;
-  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - newPaid;
+  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - tdsOf(doc) - newPaid;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
   if (letGo) await withdrawLateFor(orgId, "bill_payment", doc._id, paymentId);
@@ -572,7 +598,7 @@ export async function deleteBillPayment(orgId: string, id: string, paymentId: st
   pm.deleteOne();
   const paid = (doc.payments as unknown as { amountMinor?: number }[]).reduce((s, p) => s + (p.amountMinor ?? 0), 0);
   doc.amountPaidMinor = paid;
-  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - paid;
+  doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - tdsOf(doc) - paid;
   doc.status = paid === 0 ? "approved" : doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
   if (line) await syncDebitLine(orgId, line, null);

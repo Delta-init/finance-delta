@@ -49,6 +49,7 @@ import payrollRoutes from "./modules/payroll/payroll.routes";
 import budgetRoutes from "./modules/budget/budget.routes";
 import approvalsRoutes from "./modules/approvals/approvals.routes";
 import lateEntryRoutes from "./modules/late-entry/late-entry.routes";
+import tdsRoutes from "./modules/tds/tds.routes";
 import emailLogRoutes from "./modules/email-log/email-log.routes";
 import tetraDepositRoutes from "./modules/tetra-deposit/tetra-deposit.routes";
 import balancePaymentRoutes from "./modules/balance-payment/balance-payment.routes";
@@ -145,6 +146,7 @@ async function bootstrap() {
   api.use("/budgets", budgetRoutes);
   api.use("/approvals", approvalsRoutes);
   api.use("/late-entries", lateEntryRoutes);
+  api.use("/tds", tdsRoutes);
   api.use("/email-logs", emailLogRoutes);
   api.use("/tetra-deposits", tetraDepositRoutes);
   api.use("/balance-payments", balancePaymentRoutes);

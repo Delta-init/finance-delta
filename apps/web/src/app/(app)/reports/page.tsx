@@ -127,8 +127,21 @@ const CATEGORIES: ReportCategory[] = [
     description: "VAT, TDS, and GST compliance reports.",
     reports: [
       "UAE VAT return (output / input / net)",
-      "TDS / GST reports (India)",
       "Tax summary by rate and period",
+    ],
+  },
+  {
+    // TDS on vendor bills — Bangalore (INR books) only (2026-11-11).
+    href: "/reports/tds",
+    icon: Receipt,
+    iconBg: "bg-warning/10",
+    iconColor: "text-warning",
+    title: "TDS (India)",
+    description: "TDS deducted from vendor bills, paid to the government, and still owed — Bangalore.",
+    reports: [
+      "By month and section",
+      "Bills with TDS and the vendor's PAN",
+      "TDS paid, each a line in Banking",
     ],
   },
   {

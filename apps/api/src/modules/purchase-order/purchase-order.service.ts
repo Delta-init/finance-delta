@@ -156,6 +156,8 @@ export async function convertPOToBill(orgId: string, id: string): Promise<{ bill
   const due = new Date(today);
   due.setDate(due.getDate() + 30);
 
+  const poVendor = await (await import("../vendor/vendor.model")).Vendor.findById(doc.vendorId).select("tdsSection").lean<any>();
+  const poTds = await (await import("../tds/tds.service")).billTdsFor(orgId, String(poVendor?.tdsSection ?? ""), Number(doc.totalMinor ?? 0) - Number(doc.taxTotalMinor ?? 0), false);
   const bill = await Bill.create({
     organizationId: new Types.ObjectId(orgId),
     billNumber,
@@ -170,7 +172,9 @@ export async function convertPOToBill(orgId: string, id: string): Promise<{ bill
     subtotalMinor: doc.subtotalMinor,
     taxTotalMinor: doc.taxTotalMinor,
     totalMinor: doc.totalMinor,
-    balanceMinor: doc.totalMinor,
+    // TDS (Bangalore, 2026-11-11): the vendor's own section, if TDS is on — changed on the bill if need be.
+    tds: poTds,
+    balanceMinor: Number(doc.totalMinor ?? 0) - (poTds?.amountMinor ?? 0),
     notes: doc.notes,
     status: "draft",
     approvalStatus: "not_required",

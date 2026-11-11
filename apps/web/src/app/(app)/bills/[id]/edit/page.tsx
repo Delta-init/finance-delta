@@ -51,6 +51,7 @@ export default function EditBillPage({ params }: { params: Promise<{ id: string 
     requiresApproval: false,
     // A bill from before categories starts with none: it is asked for on this edit (2026-10-23).
     category: bill.category?.slug ?? "",
+    tdsSection: bill.tds?.section ?? "",
     subcategory: bill.category?.subcategory ?? "",
     lineItems: bill.lineItems.map((l) => ({
       description: l.description,

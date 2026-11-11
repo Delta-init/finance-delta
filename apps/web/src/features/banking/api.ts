@@ -22,6 +22,7 @@ import type {
   StatementCheck,
   CheckStatementInput,
   AddStatementLineInput,
+  BulkDeleteTransactionsResult,
 } from "@delta/shared";
 import { api, type QueryParams } from "@/lib/api";
 
@@ -167,6 +168,17 @@ export function useDeleteBankTransaction(accountId: string) {
     meta: { skipToast: true },
     mutationFn: (txId: string) =>
       api.del<void>(`bank-accounts/${accountId}/transactions/${txId}`),
+    onSuccess: () => refreshAccount(qc),
+  });
+}
+
+/** Several lines deleted at once (2026-11-11) — the server says which stayed, and why. */
+export function useBulkDeleteBankTransactions(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (ids: string[]) =>
+      api.post<BulkDeleteTransactionsResult>(`bank-accounts/${accountId}/transactions/bulk-delete`, { ids }),
     onSuccess: () => refreshAccount(qc),
   });
 }

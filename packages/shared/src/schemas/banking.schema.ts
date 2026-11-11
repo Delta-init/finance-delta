@@ -302,6 +302,17 @@ export const bulkImportTransactionsSchema = z.object({
 });
 export type BulkImportTransactionsInput = z.infer<typeof bulkImportTransactionsSchema>;
 
+/** Several lines deleted at once (2026-11-11) — each by the same rules as one on its own. */
+export const bulkDeleteTransactionsSchema = z.object({
+  ids: z.array(z.string().trim().min(1)).min(1, "Pick at least one line").max(500, "At most 500 lines at a time"),
+});
+export type BulkDeleteTransactionsInput = z.infer<typeof bulkDeleteTransactionsSchema>;
+export interface BulkDeleteTransactionsResult {
+  deleted: number;
+  /** Left as they were, and why — reconciled, matched to a record, a transfer side, part of a PSP settlement. */
+  skipped: { id: string; date: string; description: string; amountMinor: number; reason: string }[];
+}
+
 /** Asks which lines are already on the account, without writing anything. */
 export const previewImportSchema = z.object({
   transactions: z.array(importedTransactionSchema).min(1, "At least one transaction required"),

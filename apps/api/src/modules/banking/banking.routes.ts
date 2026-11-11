@@ -6,6 +6,7 @@ import {
   updateBankTransactionSchema,
   bulkImportTransactionsSchema,
   previewImportSchema,
+  bulkDeleteTransactionsSchema,
   matchTransactionSchema,
   cashCountSchema,
   updateCashCountSchema,
@@ -54,6 +55,8 @@ router.post("/:id/transactions", requirePermission("banking:write"), validateBod
 router.post("/:id/transactions/bulk", requirePermission("banking:write"), validateBody(bulkImportTransactionsSchema), c.bulkImport);
 // Reads only — it reports which lines are already on the account and writes
 // nothing, so it needs no more than the write permission the import itself has.
+// Several lines deleted at once (2026-11-11), each by the rules of a single delete.
+router.post("/:id/transactions/bulk-delete", requirePermission("banking:write"), validateBody(bulkDeleteTransactionsSchema), c.bulkDelete);
 router.post("/:id/transactions/import-preview", requirePermission("banking:write"), validateBody(previewImportSchema), c.previewImport);
 router.get("/:id/transactions/:txId", requirePermission("banking:read"), c.getTransaction);
 // Correcting or removing an entry. Refused once it has been reconciled or

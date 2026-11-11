@@ -51,6 +51,10 @@ export const bulkImport = asyncHandler(async (req, res) => {
   created(res, result);
 });
 
+export const bulkDelete = asyncHandler(async (req, res) => {
+  ok(res, await svc.bulkDeleteTransactions(org(req), req.params.id!, (req.body as { ids: string[] }).ids));
+});
+
 export const previewImport = asyncHandler(async (req, res) => {
   ok(res, await svc.previewImport(org(req), req.params.id!, req.body));
 });

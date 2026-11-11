@@ -29,6 +29,7 @@ import { BankAccount, type BankAccountDoc } from "./bank-account.model";
 import { BankTransaction, type BankTransactionDoc } from "./bank-transaction.model";
 import { computeRunningBalances, type BalanceRow } from "./running-balance";
 import { ReconciliationSession, type ReconciliationSessionDoc } from "./reconciliation.model";
+import { lineOwner } from "./line-owner";
 
 function dateOnly(d: Date | undefined): string {
   if (!d) return "";
@@ -643,6 +644,42 @@ export async function deleteTransaction(
   await recalculateRunningBalances(orgId, account);
 }
 
+/**
+ * Several lines deleted at once (the user, 2026-11-11: "Select and delete option (bulk) action required in Bank
+ * section"). Each line follows the same rules as deleting it on its own — a reconciled bank line, one matched to a
+ * record, part of a PSP settlement or one side of a transfer stays, and says why. What is deleted goes in one go and
+ * the account's balance is worked out once.
+ */
+export async function bulkDeleteTransactions(
+  orgId: string,
+  accountId: string,
+  ids: string[],
+): Promise<{ deleted: number; skipped: { id: string; date: string; description: string; amountMinor: number; reason: string }[] }> {
+  const wanted = [...new Set(ids.filter((id) => Types.ObjectId.isValid(id)))].slice(0, 500);
+  const skipped: { id: string; date: string; description: string; amountMinor: number; reason: string }[] = [];
+  const gone: Types.ObjectId[] = [];
+  for (const id of wanted) {
+    try {
+      const tx = await assertEditable(orgId, accountId, id);
+      refuseTransferLine(tx);
+      gone.push(tx._id as Types.ObjectId);
+    } catch (err) {
+      const t = await BankTransaction.findOne({ _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) })
+        .select("date description amountMinor").lean<any>();
+      skipped.push({
+        id, date: t?.date ? dateOnly(t.date) : "", description: String(t?.description ?? ""), amountMinor: Number(t?.amountMinor ?? 0),
+        reason: err instanceof AppError ? err.message : "Could not be deleted",
+      });
+    }
+  }
+  if (gone.length) {
+    await BankTransaction.deleteMany({ _id: { $in: gone }, organizationId: new Types.ObjectId(orgId), accountId: new Types.ObjectId(accountId) });
+    for (const id of gone) await withdrawLateFor(orgId, "bank_line", id);
+    await recalculateRunningBalances(orgId, new Types.ObjectId(accountId));
+  }
+  return { deleted: gone.length, skipped };
+}
+
 export async function addTransaction(
   orgId: string,
   accountId: string,
@@ -1019,6 +1056,11 @@ export async function unmatchTransaction(
   orgId: string,
   id: string,
 ): Promise<BankTransactionDTO> {
+  if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Transaction not found");
+  // A line made by its record stays tied to it (2026-11-11) — unmatched, it could be deleted while the record still
+  // pointed at it, and the next sync made it again.
+  const owner = await lineOwner(orgId, id);
+  if (owner) throw new AppError("CONFLICT", `This line comes from ${owner} — change or delete it there, and the line follows.`);
   const doc = await BankTransaction.findOneAndUpdate(
     { _id: new Types.ObjectId(id), organizationId: new Types.ObjectId(orgId) },
     { $set: { status: "unmatched", matches: [] } },

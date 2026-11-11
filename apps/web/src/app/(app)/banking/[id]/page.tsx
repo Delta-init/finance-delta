@@ -55,7 +55,9 @@ import {
   useDeactivateBankAccount,
   useUpdateBankTransaction,
   useDeleteBankTransaction,
+  useBulkDeleteBankTransactions,
 } from "@/features/banking/api";
+import type { BulkDeleteTransactionsResult } from "@delta/shared";
 import { EditTransactionDialog } from "@/features/banking/edit-transaction-dialog";
 import { PspPanel } from "@/features/banking/psp";
 import { TransferDialog } from "@/features/banking/TransferDialog";
@@ -66,6 +68,7 @@ import { ReconciliationsTab } from "@/features/banking/ReconciliationsTab";
 import { OpeningBalanceDialog } from "@/features/banking/OpeningBalanceDialog";
 import { useCan } from "@/lib/use-can";
 import { DateField } from "@/components/ui/date-field";
+import { toDmy } from "@/lib/dates";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -98,6 +101,12 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   // Transactions or Reconciliations (2026-10-23) — a bank account's; kept in the address bar.
   const [tab, setTab] = useUrlParam("tab", "transactions");
   const { data: reconciliations } = useReconciliations(id, { page: 1, pageSize: 1 });
+  // Ticked lines, deleted together (the user, 2026-11-11: "Select and delete option (bulk) action required in Bank").
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionResetKey, setSelectionResetKey] = useState(0);
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkDeleteTransactionsResult | null>(null);
+  const bulkDelete = useBulkDeleteBankTransactions(id);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [deleting, setDeleting] = useState<BankTransaction | null>(null);
   // A transfer with another of the organization's accounts (2026-10-22): made here, or a line of one corrected or
@@ -435,10 +444,83 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         )}
       </div>
 
+      {/* Only once something is ticked (2026-11-11). Each line follows the single-delete rules; the server says which
+          stayed and why. */}
+      {canWrite && selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-muted px-4 py-2.5">
+          <span className="text-sm font-medium">{selectedIds.length} selected</span>
+          <span className="text-xs text-foreground-muted">Reconciled lines, lines from a payment or expense, transfers and PSP-settled lines are left as they are.</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { setSelectedIds([]); setSelectionResetKey((n) => n + 1); }}>Clear</Button>
+            <Button variant="destructive" size="sm" onClick={() => setConfirmBulk(true)}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete {selectedIds.length}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <Dialog open={confirmBulk} onOpenChange={(o) => { if (!o && !bulkDelete.isPending) setConfirmBulk(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {selectedIds.length} line{selectedIds.length === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>
+              They come off {account.accountName} and its balance is worked out again. Any that can&apos;t be deleted
+              (reconciled, from a payment or expense, a transfer side, part of a PSP settlement) stay, and you&apos;ll see why.
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmBulk(false)} disabled={bulkDelete.isPending}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={bulkDelete.isPending}
+              onClick={() =>
+                bulkDelete.mutate(selectedIds, {
+                  onSuccess: (r) => {
+                    setConfirmBulk(false);
+                    setSelectedIds([]);
+                    setSelectionResetKey((n) => n + 1);
+                    if (r.skipped.length) setBulkResult(r);
+                    else toast.success(`${r.deleted} line${r.deleted === 1 ? "" : "s"} deleted`);
+                  },
+                  onError: (err) => toast.error((err as Error).message || "Could not delete them"),
+                })
+              }
+            >
+              {bulkDelete.isPending ? "Deleting…" : `Delete ${selectedIds.length}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkResult !== null} onOpenChange={(o) => { if (!o) setBulkResult(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{bulkResult?.deleted ?? 0} deleted, {bulkResult?.skipped.length ?? 0} left as they were</DialogTitle>
+            <DialogDescription>These couldn&apos;t be deleted:</DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
+            {bulkResult?.skipped.map((x) => (
+              <li key={x.id} className="rounded-md border border-border px-3 py-2">
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium">{toDmy(x.date)} · {x.description || "—"}</span>
+                  <MoneyDisplay minor={x.amountMinor} currency={account.currency} />
+                </div>
+                <p className="mt-0.5 text-xs text-foreground-muted">{x.reason}</p>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter><Button onClick={() => setBulkResult(null)}>OK</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <DataTable
         columns={columns}
         data={txData?.data}
         getRowId={(tx) => tx.id}
+        selectable={canWrite}
+        onSelectionChange={setSelectedIds}
+        selectionResetKey={selectionResetKey}
         total={txData?.meta.total ?? 0}
         page={t.page}
         pageSize={t.pageSize}

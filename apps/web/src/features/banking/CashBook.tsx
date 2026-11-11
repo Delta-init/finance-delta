@@ -21,7 +21,8 @@ import { useExpenseCategories } from "@/features/expense-categories/api";
 import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import {
   useBankTransactions,
-  useDeleteBankTransaction, useUnlinkTransaction} from "@/features/banking/api";
+  useDeleteBankTransaction, useUnlinkTransaction, useBulkDeleteBankTransactions} from "@/features/banking/api";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DateField } from "@/components/ui/date-field";
 import { toDmy } from "@/lib/dates";
 
@@ -72,6 +73,12 @@ export function CashBook({ account }: { account: BankAccount }) {
   const { can } = useCan();
   const canWrite = can("banking:write");
   const remove = useDeleteBankTransaction(account.id);
+  // Ticked lines, deleted together (the user, 2026-11-11: "Select and delete option (bulk) action required in Bank").
+  const bulkDelete = useBulkDeleteBankTransactions(account.id);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkSkipped, setBulkSkipped] = useState<{ deleted: number; skipped: { id: string; date: string; description: string; amountMinor: number; reason: string }[] } | null>(null);
+  const togglePick = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const unlink = useUnlinkTransaction(account.id);
 
   /*
@@ -210,10 +217,34 @@ export function CashBook({ account }: { account: BankAccount }) {
         </div>
       </div>
 
+      {canWrite && picked.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface-muted px-5 py-2.5">
+          <span className="text-sm font-medium">{picked.length} selected</span>
+          <span className="text-xs text-foreground-muted">Lines from an expense or payment, and transfers, are left as they are.</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPicked([])}>Clear</Button>
+            <Button variant="destructive" size="sm" onClick={() => setConfirmBulk(true)}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete {picked.length}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-border text-xs uppercase tracking-wide text-foreground-subtle">
+              {canWrite && (
+                <th className="w-8 py-2 pl-4">
+                  <input
+                    type="checkbox"
+                    aria-label="Select every line on this page"
+                    className="h-4 w-4 accent-primary"
+                    checked={rows.length > 0 && rows.every((r: BankTransaction) => picked.includes(r.id))}
+                    onChange={(e) => setPicked(e.target.checked ? [...new Set([...picked, ...rows.map((r: BankTransaction) => r.id)])] : picked.filter((x) => !rows.some((r: BankTransaction) => r.id === x)))}
+                  />
+                </th>
+              )}
               <th className="px-4 py-2 text-left font-medium">Date</th>
               <th className="px-4 py-2 text-left font-medium">Description</th>
               <th className="px-4 py-2 text-left font-medium">Category</th>
@@ -228,6 +259,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                 first balance in the column has something to follow from. */}
             {page === 1 && !filtered && (
             <tr className="border-b border-border bg-surface-muted/40">
+              {canWrite && <td />}
               <td className="px-4 py-2 text-foreground-muted">{toDmy(account.openingDate)}</td>
               <td className="px-4 py-2 font-medium">Opening balance</td>
               <td className="px-4 py-2" />
@@ -242,7 +274,7 @@ export function CashBook({ account }: { account: BankAccount }) {
 
             {isLoading && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-foreground-muted">
+                <td colSpan={canWrite ? 8 : 7} className="px-4 py-8 text-center text-foreground-muted">
                   Loading…
                 </td>
               </tr>
@@ -250,7 +282,7 @@ export function CashBook({ account }: { account: BankAccount }) {
 
             {!isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-foreground-muted">
+                <td colSpan={canWrite ? 8 : 7} className="px-4 py-8 text-center text-foreground-muted">
                   Nothing recorded yet.
                 </td>
               </tr>
@@ -260,6 +292,11 @@ export function CashBook({ account }: { account: BankAccount }) {
               const isIn = tx.amountMinor >= 0;
               return (
                 <tr key={tx.id} className="border-b border-border last:border-0 hover:bg-surface-muted/40">
+                  {canWrite && (
+                    <td className="w-8 py-2 pl-4">
+                      <input type="checkbox" aria-label={`Select ${tx.description}`} className="h-4 w-4 accent-primary" checked={picked.includes(tx.id)} onChange={() => togglePick(tx.id)} />
+                    </td>
+                  )}
                   <td className="whitespace-nowrap px-4 py-2 text-foreground-muted">
                     {toDmy(tx.date)}
                   </td>
@@ -395,6 +432,59 @@ export function CashBook({ account }: { account: BankAccount }) {
 
         </table>
       </div>
+
+      <Dialog open={confirmBulk} onOpenChange={(o) => { if (!o && !bulkDelete.isPending) setConfirmBulk(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {picked.length} line{picked.length === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>
+              They come out of the cash book and the balance is worked out again. Lines from an expense or a payment, and
+              transfer sides, stay — you&apos;ll see which. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmBulk(false)} disabled={bulkDelete.isPending}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={bulkDelete.isPending}
+              onClick={() =>
+                bulkDelete.mutate(picked, {
+                  onSuccess: (r) => {
+                    setConfirmBulk(false);
+                    setPicked([]);
+                    if (r.skipped.length) setBulkSkipped(r);
+                    else toast.success(`${r.deleted} line${r.deleted === 1 ? "" : "s"} deleted`);
+                  },
+                  onError: (err) => toast.error((err as Error).message || "Could not delete them"),
+                })
+              }
+            >
+              {bulkDelete.isPending ? "Deleting…" : `Delete ${picked.length}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkSkipped !== null} onOpenChange={(o) => { if (!o) setBulkSkipped(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{bulkSkipped?.deleted ?? 0} deleted, {bulkSkipped?.skipped.length ?? 0} left as they were</DialogTitle>
+            <DialogDescription>These couldn&apos;t be deleted:</DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
+            {bulkSkipped?.skipped.map((x) => (
+              <li key={x.id} className="rounded-md border border-border px-3 py-2">
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium">{toDmy(x.date)} · {x.description || "—"}</span>
+                  <span className="font-numeric">{formatMoney(x.amountMinor, account.currency)}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-foreground-muted">{x.reason}</p>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter><Button onClick={() => setBulkSkipped(null)}>OK</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <CashEntryDialog
         account={account}

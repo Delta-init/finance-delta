@@ -35,6 +35,7 @@ export * from "./schemas/advance.schema";
 export * from "./schemas/crm-commission.schema";
 export * from "./schemas/cs-commission.schema";
 export * from "./schemas/hiring.schema";
+export * from "./payroll/manual-payroll";
 export * from "./schemas/banking.schema";
 export * from "./schemas/inventory.schema";
 export * from "./schemas/reports.schema";

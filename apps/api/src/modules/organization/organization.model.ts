@@ -67,6 +67,13 @@ const organizationSchema = new Schema(
     taxSystem: { type: String, enum: ["vat", "gst", "sales_tax", "wht", "none", "custom"], default: "vat" },
     taxLabel:  { type: String, default: "VAT" },
     taxRates:  { type: [taxRateSchema], default: [] },
+
+    // ── Payroll (2026-11-11) ──────────────────────────────────────────────────
+    /**
+     * Where this organization's payroll comes from: "hrms" (HR submits each month; every organization, HQ included,
+     * as before) or "manual" (entered or imported in finance — modules/payroll/manual.service.ts).
+     */
+    payrollMode: { type: String, enum: ["hrms", "manual"], default: "hrms" },
   },
   { timestamps: true },
 );

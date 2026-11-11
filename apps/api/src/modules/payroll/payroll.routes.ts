@@ -4,6 +4,7 @@ import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import {
   addAdjustmentsSchema, holdLineSchema, importRunSchema, payRunSchema, returnRunSchema, reversePaymentSchema,
+  createManualRunSchema, addManualLinesSchema, updateManualLineSchema,
 } from "./payroll.schemas";
 import * as c from "./payroll.controller";
 
@@ -26,6 +27,15 @@ router.get("/people-report/:employeeId", requirePermission("payroll:read"), c.pe
 router.get("/people-report/:employeeId/ledger", requirePermission("payroll:read"), c.personLedger);
 router.get("/runs", requirePermission("payroll:read"), c.listRuns);
 router.get("/runs/:id", requirePermission("payroll:read"), c.getRun);
+
+// Manual payroll (2026-11-11): an organization not run through HRMS creates its months here and puts its people on
+// them — typed or imported — until the month is approved. Nothing on these routes calls HRMS.
+router.get("/setup", requirePermission("payroll:read"), c.payrollSetup);
+router.post("/manual/runs", requirePermission("payroll:write"), validateBody(createManualRunSchema), c.createManualRun);
+router.delete("/runs/:id", requirePermission("payroll:write"), c.deleteManualRun);
+router.post("/runs/:id/lines", requirePermission("payroll:write"), validateBody(addManualLinesSchema), c.addManualLines);
+router.patch("/runs/:id/lines/:lineId", requirePermission("payroll:write"), validateBody(updateManualLineSchema), c.updateManualLine);
+router.delete("/runs/:id/lines/:lineId", requirePermission("payroll:write"), c.removeManualLine);
 
 // Step two of the handover: what accounts add or take off. Every one of these
 // writes through to HRMS, so the payslip matches what is actually paid.

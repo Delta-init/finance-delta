@@ -75,6 +75,8 @@ export interface RunSummary {
   id: string;
   runNumber: string;
   period: string;
+  /** "manual": a month entered in finance (2026-11-11). Absent from an older API: from HRMS. */
+  source?: RunSource;
   hrmsOrgName: string;
   currency: string;
   status: RunStatus;
@@ -110,13 +112,19 @@ export interface RunLine {
   payable: boolean;
   /** Inactive in finance now — has left (resigned or terminated). Older APIs don't send it. */
   left?: boolean;
-  bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string };
+  /** `ifsc`: on a manual month's line (2026-11-11). */
+  bank: { iban: string; accountNumber: string; bankName: string; nameInBank: string; ifsc?: string | null };
 }
 
 export interface RunDetail {
   id: string;
   runNumber: string;
   period: string;
+  /**
+   * "manual": entered in finance (2026-11-11) — its people are added, changed and removed on the run before approval,
+   * and nothing about it goes to HRMS. Absent from an older API: from HRMS.
+   */
+  source?: RunSource;
   hrmsOrgId: string;
   hrmsOrgName: string;
   currency: string;
@@ -376,4 +384,47 @@ export interface PersonLedger {
   counts: Record<LedgerKind, number>;
   /** One kind had more than the server reads at once: the oldest of it are left out. */
   capped: boolean;
+}
+
+// ── Manual payroll (2026-11-11) ──────────────────────────────────────────────
+
+/** A run's status as shown: a month entered in finance and not yet approved is "Open", not "Imported". */
+export function runStatusLabel(status: RunStatus, source?: RunSource): string {
+  return source === "manual" && status === "imported" ? "Open" : RUN_STATUS_LABELS[status];
+}
+
+/** Where a run came from: HR, or typed / imported in finance. */
+export type RunSource = "hrms" | "manual";
+
+/** Where this organization's months come from, and the currency a new one starts in. */
+export interface PayrollSetup {
+  mode: "hrms" | "manual";
+  baseCurrency: string;
+}
+
+/** A row the API left out, and why. */
+export interface ManualRowProblem {
+  rowNo: number;
+  name: string;
+  problems: string[];
+}
+
+export interface ManualRunCreated {
+  id: string;
+  runNumber: string;
+  period: string;
+  currency: string;
+  created: number;
+  problems: ManualRowProblem[];
+  byCurrency: RunCurrencyTotals[];
+}
+
+export interface ManualLinesResult {
+  runId: string;
+  runNumber: string;
+  employeeCount: number;
+  byCurrency: RunCurrencyTotals[];
+  created?: number;
+  problems?: ManualRowProblem[];
+  message: string;
 }

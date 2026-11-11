@@ -13,6 +13,7 @@ import { toMinor, formatMinor } from "./money";
 import { recalculate, lineAdjustmentTotal, type RecalcAdjustment, type RecalcRun } from "./recalculate";
 import { isAttendance, slabDifference } from "./slab";
 import { afterPayChange, lastPaymentOf } from "./payment.service";
+import { requireHrmsRun } from "./run-source";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -160,6 +161,8 @@ export async function addAdjustments(
   actor: { userId: string },
 ) {
   const run = await loadRun(orgId, runId);
+  // Every addition and deduction is written to the payslip in HRMS: a manual run has none (2026-11-11).
+  requireHrmsRun(run, "an addition or deduction written to the HRMS payslip");
   requireAdjustable(run);
   if (!inputs.length) throw new AppError("VALIDATION_ERROR", "Nothing to add");
   const afterApproval = STATUSES_OPEN_AFTER_APPROVAL.includes(run.status);
@@ -247,6 +250,7 @@ export async function addAdjustments(
  */
 export async function pullCommissions(orgId: string, runId: string, actor: { userId: string }) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "Pull earned commission");
   requireOpen(run);
   const user = await User.findById(oid(actor.userId)).select("name").lean();
   const staged: Array<{ externalId: string; employeeId: string; kind: "payment"; label: string; amount: number }> = [];
@@ -294,6 +298,7 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
  */
 export async function pullCsCommission(orgId: string, runId: string, actor: { userId: string }) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "Pull CS commission");
   requireAdjustable(run);
   const user = await User.findById(oid(actor.userId)).select("name").lean();
   const staged: Staged = [];
@@ -442,6 +447,7 @@ async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { us
  */
 export async function pullSlabSalaries(orgId: string, runId: string, actor: { userId: string }) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "Pull salary slabs");
   requireOpen(run);
   const [root, batch] = await Promise.all([slabsFromRoot(run.period), hrmsClient.payrollBatch(run.hrmsOrgId, run.period)]);
   if (!batch.lines.some((l) => l.salary)) {
@@ -584,6 +590,7 @@ async function stageCsCommission(orgId: string, run: PayrollRunDoc, actor: { use
 
 export async function removeAdjustment(orgId: string, runId: string, externalId: string) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "removing an addition or deduction from the HRMS payslip");
   requireAdjustable(run);
 
   const index = run.adjustments.findIndex((a) => a.externalId === externalId);

@@ -129,6 +129,8 @@ export default function SettingsPage() {
         paymentAccounts: Object.fromEntries(PAYMENT_METHODS.map((m) => [m, org.paymentAccounts?.[m] ?? ""])),
         lateEntryDays: org.lateEntryDays ?? 1,
         vatOnPayments: org.vatOnPayments ?? false,
+        // ── Payroll (2026-11-11) ──
+        payrollMode: org.payrollMode ?? "hrms",
       });
     }
   }, [org, reset]);
@@ -457,6 +459,39 @@ export default function SettingsPage() {
               </span>
             </span>
           </label>
+        </section>
+
+        {/* ── Payroll (2026-11-11): where this organization's payroll comes from ── */}
+        <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Payroll</h2>
+            <p className="mt-1 text-xs text-foreground-muted">
+              Where this organization&apos;s payroll months come from. Months already on Payroll runs stay as they are
+              whichever is chosen.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-start gap-2.5 rounded-md border border-border p-3">
+              <input type="radio" value="hrms" {...register("payrollMode")} className="mt-0.5 h-4 w-4 accent-primary" />
+              <span>
+                <span className="block text-sm font-medium text-foreground">From HRMS</span>
+                <span className="block text-xs text-foreground-muted">
+                  HR submits each month; it waits on Payroll runs to be imported, adjusted and paid. Every payslip
+                  change is written back to HRMS.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-md border border-border p-3">
+              <input type="radio" value="manual" {...register("payrollMode")} className="mt-0.5 h-4 w-4 accent-primary" />
+              <span>
+                <span className="block text-sm font-medium text-foreground">Entered here</span>
+                <span className="block text-xs text-foreground-muted">
+                  For an organization not run through HRMS: Payroll runs offers New payroll month and Import from
+                  Excel/CSV. Nothing is sent to or asked of HRMS.
+                </span>
+              </span>
+            </label>
+          </div>
         </section>
 
         <section className="rounded-xl border border-border bg-surface p-5 space-y-4">

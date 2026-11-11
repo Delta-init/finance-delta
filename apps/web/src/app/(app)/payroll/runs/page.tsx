@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Wallet, Download, AlertTriangle, Info, CheckCircle2, PauseCircle, Clock } from "lucide-react";
+import { Wallet, Download, AlertTriangle, Info, CheckCircle2, PauseCircle, Clock, Plus, Upload } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  useAvailableBatches, useImportPreview, useImportRun, usePayrollRuns, useReconciliation,
+  useAvailableBatches, useImportPreview, useImportRun, usePayrollRuns, usePayrollSetup, useReconciliation,
 } from "@/features/payroll/api";
+import { ImportPayrollDialog, NewMonthDialog } from "@/features/payroll/manual-payroll";
+import { useCan } from "@/lib/use-can";
 import {
-  RUN_STATUS_LABELS, type AvailableBatch, type ImportPreview, type RunCurrencyTotals, type RunStatus, type RunSummary,
+  runStatusLabel, type AvailableBatch, type ImportPreview, type RunCurrencyTotals, type RunStatus, type RunSummary,
 } from "@/features/payroll/types";
 import { AmountsByCurrency, ApproxTotal } from "@/features/payroll/currency-amounts";
 
@@ -43,7 +45,16 @@ export default function PayrollRunsPage() {
 
   const runs = usePayrollRuns({ page, limit: pageSize });
   const attention = useReconciliation();
-  const available = useAvailableBatches();
+  // An organization that enters its payroll here (2026-11-11, Settings → Payroll) makes its months on this page, and
+  // has nothing waiting from HR: HRMS isn't asked.
+  const setup = usePayrollSetup();
+  const manual = setup.data?.mode === "manual";
+  const { can } = useCan();
+  const canWrite = can("payroll:write");
+  const [making, setMaking] = useState(false);
+  const [importing, setImporting] = useState(false);
+  // Asked once the mode is known — or could not be: then as before.
+  const available = useAvailableBatches(!setup.isPending && !manual);
   const preview = useImportPreview(candidate?.hrmsOrgId ?? null, candidate?.period ?? null);
   const doImport = useImportRun();
 
@@ -63,7 +74,7 @@ export default function PayrollRunsPage() {
         <RunMoney run={r} whole={r.balanceMinor} pick={(c) => c.balanceMinor ?? c.payableMinor - c.amountPaidMinor} />
       ),
     },
-    { key: "status", header: "Status", cell: (r) => <Badge tone={TONE[r.status]}>{RUN_STATUS_LABELS[r.status]}</Badge> },
+    { key: "status", header: "Status", cell: (r) => <Badge tone={TONE[r.status]}>{runStatusLabel(r.status, r.source)}</Badge> },
   ];
 
   return (
@@ -71,8 +82,43 @@ export default function PayrollRunsPage() {
       <PageHeader
         icon={Wallet}
         title="Payroll runs"
-        description="Months handed over by HR, imported here to be adjusted and paid."
+        description={
+          manual
+            ? "Months entered here — made one by one or imported from a sheet, then approved and paid."
+            : "Months handed over by HR, imported here to be adjusted and paid."
+        }
+        action={manual && canWrite ? (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setImporting(true)}>
+              <Upload className="mr-1.5 h-4 w-4" />Import from Excel/CSV
+            </Button>
+            <Button onClick={() => setMaking(true)}>
+              <Plus className="mr-1.5 h-4 w-4" />New payroll month
+            </Button>
+          </div>
+        ) : undefined}
       />
+
+      {/* Nothing yet, in an organization that makes its own months: say how to start, rather than an empty table. */}
+      {manual && runs.isSuccess && (runs.data?.meta.total ?? 0) === 0 && (
+        <Card className="p-6 text-center">
+          <p className="font-medium">No payroll yet — start a month or import one.</p>
+          <p className="mx-auto mt-1 max-w-xl text-sm text-foreground-muted">
+            This organization&rsquo;s payroll is kept here, not in HRMS. Make a month and add its people one at a time,
+            or import a sheet (Excel or CSV — the template has the columns). Then approve it and record the payment.
+          </p>
+          {canWrite && (
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Button variant="secondary" onClick={() => setImporting(true)}>
+                <Upload className="mr-1.5 h-4 w-4" />Import from Excel/CSV
+              </Button>
+              <Button onClick={() => setMaking(true)}>
+                <Plus className="mr-1.5 h-4 w-4" />New payroll month
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* ── Waiting to be imported ───────────────────────────────────────── */}
       {waiting.length > 0 && (
@@ -172,7 +218,7 @@ export default function PayrollRunsPage() {
         </Card>
       )}
 
-      {available.isError && (
+      {!manual && available.isError && (
         <Card>
           <p className="px-5 py-4 text-sm text-danger">
             Could not reach HRMS: {(available.error as Error).message}
@@ -180,6 +226,8 @@ export default function PayrollRunsPage() {
         </Card>
       )}
 
+      {/* The card above says how to start; an empty table under it would only say it again. */}
+      {!(manual && runs.isSuccess && (runs.data?.meta.total ?? 0) === 0) && (
       <Card className="overflow-hidden">
         <DataTable
           columns={columns}
@@ -192,9 +240,17 @@ export default function PayrollRunsPage() {
           onPageSizeChange={setPageSize}
           onRowClick={(r) => router.push(`/payroll/runs/${r.id}`)}
           isLoading={runs.isLoading} isFetching={runs.isPlaceholderData}
-          emptyMessage="No payroll has been imported yet."
+          emptyMessage={manual ? "No payroll yet — start a month or import one." : "No payroll has been imported yet."}
         />
       </Card>
+      )}
+
+      {manual && setup.data && (
+        <>
+          <NewMonthDialog open={making} onOpenChange={setMaking} baseCurrency={setup.data.baseCurrency} />
+          <ImportPayrollDialog open={importing} onOpenChange={setImporting} baseCurrency={setup.data.baseCurrency} />
+        </>
+      )}
 
       {/* ── Import review ────────────────────────────────────────────────── */}
       <Dialog open={Boolean(candidate)} onOpenChange={(o) => { if (!o) { setCandidate(null); doImport.reset(); } }}>

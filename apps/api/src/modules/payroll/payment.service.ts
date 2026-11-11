@@ -15,6 +15,7 @@ import { selectPayableLines, isSettled, type PayableLine } from "./select-payabl
 import { currencyOf } from "./currency-totals";
 import { postPayrollExpense, voidPayrollExpense } from "./posting.service";
 import { notifyPaymentNotSynced } from "./notify.service";
+import { isManualRun, requireHrmsRun } from "./run-source";
 
 const oid = (id: string) => new Types.ObjectId(id);
 
@@ -89,7 +90,12 @@ export async function approveRun(orgId: string, runId: string, actor: { userId: 
     );
   }
 
-  await hrmsClient.approveBatch(run.hrmsOrgId, run.period);
+  if (isManualRun(run)) {
+    // Entered in finance (2026-11-11): nobody in HRMS to tell, but nothing to approve without somebody on it.
+    if (!run.lines.length) throw new AppError("CONFLICT", `${run.runNumber} has nobody on it yet — add people before approving.`);
+  } else {
+    await hrmsClient.approveBatch(run.hrmsOrgId, run.period);
+  }
 
   run.status = "approved";
   run.approvedById = oid(actor.userId);
@@ -112,7 +118,8 @@ export async function unapproveRun(orgId: string, runId: string, reason: string)
   if (run.amountPaidMinor > 0 || run.payments.length > 0) {
     throw new AppError("CONFLICT", `Part of ${run.runNumber} has already been paid — reverse that payment first.`);
   }
-  await hrmsClient.unapproveBatch(run.hrmsOrgId, run.period, reason);
+  // A month entered in finance has no month in HRMS to hand back (2026-11-11).
+  if (!isManualRun(run)) await hrmsClient.unapproveBatch(run.hrmsOrgId, run.period, reason);
   run.status = run.adjustments.length > 0 ? "additions" : "imported";
   run.set("approvedById", undefined);
   run.set("approvedAt", undefined);
@@ -123,6 +130,7 @@ export async function unapproveRun(orgId: string, runId: string, reason: string)
 /** Hand the month back to HR, with a reason they can act on. */
 export async function returnRun(orgId: string, runId: string, reason: string) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "Send back to HR");
   if (run.amountPaidMinor > 0) {
     throw new AppError("CONFLICT", "Part of this run has already been paid and cannot be sent back.");
   }
@@ -309,6 +317,9 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
  * unsynced, and retrying is a separate, safe action.
  */
 async function syncPaymentToHrms(run: PayrollRunDoc, paymentId: string): Promise<{ ok: boolean; message: string }> {
+  // A month entered in finance (2026-11-11) has no payslips in HRMS: nothing to tell, nothing waits on it. Left
+  // unsynced and untried — it was never HRMS's — and kept out of every "HRMS was not told" list by its source.
+  if (isManualRun(run)) return { ok: true, message: "" };
   const payment = run.payments.find((p) => p.paymentId === paymentId);
   if (!payment) return { ok: false, message: "Payment not found on this run" };
 
@@ -366,6 +377,7 @@ async function syncPaymentToHrms(run: PayrollRunDoc, paymentId: string): Promise
 /** Retry a payment HRMS never acknowledged. Safe to call repeatedly. */
 export async function retrySync(orgId: string, runId: string, paymentId: string) {
   const run = await loadRun(orgId, runId);
+  requireHrmsRun(run, "telling HRMS about a payment");
   const payment = run.payments.find((p) => p.paymentId === paymentId);
   if (!payment) throw new AppError("NOT_FOUND", "No such payment on this run");
   if (payment.syncedToHrms) return { paymentId, synced: true, message: "Already confirmed by HRMS" };
@@ -506,7 +518,7 @@ export async function reversePayment(
   // still say paid would leave the employee's record claiming money that came
   // back — the exact disagreement this whole handover exists to prevent.
   // A payment that finished nobody never reached HRMS: there is nothing there to undo.
-  if (payment.syncedToHrms && mine.size > 0) {
+  if (!isManualRun(run) && payment.syncedToHrms && mine.size > 0) {
     await hrmsClient.reversePayment(run.hrmsOrgId, run.period, paymentId, reason);
   }
 
@@ -713,7 +725,8 @@ export async function payrollBreakdownOfExpense(orgId: string, expenseId: string
   /** The payment record itself (2026-11-05: "show the payment record … and a link"): its account and line in Banking, who recorded it, HRMS. */
   bankAccountId: string | null; bankTransactionId: string | null; reversalTransactionId: string | null;
   reversedAt: string | null; recordedByName: string; recordedAt: string | null;
-  people: number; finishedCount: number; syncedToHrms: boolean; syncError: string;
+  /** Absent for a month entered in finance (2026-11-11), which never had anything to tell HRMS. */
+  people: number; finishedCount: number; syncedToHrms?: boolean; syncError: string;
 } | null> {
   if (!Types.ObjectId.isValid(expenseId)) return null;
   const run = await PayrollRun.findOne({ organizationId: oid(orgId), "payments.expenseId": oid(expenseId) }).lean<any>();
@@ -738,6 +751,7 @@ export async function payrollBreakdownOfExpense(orgId: string, expenseId: string
     reversalTransactionId: payment.reversalTransactionId ? String(payment.reversalTransactionId) : null,
     reversedAt: payment.reversedAt ? new Date(payment.reversedAt).toISOString() : null,
     recordedByName: payment.createdByName ?? "", recordedAt: payment.createdAt ? new Date(payment.createdAt).toISOString() : null,
-    people: rows.length, finishedCount: finished.size, syncedToHrms: Boolean(payment.syncedToHrms), syncError: payment.syncError ?? "",
+    people: rows.length, finishedCount: finished.size,
+    syncedToHrms: isManualRun(run) ? undefined : Boolean(payment.syncedToHrms), syncError: payment.syncError ?? "",
   };
 }

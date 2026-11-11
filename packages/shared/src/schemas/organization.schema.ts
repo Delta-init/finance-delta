@@ -85,6 +85,13 @@ export const updateOrganizationSchema = z.object({
    * gets its own tax invoice with the VAT on that payment. Off until the organization turns it on.
    */
   vatOnPayments: z.boolean().optional(),
+
+  // ── Payroll (2026-11-11) ──────────────────────────────────────────────────
+  /**
+   * Where this organization's payroll comes from: "hrms" — HR submits each month (every organization, as before) —
+   * or "manual", entered or imported in finance (an organization not run through HRMS). See PAYROLL_MODES.
+   */
+  payrollMode: z.enum(["hrms", "manual"]).optional(),
 });
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 
@@ -114,6 +121,8 @@ export const organizationSchema = z.object({
   taxSystem: z.enum(TAX_SYSTEMS).default("vat"),
   taxLabel: z.string().default("VAT"),
   taxRates: z.array(taxConfigItemSchema).default([]),
+  // ── Payroll (2026-11-11) ──
+  payrollMode: z.enum(["hrms", "manual"]).default("hrms"),
   updatedAt: z.string(),
 });
 export type OrganizationSettings = z.infer<typeof organizationSchema>;

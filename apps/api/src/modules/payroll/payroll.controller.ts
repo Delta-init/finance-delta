@@ -5,6 +5,7 @@ import * as service from "./payroll.service";
 import * as adjustments from "./adjustments.service";
 import * as payments from "./payment.service";
 import * as peopleReport from "./people-report.service";
+import * as manual from "./manual.service";
 import {
   importPreviewQuerySchema, runQuerySchema,
   peopleReportQuerySchema, personDetailQuerySchema, personLedgerQuerySchema,
@@ -114,4 +115,31 @@ export const personDetail = asyncHandler(async (req: Request, res: Response) => 
 export const departmentReport = asyncHandler(async (req: Request, res: Response) => {
   const query = parseQuery(personDetailQuerySchema, req.query);
   ok(res, await peopleReport.departmentReport(orgId(req), query));
+});
+
+// ── Manual payroll (2026-11-11) ──────────────────────────────────────────────
+
+/** Where this organization's months come from, for the payroll pages (no settings permission needed to know). */
+export const payrollSetup = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await manual.payrollSetup(orgId(req)));
+});
+
+export const createManualRun = asyncHandler(async (req: Request, res: Response) => {
+  created(res, await manual.createManualRun(orgId(req), req.body as manual.CreateManualRunInput, { userId: req.auth!.userId }));
+});
+
+export const addManualLines = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await manual.addManualLines(orgId(req), req.params.id!, req.body as Parameters<typeof manual.addManualLines>[2]));
+});
+
+export const updateManualLine = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await manual.updateManualLine(orgId(req), req.params.id!, req.params.lineId!, req.body as Parameters<typeof manual.updateManualLine>[3]));
+});
+
+export const removeManualLine = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await manual.removeManualLine(orgId(req), req.params.id!, req.params.lineId!));
+});
+
+export const deleteManualRun = asyncHandler(async (req: Request, res: Response) => {
+  ok(res, await manual.deleteManualRun(orgId(req), req.params.id!));
 });

@@ -56,6 +56,8 @@ function toDTO(doc: AnyDoc): OrganizationSettings {
     taxSystem: (d.taxSystem as OrganizationSettings["taxSystem"]) ?? "vat",
     taxLabel: (d.taxLabel as string) ?? "VAT",
     taxRates: ((d.taxRates as unknown[]) ?? []) as OrganizationSettings["taxRates"],
+    // ── Payroll (2026-11-11) ──
+    payrollMode: d.payrollMode === "manual" ? "manual" : "hrms",
     updatedAt: doc.updatedAt.toISOString(),
   };
 }
@@ -167,6 +169,8 @@ export async function updateOrganization(
   if (input.reminderIntervals !== undefined) flat.reminderIntervals = input.reminderIntervals;
   if (input.lateEntryDays !== undefined) flat.lateEntryDays = input.lateEntryDays;
   if (input.vatOnPayments !== undefined) flat.vatOnPayments = input.vatOnPayments;
+  // ── Payroll (2026-11-11) ──
+  if (input.payrollMode !== undefined) flat.payrollMode = input.payrollMode;
   if (input.paymentAccounts !== undefined) {
     // Only payment methods, and only this organization's accounts; "" clears a method.
     const { PAYMENT_METHODS } = await import("@delta/shared");

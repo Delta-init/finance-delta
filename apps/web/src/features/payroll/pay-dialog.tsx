@@ -99,7 +99,7 @@ interface Share {
  * Without it a person is in one payment at most, paid all they are still owed.
  */
 export function PayDialog({
-  open, onOpenChange, lines, selectedIds, runCurrency, parts = false, payOne, onDone,
+  open, onOpenChange, lines, selectedIds, runCurrency, parts = false, hrms = true, payOne, onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -110,6 +110,8 @@ export function PayDialog({
   runCurrency: string;
   /** The API takes an amount per person, so a person can be paid in parts (the run's `payInParts`). */
   parts?: boolean;
+  /** The month came from HRMS, which each payment tells. False for one entered in finance (2026-11-11). */
+  hrms?: boolean;
   /** Records one payment; rejects with the API's reason. */
   payOne: (input: PayPayload) => Promise<unknown>;
   /** Every payment recorded. */
@@ -291,7 +293,9 @@ export function PayDialog({
             Pay {payable.length - unassigned.length} of {payable.length} {payable.length === 1 ? "person" : "people"}{currency ? ` in ${currency}` : ""}
           </DialogTitle>
           <DialogDescription>
-            This records each transfer against a bank account and tells HRMS, which marks the payslips paid. It does
+            {hrms
+              ? "This records each transfer against a bank account and tells HRMS, which marks the payslips paid."
+              : "This records each transfer against a bank account, with its expense."} It does
             not move money by itself — make the transfers first. Split it into several payments to pay some people
             another way (cash from petty cash, a cheque){parts ? " — or one person part by each, with an amount in each" : ""}.
           </DialogDescription>
@@ -426,7 +430,7 @@ export function PayDialog({
                     return noBank.length > 0 ? (
                       <p className="text-xs text-warning">
                         {noBank.length === 1 ? `${noBank[0]!.name} has` : `${noBank.length} people in this payment have`} no bank
-                        details in HRMS — make sure you have them before transferring, or pay {noBank.length === 1 ? "them" : "those"} by cash.
+                        details{hrms ? " in HRMS" : ""} — make sure you have them before transferring, or pay {noBank.length === 1 ? "them" : "those"} by cash.
                       </p>
                     ) : null;
                   })()}
@@ -575,7 +579,7 @@ export function PayDialog({
           <p className="flex items-start gap-2 text-xs text-foreground-muted">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             Recording a payment cannot be undone from this screen. If a transfer bounces, reverse it
-            so the payslips go back to issued.
+            {hrms ? " so the payslips go back to issued." : " so the people it paid are owed again."}
           </p>
         </div>
 

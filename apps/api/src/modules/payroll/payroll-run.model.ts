@@ -21,15 +21,33 @@ const lineItemSchema = new Schema(
   { _id: false },
 );
 
+/**
+ * True unless the line is on a manual run (2026-11-11). A manual run's people are typed or imported in finance and need
+ * not have an employee code; on a run from HRMS the code stays required, exactly as before.
+ */
+function onHrmsRun(this: unknown): boolean {
+  const owner = (this as { ownerDocument?: () => { source?: string } | null }).ownerDocument?.();
+  return owner?.source !== "manual";
+}
+
 const payrollLineSchema = new Schema(
   {
     // Provenance, so a line can always be traced back to the payslip it came
-    // from even after HRMS has moved on.
+    // from even after HRMS has moved on. A manual run's line has no payslip in
+    // HRMS: both hold "manual:<the line's id>" — unique, and never an HRMS id.
     hrmsPayslipId: { type: String, required: true },
     hrmsEmployeeId: { type: String, required: true },
     employeeId: { type: Schema.Types.ObjectId, ref: "Employee", default: null },
 
-    employeeCode: { type: String, required: true },
+    // Required on a run from HRMS (as before); optional on a manual run's line.
+    employeeCode: {
+      type: String,
+      default: "",
+      validate: {
+        validator(this: unknown, v: unknown) { return !onHrmsRun.call(this) || (typeof v === "string" && v.length > 0); },
+        message: "Path `employeeCode` is required.",
+      },
+    },
     name: { type: String, required: true },
     designation: { type: String, default: "" },
     /**
@@ -62,6 +80,8 @@ const payrollLineSchema = new Schema(
       accountNumber: { type: String, default: "" },
       bankName: { type: String, default: "" },
       nameInBank: { type: String, default: "" },
+      /** An Indian bank's branch code, on a manual run's line (2026-11-11). Absent on lines from HRMS. */
+      ifsc: { type: String },
     },
     /** False when there is nowhere to send the money. Set at import from HRMS. */
     payable: { type: Boolean, default: true },
@@ -197,8 +217,20 @@ const payrollRunSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, index: true },
 
+    /**
+     * Where the month came from (2026-11-11): "hrms" — imported from HR, as every run before this — or "manual",
+     * entered or imported in finance by an organization whose payroll is not run through HRMS (manual.service.ts).
+     * Nothing on a manual run ever reaches HRMS: every call to it checks this first (run-source.ts).
+     */
+    source: { type: String, enum: ["hrms", "manual"], default: "hrms" },
+
     // Which HRMS organization this month came from. Carried because several
     // may feed one book, and "March" alone would then be ambiguous.
+    //
+    // A manual run has no HRMS organization: it holds "manual:<currency>"
+    // instead (run-source.ts, manualRunKey), never an HRMS id — so the unique
+    // index below keeps one manual run per organization, month and currency
+    // without a second index.
     hrmsOrgId: { type: String, required: true },
     hrmsOrgName: { type: String, default: "" },
 

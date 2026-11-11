@@ -2,9 +2,10 @@
 
 import { Fragment, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Wallet, PauseCircle, TrendingUp, Plus, X, Info, Layers,
-  CheckCircle2, Banknote, Undo2, RefreshCw, AlertTriangle, Headset,
+  CheckCircle2, Banknote, Undo2, RefreshCw, AlertTriangle, Headset, Pencil, Trash2, Upload, UserPlus,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -14,12 +15,15 @@ import { MoneyDisplay } from "@/components/ui/money";
 import {
   usePayrollRun, useAddAdjustments, usePullCommissions, usePullCsCommission, usePullSlabSalaries, useRemoveAdjustment,
   useApproveRun, useUnapproveRun, useReturnRun, usePayRun, useRetrySync, useReversePayment, useHoldLine,
+  useRemoveManualLine, useDeleteManualRun,
 } from "@/features/payroll/api";
+import { ConfirmDialog, ImportPayrollDialog, LineDialog, manualParts } from "@/features/payroll/manual-payroll";
+import { useCan } from "@/lib/use-can";
 import { AdjustDialog } from "@/features/payroll/adjust-dialog";
 import { PayDialog } from "@/features/payroll/pay-dialog";
 import { ReasonDialog } from "@/features/payroll/reason-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { RUN_STATUS_LABELS, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
+import { runStatusLabel, type LineStatus, type RunLine, type RunStatus } from "@/features/payroll/types";
 import { Button } from "@/components/ui/button";
 import { ApproxTotal } from "@/features/payroll/currency-amounts";
 import { ExportButton } from "@/components/ui/export-button";
@@ -90,6 +94,25 @@ const RUN_EXPORT_COLUMNS: ExportColumn<RunLine & { runCurrency: string }>[] = [
   { header: "Left the company", value: (l) => (l.left ? "Yes" : "") },
 ];
 
+/** A month entered in finance (2026-11-11): its own columns — gross, the named deductions, net. No bank details, as above. */
+const MANUAL_EXPORT_COLUMNS: ExportColumn<RunLine & { runCurrency: string }>[] = [
+  { header: "Code", value: (l) => l.employeeCode },
+  { header: "Name", value: (l) => l.name },
+  { header: "Designation", value: (l) => l.designation || "" },
+  { header: "Department", value: (l) => l.departmentName || "" },
+  { header: "Currency", value: (l) => l.currency || l.runCurrency },
+  { header: "Gross pay", value: (l) => money(l.grossMinor) },
+  { header: "PF", value: (l) => money(manualParts(l).pf) },
+  { header: "ESI", value: (l) => money(manualParts(l).esi) },
+  { header: "Professional tax", value: (l) => money(manualParts(l).professionalTax) },
+  { header: "TDS (income tax)", value: (l) => money(manualParts(l).tds) },
+  { header: "Other deductions", value: (l) => money(manualParts(l).other) },
+  { header: "Net pay", value: (l) => money(l.payableMinor) },
+  { header: "Paid", value: (l) => money(l.amountPaidMinor) },
+  { header: "Status", value: (l) => LINE_LABEL[l.status] },
+  { header: "Hold reason", value: (l) => l.holdReason || "" },
+];
+
 export default function PayrollRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: run, isLoading } = usePayrollRun(id);
@@ -139,6 +162,21 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const pay = usePayRun(id);
   const retrySync = useRetrySync(id);
   const reverse = useReversePayment(id);
+  // A month entered in finance (2026-11-11): its people typed, imported, changed and removed here before approval.
+  const router = useRouter();
+  const { can } = useCan();
+  const [editingLine, setEditingLine] = useState<RunLine | "new" | null>(null);
+  const [importingLines, setImportingLines] = useState(false);
+  const [removingLine, setRemovingLine] = useState<RunLine | null>(null);
+  const [deletingRun, setDeletingRun] = useState(false);
+  const removeLine = useRemoveManualLine(id);
+  const deleteRun = useDeleteManualRun(id);
+  /** The employee codes on the month, so a sheet or a typed person can't bring one in twice. */
+  const manualCodes = useMemo(() => (run?.lines ?? []).map((l) => l.employeeCode).filter(Boolean), [run]);
+  const importInto = useMemo(
+    () => (run ? { id: run.id, runNumber: run.runNumber, period: run.period, currency: run.currency, codes: manualCodes } : undefined),
+    [run, manualCodes],
+  );
 
   // What HRMS actually did, once it has told us. Adding money can move net pay
   // by a different amount, so this is shown rather than assumed.
@@ -166,6 +204,10 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // changing a payslip underneath it would put the payslip and the transfer out
   // of step — which is the whole thing this handover exists to prevent.
   const openForAdjustment = run.status === "imported" || run.status === "additions";
+  /** Entered in finance, not from HRMS (2026-11-11): nothing on it goes to HRMS — no additions, pulls or sending back. */
+  const manual = run.source === "manual";
+  /** Its people can be added, changed and removed: before approval, by somebody who may write payroll. */
+  const editablePeople = manual && run.status === "imported" && can("payroll:write");
   // Somebody can be held or released until the run is paid.
   const holdable = openForAdjustment || run.status === "approved" || run.status === "partially_paid";
   const canApprove = openForAdjustment && run.lines.length > 0;
@@ -174,13 +216,14 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   // 2026-11-04 and 2026-11-06). Somebody already paid is never taken below what they have been paid; their status
   // follows on its own. Pulling slabs or commission stays before approval.
   const adjustAfterApproval = canPay || run.status === "paid";
-  const lineAdjustable = (_l: RunLine) => openForAdjustment || adjustAfterApproval;
+  // Every addition and deduction is written to the HRMS payslip, so none on a month entered in finance.
+  const lineAdjustable = (_l: RunLine) => !manual && (openForAdjustment || adjustAfterApproval);
   // Approved by mistake: one step back, while nothing of it is paid (2026-11-01).
   const canUndoApproval = run.status === "approved" && run.payments.length === 0 && !(run.totals.amountPaidMinor > 0);
   // Rows are tickable in both stages, for two different jobs: choosing who to
   // pay, and choosing who an addition or deduction applies to. Which one the
   // selection means is decided by the stage, so it is cleared when that changes.
-  const selectable = canPay || openForAdjustment;
+  const selectable = canPay || (openForAdjustment && !manual);
   /** More than one currency among the people on this run. */
   const mixed = (run.byCurrency?.length ?? 0) > 1;
   /**
@@ -203,7 +246,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
   const tickable = lines.filter(isTickable);
   // A payment the money left the bank for but HRMS never acknowledged. The one
   // disagreement between the two systems that must never be quiet.
-  const unsynced = run.payments.filter((p) => !p.syncedToHrms);
+  const unsynced = manual ? [] : run.payments.filter((p) => !p.syncedToHrms);
+  /** The table's columns: a month from HR splits its payslips as HRMS does; a manual one shows its named deductions. */
+  const columnCount = (selectable ? 1 : 0) + 3 + (manual ? 7 : 8);
   /** Held on import only for having no bank details in HRMS — nothing to hold them for since 2026-11-05. */
   const heldNoBank = run.lines.filter((l) => l.status === "on_hold" && /bank details/i.test(l.holdReason ?? ""));
   async function releaseNoBank() {
@@ -233,8 +278,10 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
       <PageHeader
         icon={Wallet}
         title={`${run.runNumber} · ${run.period}`}
-        description={`From ${run.hrmsOrgName}. Imported ${run.importedAt ? new Date(run.importedAt).toLocaleDateString() : ""}${run.importedByName ? ` by ${run.importedByName}` : ""}.`}
-        action={<Badge tone={RUN_TONE[run.status]}>{RUN_STATUS_LABELS[run.status]}</Badge>}
+        description={manual
+          ? `Entered in finance, ${run.currency}. Made ${run.importedAt ? new Date(run.importedAt).toLocaleDateString() : ""}${run.importedByName ? ` by ${run.importedByName}` : ""}.`
+          : `From ${run.hrmsOrgName}. Imported ${run.importedAt ? new Date(run.importedAt).toLocaleDateString() : ""}${run.importedByName ? ` by ${run.importedByName}` : ""}.`}
+        action={<Badge tone={RUN_TONE[run.status]}>{runStatusLabel(run.status, run.source)}</Badge>}
       />
 
       {/* A month can hold salaries in more than one currency. Adding those
@@ -353,14 +400,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 ? selected.size > 0
                   ? `${selected.size} selected — they start in the payment; pick others or split it there.`
                   : "Pick who is paid, and how, in the next step — split it into several payments (bank, cash) if needed. Held people are always excluded."
-                : "Approving locks the figures and tells HR the month is final."}
+                : manual
+                  ? "Approving locks who is on it and their pay. Then record the payment."
+                  : "Approving locks the figures and tells HR the month is final."}
             </p>
           </div>
           {canApprove && (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setSendingBack(true)}>
-                <Undo2 className="mr-1.5 h-3.5 w-3.5" />Send back to HR
-              </Button>
+              {!manual && (
+                <Button variant="ghost" size="sm" onClick={() => setSendingBack(true)}>
+                  <Undo2 className="mr-1.5 h-3.5 w-3.5" />Send back to HR
+                </Button>
+              )}
               <Button size="sm" loading={approve.isPending} onClick={() => approve.mutate()}>
                 <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve
               </Button>
@@ -397,7 +448,36 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
 
-      {(openForAdjustment || adjustAfterApproval) && (
+      {editablePeople && (
+        <Card className="flex flex-wrap items-center gap-3 p-4">
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-medium">People on this month</p>
+            <p className="text-foreground-muted">
+              {run.lines.length === 0
+                ? "Nobody yet — add people one at a time, or import a sheet (Excel or CSV)."
+                : "Add, change or remove people until the month is approved — open a row to change or remove somebody."}
+            </p>
+          </div>
+          {run.lines.length === 0 && run.payments.length === 0 && (
+            <Button variant="ghost" size="sm" className="text-danger" onClick={() => setDeletingRun(true)}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete month
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => setImportingLines(true)}>
+            <Upload className="mr-1.5 h-3.5 w-3.5" />Import from Excel/CSV
+          </Button>
+          <Button size="sm" onClick={() => setEditingLine("new")}>
+            <UserPlus className="mr-1.5 h-3.5 w-3.5" />Add person
+          </Button>
+        </Card>
+      )}
+      {(removeLine.isError || deleteRun.isError) && (
+        <Card className="border-danger/20 bg-danger/5 p-4 text-sm text-danger">
+          {((removeLine.error ?? deleteRun.error) as Error).message}
+        </Card>
+      )}
+
+      {!manual && (openForAdjustment || adjustAfterApproval) && (
         <Card className="flex flex-wrap items-center gap-3 p-4">
           <div className="min-w-0 flex-1 text-sm">
             <p className="font-medium">Additions and deductions{adjustAfterApproval ? " — after approval" : ""}</p>
@@ -534,6 +614,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 </div>
                 {p.reversedAt ? (
                   <Badge tone="neutral">Reversed</Badge>
+                ) : manual ? (
+                  // Entered in finance: no HRMS to confirm anything.
+                  null
                 ) : p.finishedCount === 0 ? (
                   // Paid part of everybody in it: HRMS marks their payslips paid with the payment that pays the rest.
                   <Badge tone="warning">Part pay — HRMS waits for the rest</Badge>
@@ -590,7 +673,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
           {/* What is on screen: the search and the Dubai / India / Left filters, every row. */}
           <ExportButton
             resource="payroll/runs"
-            columns={RUN_EXPORT_COLUMNS}
+            columns={manual ? MANUAL_EXPORT_COLUMNS : RUN_EXPORT_COLUMNS}
             filename={`${run.runNumber}-${run.period}`}
             title={`${run.runNumber} · ${run.period}`}
             formats={["excel", "csv", "pdf"]}
@@ -645,6 +728,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 )}
                 <th className="px-5 py-3 font-medium">Employee</th>
                 <th className="px-5 py-3 font-medium">Department</th>
+                {manual ? (
+                  <>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Gross</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">PF</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">ESI</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Prof. tax</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">TDS</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Other</th>
+                    <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Net pay</th>
+                  </>
+                ) : (
+                  <>
                 <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Basic</th>
                 <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Add-ons</th>
                 <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Gross</th>
@@ -654,6 +749,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 {/* Commission and anything else accounts added or took off here — so the row adds up to Payable. */}
                 <th className="whitespace-nowrap px-5 py-3 text-right font-medium">By accounts</th>
                 <th className="whitespace-nowrap px-5 py-3 text-right font-medium">Payable</th>
+                  </>
+                )}
                 <th className="px-5 py-3 font-medium">Status</th>
               </tr>
             </thead>
@@ -706,6 +803,18 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                       </div>
                     </td>
                     <td className="px-5 py-3 text-foreground-muted">{l.departmentName || "—"}</td>
+                    {manual ? (
+                      <>
+                        <td className="whitespace-nowrap px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={cur} /></td>
+                        {part(manualParts(l).pf, "text-danger")}
+                        {part(manualParts(l).esi, "text-danger")}
+                        {part(manualParts(l).professionalTax, "text-danger")}
+                        {part(manualParts(l).tds, "text-danger")}
+                        {part(manualParts(l).other, "text-danger")}
+                        <td className="whitespace-nowrap px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={cur} showConverted /></td>
+                      </>
+                    ) : (
+                      <>
                     {part(parts.basic)}
                     {part(parts.addOns, "text-success")}
                     <td className="whitespace-nowrap px-5 py-3 text-right"><MoneyDisplay minor={l.grossMinor} currency={cur} /></td>
@@ -718,6 +827,8 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                         : <span className="text-foreground-muted">—</span>}
                     </td>
                     <td className="whitespace-nowrap px-5 py-3 text-right font-medium"><MoneyDisplay minor={l.payableMinor} currency={cur} showConverted /></td>
+                      </>
+                    )}
                     <td className="px-5 py-3">
                       <Badge tone={LINE_TONE[l.status]}>{LINE_LABEL[l.status]}</Badge>
                       {l.status === "partially_paid" && (
@@ -735,7 +846,7 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                   </tr>
                   {(allOpen || expanded === l.id) && (
                     <tr className="border-b border-border bg-surface-muted/50">
-                      <td colSpan={selectable ? 12 : 11} className="px-5 py-4">
+                      <td colSpan={columnCount} className="px-5 py-4">
                         <div className="grid gap-6 sm:grid-cols-2">
                           <Breakdown title="Earnings" items={l.earnings} currency={l.currency || run.currency} />
                           <Breakdown title="Deductions" items={l.deductions} currency={l.currency || run.currency} />
@@ -821,12 +932,25 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                             <Plus className="mr-1.5 h-3.5 w-3.5" />Add or deduct
                           </Button>
                         )}
+                        {editablePeople && (
+                          <>
+                            <Button variant="secondary" size="sm" className="mr-2 mt-4" onClick={(e) => { e.stopPropagation(); setEditingLine(l); }}>
+                              <Pencil className="mr-1.5 h-3.5 w-3.5" />Change
+                            </Button>
+                            <Button variant="ghost" size="sm" className="mt-4 text-danger" onClick={(e) => { e.stopPropagation(); setRemovingLine(l); }}>
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Remove
+                            </Button>
+                          </>
+                        )}
                         <p className="mt-3 text-xs text-foreground-muted">
                           {/* Enough to tell one account from another without
                               putting a full IBAN on screen for a passer-by. */}
                           {l.bank.bankName || "No bank"}
                           {l.bank.iban ? ` · ${l.bank.iban.slice(0, 4)}…${l.bank.iban.slice(-4)}` : ""}
                           {l.bank.nameInBank ? ` · ${l.bank.nameInBank}` : ""}
+                          {/* A manual line's account, masked the same way, and its IFSC (2026-11-11). */}
+                          {manual && l.bank.accountNumber ? ` · …${l.bank.accountNumber.slice(-4)}` : ""}
+                          {manual && l.bank.ifsc ? ` · IFSC ${l.bank.ifsc}` : ""}
                         </p>
                       </td>
                     </tr>
@@ -835,7 +959,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
                 );
               })}
               {lines.length === 0 && (
-                <tr><td colSpan={selectable ? 12 : 11} className="px-5 py-10 text-center text-foreground-muted">Nothing matches that search.</td></tr>
+                <tr><td colSpan={columnCount} className="px-5 py-10 text-center text-foreground-muted">
+                  {run.lines.length === 0 ? "Nobody on this month yet." : "Nothing matches that search."}
+                </td></tr>
               )}
             </tbody>
           </table>
@@ -861,7 +987,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         open={undoing}
         onOpenChange={setUndoing}
         title={`Undo the approval of ${run.runNumber}?`}
-        description="It goes back to before it was approved — nothing is paid, nothing changes in HR — and can be approved again."
+        description={manual
+          ? "It goes back to before it was approved — nothing is paid — so its people can be changed, and it can be approved again."
+          : "It goes back to before it was approved — nothing is paid, nothing changes in HR — and can be approved again."}
         label="Why?"
         placeholder="Approved by mistake"
         confirmLabel="Undo approval"
@@ -885,7 +1013,9 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         open={Boolean(reversing)}
         onOpenChange={(o) => { if (!o) setReversing(null); }}
         title="Reverse this payment?"
-        description="The money goes back on the bank account, the payslips return to issued, any commission it settled is owed again, and the expense is voided."
+        description={manual
+          ? "The money goes back on the bank account, the people it paid are owed again, and the expense is voided."
+          : "The money goes back on the bank account, the payslips return to issued, any commission it settled is owed again, and the expense is voided."}
         label="Why is it being reversed?"
         placeholder="Bank returned the transfer — closed account"
         confirmLabel="Reverse payment"
@@ -903,9 +1033,47 @@ export default function PayrollRunPage({ params }: { params: Promise<{ id: strin
         selectedIds={Array.from(selected)}
         runCurrency={run.currency}
         parts={!!run.payInParts}
+        hrms={!manual}
         payOne={(input) => pay.mutateAsync(input)}
         onDone={() => { setPaying(false); setSelected(new Set()); }}
       />
+
+      {manual && (
+        <>
+          <LineDialog
+            open={editingLine !== null}
+            onOpenChange={(o) => { if (!o) setEditingLine(null); }}
+            runId={run.id}
+            currency={run.currency}
+            line={editingLine === "new" ? null : editingLine}
+            codes={manualCodes}
+          />
+          <ImportPayrollDialog
+            open={importingLines}
+            onOpenChange={setImportingLines}
+            baseCurrency={run.currency}
+            into={importInto}
+          />
+          <ConfirmDialog
+            open={Boolean(removingLine)}
+            onOpenChange={(o) => { if (!o) setRemovingLine(null); }}
+            title={removingLine ? `Remove ${removingLine.name}?` : "Remove?"}
+            description="They come off this month and its totals. They can be added again until the month is approved."
+            confirmLabel="Remove"
+            pending={removeLine.isPending}
+            onConfirm={() => removingLine && removeLine.mutate(removingLine.id, { onSuccess: () => { setRemovingLine(null); setExpanded(null); } })}
+          />
+          <ConfirmDialog
+            open={deletingRun}
+            onOpenChange={setDeletingRun}
+            title={`Delete ${run.runNumber}?`}
+            description={`The ${run.period} ${run.currency} month goes — it has nobody on it and nothing paid. This can't be undone; a new month can be made again.`}
+            confirmLabel="Delete month"
+            pending={deleteRun.isPending}
+            onConfirm={() => deleteRun.mutate(undefined, { onSuccess: () => router.push("/payroll/runs") })}
+          />
+        </>
+      )}
 
       <AdjustDialog
         lines={adjusting}

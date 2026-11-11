@@ -2,20 +2,23 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, qs, type QueryParams } from "@/lib/api";
+import type { ManualPayrollLineInput } from "@delta/shared";
 import type {
   AdjustmentResult, AvailableBatch, CommissionPullResult,
   ImportPreview, ImportResult, PayResult, Reconciliation, RunDetail, RunSummary,
   PeopleReport, DepartmentReport, PersonDetail, PersonLedger, LedgerKind,
+  PayrollSetup, ManualRunCreated, ManualLinesResult,
 } from "./types";
 
 const KEY = ["payroll"] as const;
 
-/** What HR is offering across every linked organization. */
-export function useAvailableBatches() {
+/** What HR is offering across every linked organization. Not asked for an organization that enters its own (2026-11-11). */
+export function useAvailableBatches(enabled = true) {
   return useQuery({
     queryKey: [...KEY, "available"],
     queryFn: () => api.get<AvailableBatch[]>("payroll/available"),
     retry: false,
+    enabled,
   });
 }
 
@@ -242,5 +245,65 @@ export function usePersonDetail(employeeId: string | null, params: { from: strin
     queryFn: () =>
       api.get<PersonDetail>(`payroll/people-report/${employeeId}?from=${params.from}&to=${params.to}`),
     enabled: Boolean(employeeId),
+  });
+}
+
+// ── Manual payroll (2026-11-11): months entered or imported in finance ──────
+
+/** Where this organization's months come from — HRMS, or entered here — and the currency a new month starts in. */
+export function usePayrollSetup() {
+  return useQuery({
+    queryKey: [...KEY, "setup"],
+    queryFn: () => api.get<PayrollSetup>("payroll/setup"),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateManualRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { period: string; currency?: string; lines?: ManualPayrollLineInput[] }) =>
+      api.post<ManualRunCreated>("payroll/manual/runs", input),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** One person typed (refused whole if wrong), or an import's rows with `partial` (the good ones added). */
+export function useAddManualLines(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { lines: ManualPayrollLineInput[]; partial?: boolean }) =>
+      api.post<ManualLinesResult>(`payroll/runs/${runId}/lines`, input),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useUpdateManualLine(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lineId, line }: { lineId: string; line: ManualPayrollLineInput }) =>
+      api.patch<ManualLinesResult>(`payroll/runs/${runId}/lines/${lineId}`, line),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useRemoveManualLine(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lineId: string) => api.del<ManualLinesResult>(`payroll/runs/${runId}/lines/${lineId}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** A month made by mistake, before approval. */
+export function useDeleteManualRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.del<{ runNumber: string; message: string }>(`payroll/runs/${runId}`),
+    // Everything but the month itself, which is gone: asking for it again would only say so.
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: [...KEY, "runs", runId], exact: true });
+      void qc.invalidateQueries({ queryKey: KEY, predicate: (q) => !(q.queryKey[1] === "runs" && q.queryKey[2] === runId) });
+    },
   });
 }

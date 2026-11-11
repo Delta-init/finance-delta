@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { manualPayrollLineSchema } from "@delta/shared";
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "Must be a valid id");
 const period = z.string().regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");
@@ -91,3 +92,22 @@ export const personLedgerQuerySchema = z.object({
   to: isoDate.optional(),
   sort: z.enum(["asc", "desc"]).default("desc"),
 });
+
+// ── Manual payroll (2026-11-11): an organization not run through HRMS enters its months here ──────────────────────
+
+export const createManualRunSchema = z.object({
+  period,
+  /** The month's currency; the organization's own when left out. */
+  currency: z.string().trim().regex(/^[A-Za-z]{3}$/, "Use a 3-letter currency code").optional(),
+  notes: z.string().trim().max(300).optional(),
+  /** An import's rows, the good ones added at once (manual.service createManualRun). */
+  lines: z.array(manualPayrollLineSchema).max(1000).optional(),
+});
+
+/** People onto an open month: one typed (refused whole if wrong), or an import's rows with `partial` (good ones added). */
+export const addManualLinesSchema = z.object({
+  lines: z.array(manualPayrollLineSchema).min(1).max(1000),
+  partial: z.boolean().optional(),
+});
+
+export const updateManualLineSchema = manualPayrollLineSchema;

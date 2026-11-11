@@ -5,6 +5,7 @@ import { env } from "../config/env";
 import { hrmsClient } from "../lib/hrms-client";
 import { PayrollOrgLink } from "../modules/payroll-mapping/org-link.model";
 import { PayrollRun } from "../modules/payroll/payroll-run.model";
+import { Organization } from "../modules/organization/organization.model";
 import { notifyPayrollWaiting } from "../modules/payroll/notify.service";
 
 /**
@@ -40,8 +41,14 @@ function redisIsAvailable(): Promise<boolean> {
 }
 
 export async function checkPayrollWaiting(): Promise<number> {
-  const links = await PayrollOrgLink.find({ isActive: true }).lean();
-  if (!links.length) return 0;
+  const linked = await PayrollOrgLink.find({ isActive: true }).lean();
+  if (!linked.length) return 0;
+  // An organization that enters its payroll in finance (2026-11-11, Settings → Payroll) waits for nothing from HR.
+  const manual = new Set(
+    (await Organization.find({ _id: { $in: linked.map((l) => l.organizationId) }, payrollMode: "manual" }).select("_id").lean())
+      .map((o) => String(o._id)),
+  );
+  const links = linked.filter((l) => !manual.has(String(l.organizationId)));
 
   // Grouped by finance organization, so somebody with several HRMS entities
   // feeding one book gets a single mail listing all of them rather than one

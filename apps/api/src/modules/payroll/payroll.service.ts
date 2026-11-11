@@ -10,6 +10,8 @@ import { toMinor, formatMinor, assertTotalsAgree } from "./money";
 import {
   batchByCurrency, currencyOf, summariseByCurrency, type BatchCurrencyTotals,
 } from "./currency-totals";
+import { payrollModeOf } from "./manual.service";
+import { isManualRun } from "./run-source";
 
 // Lives in currency-totals, so it can be tested without config; still offered here.
 export { summariseByCurrency };
@@ -141,7 +143,21 @@ function batchCurrencies(batch: HrmsBatch): BatchCurrencyTotals[] {
   }
 }
 
+/**
+ * An organization that enters its payroll in finance (2026-11-11, Settings → Payroll) imports nothing from HR: refused
+ * before HRMS is asked anything. Every organization is on HRMS until somebody switches it, so none is stopped that wasn't.
+ */
+async function requireHrmsMode(orgId: string) {
+  if ((await payrollModeOf(orgId)) === "manual") {
+    throw new AppError(
+      "CONFLICT",
+      "This organization enters its payroll in finance (Settings → Payroll). Switch it to HRMS to import a month from HR.",
+    );
+  }
+}
+
 export async function previewImport(orgId: string, hrmsOrgId: string, period: string): Promise<ImportPreview> {
+  await requireHrmsMode(orgId);
   const link = await requireLink(orgId, hrmsOrgId);
   const batch = await hrmsClient.payrollBatch(hrmsOrgId, period);
 
@@ -272,6 +288,7 @@ export async function importRun(
   period: string,
   actor: { userId: string },
 ) {
+  await requireHrmsMode(orgId);
   const link = await requireLink(orgId, hrmsOrgId);
   const preview = await previewImport(orgId, hrmsOrgId, period);
   if (!preview.canImport) {
@@ -413,7 +430,7 @@ export async function listRuns(
     PayrollRun.find(filter)
       // Of each line only what its currency's totals need, not the payslip itself.
       .select(
-        "runNumber period hrmsOrgName currency status payableMinor amountPaidMinor balanceMinor importedAt importedByName " +
+        "runNumber period source hrmsOrgName currency status payableMinor amountPaidMinor balanceMinor importedAt importedByName " +
           "lines.currency lines.grossMinor lines.deductionsMinor lines.payableMinor lines.amountPaidMinor",
       )
       .sort({ period: -1, createdAt: -1 })
@@ -428,6 +445,8 @@ export async function listRuns(
       id: String(r._id),
       runNumber: r.runNumber,
       period: r.period,
+      /** "manual" for a month entered in finance (2026-11-11); "hrms" for one from HR. */
+      source: isManualRun(r) ? ("manual" as const) : ("hrms" as const),
       hrmsOrgName: r.hrmsOrgName,
       currency: r.currency,
       status: r.status,
@@ -458,6 +477,11 @@ export async function getRun(orgId: string, id: string) {
     id: String(run._id),
     runNumber: run.runNumber,
     period: run.period,
+    /**
+     * "manual" for a month entered in finance (2026-11-11): its people are added, changed and removed here before
+     * approval, and nothing about it goes to HRMS. "hrms" for a month from HR, as every run before.
+     */
+    source: isManualRun(run) ? ("manual" as const) : ("hrms" as const),
     hrmsOrgId: run.hrmsOrgId,
     hrmsOrgName: run.hrmsOrgName,
     currency: run.currency,
@@ -561,6 +585,8 @@ export async function getRun(orgId: string, id: string) {
 
 /** Months HRMS is offering that this book has not taken yet. */
 export async function listAvailable(orgId: string) {
+  // Nothing waits from HR for an organization that enters its payroll in finance (2026-11-11) — and HRMS isn't asked.
+  if ((await payrollModeOf(orgId)) === "manual") return [];
   const links = await PayrollOrgLink.find({ organizationId: oid(orgId), isActive: true }).lean();
   const out: Array<{
     hrmsOrgId: string; hrmsOrgName: string; period: string; status: string;
@@ -664,7 +690,8 @@ export async function reconciliation(orgId: string) {
 
   for (const run of runs) {
     for (const p of run.payments) {
-      if (!p.syncedToHrms && !p.reversedAt) {
+      // A month entered in finance (2026-11-11) never had anything to tell HRMS.
+      if (!p.syncedToHrms && !p.reversedAt && !isManualRun(run)) {
         unsyncedPayments.push({
           runId: String(run._id), runNumber: run.runNumber, period: run.period,
           paymentId: p.paymentId, amountMinor: p.amountMinor, currency: p.currency || run.currency,

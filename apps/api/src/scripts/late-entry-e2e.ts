@@ -9,8 +9,8 @@
  *      then it pays, into its account. A new one rejected: rejected, and can't be sent again.
  *   3. An edit that moves an expense's date back: waiting; rejected — its date put back. Moved back within the days —
  *      no longer asked. Deleted while waiting — withdrawn.
- *   4. A bill: waiting — not approved, not paid; approved — paid. A new one rejected — voided.
- *   5. A bill payment: waiting — out of its account; approved — in. Rejected — removed, the bill owed again.
+ *   4. A bill: no longer asked (2026-11-11) — an old date is saved, approved and paid as any other.
+ *   5. A bill payment: no longer asked — in its account at once; ones still waiting from before let go (the release).
  *   6. An invoice payment: the same; an edit moving one back, rejected — its date and its line back.
  *   7. Entries finance makes itself (no one typing) are not asked; with days 0 nothing is.
  *   8. Super admins decide when nobody is tagged; the page answers who is a manager and how many wait.
@@ -167,38 +167,64 @@ const pageNow = await late.listLateEntries(ORG, MONA, { state: "pending" });
 check("gone some other way: the page drops it", !pageNow.some((x) => x.refId === e5.id) && (await entryFor(e5.id))?.state === "withdrawn");
 
 /* ── 4 ── */
-step("4. A bill");
+step("4. A bill (2026-11-11: bills no longer ask)");
 const vendor = await Vendor.create({ organizationId: org._id, vendorCode: "VEN-00001", name: "Gulf Supplies", email: "v@e2e-late.test", phone: "+971400000000", currency: "AED", status: "active" });
 const bill = (date: string, reason?: string, over: Record<string, unknown> = {}) => bills.createBill(ORG, { category: "office_supplies", subcategory: "stationery", vendorId: String(vendor._id), billDate: date, dueDate: RECENT, currency: "AED",
   lineItems: [{ description: "Paper", quantity: 1, unitPriceMinor: 50_000, discountPct: 0, taxPct: 0 }], notes: "", paymentTerms: "", requiresApproval: false, ...over } as never, typing(reason));
 const pay = (id: string, date: string, reason?: string, over: Record<string, unknown> = {}) => bills.recordBillPayment(ORG, id, { method: "bank_transfer", amountMinor: 20_000, paidOn: date, reference: "", accountName: "", notes: "", chargesMinor: 0, ...over } as never, typing(reason));
-check("10 days back with no reason: refused", /give the reason/.test(await refusal(bill(OLD))));
-let b1 = await bill(OLD, "Invoice came by post");
-check("with one: waiting", b1.lateEntry?.state === "pending");
-check("waiting: it can't be paid", /waiting for a manager/.test(await refusal(pay(b1.id, RECENT))));
-const b1a = await bill(OLD, "Late", { requiresApproval: true });
-check("…nor approved", /waiting for a manager/.test(await refusal(bills.approveBill(ORG, b1a.id))));
-await late.decideLateEntry(ORG, MONA, String((await entryFor(b1.id))._id), "approved", "");
+let b1 = await bill(OLD);
+check("10 days back with no reason: saved, nothing asked", !b1.lateEntry && !(await entryFor(b1.id)), j(b1.lateEntry ?? null));
 b1 = await pay(b1.id, RECENT);
-check("approved: it is paid", b1.payments.length === 1 && b1.lateEntry?.state === "approved");
-const b2 = await bill(OLD, "Duplicate?");
-await late.decideLateEntry(ORG, MONA, String((await entryFor(b2.id))._id), "rejected", "Already entered as BILL-00001");
-check("a new one rejected: voided", (await bills.getBill(ORG, b2.id)).status === "voided");
+check("…paid straight away", b1.payments.length === 1 && b1.status === "partially_paid");
+const b1a = await bill(OLD, "Late", { requiresApproval: true });
+const b1aDone = await bills.approveBill(ORG, b1a.id);
+check("…one needing approval: approved as usual, a reason given or not", b1aDone.status === "approved" && !(await entryFor(b1a.id)));
+const b1b = await bill(RECENT);
+const billMoved = await bills.updateBill(ORG, b1b.id, { billDate: OLDER } as never, typing(undefined));
+check("an edit moving it far back: nothing asked", !billMoved.lateEntry && !(await entryFor(b1b.id)));
 
 /* ── 5 ── */
-step("5. A bill payment");
+step("5. A bill payment (2026-11-11: no longer asked)");
 let b3 = await bill(RECENT);
-b3 = await pay(b3.id, OLD, "Paid last week, slip found today");
-let p3 = b3.payments[0]!;
-check("10 days back: waiting, out of its account", p3.lateEntry?.state === "pending" && p3.bankAccountId === bank.id && (await linesFor(b3.id)) === 0, j(p3));
-await late.decideLateEntry(ORG, MONA, String((await entryFor(b3.id))._id), "approved", "");
-check("approved: in its account", (await linesFor(b3.id)) === 1 && (await bills.getBill(ORG, b3.id)).payments[0]!.lateEntry?.state === "approved");
-b3 = await pay(b3.id, OLDER, "Another old one");
-const p3b = b3.payments[1]!;
-check("another, waiting; the bill counts it meanwhile", p3b.lateEntry?.state === "pending" && b3.amountPaidMinor === 40_000);
-await late.decideLateEntry(ORG, MONA, String((await LateEntryModel.findOne({ paymentId: new Types.ObjectId(p3b.id) }).lean<any>())._id), "rejected", "Not ours");
-b3 = await bills.getBill(ORG, b3.id);
-check("rejected: removed, the bill owed again", b3.payments.length === 1 && b3.amountPaidMinor === 20_000 && b3.balanceMinor === 30_000, j({ n: b3.payments.length, paid: b3.amountPaidMinor }));
+b3 = await pay(b3.id, OLD);
+const p3 = b3.payments[0]!;
+check("10 days back, no reason: in its account at once", !p3.lateEntry && p3.bankAccountId === bank.id && (await linesFor(b3.id)) === 1, j(p3));
+b3 = await bills.updateBillPayment(ORG, b3.id, p3.id, { method: "bank_transfer", amountMinor: 20_000, paidOn: OLDER, reference: "", accountName: "", notes: "", chargesMinor: 0, bankAccountId: bank.id } as never, typing(undefined));
+check("moved further back: still in its account, nothing asked", (await linesFor(b3.id)) === 1 && !b3.payments[0]!.lateEntry);
+
+step("5b. Bills still waiting from before: let go");
+// As left by the old rule: a bill and a payment waiting for a manager, the payment out of its account.
+const legacy = await bill(RECENT);
+const legacyPaid = await pay(legacy.id, RECENT);
+const lp = legacyPaid.payments[0]!;
+const reqBill = new Types.ObjectId(), reqPay = new Types.ObjectId();
+const sub = (entryId: Types.ObjectId) => ({ state: "pending", entryId, reason: "Old", enteredByName: "Asha Accountant" });
+await Bill.updateOne({ _id: legacy.id }, { $set: { lateEntry: sub(reqBill), "payments.0.lateEntry": sub(reqPay) } });
+await BankTransaction.deleteOne({ _id: (await Bill.findById(legacy.id).lean<any>()).payments[0].bankTransactionId });
+await Bill.updateOne({ _id: legacy.id }, { $set: { "payments.0.bankTransactionId": null } });
+const asked = (id: Types.ObjectId, kind: string, paymentId: Types.ObjectId | null) => LateEntryModel.collection.insertOne({
+  _id: id, organizationId: new Types.ObjectId(ORG), kind, refId: new Types.ObjectId(legacy.id), paymentId, number: legacy.billNumber, title: "Gulf Supplies",
+  amountMinor: 50_000, currency: "AED", date: new Date(OLD), reason: "Old", state: "pending", enteredById: asha._id, enteredByName: "Asha Accountant", createdAt: new Date(), updatedAt: new Date(),
+});
+await asked(reqBill, "bill", null);
+await asked(reqPay, "bill_payment", new Types.ObjectId(lp.id));
+const shown = await bills.getBill(ORG, legacy.id);
+check("the bill and its payment no longer show as waiting", !shown.lateEntry && !shown.payments[0]!.lateEntry, j({ b: shown.lateEntry ?? null, p: shown.payments[0]!.lateEntry ?? null }));
+const billWaiting = await late.listLateEntries(ORG, MONA, { state: "pending" });
+check("…off the managers' Waiting list", !billWaiting.some((x) => x.refId === legacy.id));
+check("…not counted as waiting", (await late.lateEntryMe(ORG, MONA)).pending === billWaiting.length, j({ me: (await late.lateEntryMe(ORG, MONA)).pending, list: billWaiting.length }));
+check("…nothing to decide", /nothing left to decide|already/.test(await refusal(late.decideLateEntry(ORG, MONA, String(reqBill), "rejected", "x"))));
+const { releaseWaitingBills } = await import("../modules/bill/release-late");
+await Bill.updateOne({ _id: legacy.id }, { $set: { lateEntry: sub(reqBill), "payments.0.lateEntry": sub(reqPay) } });
+await LateEntryModel.updateMany({ _id: { $in: [reqBill, reqPay] } }, { $set: { state: "pending" } });
+const look = await releaseWaitingBills(false);
+check("the release script, looking: the bill and its payment listed, nothing changed", look.filter((r) => r.billId === legacy.id).length === 2
+  && (await Bill.findById(legacy.id).lean<any>()).lateEntry?.state === "pending", j(look));
+await releaseWaitingBills(true);
+const after = await Bill.findById(legacy.id).lean<any>();
+check("…writing: both cleared, the payment back in its account", !after.lateEntry && !after.payments[0].lateEntry && (await linesFor(legacy.id)) === 1, j({ b: after.lateEntry, p: after.payments[0].lateEntry, lines: await linesFor(legacy.id) }));
+check("…the requests withdrawn", (await LateEntryModel.find({ _id: { $in: [reqBill, reqPay] } }).lean<any[]>()).every((e) => e.state === "withdrawn"));
+check("…run again: nothing left", (await releaseWaitingBills(false)).length === 0);
 
 /* ── 6 ── */
 step("6. An invoice payment");

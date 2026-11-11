@@ -8,6 +8,7 @@ import { Expense } from "../expense/expense.model";
 import { BankTransaction } from "../banking/bank-transaction.model";
 import { BalancePaymentModel } from "../balance-payment/balance-payment.model";
 import { LateEntryModel } from "../late-entry/late-entry.model";
+import { NOT_ASKED_KINDS } from "../late-entry/late-entry.service";
 
 /**
  * GET /api/v1/service/finance-watch — the Root portal's Pending → Finance tab
@@ -106,7 +107,8 @@ async function waitingIn(org: { _id: Types.ObjectId; name: string }, now: number
     for (const u of r.meta.unavailable) unavailable.add(u);
     if (page >= r.meta.pageCount) break;
   }
-  const late = (await LateEntryModel.find({ organizationId: org._id, state: "pending" })
+  // Bills and bill payments are no longer asked (2026-11-11) — one still waiting from before isn't Root's to chase.
+  const late = (await LateEntryModel.find({ organizationId: org._id, state: "pending", kind: { $nin: [...NOT_ASKED_KINDS] } })
     .select("number title amountMinor currency enteredByName createdAt kind").lean()) as any[];
   const lateRows: WatchApproval[] = late.map((l) => {
     const since = new Date(l.createdAt).toISOString();

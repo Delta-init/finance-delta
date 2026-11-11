@@ -10,7 +10,7 @@ import { notifyBillWaiting } from "./bill-notify.service";
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { paymentAccountsOf } from "../invoice/payment-bank";
 import { isLatePending, lateView } from "../late-entry/late-entry.model";
-import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
+import { withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 import { syncBillExpense } from "./bill-expense";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { User } from "../user/user.model";
@@ -86,7 +86,7 @@ function toDTO(doc: BillDoc): BillDTO {
         bankAccountId: pm.bankAccountId ? pm.bankAccountId.toString() : undefined,
         inBank: pm.bankAccountId ? Boolean(pm.bankTransactionId) : undefined,
         bankNote: pm.bankNote || undefined,
-        lateEntry: lateView(pm.lateEntry),
+        lateEntry: released(pm.lateEntry),
         notes: pm.notes ?? "",
         chargesMinor: pm.chargesMinor ?? 0,
         emi: pm.emi
@@ -113,7 +113,7 @@ function toDTO(doc: BillDoc): BillDTO {
         uploadedAt: at.createdAt?.toISOString() ?? new Date().toISOString(),
       };
     }),
-    lateEntry: lateView(d.lateEntry),
+    lateEntry: released(d.lateEntry),
     notes: (doc.notes as string) ?? "",
     paymentTerms: (d.paymentTerms as string) ?? "",
     ...(d.category
@@ -163,22 +163,14 @@ export async function getBill(orgId: string, id: string): Promise<BillDTO> {
   return toDTO(doc as unknown as BillDoc);
 }
 
-/** What the managers are shown of a bill, and of a payment on one, typed in late. */
-const billLateInfo = (doc: any) => ({
-  kind: "bill" as const, refId: doc._id, number: String(doc.billNumber ?? ""), title: String(doc.vendorName ?? ""),
-  amountMinor: Number(doc.totalMinor ?? 0), currency: String(doc.currency ?? "AED"),
-});
-const paymentLateInfo = (doc: any, p: any) => ({
-  kind: "bill_payment" as const, refId: doc._id, paymentId: p._id, number: String(doc.billNumber ?? ""),
-  title: `${doc.vendorName ?? ""} · ${String(p.method ?? "").replace(/_/g, " ")}`, amountMinor: Number(p.amountMinor ?? 0), currency: String(doc.currency ?? "AED"),
-});
-
-/** Refused while a manager has still to approve the bill being entered late. */
-function assertBillNotWaiting(doc: unknown, what: string): void {
-  if (isLatePending((doc as { lateEntry?: unknown }).lateEntry)) {
-    throw new AppError("CONFLICT", `This bill was entered late and is waiting for a manager — it can't be ${what} until one approves it`);
-  }
+/* Bills and bill payments no longer ask a manager about an old date (the user, 2026-11-11: "removal approval things
+   in Late Bills ( date of bill in past )") — expenses, invoice payments and bank lines still do. One asked before
+   that and still waiting is let go: shown as nothing, and it no longer holds the bill back
+   (scripts/release-late-bills.ts withdraws them for good). */
+function released(v: unknown) {
+  return isLatePending(v) ? undefined : lateView(v);
 }
+
 
 export async function createBill(orgId: string, input: CreateBillInput, late?: LateActor): Promise<BillDTO> {
   const vendor = await Vendor.findOne({ _id: input.vendorId, organizationId: orgId });
@@ -193,7 +185,6 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
   const totalMinor = lines.reduce((s, l) => s + l.lineTotalMinor, 0);
   const billNumber = await nextNumber(orgId, "bill", "BILL-");
 
-  const lateNow = await lateForDate(orgId, late, input.billDate, null, null);
   // What it is for, checked against the organization's categories (2026-10-23) — its expense is filed under it.
   const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
   const creator = late?.userId ? await User.findById(late.userId).select("name").lean<{ name?: string }>() : null;
@@ -219,7 +210,7 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
     paymentTerms: input.paymentTerms ?? "",
     status,
     approvalStatus,
-    lateEntry: lateNow.next ?? null,
+    lateEntry: null,
     category: cat.category,
     categoryName: cat.categoryName,
     subcategory: cat.subcategory,
@@ -227,7 +218,6 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
     createdById: late?.userId ? new Types.ObjectId(late.userId) : null,
     createdByName: creator?.name ?? "",
   });
-  if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, billLateInfo(doc));
   // Held for approval: the accountants are told, as for every approval request.
   if (status === "pending_approval") {
     void notifyBillWaiting(orgId, {
@@ -255,9 +245,9 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
     doc.vendorName = vendor.name;
   }
   if (input.currency !== undefined) doc.currency = input.currency;
-  // Its date moved: too far back and it waits for a manager; back within the days and it no longer does.
-  const lateNow = input.billDate ? await lateForDate(orgId, late, input.billDate, doc.billDate as unknown as Date, (doc as any).lateEntry) : null;
-  if (lateNow && lateNow.next !== undefined) (doc as any).lateEntry = lateNow.next;
+  // Never asked about its date any more (2026-11-11): one still waiting from before is let go when it is edited.
+  const letGo = isLatePending((doc as any).lateEntry);
+  if (letGo) (doc as any).lateEntry = null;
   if (input.billDate) doc.billDate = new Date(input.billDate) as unknown as typeof doc.billDate;
   if (input.dueDate) doc.dueDate = new Date(input.dueDate) as unknown as typeof doc.dueDate;
   if (input.notes !== undefined) doc.notes = input.notes;
@@ -306,8 +296,7 @@ export async function updateBill(orgId: string, id: string, input: UpdateBillInp
   }
 
   await doc.save();
-  if (lateNow?.pending) await openLateEntry(orgId, lateNow.pending, billLateInfo(doc));
-  else if (lateNow?.withdraw) await withdrawLateFor(orgId, "bill", doc._id);
+  if (letGo) await withdrawLateFor(orgId, "bill", doc._id);
   await syncBillExpense(orgId, doc._id);
   return billDTO(orgId, doc._id);
 }
@@ -316,7 +305,6 @@ export async function approveBill(orgId: string, id: string): Promise<BillDTO> {
   const doc = await Bill.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
   if (doc.status !== "pending_approval") throw new AppError("CONFLICT", "Bill is not pending approval");
-  assertBillNotWaiting(doc, "approved");
   doc.status = "approved";
   (doc as unknown as Record<string, unknown>).approvalStatus = "approved";
   await doc.save();
@@ -359,8 +347,8 @@ async function syncBillPaymentLine(orgId: string, billId: unknown, paymentId: un
   if (!bill || !p) return;
   let note = "";
   let want: Parameters<typeof syncDebitLine>[2] = null;
-  // Not while it waits for a manager to approve it being entered late.
-  if (p.bankAccountId && !isLatePending(p.lateEntry)) {
+  // In its account whatever its date (2026-11-11: bill payments no longer wait for a manager).
+  if (p.bankAccountId) {
     const acc = await debitAccount(orgId, String(p.bankAccountId), bill.currency ?? "AED");
     if ("note" in acc) note = acc.note;
     else {
@@ -396,7 +384,6 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
   if (!doc) throw new AppError("NOT_FOUND", "Bill not found");
   if (!["approved", "partially_paid", "overdue"].includes(doc.status as string))
     throw new AppError("CONFLICT", "Bill must be approved or overdue to record a payment");
-  assertBillNotWaiting(doc, "paid");
 
   const balance = (doc.balanceMinor as number) ?? 0;
   if (input.amountMinor > balance) throw new AppError("CONFLICT", "Payment exceeds outstanding balance");
@@ -430,14 +417,12 @@ export async function recordBillPayment(orgId: string, id: string, input: Record
   const acc = await billPaymentAccount(orgId, input.method, input.bankAccountId);
   payment.bankAccountId = acc.id;
   if (acc.name) payment.accountName = acc.name;
-  const lateNow = await lateForDate(orgId, late, input.paidOn, null, null);
-  (doc.payments as unknown[]).push({ ...payment, lateEntry: lateNow.next ?? null });
+  (doc.payments as unknown[]).push({ ...payment, lateEntry: null });
   doc.amountPaidMinor = ((doc.amountPaidMinor as number) ?? 0) + input.amountMinor;
   doc.balanceMinor = ((doc.balanceMinor as number) ?? 0) - input.amountMinor;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
   const added = (doc.payments as unknown as { _id: unknown }[]).at(-1);
-  if (added && lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, added));
   if (added) await syncBillPaymentLine(orgId, doc._id, added._id);
   await syncBillExpense(orgId, doc._id);
   return billDTO(orgId, doc._id);
@@ -530,10 +515,9 @@ export async function updateBillPayment(
 
   const p = pm as Record<string, unknown>;
   const before = { amountMinor: p.amountMinor, paidOn: p.paidOn };
-  // Its date moved too far back: it waits for a manager again, out of its account meanwhile.
-  const lateNow = await lateForDate(orgId, late, input.paidOn, p.paidOn as Date, p.lateEntry as never);
-  if (lateNow.pending) await assertDebitMovable(orgId, p.bankTransactionId);
-  if (lateNow.next !== undefined) p.lateEntry = lateNow.next;
+  // Never asked about its date any more (2026-11-11): one still waiting from before is let go when it is edited.
+  const letGo = isLatePending(p.lateEntry);
+  if (letGo) p.lateEntry = null;
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
@@ -563,8 +547,7 @@ export async function updateBillPayment(
   doc.balanceMinor = ((doc.totalMinor as number) ?? 0) - newPaid;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partially_paid";
   await doc.save();
-  if (lateNow.pending) await openLateEntry(orgId, lateNow.pending, paymentLateInfo(doc, p));
-  else if (lateNow.withdraw) await withdrawLateFor(orgId, "bill_payment", doc._id, paymentId);
+  if (letGo) await withdrawLateFor(orgId, "bill_payment", doc._id, paymentId);
   await syncBillPaymentLine(orgId, doc._id, paymentId);
   await syncBillExpense(orgId, doc._id);
   return billDTO(orgId, doc._id);

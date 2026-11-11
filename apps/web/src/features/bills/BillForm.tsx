@@ -19,7 +19,6 @@ import { toast } from "@/lib/toast";
 import { VendorPicker } from "@/features/vendors/VendorPicker";
 import { useCreateBill, useUpdateBill } from "@/features/bills/api";
 import { useCurrency } from "@/lib/currency-context";
-import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { useFileDrop } from "@/components/ui/file-drop";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { CategoryPicker, choiceComplete } from "@/features/expense-categories/CategoryPicker";
@@ -117,9 +116,7 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const { data: categories, isLoading: categoriesLoading } = useExpenseCategories();
   const watchedLines = useWatch({ control, name: "lineItems" });
   const currency = watch("currency");
-  // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
-  const lateDate = useLateDate(watch("billDate"), isEdit ? initialValues?.billDate : undefined);
-  const [lateReason, setLateReason] = useState("");
+  // A bill dated in the past no longer asks for a reason or a manager (the user, 2026-11-11).
 
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -168,10 +165,6 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
   const belowPaid = amountPaidMinor > 0 && nextTotalMinor < amountPaidMinor;
 
   async function onSubmit(values: BillFormValues) {
-    if (lateDate.late && !lateReason.trim()) {
-      toast.error("Give the reason it is entered late — a manager will need to approve it");
-      return;
-    }
     if (!choiceComplete(categories, { category: values.category, subcategory: values.subcategory ?? "" })) {
       toast.error("Choose the bill's category and subcategory");
       return;
@@ -194,7 +187,6 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
         discountPct: l.discountPct,
         taxPct: l.taxPct,
       })),
-      ...(lateDate.late ? { lateReason: lateReason.trim() } : {}),
     };
     try {
       if (isEdit && billId) {
@@ -257,7 +249,6 @@ export function BillForm({ mode, billId, initialValues, amountPaidMinor = 0 }: B
               <Label>Bill Date *</Label>
               <Input type="date" {...register("billDate")} />
               {errors.billDate && <p className="text-xs text-danger">{errors.billDate.message}</p>}
-              <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="bill" />
             </div>
             <div className="space-y-1.5">
               <Label>Due Date *</Label>

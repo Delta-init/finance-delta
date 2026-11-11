@@ -32,7 +32,7 @@ import {
 import { useCan } from "@/lib/use-can";
 import { useOrganization } from "@/features/organization/api";
 import { useBankAccounts } from "@/features/banking/api";
-import { LateBadge, LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { LateBadge } from "@/features/late-entries/LateReason";
 import { useFileDrop } from "@/components/ui/file-drop";
 
 /** "Not in a bank account" in the account picker. */
@@ -110,9 +110,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     return accounts.some((a) => a.id === aid) ? aid : NO_ACCOUNT;
   };
   const [accountTouched, setAccountTouched] = useState(false);
-  // Dated the organization's days back or more (1: before today): a reason, and a manager to approve it (2026-10-17).
-  const lateDate = useLateDate(watch("paidOn"), editingPayment?.paidOn);
-  const [lateReason, setLateReason] = useState("");
+  // A payment dated in the past no longer asks for a reason or a manager (the user, 2026-11-11).
   const bankAccountId = watch("bankAccountId") ?? NO_ACCOUNT;
   const pickedAccount = accounts.find((a) => a.id === bankAccountId);
   useEffect(() => {
@@ -120,7 +118,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   }, [paymentOpen, org, accountList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (paymentOpen) setLateReason("");
     if (paymentOpen && editingPayment) {
       reset({
         method: editingPayment.method,
@@ -170,11 +167,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   async function onPaymentSubmit(values: RecordBillPaymentInput) {
-    if (lateDate.late && !lateReason.trim()) {
-      toast.error("Give the reason it is entered late — a manager will need to approve it");
-      return;
-    }
-    const payload: RecordBillPaymentInput = { ...values, ...(lateDate.late ? { lateReason: lateReason.trim() } : {}) };
+    const payload: RecordBillPaymentInput = { ...values };
     const picked = accounts.find((a) => a.id === values.bankAccountId);
     payload.bankAccountId = picked ? picked.id : "";
     // Typed before there was a list: kept while no account is picked.
@@ -660,7 +653,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 {errors.paidOn && <p className="text-xs text-danger">{errors.paidOn.message}</p>}
               </div>
             </div>
-            <LateReasonField late={lateDate.late} days={lateDate.days} value={lateReason} onChange={setLateReason} what="payment" />
 
             {method === "easebuzz_emi" && (
               <div className="rounded-md border border-border bg-surface-muted/40 p-3 space-y-3">

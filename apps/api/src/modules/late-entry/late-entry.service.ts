@@ -241,8 +241,13 @@ async function recordLateOf(e: any): Promise<RecordLate | null> {
   return (doc?.payments ?? []).find((p: any) => String(p._id) === String(e.paymentId))?.lateEntry ?? null;
 }
 
+/** Kinds no longer asked (the user, 2026-11-11: "removal approval things in Late Bills") — bills and their payments.
+ *  One still waiting from before is not asked any more: off the Waiting list, nothing to decide. */
+export const NOT_ASKED_KINDS: readonly string[] = ["bill", "bill_payment"];
+
 /** Still asked: the record is there and is waiting on this very request. */
 async function stillAsked(e: any): Promise<boolean> {
+  if (NOT_ASKED_KINDS.includes(String(e.kind))) return false;
   const l = await recordLateOf(e);
   return l?.state === "pending" && String(l.entryId) === String(e._id);
 }
@@ -359,7 +364,7 @@ async function managerNames(orgId: string): Promise<string[]> {
 export async function lateEntryMe(orgId: string, userId: string): Promise<LateEntryMe> {
   const [manager, days, managers] = await Promise.all([isManager(orgId, userId), lateEntryDaysOf(orgId), managerNames(orgId)]);
   const scope = scopeOf(manager);
-  const pending = scope === "none" ? 0 : await LateEntryModel.countDocuments({ organizationId: oid(orgId), state: "pending" });
+  const pending = scope === "none" ? 0 : await LateEntryModel.countDocuments({ organizationId: oid(orgId), state: "pending", kind: { $nin: [...NOT_ASKED_KINDS] } });
   return { isManager: manager, pending, days, canView: scope !== "none", scope, managers };
 }
 

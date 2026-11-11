@@ -17,6 +17,8 @@ import { useCreateBankAccount } from "@/features/banking/api";
 import { BANK_ACCOUNT_TYPE_LABELS, type BankAccountType } from "@delta/shared";
 import { useCurrency } from "@/lib/currency-context";
 import { PspSettingsFields, draftOf, settingsOf, type PspDraft } from "@/features/banking/psp";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
 const ACCOUNT_TYPES = Object.keys(BANK_ACCOUNT_TYPE_LABELS) as BankAccountType[];
 const PRESET_TYPES: string[] = ACCOUNT_TYPES;
@@ -55,7 +57,7 @@ export default function NewBankAccountPage() {
   // say AED and an Indian branch got an AED tin, whose entries then read as
   // dirhams forever after. What an account holds is a fact about the account.
   const { baseCurrency: orgCurrency } = useCurrency();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDubai();
 
   const {
     register,
@@ -233,7 +235,7 @@ export default function NewBankAccountPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <Label htmlFor="openingDate">Opening Date *</Label>
-              <Input id="openingDate" type="date" {...register("openingDate")} />
+              <DateField id="openingDate" value={watch("openingDate") ?? ""} onChange={(v) => setValue("openingDate", v, { shouldValidate: true })} />
               {errors.openingDate && <p className="text-xs text-danger">{errors.openingDate.message}</p>}
             </div>
             <div className="space-y-1">

@@ -6,7 +6,6 @@ import { useUrlPage, useUrlParam } from "@/lib/url-state";
 import { ArrowLeftRight, Calculator, Link2, Link2Off, Paperclip, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { formatMoney, type BankAccount, type BankTransaction } from "@delta/shared";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ExportButton } from "@/components/ui/export-button";
 import type { ExportColumn } from "@/lib/export";
 import { ApiError } from "@/lib/api";
@@ -23,6 +22,8 @@ import { subcategoriesOf } from "@/features/expense-categories/CategoryPicker";
 import {
   useBankTransactions,
   useDeleteBankTransaction, useUnlinkTransaction} from "@/features/banking/api";
+import { DateField } from "@/components/ui/date-field";
+import { toDmy } from "@/lib/dates";
 
 /**
  * The petty cash book.
@@ -50,7 +51,7 @@ import {
  * Numbers stay numbers so Excel can total them.
  */
 const EXPORT_COLUMNS = (account: BankAccount): ExportColumn<BankTransaction>[] => [
-  { header: "Date", value: (t) => t.date.slice(0, 10) },
+  { header: "Date", value: (t) => toDmy(t.date) },
   { header: "Description", value: (t) => t.description },
   { header: "Reference", value: (t) => t.reference ?? "" },
   { header: `In (${account.currency})`, value: (t) => (t.amountMinor >= 0 ? t.amountMinor / 100 : "") },
@@ -130,7 +131,7 @@ export function CashBook({ account }: { account: BankAccount }) {
         <h2 className="text-sm font-semibold">Cash book</h2>
         <span className="text-xs text-foreground-muted">
           Opening balance {formatMoney(account.openingBalanceMinor, account.currency)} on{" "}
-          {account.openingDate}
+          {toDmy(account.openingDate)}
         </span>
         <span className="ml-auto text-xs text-foreground-muted">
           {total} {total === 1 ? "entry" : "entries"}
@@ -156,21 +157,11 @@ export function CashBook({ account }: { account: BankAccount }) {
       <div className="flex flex-wrap items-end gap-3 border-b border-border px-5 py-2.5">
         <div className="space-y-1">
           <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">From</label>
-          <Input
-            type="date"
-            value={dateFrom}
-            className="h-8 w-[150px]"
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
+          <DateField value={dateFrom} onChange={setDateFrom} className="w-[150px]" inputClassName="h-8" aria-label="From" clearable />
         </div>
         <div className="space-y-1">
           <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">To</label>
-          <Input
-            type="date"
-            value={dateTo}
-            className="h-8 w-[150px]"
-            onChange={(e) => setDateTo(e.target.value)}
-          />
+          <DateField value={dateTo} onChange={setDateTo} className="w-[150px]" inputClassName="h-8" aria-label="To" clearable />
         </div>
         <div className="space-y-1">
           <label className="block text-[11px] uppercase tracking-wide text-foreground-muted">Category</label>
@@ -237,7 +228,7 @@ export function CashBook({ account }: { account: BankAccount }) {
                 first balance in the column has something to follow from. */}
             {page === 1 && !filtered && (
             <tr className="border-b border-border bg-surface-muted/40">
-              <td className="px-4 py-2 text-foreground-muted">{account.openingDate}</td>
+              <td className="px-4 py-2 text-foreground-muted">{toDmy(account.openingDate)}</td>
               <td className="px-4 py-2 font-medium">Opening balance</td>
               <td className="px-4 py-2" />
               <td className="px-4 py-2" />
@@ -270,7 +261,7 @@ export function CashBook({ account }: { account: BankAccount }) {
               return (
                 <tr key={tx.id} className="border-b border-border last:border-0 hover:bg-surface-muted/40">
                   <td className="whitespace-nowrap px-4 py-2 text-foreground-muted">
-                    {tx.date.slice(0, 10)}
+                    {toDmy(tx.date)}
                   </td>
                   <td className="px-4 py-2">
                     {tx.description}

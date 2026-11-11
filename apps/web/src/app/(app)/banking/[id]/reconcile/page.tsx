@@ -24,6 +24,7 @@ import {
   useReconciliations,
 } from "@/features/banking/api";
 import { StatementCheckPanel } from "@/features/banking/StatementCheckPanel";
+import { DateField } from "@/components/ui/date-field";
 
 /*
  * A reconciliation covers a period (the user, 2026-10-23: "reconcile by a specific date — this month, this week,
@@ -183,11 +184,11 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
             <div className="grid grid-cols-2 gap-4 pt-1">
               <div className="space-y-1">
                 <Label htmlFor="periodFrom">From</Label>
-                <Input id="periodFrom" type="date" value={from} onChange={(e) => { setPeriod("custom"); setFrom(e.target.value); setOpeningTouched(false); }} />
+                <DateField id="periodFrom" value={from} onChange={(v) => { setPeriod("custom"); setFrom(v); setOpeningTouched(false); }} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="periodTo">To</Label>
-                <Input id="periodTo" type="date" value={to} min={from} onChange={(e) => { setPeriod("custom"); setTo(e.target.value); if (statementDate < e.target.value) setStatementDate(e.target.value); }} />
+                <DateField id="periodTo" value={to} min={from || undefined} onChange={(v) => { setPeriod("custom"); setTo(v); if (statementDate < v) setStatementDate(v); }} />
               </div>
             </div>
             {reconciledTo && (
@@ -213,7 +214,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <Label htmlFor="statementDate">Statement date *</Label>
-              <Input id="statementDate" type="date" value={statementDate} min={to} onChange={(e) => setStatementDate(e.target.value)} />
+              <DateField id="statementDate" value={statementDate} min={to || undefined} onChange={setStatementDate} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="notes">Notes</Label>
@@ -450,13 +451,13 @@ function ActiveReconciliation({
                   <td className="px-4 py-2.5 text-foreground-muted">{tx.date}</td>
                   <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     {selected.has(tx.id) ? (
-                      <input
-                        type="date"
+                      <DateField
                         aria-label={`Statement date for ${tx.description}`}
                         value={dates[tx.id] ?? tx.date}
-                        max={session.statementDate}
-                        onChange={(e) => setDates((prev) => ({ ...prev, [tx.id]: e.target.value || tx.date }))}
-                        className={`h-8 rounded-md border bg-surface px-2 text-xs ${dates[tx.id] && dates[tx.id] !== tx.date ? "border-primary text-foreground" : "border-border text-foreground-muted"}`}
+                        max={session.statementDate || undefined}
+                        onChange={(v) => setDates((prev) => ({ ...prev, [tx.id]: v || tx.date }))}
+                        className="w-[140px]"
+                        inputClassName={`h-8 text-xs ${dates[tx.id] && dates[tx.id] !== tx.date ? "border-primary" : "text-foreground-muted"}`}
                       />
                     ) : (
                       <span className="text-xs text-foreground-subtle">—</span>

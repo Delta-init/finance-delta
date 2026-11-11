@@ -12,6 +12,7 @@ import { useCan } from "@/lib/use-can";
 import { useBankAccounts } from "@/features/banking/api";
 import { CashBook } from "@/features/banking/CashBook";
 import { CashCounts } from "@/features/banking/CashCounts";
+import { toDmy } from "@/lib/dates";
 
 /**
  * The tin, reachable without knowing it lives inside Banking.
@@ -94,7 +95,7 @@ export default function PettyCashPage() {
               />
               <p className="mt-1 text-xs text-foreground-subtle">
                 {a.lastReconciledAt
-                  ? `Last counted ${a.lastReconciledAt.slice(0, 10)}`
+                  ? `Last counted ${toDmy(a.lastReconciledAt)}`
                   : "Never counted"}
               </p>
             </button>
@@ -113,7 +114,7 @@ function SingleTin({ account }: { account: BankAccount }) {
           icon={Wallet}
           title={account.accountName}
           description={`Petty cash · ${account.currency}${
-            account.lastReconciledAt ? ` · last counted ${account.lastReconciledAt.slice(0, 10)}` : ""
+            account.lastReconciledAt ? ` · last counted ${toDmy(account.lastReconciledAt)}` : ""
           }`}
         />
         <div className="text-right">

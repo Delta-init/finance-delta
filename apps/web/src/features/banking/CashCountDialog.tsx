@@ -12,8 +12,10 @@ import {
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useRecordCashCount, useUpdateCashCount } from "@/features/banking/api";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayDubai();
 
 /**
  * Counting the tin.
@@ -96,7 +98,7 @@ export function CashCountDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="counted-on">Counted on</Label>
-              <Input id="counted-on" type="date" value={countedOn} onChange={(e) => setCountedOn(e.target.value)} />
+              <DateField id="counted-on" value={countedOn} onChange={setCountedOn} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="counted">Counted ({account.currency})</Label>

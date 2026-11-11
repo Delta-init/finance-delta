@@ -14,6 +14,8 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useBankAccount, useCreateBankTransaction } from "@/features/banking/api";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
 const formSchema = z.object({
   date: z.string().min(1, "Date is required"),
@@ -35,7 +37,7 @@ export default function NewTransactionPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const { data: account } = useBankAccount(id);
   const createTx = useCreateBankTransaction(id);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDubai();
 
   const {
     register,
@@ -98,7 +100,7 @@ export default function NewTransactionPage({ params }: { params: Promise<{ id: s
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <Label htmlFor="date">Date *</Label>
-              <Input id="date" type="date" {...register("date")} />
+              <DateField id="date" value={watch("date") ?? ""} onChange={(v) => setValue("date", v, { shouldValidate: true })} />
               {errors.date && <p className="text-xs text-danger">{errors.date.message}</p>}
             </div>
 

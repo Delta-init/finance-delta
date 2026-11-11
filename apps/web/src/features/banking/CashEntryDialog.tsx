@@ -15,8 +15,10 @@ import { useCreateBankTransaction, useUpdateBankTransaction } from "@/features/b
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
 import { useExpenseCategories } from "@/features/expense-categories/api";
 import { CategoryPicker, choiceComplete, type CategoryChoice } from "@/features/expense-categories/CategoryPicker";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayDubai();
 
 /**
  * Adding or correcting one line of the cash book.
@@ -158,7 +160,7 @@ export function CashEntryDialog({
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="cash-date">Date</Label>
-              <Input id="cash-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateField id="cash-date" value={date} onChange={setDate} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cash-in">In ({account.currency})</Label>

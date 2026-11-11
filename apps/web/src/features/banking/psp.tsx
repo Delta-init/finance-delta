@@ -19,6 +19,8 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useBankAccounts, useUpdateBankAccount } from "./api";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
 /*
  * PSP accounts (the user, 2026-11-06): Tabby, Tamara, Billexpro, Easebuzz, a card acquirer. Clients' payments land in
@@ -73,7 +75,7 @@ export function draftOf(p: BankAccount["psp"] | null | undefined): PspDraft {
   return {
     provider: p?.provider ?? "", feePct: p ? String(p.feePct) : "", fixedFee: p ? String(p.fixedFeeMinor / 100) : "",
     feeVatPct: p ? String(p.feeVatPct) : "5", settlementAccountId: p?.settlementAccountId ?? "", settlementDays: p ? String(p.settlementDays) : "7",
-    startDate: p?.startDate ?? new Date().toISOString().slice(0, 10),
+    startDate: p?.startDate ?? todayDubai(),
   };
 }
 const num = (v: string) => (v.trim() === "" || Number.isNaN(Number(v)) ? 0 : Number(v));
@@ -126,7 +128,7 @@ export function PspSettingsFields({ value, onChange, currency, selfId }: {
         </div>
         <div className="space-y-1 sm:col-span-2">
           <Label>Settlements start on</Label>
-          <Input type="date" value={value.startDate} onChange={set("startDate")} className="max-w-[12rem]" />
+          <DateField value={value.startDate} onChange={(v) => set("startDate")({ target: { value: v } })} className="max-w-[12rem]" aria-label="Start date" />
           <p className="text-xs text-foreground-muted">Money that came in before this day counts as settled already.</p>
         </div>
       </div>
@@ -307,7 +309,7 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [upTo, setUpTo] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayDubai());
   const [received, setReceived] = useState("");
   const [touched, setTouched] = useState(false);
   const [reference, setReference] = useState("");
@@ -352,7 +354,7 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Paid up to</Label>
-              <Input type="date" value={upTo} onChange={(e) => setUpTo(e.target.value)} className="w-[10rem]" />
+              <DateField value={upTo} onChange={setUpTo} className="w-[10rem]" aria-label="Up to" />
             </div>
             <Button
               type="button" variant="ghost" size="sm" disabled={shown.length === 0}
@@ -396,7 +398,7 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label>Date it arrived</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateField value={date} onChange={setDate} aria-label="Date" />
             </div>
             <div className="space-y-1">
               <Label>Arrived in {p.settlementAccountName} ({cur})</Label>

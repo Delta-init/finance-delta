@@ -16,6 +16,7 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCan } from "@/lib/use-can";
 import { useDeleteReconciliation, useEditReconciliation, useReconciliationLines, useReconciliations, useReopenReconciliation } from "./api";
+import { DateField } from "@/components/ui/date-field";
 
 /*
  * Every reconciliation of a bank account (the user, 2026-10-23: "list all the bank reconciliations in a separate tab
@@ -237,11 +238,11 @@ function EditReconciliation({ accountId, session, onClose }: { accountId: string
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="editFrom">Period from</Label>
-                  <Input id="editFrom" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                  <DateField id="editFrom" value={from} onChange={setFrom} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="editTo">Period to</Label>
-                  <Input id="editTo" type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); if (statementDate < e.target.value) setStatementDate(e.target.value); }} />
+                  <DateField id="editTo" value={to} min={from || undefined} onChange={(v) => { setTo(v); if (statementDate < v) setStatementDate(v); }} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -256,7 +257,7 @@ function EditReconciliation({ accountId, session, onClose }: { accountId: string
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="editStatementDate">Statement date</Label>
-                <Input id="editStatementDate" type="date" value={statementDate} min={to || undefined} onChange={(e) => setStatementDate(e.target.value)} />
+                <DateField id="editStatementDate" value={statementDate} min={to || undefined} onChange={setStatementDate} />
               </div>
             </>
           )}

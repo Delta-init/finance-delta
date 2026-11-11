@@ -12,8 +12,10 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useBankAccounts, useCreateTransfer, useDeleteTransfer, useUpdateTransfer } from "@/features/banking/api";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { DateField } from "@/components/ui/date-field";
+import { todayDubai } from "@/lib/dates";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayDubai();
 const shown = (minor: number) => (minor / 100).toFixed(2);
 
 /**
@@ -171,7 +173,7 @@ export function TransferDialog({
           <div className={`grid gap-4 ${twoCurrencies ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <div className="space-y-1.5">
               <Label htmlFor="tr-date">Date</Label>
-              <Input id="tr-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateField id="tr-date" value={date} onChange={setDate} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="tr-sent">{twoCurrencies ? `Sent (${from?.currency})` : `Amount${from ? ` (${from.currency})` : ""}`}</Label>

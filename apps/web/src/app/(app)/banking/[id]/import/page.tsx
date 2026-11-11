@@ -320,7 +320,9 @@ export default function ImportTransactionsPage({ params }: { params: Promise<{ i
         // Loaded on demand: the parser is large, and most of the app never
         // touches it.
         const XLSX = await import("xlsx");
-        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        // Excel's built-in short date (format 14) is written out as m/d/yy whatever the sheet shows — read day for month on
+        // every date with a day up to 12 (2026-11-11). Given as yyyy-mm-dd instead, it can't be taken the wrong way round.
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array", dateNF: "yyyy-mm-dd" });
         const first = wb.Sheets[wb.SheetNames[0]!];
         if (!first) {
           toast.error("That workbook has no sheets");

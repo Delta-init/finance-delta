@@ -39,7 +39,9 @@ export async function downloadTemplate(kind: "csv" | "xlsx") {
 export async function readStatementRows(file: File): Promise<string[][]> {
   if (/\.(xls|xlsx|xlsm|xlsb|ods)$/i.test(file.name)) {
     const XLSX = await import("xlsx");
-    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    // Excel's built-in short date (format 14) is written out as m/d/yy whatever the sheet shows — read day for month on
+    // every date with a day up to 12 (2026-11-11). Given as yyyy-mm-dd instead, it can't be taken the wrong way round.
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array", dateNF: "yyyy-mm-dd" });
     const first = wb.Sheets[wb.SheetNames[0]!];
     if (!first) throw new Error("That workbook has no sheets");
     // As the sheet shows them, so a date reads as it is written and not as a serial number.

@@ -65,6 +65,7 @@ import { CashCounts } from "@/features/banking/CashCounts";
 import { ReconciliationsTab } from "@/features/banking/ReconciliationsTab";
 import { OpeningBalanceDialog } from "@/features/banking/OpeningBalanceDialog";
 import { useCan } from "@/lib/use-can";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -402,18 +403,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
           </SelectContent>
         </Select>
 
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-[140px]"
-        />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-[140px]"
-        />
+        <DateField value={dateFrom} onChange={setDateFrom} className="w-[150px]" aria-label="From" clearable />
+        <DateField value={dateTo} onChange={setDateTo} className="w-[150px]" aria-label="To" clearable />
         </>)}
 
         <Button

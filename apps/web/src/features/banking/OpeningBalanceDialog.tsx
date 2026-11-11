@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useUpdateBankAccount } from "@/features/banking/api";
+import { DateField } from "@/components/ui/date-field";
 
 /**
  * Correcting the figure an account was opened with.
@@ -85,12 +86,7 @@ export function OpeningBalanceDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="opening-date">As of</Label>
-            <Input
-              id="opening-date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+            <DateField id="opening-date" value={date} onChange={setDate} />
           </div>
 
           {/* Said before it happens, not discovered after. */}

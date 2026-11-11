@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { BankTransaction, UpdateBankTransactionInput } from "@delta/shared";
 import { LateReasonField, useLateDate } from "@/features/late-entries/LateReason";
+import { DateField } from "@/components/ui/date-field";
 
 /**
  * Correcting an entry after it has been made.
@@ -91,7 +92,7 @@ export function EditTransactionDialog({
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="tx-date">Date</Label>
-                <Input id="tx-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DateField id="tx-date" value={date} onChange={setDate} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="tx-amount">Amount</Label>

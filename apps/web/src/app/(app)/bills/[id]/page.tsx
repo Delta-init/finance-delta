@@ -569,6 +569,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
               <p className="font-medium">{bill.vendorName}</p>
             </div>
             <Link href={`/vendors/${bill.vendorId}`} className="text-xs text-primary hover:underline">View vendor →</Link>
+            {/* The vendor's own number for it (2026-11-11: brought in by the import). */}
+            {bill.reference && (
+              <div className="pt-1 border-t border-border">
+                <p className="text-xs text-foreground-muted">Vendor&rsquo;s bill number</p>
+                <p className="text-sm font-medium font-mono">{bill.reference}</p>
+              </div>
+            )}
             {bill.sourcePONumber && (
               <div className="pt-1 border-t border-border">
                 <p className="text-xs text-foreground-muted">From PO</p>

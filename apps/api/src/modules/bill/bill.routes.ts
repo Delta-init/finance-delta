@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { createBillSchema, updateBillSchema, recordBillPaymentSchema, updateBillNotesSchema } from "@delta/shared";
+import { createBillSchema, updateBillSchema, recordBillPaymentSchema, updateBillNotesSchema, billImportSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import { parseUpload } from "../../middleware/upload";
 import * as c from "./bill.controller";
+import * as imports from "../bulk-import/import.controller";
 
 const router = Router();
 router.use(authenticate);
@@ -12,6 +13,9 @@ router.use(authenticate);
 router.get("/", requirePermission("bill:read"), c.list);
 router.get("/:id", requirePermission("bill:read"), c.get);
 router.post("/", requirePermission("bill:create"), validateBody(createBillSchema), c.create);
+// From a spreadsheet (2026-11-11): checked (nothing written), then made. A new vendor is added only with vendor:create.
+router.post("/import/preview", requirePermission("bill:create"), validateBody(billImportSchema), imports.previewBills);
+router.post("/import", requirePermission("bill:create"), validateBody(billImportSchema), imports.runBills);
 router.patch("/:id", requirePermission("bill:update"), validateBody(updateBillSchema), c.update);
 router.post("/:id/approve", requirePermission("bill:approve"), c.approve);
 router.post("/:id/reject", requirePermission("bill:approve"), c.reject);

@@ -142,6 +142,8 @@ export const billSchema = z.object({
   tds: billTdsSchema.nullable().optional(),
   notes: z.string(),
   paymentTerms: z.string(),
+  /** The vendor's own number for it — their invoice number — when known (2026-11-11: set by the import). */
+  reference: z.string().optional(),
   /** What it is for (2026-10-23); absent on bills from before. */
   category: z.object({ slug: z.string(), name: z.string(), subcategory: z.string().optional(), subcategoryName: z.string().optional() }).optional(),
   /** The expense it made (2026-10-23). */

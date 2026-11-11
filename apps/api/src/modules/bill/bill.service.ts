@@ -118,6 +118,7 @@ function toDTO(doc: BillDoc): BillDTO {
     tds: billTdsView(d.tds),
     notes: (doc.notes as string) ?? "",
     paymentTerms: (d.paymentTerms as string) ?? "",
+    ...(d.reference ? { reference: String(d.reference) } : {}),
     ...(d.category
       ? { category: { slug: String(d.category), name: String(d.categoryName || d.category), ...(d.subcategory ? { subcategory: String(d.subcategory), subcategoryName: String(d.subcategoryName || d.subcategory) } : {}) } }
       : {}),
@@ -140,7 +141,8 @@ const SORT = {
 export async function listBills(orgId: string, query: BillQuery): Promise<Paginated<BillDTO>> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
-  const or = searchOr(query.q, ["billNumber", "vendorName"]);
+  // The vendor's own number too (2026-11-11).
+  const or = searchOr(query.q, ["billNumber", "vendorName", "reference"]);
   if (or) and.push({ $or: or });
   if (query.status) and.push({ status: query.status });
   if (query.vendorId) and.push({ vendorId: new Types.ObjectId(query.vendorId) });
@@ -180,7 +182,17 @@ function released(v: unknown) {
 }
 
 
-export async function createBill(orgId: string, input: CreateBillInput, late?: LateActor): Promise<BillDTO> {
+/**
+ * What an import (bulk-import/bill-import.service.ts, 2026-11-11) adds to a bill it creates: who imported it — there is
+ * no late actor, as imported history is not asked about — the vendor's own number for it, and its batch.
+ */
+export interface CreateBillExtras {
+  createdById?: string;
+  reference?: string;
+  importBatchId?: string;
+}
+
+export async function createBill(orgId: string, input: CreateBillInput, late?: LateActor, extras: CreateBillExtras = {}): Promise<BillDTO> {
   const vendor = await Vendor.findOne({ _id: input.vendorId, organizationId: orgId });
   if (!vendor) throw new AppError("NOT_FOUND", "Vendor not found");
 
@@ -197,7 +209,8 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
 
   // What it is for, checked against the organization's categories (2026-10-23) — its expense is filed under it.
   const cat = await resolveExpenseCategory(orgId, input.category, input.subcategory);
-  const creator = late?.userId ? await User.findById(late.userId).select("name").lean<{ name?: string }>() : null;
+  const creatorId = late?.userId ?? extras.createdById;
+  const creator = creatorId ? await User.findById(creatorId).select("name").lean<{ name?: string }>() : null;
   const approvalStatus = input.requiresApproval ? "pending" : "not_required";
   const status = input.requiresApproval ? "pending_approval" : "approved";
 
@@ -226,8 +239,10 @@ export async function createBill(orgId: string, input: CreateBillInput, late?: L
     categoryName: cat.categoryName,
     subcategory: cat.subcategory,
     subcategoryName: cat.subcategoryName,
-    createdById: late?.userId ? new Types.ObjectId(late.userId) : null,
+    createdById: creatorId ? new Types.ObjectId(creatorId) : null,
     createdByName: creator?.name ?? "",
+    reference: extras.reference ?? "",
+    importBatchId: extras.importBatchId ?? null,
   });
   // Held for approval: the accountants are told, as for every approval request.
   if (status === "pending_approval") {

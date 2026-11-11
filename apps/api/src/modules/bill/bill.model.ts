@@ -108,6 +108,10 @@ const billSchema = new Schema(
     /** The expense it made, kept in step with it. */
     expenseId: { type: Schema.Types.ObjectId, ref: "Expense", default: null },
     expenseNumber: { type: String, default: "" },
+    /** The vendor's own number for it — their invoice number (2026-11-11, set by the import; "" when not known). */
+    reference: { type: String, default: "" },
+    /** The import it came in by (bulk-import/bill-import.service.ts), so a batch can be found again; null when typed. */
+    importBatchId: { type: String, default: null },
   },
   { timestamps: true },
 );

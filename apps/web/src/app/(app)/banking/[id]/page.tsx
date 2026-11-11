@@ -148,7 +148,8 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
       key: "date",
       header: "Date",
       sortable: true,
-      cell: (tx) => <span className="text-foreground-muted">{tx.date}</span>,
+      // dd/mm/yyyy, as typed (2026-11-11).
+      cell: (tx) => <span className="text-foreground-muted">{toDmy(tx.date)}</span>,
     },
     {
       key: "description",

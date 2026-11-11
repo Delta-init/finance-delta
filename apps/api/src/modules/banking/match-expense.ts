@@ -46,6 +46,8 @@ export async function expenseCandidates(
   const { Expense } = await import("../expense/expense.model");
   const amount = -tx.amountMinor;
   const at = new Date(tx.date).getTime();
+  // Calendar days apart — a statement line sits at midday, an expense at midnight.
+  const dayNo = (d: Date | string) => Math.round(Date.parse(`${new Date(d).toISOString().slice(0, 10)}T00:00:00.000Z`) / DAY);
   const days = opts.wide ? WIDE_DAYS : NEAR_DAYS;
   const filter: Record<string, unknown> = {
     organizationId: new Types.ObjectId(orgId),
@@ -65,7 +67,7 @@ export async function expenseCandidates(
       id: String(e._id), expenseNumber: String(e.expenseNumber ?? ""), description: String(e.description ?? ""),
       expenseDate: new Date(e.expenseDate).toISOString().slice(0, 10), totalMinor: Number(e.totalMinor ?? 0), currency: String(e.currency ?? ""),
       status: String(e.status ?? ""), category: String(e.categoryName || e.category || ""), paid: Boolean(e.paidOn),
-      sameAmount: Number(e.totalMinor ?? 0) === amount, daysApart: Math.round(Math.abs(new Date(e.expenseDate).getTime() - at) / DAY),
+      sameAmount: Number(e.totalMinor ?? 0) === amount, daysApart: Math.abs(dayNo(e.expenseDate) - dayNo(tx.date)),
     }))
     .filter((c) => c.daysApart <= days)
     .sort((a, b) => Number(b.sameAmount) - Number(a.sameAmount) || a.daysApart - b.daysApart)

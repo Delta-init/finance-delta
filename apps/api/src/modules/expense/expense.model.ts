@@ -159,6 +159,12 @@ const expenseSchema = new Schema(
     costCentre: { type: String, default: "" },
     notes: { type: String, default: "" },
     source: { type: expenseSourceSchema },
+    /**
+     * The spreadsheet import it came in by (2026-11-11, bulk-import/expense-import.service.ts), so a batch can be found
+     * again; absent when typed. Not a `source` — it is typed in all the same, just many at once ("import" there is the
+     * old books).
+     */
+    importBatchId: { type: String, default: undefined },
   },
   { timestamps: true },
 );

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, ShoppingCart, X, AlertTriangle, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, ShoppingCart, X, AlertTriangle, Pencil, Trash2, Upload } from "lucide-react";
 import { type Bill } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,8 @@ export default function BillsPage() {
 
   const { can } = useCan();
   const canDelete = can("bill:delete");
+  // Bills from a spreadsheet (2026-11-11): for whoever may add them.
+  const canImport = can("bill:create");
   const deleteBill = useDeleteBill();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectionResetKey, setSelectionResetKey] = useState(0);
@@ -170,6 +172,11 @@ export default function BillsPage() {
               title="Bills"
               size="md"
             />
+            {canImport && (
+              <Button variant="outline" onClick={() => router.push("/bills/import")}>
+                <Upload className="h-4 w-4" /> Import
+              </Button>
+            )}
             <Button onClick={() => router.push("/bills/new")}><Plus className="h-4 w-4" /> New bill</Button>
           </div>
         }

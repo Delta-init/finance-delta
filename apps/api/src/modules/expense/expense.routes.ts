@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema, markExpensePaidSchema, setExpenseStatementDateSchema, recordProcurementPaymentSchema } from "@delta/shared";
+import { createExpenseSchema, updateExpenseSchema, rejectExpenseSchema, markExpensePaidSchema, setExpenseStatementDateSchema, recordProcurementPaymentSchema, expenseImportSchema } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requireAnyPermission, requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
 import { parseUpload } from "../../middleware/upload";
 import * as c from "./expense.controller";
+import * as imports from "../bulk-import/import.controller";
 
 const router = Router();
 router.use(authenticate);
@@ -18,6 +19,9 @@ router.get("/:id/payroll-payment", requirePermission("expense:delete"), c.payrol
 // Who a payroll payment paid and how much each (2026-11-04) — salaries, so payroll's to see.
 router.get("/:id/payroll-breakdown", requirePermission("payroll:read"), c.payrollBreakdown);
 router.post("/", requireAnyPermission("expense:create", "expense:write:own"), validateBody(createExpenseSchema), c.create);
+// From a spreadsheet (2026-11-11): checked (nothing written), then made — the organization's expenses, so expense:create.
+router.post("/import/preview", requirePermission("expense:create"), validateBody(expenseImportSchema), imports.previewExpenses);
+router.post("/import", requirePermission("expense:create"), validateBody(expenseImportSchema), imports.runExpenses);
 // Supporting documents are uploaded, never pasted (2026-10-20): the form stores each file here, then saves the expense with it.
 router.post("/uploads", requireAnyPermission("expense:create", "expense:write:own"), parseUpload, c.uploadFormFile);
 router.patch("/:id", requireAnyPermission("expense:update", "expense:write:own"), validateBody(updateExpenseSchema), c.update);

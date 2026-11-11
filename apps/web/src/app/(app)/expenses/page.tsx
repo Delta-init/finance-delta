@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag, Filter } from "lucide-react";
+import { Plus, Search, ReceiptText, X, Repeat, PauseCircle, Pencil, Trash2, Tag, Filter, Upload } from "lucide-react";
 import { type Expense, EXPENSE_PAYMENT_STATUS_LABELS, expensePaymentMethodSchema, paymentMethodLabel } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -185,6 +185,8 @@ export default function ExpensesPage() {
   const ownOnly = useCan().ownOnly("expense:read", "expense:read:own");
   // Voiding and deleting are both the expense's delete right, as on the server.
   const canRemove = useCan().can("expense:delete");
+  // Expenses from a spreadsheet (2026-11-11): the organization's, so for whoever may add them (not own-only claims).
+  const canImport = useCan().can("expense:create");
 
   const columns: Column<Expense>[] = [
     {
@@ -391,6 +393,11 @@ export default function ExpensesPage() {
               title="Expenses"
               size="md"
             />
+            {canImport && (
+              <Button variant="outline" onClick={() => router.push("/expenses/import")}>
+                <Upload className="h-4 w-4" /> Import
+              </Button>
+            )}
             {/* Managing categories reads them org-wide, which somebody scoped
                 to their own claims cannot do. Recurring is fine — it lists
                 their own. */}

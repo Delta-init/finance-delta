@@ -72,20 +72,39 @@ export function QuotationManager() {
       header: "Quote #",
       sortable: true,
       cell: (q) => (
-        <Link href={`/quotations/${q.id}`} className="font-medium text-primary hover:underline">
-          {q.quoteNumber}
-        </Link>
+        <span className="inline-flex items-center gap-1.5">
+          <Link href={`/quotations/${q.id}`} className="font-medium text-primary hover:underline">
+            {q.quoteNumber}
+          </Link>
+          {/* Made at a CRM close (2026-11-11): approved in Approvals, where it becomes the invoice. */}
+          {q.enrolment && (
+            <span className="rounded-full bg-surface-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground-muted" title="An enrolment's quote — approved in Approvals, where it becomes the invoice for the whole fee">
+              Enrolment
+            </span>
+          )}
+        </span>
       ),
     },
     { key: "customer", header: "Customer", sortable: true, cell: (q) => q.customerName },
     { key: "tags", header: "Tags", cell: (q) => <TagList tags={q.tags} /> },
     { key: "issue", header: "Issue", sortable: true, cell: (q) => <span className="text-foreground-muted">{q.issueDate}</span> },
-    { key: "expiry", header: "Expiry", sortable: true, cell: (q) => <span className="text-foreground-muted">{q.expiryDate}</span> },
+    { key: "expiry", header: "Expiry", sortable: true, cell: (q) => <span className="text-foreground-muted">{q.enrolment ? "—" : q.expiryDate}</span> },
     {
       key: "status",
       header: "Status",
       sortable: true,
-      cell: (q) => <Badge tone={QUOTE_STATUS_TONE[q.status]} className="capitalize">{q.status}</Badge>,
+      cell: (q) => (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <Badge tone={QUOTE_STATUS_TONE[q.status]} className="capitalize">
+            {q.enrolment && q.status === "sent" ? "Waiting for approval" : q.enrolment && q.status === "draft" ? "Sent back" : q.status}
+          </Badge>
+          {(q.invoicedMinor ?? 0) > 0 && (
+            <Badge tone={(q.invoicedMinor ?? 0) >= q.totalMinor ? "success" : "warning"}>
+              {(q.invoicedMinor ?? 0) >= q.totalMinor ? "Invoiced" : "Partially invoiced"}
+            </Badge>
+          )}
+        </span>
+      ),
     },
     {
       key: "total",
@@ -101,7 +120,7 @@ export function QuotationManager() {
       <PageHeader
         icon={FileText}
         title="Quotations"
-        description="Create, send and track quotes through to accepted orders."
+        description="Create, send and track quotes through to accepted orders. An enrolment closed in a CRM starts here as a quote and becomes its invoice when approved."
         action={
           <div className="flex items-center gap-2">
             <ExportButton

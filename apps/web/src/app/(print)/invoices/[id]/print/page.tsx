@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel, displayTaxSplit, type Invoice } from "@delta/shared";
+import { enrolmentQuoteStage, formatMoney, getPrintLabels, formatOrgAddress, taxNumberLabel, displayTaxSplit, type Invoice } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { INVOICE_STATUS_TONE } from "@/features/invoices/status";
 import { useOrganization } from "@/features/organization/api";
@@ -39,7 +39,7 @@ export default function PrintInvoicePage({
   // No print dialog. Opening a document should not put a decision in front of
   // somebody who only wanted the file — the button below hands them the PDF.
   useEffect(() => {
-    if (invoice) document.title = `Invoice ${invoice.invoiceNumber}`;
+    if (invoice) document.title = enrolmentQuoteStage(invoice) ? `Quote ${enrolmentQuoteStage(invoice)!.number}` : `Invoice ${invoice.invoiceNumber}`;
   }, [invoice]);
 
   if (isLoading) {
@@ -68,7 +68,9 @@ export default function PrintInvoicePage({
     Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
   // A pro-forma (VAT on payments received) is not a tax invoice: each payment has its own.
   const proforma = Boolean(invoice.proforma);
-  const docTitle = proforma ? (L.proforma ?? "PRO-FORMA INVOICE") : org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
+  // Not approved yet, an enrolment is its quote (2026-11-11): headed and numbered as that.
+  const quote = enrolmentQuoteStage(invoice);
+  const docTitle = quote ? L.quotation : proforma ? (L.proforma ?? "PRO-FORMA INVOICE") : org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
 
   // HSN/SAC is an Indian requirement, so the column appears only under GST —
   // an empty column on a dirham invoice reads as something left unfilled.
@@ -116,7 +118,7 @@ export default function PrintInvoicePage({
           </div>
           <div style={{ textAlign: isRtl ? "left" : "right" }}>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>{docTitle}</div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "#2563eb" }}>{invoice.invoiceNumber}</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "#2563eb" }}>{quote?.number ?? invoice.invoiceNumber}</div>
             <div style={{ marginTop: 6, display: "inline-block", padding: "2px 10px", borderRadius: 99, fontSize: 11, fontWeight: 600, textTransform: "capitalize", background: statusColor + "20", color: statusColor }}>
               {invoice.status}
             </div>

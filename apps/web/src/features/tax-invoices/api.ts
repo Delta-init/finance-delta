@@ -8,6 +8,8 @@ export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
+  /** Since made an ordinary invoice again (2026-11-11): the day it was. */
+  convertedOn?: string;
 }
 
 /** One payment's tax invoice (TI-…) — or one cancelled, its payment since deleted. */
@@ -15,6 +17,8 @@ export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
   paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
   emailed: boolean; cancelled: boolean;
+  /** Its pro-forma is an ordinary invoice again — the VAT is counted on that invoice. */
+  converted?: boolean;
 }
 
 export interface TaxInvoicesAnswer {

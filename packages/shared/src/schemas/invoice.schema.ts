@@ -276,6 +276,15 @@ export type InvoiceApproval = (typeof INVOICE_APPROVALS)[number];
  * detail screen deciding what to offer, and the approval panel. Two of them
  * disagreeing would mean offering a button that only ever produces a refusal.
  */
+/**
+ * An enrolment not approved yet is still its quote (2026-11-11, the Zoho Books way): approving it converts it into the
+ * invoice. Until then it is headed and numbered as the quotation it is, wherever it is shown or printed.
+ */
+export function enrolmentQuoteStage(invoice: { quote?: { number: string } | null; approval?: { state?: string } | null; status?: string }): { number: string } | null {
+  if (!invoice.quote?.number || invoice.approval?.state === "approved") return null;
+  return { number: invoice.quote.number };
+}
+
 export function approvalBlocksSending(state: InvoiceApproval | undefined | null): boolean {
   return state === "pending" || state === "returned";
 }
@@ -673,6 +682,13 @@ export const invoiceSchema = z.object({
     number: z.string(), amountMinor: z.number(), taxMinor: z.number(), paidOn: z.string(), cancelledAt: z.string(),
   })).optional(),
   sourceQuoteId: z.string().optional(),
+  /**
+   * The quote an enrolment was converted from (2026-11-11, the Zoho way). Until finance approves it the enrolment is
+   * that quote — it carries the quote's number — and gets its invoice number at approval.
+   */
+  quote: z.object({ id: z.string(), number: z.string() }).nullable().optional(),
+  /** It was a pro-forma until then — converted back to the one tax invoice it is now (2026-11-11). */
+  proformaUntil: z.string().optional(),
   locale: z.string().optional(),
   exchangeRate: z.number().optional(),
   taxInclusive: z.boolean().default(false),

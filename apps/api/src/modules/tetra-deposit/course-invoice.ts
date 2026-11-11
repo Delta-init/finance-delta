@@ -195,11 +195,10 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
     taxInclusive: true,
     lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
   } as never, { all: true });
-  // Part paid, with VAT on payments received: a pro-forma — this payment and each after it gets its own tax invoice.
-  const { vatOnPaymentsFor } = await import("../invoice/payment-tax-invoice");
-  const proforma = amountMinor < (created.totalMinor ?? 0) && (created.taxTotalMinor ?? 0) > 0 && await vatOnPaymentsFor(orgId);
+  // One invoice for the whole course, part paid or not — each payment is recorded against it (2026-11-11; it was a
+  // pro-forma with a tax invoice per payment before).
   await Invoice.updateOne({ _id: new Types.ObjectId(created.id) }, {
-    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent", ...(proforma ? { proforma: { at: new Date() } } : {}) },
+    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent" },
   });
   return Invoice.findById(created.id).lean<any>();
 }

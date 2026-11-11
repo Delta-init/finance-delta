@@ -33,6 +33,7 @@ import { throughDay } from "../../lib/day-range";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { nextNumber } from "../sequence/sequence.service";
 import { invoiceNumberingFor, invoiceComputationDefaults } from "../organization/organization.service";
+import { closeEnrolmentQuote, isQuoteNumber, nextQuoteNumber, syncEnrolmentQuote } from "../quotation/enrolment-quote";
 import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -43,7 +44,7 @@ import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
 import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
-import { emailTaxInvoices, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, vatOnPaymentsFor } from "./payment-tax-invoice";
+import { emailTaxInvoices, noteCancelledTaxInvoice, stampTaxInvoices } from "./payment-tax-invoice";
 
 /**
  * Tell CS Portal the enrolment's money changed, if its student went
@@ -124,6 +125,15 @@ function enrolmentAcademyDTO(doc: unknown): { academy?: "dubai" | "bangalore" } 
  * A pro-forma (VAT on payments received, payment-tax-invoice.ts): when it became one, and the tax invoices of payments
  * since taken off it — kept, a TI number once issued never being reused.
  */
+/** The quote it was converted from, and — for one converted back by the 2026-11-11 backfill — until when it was a pro-forma. */
+function quoteView(doc: unknown): Pick<InvoiceDTO, "quote" | "proformaUntil"> {
+  const d = doc as { quote?: { id?: unknown; number?: string } | null; proformaUntil?: Date | null };
+  return {
+    quote: d.quote?.id ? { id: String(d.quote.id), number: String(d.quote.number ?? "") } : null,
+    ...(d.proformaUntil ? { proformaUntil: new Date(d.proformaUntil).toISOString() } : {}),
+  };
+}
+
 function proformaView(doc: unknown): Pick<InvoiceDTO, "proforma" | "cancelledTaxInvoices"> {
   const d = doc as {
     proforma?: { at?: Date } | null;
@@ -333,6 +343,7 @@ export function toDTO(doc: InvoiceDoc): InvoiceDTO {
     }),
     sourceQuoteId: doc.sourceQuoteId?.toString(),
     ...proformaView(doc),
+    ...quoteView(doc),
     locale: (doc as unknown as { locale?: string }).locale ?? "en",
     exchangeRate: (doc as unknown as { exchangeRate?: number }).exchangeRate ?? 1,
     baseTotalMinor: (doc as unknown as { baseTotalMinor?: number }).baseTotalMinor
@@ -538,7 +549,8 @@ async function paymentListFilter(orgId: string, query: InvoiceQuery): Promise<Re
 async function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scope): Promise<Record<string, unknown>> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
-  const or = searchOr(query.q, ["invoiceNumber", "customerName", "salespersonName", "reference"]);
+  // Its quote's number too (2026-11-11): what the CRMs were given at the close.
+  const or = searchOr(query.q, ["invoiceNumber", "customerName", "salespersonName", "reference", "quote.number"]);
   if (or) and.push({ $or: or });
 
   if (query.status === "overdue") {
@@ -661,6 +673,14 @@ export async function invoiceLogo(orgId: string, id: string, scope: Scope): Prom
   return { dataUrl: await logoDataUrl([own, current, DEFAULT_LOGO_URL]) };
 }
 
+/** An enrolment's quote brought into line with it (quotation/enrolment-quote.ts), and the link put on the copy in hand. */
+async function followQuote(orgId: string, doc: unknown): Promise<void> {
+  const d = doc as { _id: unknown; enrolment?: unknown; set(path: string, value: unknown): unknown };
+  if (!d.enrolment) return;
+  const q = await syncEnrolmentQuote(orgId, d._id);
+  if (q) d.set("quote", { id: new Types.ObjectId(q.id), number: q.number });
+}
+
 export async function createInvoice(
   orgId: string,
   input: CreateInvoiceInput,
@@ -742,8 +762,11 @@ export async function createInvoice(
     defaultHsnSac: computation.hsnSac,
     itemHsnSac: await itemHsnSacFor(orgId, input.lineItems),
   });
+  // An enrolment is a quote until finance approves it (the user, 2026-11-11: "exact same as the quotation based
+  // system same as the Zoho Books have"): it carries its quote's number, and is given its invoice number when the
+  // approval converts it (approveInvoice). Anything else is an invoice from the start, as before.
   const numbering = await invoiceNumberingFor(orgId);
-  const invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
+  const invoiceNumber = enrolment ? await nextQuoteNumber(orgId) : await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
   const tagIds = await resolveTagIds(orgId, input.tagIds);
 
   const branding = org?.branding
@@ -802,6 +825,7 @@ export async function createInvoice(
     taxInclusive: input.taxInclusive ?? false,
   });
   await doc.populate("tagIds", "name color");
+  await followQuote(orgId, doc);
   // Straight into the approval queue. Not awaited: the invoice exists either
   // way, and a mail outage must not fail the creation.
   if (needsApproval) void notifyApprovers(doc as unknown as InvoiceDoc);
@@ -949,6 +973,7 @@ export async function updateInvoice(
     doc.set("tagIds", await resolveTagIds(orgId, input.tagIds));
   }
   await doc.save();
+  await followQuote(orgId, doc);
 
   // Stock follows what was sold. Only for an invoice that had already gone
   // out: a draft has taken nothing off the shelf yet.
@@ -1287,6 +1312,7 @@ export async function restoreInvoice(orgId: string, id: string): Promise<Invoice
   // It is not a sent document again until somebody sends it.
   if (doc.status === "draft") doc.set("sentAt", undefined);
   await doc.save();
+  await followQuote(orgId, doc);
 
   // Voiding put the stock back. An invoice returning to a sent state is
   // selling it again; one returning to draft has sold nothing yet.
@@ -1409,8 +1435,10 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   const [credited, commissioned, quoted, balance, deposit] = await Promise.all([
     CreditNote.exists({ organizationId: orgId, invoiceId: objectId }),
     CommissionRecord.exists({ organizationId: orgId, invoiceId: objectId }),
+    // An enrolment's own quote (2026-11-11) goes with it — declined below — and does not hold it.
     Quotation.exists({
       organizationId: orgId,
+      "enrolment.invoiceId": { $exists: false },
       $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
     }),
     BalancePaymentModel.exists({ organizationId: orgId, invoiceId: objectId }),
@@ -1427,6 +1455,7 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   // Gone from the database once deleted, so CS Portal is told from what it was.
   const gone = doc.toObject();
   await doc.deleteOne();
+  await closeEnrolmentQuote(orgId, objectId);
   feeUpdate(gone as never, "delete", { deleted: true });
 
   // Nothing still queued for it is done any more. What was done stays done.
@@ -1480,14 +1509,20 @@ export async function approveInvoice(
   const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
   for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
   const before = ((doc.payments as unknown[]) ?? []).length;
-  // Part paid at the close, with VAT on payments received: a pro-forma, each payment its own tax invoice.
-  if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
+  // Converted from its quote now (2026-11-11, the Zoho way): the one invoice for the whole fee, numbered at this
+  // moment — until approved it carried its quote's number. Never a pro-forma any more: every payment is recorded
+  // against this invoice, which is the tax invoice (an older pro-forma keeps getting its TIs until it is converted).
+  if (isQuoteNumber(doc.invoiceNumber)) {
+    const numbering = await invoiceNumberingFor(orgId);
+    doc.invoiceNumber = await nextNumber(orgId, "invoice", numbering.prefix, numbering.pad);
+  }
   // In the same save: an approval and the payments it records stand or fall together.
   const recorded = recordDeclaredPayments(doc, accountFor);
   const taxInvoices = await stampTaxInvoices(doc);
   // Part paid at the close: the next instalment is due 29 days after the money was paid.
   applyInstalmentDue(doc as never);
   await doc.save();
+  await followQuote(orgId, doc);
   // …and each in its bank account.
   for (const p of ((doc.payments as unknown as { _id: unknown }[]) ?? []).slice(before)) await syncPaymentLine(doc as never, p._id);
 
@@ -1658,6 +1693,7 @@ export async function returnInvoice(
     submittedAt: a.submittedAt,
   });
   await doc.save();
+  await followQuote(orgId, doc);
 
   /*
    * Only for invoices raised here.
@@ -1699,6 +1735,7 @@ export async function resubmitInvoice(
   doc.set("approval.state", "pending");
   doc.set("approval.submittedAt", new Date());
   await doc.save();
+  await followQuote(orgId, doc);
 
   void notifyApprovers(doc as unknown as InvoiceDoc);
   return toDTO(doc as unknown as InvoiceDoc);
@@ -1991,6 +2028,7 @@ export async function voidInvoice(orgId: string, id: string): Promise<InvoiceDTO
   const wasSent = ["sent", "viewed", "partial"].includes(doc.status as string);
   doc.status = "void";
   await doc.save();
+  await followQuote(orgId, doc);
   if (wasSent) void _restoreInventory(orgId, doc);
   feeUpdate(doc._id, "void");
   return toDTO(doc);

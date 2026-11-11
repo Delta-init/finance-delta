@@ -1,4 +1,10 @@
 /**
+ * NO NEW PRO-FORMAS since 2026-11-11 (the user: "instead of pro-forma TIs we need exact same as the quotation based
+ * system same as the Zoho Books have"): an enrolment is a quote, then one invoice for the whole fee with each payment
+ * recorded against it (quotation/enrolment-quote.ts). What is here keeps the pro-formas made before working — their
+ * TIs, the Past TIs page — until scripts/enrolment-quotes-backfill.ts makes them ordinary invoices again. The
+ * organization setting is no longer read by anything that decides.
+ *
  * VAT on payments received (the user, 2026-11-01: "2,000 paid, VAT on the 2,000 — and the next payment gets the VAT
  * on that payment").
  *
@@ -179,11 +185,15 @@ export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
+  /** Since made an ordinary invoice again (2026-11-11): the day — its VAT is the invoice's, its TIs the payments' record. */
+  convertedOn?: string;
 }
 export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
   paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
   emailed: boolean; cancelled: boolean;
+  /** Its pro-forma is an ordinary invoice again: the VAT is counted there, not on this. */
+  converted?: boolean;
 }
 
 /**
@@ -208,10 +218,13 @@ export async function listProformasAndTaxInvoices(
 
   const docs = await Invoice.find({
     organizationId: new Types.ObjectId(orgId),
-    "proforma.at": { $exists: true },
+    // Pro-formas, and those made ordinary invoices again since (2026-11-11) — kept here as what was sent.
+    $and: [
+      { $or: [{ "proforma.at": { $exists: true } }, { proformaUntil: { $exists: true } }] },
+      ...(ranged ? [{ $or: [{ issueDate: range }, { "payments.paidOn": range }, { "cancelledTaxInvoices.paidOn": range }] }] : []),
+    ],
     status: { $ne: "void" },
-    ...(ranged ? { $or: [{ issueDate: range }, { "payments.paidOn": range }, { "cancelledTaxInvoices.paidOn": range }] } : {}),
-  }).select("invoiceNumber customerId customerName salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma payments cancelledTaxInvoices")
+  }).select("invoiceNumber customerId customerName salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma proformaUntil payments cancelledTaxInvoices")
     .sort({ issueDate: -1, invoiceNumber: -1 }).lean<any[]>();
 
   const proformas: ProformaRow[] = [];
@@ -219,13 +232,14 @@ export async function listProformasAndTaxInvoices(
   for (const d of docs) {
     const base = { invoiceId: String(d._id), invoiceNumber: String(d.invoiceNumber), customerId: String(d.customerId ?? ""), customerName: String(d.customerName ?? ""), currency: String(d.currency ?? "AED") };
     const matches = (...xs: string[]) => !like || [base.invoiceNumber, base.customerName, ...xs].some((x) => like.test(x));
+    const converted = !d.proforma?.at;
     const tis: TaxInvoiceRow[] = [];
     for (const p of d.payments ?? []) {
       if (!p.taxInvoice?.number) continue;
       tis.push({
         ...base, number: p.taxInvoice.number, paymentId: String(p._id), paidOn: day(p.paidOn), amountMinor: p.amountMinor ?? 0,
         netMinor: p.taxInvoice.netMinor ?? 0, taxMinor: p.taxInvoice.taxMinor ?? 0, method: String(p.method ?? ""),
-        emailed: Boolean(p.taxInvoice.emailedAt), cancelled: false,
+        emailed: Boolean(p.taxInvoice.emailedAt), cancelled: false, ...(converted ? { converted: true } : {}),
       });
     }
     for (const c of d.cancelledTaxInvoices ?? []) {
@@ -240,7 +254,9 @@ export async function listProformasAndTaxInvoices(
         id: base.invoiceId, invoiceNumber: base.invoiceNumber, customerId: base.customerId, customerName: base.customerName, course,
         salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
         totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
-        status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
+        status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number),
+        proformaAt: d.proforma?.at ? new Date(d.proforma.at).toISOString() : "",
+        ...(converted && d.proformaUntil ? { convertedOn: day(d.proformaUntil) } : {}),
       });
     }
     for (const t of tis) if ((!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
@@ -249,7 +265,8 @@ export async function listProformasAndTaxInvoices(
 
   const totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }> = {};
   for (const t of taxInvoices) {
-    if (t.cancelled) continue;
+    // A converted one's VAT is its invoice's now: not in the figure the VAT report counts for tax invoices.
+    if (t.cancelled || t.converted) continue;
     const x = (totals[t.currency] ??= { count: 0, amountMinor: 0, netMinor: 0, taxMinor: 0 });
     x.count++; x.amountMinor += t.amountMinor; x.netMinor += t.netMinor; x.taxMinor += t.taxMinor;
   }

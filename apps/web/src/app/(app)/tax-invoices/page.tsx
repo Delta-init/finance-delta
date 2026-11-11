@@ -26,7 +26,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 const TI_EXPORT: ExportColumn<TaxInvoiceRow>[] = [
-  { header: "Tax invoice", value: (t) => t.number + (t.cancelled ? " (cancelled)" : "") },
+  { header: "Tax invoice", value: (t) => t.number + (t.cancelled ? " (cancelled)" : t.converted ? " (now on its invoice)" : "") },
   { header: "Paid on", value: (t) => t.paidOn },
   { header: "Customer", value: (t) => t.customerName },
   { header: "Against", value: (t) => t.invoiceNumber },
@@ -48,6 +48,7 @@ const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Balance", value: (p) => p.balanceMinor / 100 },
   { header: "Currency", value: (p) => p.currency },
   { header: "Tax invoices", value: (p) => p.taxInvoices.join(", ") },
+  { header: "Ordinary invoice since", value: (p) => p.convertedOn ?? "" },
 ];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -60,9 +61,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /**
- * Sales → Pro-formas & tax invoices (the user, 2026-11-01): with VAT on payments received, a part-paid enrolment's
- * invoice is a pro-forma and each payment towards it its own tax invoice. Both here, by the day paid, with the VAT the
- * tax invoices carry — the figure the VAT report counts.
+ * Sales → Past TIs. From 2026-11-01 a part-paid enrolment's invoice was a pro-forma and each payment towards it had
+ * its own tax invoice. Since 2026-11-11 an enrolment is a quote, then one invoice for the whole fee with each payment
+ * recorded against it (the Zoho Books way) — so nothing new arrives here. What was sent stays listed; a pro-forma made
+ * an ordinary invoice again says so, and its VAT is counted on the invoice, not on these.
  */
 export default function TaxInvoicesPage() {
   const [tabParam, setTabParam] = useUrlParam("tab", "tis");
@@ -104,6 +106,7 @@ export default function TaxInvoicesPage() {
         <span className={t.cancelled ? "text-foreground-muted line-through" : "font-medium"}>
           {t.number}
           {t.cancelled && <Badge tone="neutral" className="ml-2 no-underline">Cancelled</Badge>}
+          {!t.cancelled && t.converted && <Badge tone="neutral" className="ml-2" title="Its pro-forma is an ordinary invoice again: the VAT is counted on that invoice, and this is the payment's record">Now on its invoice</Badge>}
         </span>
       ),
     },
@@ -145,6 +148,7 @@ export default function TaxInvoicesPage() {
     { key: "paid", header: "Paid", align: "right", cell: (p) => <MoneyDisplay minor={p.amountPaidMinor} currency={p.currency} className="text-success" /> },
     { key: "balance", header: "Balance", align: "right", cell: (p) => <MoneyDisplay minor={p.balanceMinor} currency={p.currency} className={p.balanceMinor > 0 ? "font-medium text-warning" : ""} /> },
     { key: "tis", header: "Tax invoices", cell: (p) => <span className="text-xs text-foreground-muted">{p.taxInvoices.join(", ") || "—"}</span> },
+    { key: "now", header: "Now", cell: (p) => (p.convertedOn ? <Badge tone="success" title={`Made an ordinary invoice again on ${p.convertedOn}`}>Ordinary invoice</Badge> : <Badge tone="warning">Pro-forma</Badge>) },
   ];
 
   const tis = data?.taxInvoices ?? [];
@@ -158,8 +162,8 @@ export default function TaxInvoicesPage() {
     <div className="space-y-4 p-6">
       <PageHeader
         icon={FileCheck2}
-        title="Pro-formas & tax invoices"
-        description="Part-paid enrolments are pro-formas; each payment towards one has its own tax invoice with the VAT on that payment"
+        title="Past pro-formas & tax invoices"
+        description="How part-paid enrolments were invoiced before: a pro-forma, and a tax invoice per payment. An enrolment is now a quote, then one invoice with every payment recorded against it — nothing new is added here."
         action={tab === "tis" ? (
           <ExportButton resource="invoices/tax-invoices" params={params} fetchRows={async () => tis} columns={TI_EXPORT} filename={exportName} title="Tax invoices" size="md" />
         ) : (
@@ -195,7 +199,7 @@ export default function TaxInvoicesPage() {
       {/* What the tax invoices in the period come to — the VAT the VAT report counts for them. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {totals.length === 0 ? (
-          <div className="rounded-lg border border-border bg-surface p-4 text-sm text-foreground-muted">No tax invoices in this period.</div>
+          <div className="rounded-lg border border-border bg-surface p-4 text-sm text-foreground-muted">No tax invoices counted for VAT in this period.</div>
         ) : totals.flatMap(([cur, t]) => [
           <div key={`${cur}-n`} className="rounded-lg border border-border bg-surface p-4">
             <p className="text-xs text-foreground-muted">Tax invoices{totals.length > 1 ? ` · ${cur}` : ""}</p>
@@ -228,7 +232,7 @@ export default function TaxInvoicesPage() {
           onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
           isLoading={isLoading}
           isFetching={isPlaceholderData}
-          emptyMessage={org && !org.vatOnPayments ? "VAT on payments received is off — turn it on in Settings." : "No tax invoices in this period."}
+          emptyMessage="No tax invoices in this period."
         />
       ) : (
         <DataTable

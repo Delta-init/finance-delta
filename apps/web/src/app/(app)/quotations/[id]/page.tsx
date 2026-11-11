@@ -42,9 +42,11 @@ export default function QuotationDetailPage() {
     }
   };
 
-  const isDraft = q.status === "draft";
-  const isOpen = q.status === "draft" || q.status === "sent" || q.status === "expired";
-  const isAccepted = q.status === "accepted";
+  // An enrolment's quote (2026-11-11): made at the close and decided in Approvals — nothing is done to it from here.
+  const enrolment = q.enrolment;
+  const isDraft = !enrolment && q.status === "draft";
+  const isOpen = !enrolment && (q.status === "draft" || q.status === "sent" || q.status === "expired");
+  const isAccepted = !enrolment && q.status === "accepted";
   const converted = !!q.convertedTo?.salesOrderId;
   const hasInvoice = !!q.convertedTo?.invoiceId;
   const fullyInvoiced = (q.invoicedMinor ?? 0) >= q.totalMinor && q.totalMinor > 0;
@@ -100,6 +102,11 @@ export default function QuotationDetailPage() {
               <FileText className="h-4 w-4" /> {hasInvoice ? "Invoice more" : "Convert to Invoice"}
             </Button>
           )}
+          {enrolment && !hasInvoice && !enrolment.deleted && (
+            <Button size="sm" variant="outline" onClick={() => router.push(`/invoices/${enrolment.invoiceId}`)}>
+              <FileText className="h-4 w-4" /> Open the enrolment
+            </Button>
+          )}
           {hasInvoice && (
             <Button
               size="sm"
@@ -116,7 +123,7 @@ export default function QuotationDetailPage() {
           >
             <Printer className="h-4 w-4" /> PDF
           </Button>
-          {!converted && (
+          {!converted && !enrolment && (
             <Button
               variant="ghost"
               size="icon"
@@ -139,6 +146,18 @@ export default function QuotationDetailPage() {
       {converted && (
         <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
           Converted to a sales order.
+        </p>
+      )}
+
+      {enrolment && (
+        <p className={`rounded-md px-3 py-2 text-sm ${q.status === "accepted" ? "bg-success/10 text-success" : "bg-surface-muted text-foreground-muted"}`}>
+          {q.status === "accepted"
+            ? "An enrolment's quote — approved, and converted into its invoice for the whole fee. Every payment is recorded against that invoice."
+            : q.status === "draft"
+              ? "An enrolment's quote — sent back to sales to correct. It is out again as soon as they resend it."
+              : q.status === "declined"
+                ? `An enrolment's quote — ${enrolment.deleted ? "the enrolment was deleted" : "the enrolment was cancelled"} before it became an invoice.`
+                : "An enrolment's quote — waiting in Approvals. Approving it converts it into one invoice for the whole fee; each payment is then recorded against that invoice."}
         </p>
       )}
 
@@ -174,9 +193,11 @@ export default function QuotationDetailPage() {
             <p className="text-foreground-muted">
               Issued: <span className="text-foreground">{q.issueDate}</span>
             </p>
-            <p className="text-foreground-muted">
-              Expires: <span className="text-foreground">{q.expiryDate}</span>
-            </p>
+            {!enrolment && (
+              <p className="text-foreground-muted">
+                Expires: <span className="text-foreground">{q.expiryDate}</span>
+              </p>
+            )}
           </div>
         </div>
 

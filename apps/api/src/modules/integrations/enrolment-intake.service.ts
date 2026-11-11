@@ -11,6 +11,7 @@ import { Customer } from "../customer/customer.model";
 import { findOrCreateCustomer } from "../customer/customer.service";
 import { createInvoice, updateInvoice } from "../invoice/invoice.service";
 import { notifyApprovers } from "../invoice/approval-notify.service";
+import { syncEnrolmentQuote } from "../quotation/enrolment-quote";
 import { closeIsForAnother, correctionIsForAnother, emailBelongsToAnother, phoneKnown } from "./client-identity";
 
 /**
@@ -416,6 +417,9 @@ export async function intakeEnrolment(
     },
   );
 
+  // Its quote — made with the invoice — now says which close it is.
+  await syncEnrolmentQuote(orgId, invoice.id);
+
   if (elsewhere) await moveOut(elsewhere, orgId, { id: invoice.id, number: invoice.invoiceNumber }, intakeAcademy(input));
 
   logger.info(
@@ -698,6 +702,8 @@ async function resubmitReturned(
     const added = receiptsOf(input).filter((r) => !attachments.some((a) => a.key === r.key));
     if (added.length) doc.set("attachments", [...attachments, ...added.map(asAttachment)]);
     await doc.save();
+    // Resent: the quote is out again, as corrected.
+    await syncEnrolmentQuote(orgId, invoiceId);
     void notifyApprovers(doc as never);
   }
 
@@ -745,6 +751,8 @@ async function moveOut(other: any, toOrgId: string, to: { id: string; number: st
       },
     },
   );
+  // The quote it left behind there is declined with it.
+  if (moved.modifiedCount === 1) await syncEnrolmentQuote(String(other.organizationId), other._id);
   logger.info({ from: other.invoiceNumber, fromOrg: String(other.organizationId), to: to.number, toOrgId, voided: moved.modifiedCount === 1 },
     "Sent-back enrolment moved to the other academy");
 }

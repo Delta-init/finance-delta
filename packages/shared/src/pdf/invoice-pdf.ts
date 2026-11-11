@@ -7,7 +7,7 @@ import {
   type OrganizationSettings,
 } from "../schemas/organization.schema";
 import { getPrintLabels } from "../i18n/print-labels";
-import type { Invoice, Payment } from "../schemas/invoice.schema";
+import { enrolmentQuoteStage, type Invoice, type Payment } from "../schemas/invoice.schema";
 import type { Customer } from "../schemas/customer.schema";
 
 /**
@@ -99,7 +99,10 @@ export function buildInvoicePdf(opts: {
   // "TAX INVOICE" is a claim about the seller: only an organization with a tax
   // registration may head a document that way.
   const registered = Boolean(org?.taxRegistrationNumber?.trim()) && org?.taxSystem !== "none";
+  // Not approved yet, an enrolment is its quote: headed and numbered as that.
+  const quote = opts.taxInvoiceAgainst ? null : enrolmentQuoteStage(invoice);
   const title = opts.taxInvoiceAgainst ? L.taxInvoice
+    : quote ? L.quotation
     : proforma ? (L.proforma ?? "PRO-FORMA INVOICE")
     : org?.invoiceDefaults?.title?.trim() || (registered ? L.taxInvoice : L.invoice);
   // HSN/SAC is an Indian requirement; an empty column on a dirham invoice reads
@@ -112,7 +115,7 @@ export function buildInvoicePdf(opts: {
   doc.setFont("helvetica", "bold").setFontSize(18).setTextColor(17);
   doc.text(title, PAGE_W - MARGIN, y + 4, { align: "right" });
   doc.setFont("helvetica", "bold").setFontSize(11).setTextColor(37, 99, 235);
-  doc.text(invoice.invoiceNumber, PAGE_W - MARGIN, y + 10, { align: "right" });
+  doc.text(quote?.number ?? invoice.invoiceNumber, PAGE_W - MARGIN, y + 10, { align: "right" });
 
   // The logo first, where there is one, with the name under it.
   const logoH = drawPdfLogo(doc, opts.logo, MARGIN, y);

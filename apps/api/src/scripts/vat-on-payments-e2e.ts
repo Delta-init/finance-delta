@@ -9,6 +9,11 @@
  * VAT report and Revenue's Invoiced view count the TIs by the day paid, and not the pro-forma; the PDFs draw. An
  * enrolment approved paid in full, and any in an organization with the setting off, are untouched.
  *
+ * Since 2026-11-11 (quotation/enrolment-quote.ts) an approval no longer starts a pro-forma: an enrolment is a quote,
+ * then one invoice with each payment recorded against it. What is proved here now is that a pro-forma from before
+ * keeps working exactly as it did until the backfill makes it an ordinary invoice — so the part-paid one below starts
+ * as a pro-forma already; scripts/enrolment-quote-e2e.sh proves no new one is made, and the conversion.
+ *
  * Run through scripts/vat-on-payments-e2e.sh (throwaway mongod, no .env anywhere).
  */
 import mongoose, { Types } from "mongoose";
@@ -62,7 +67,7 @@ const inv = (o: Record<string, any>) => {
     ...o, enrolment: { course: "Course 2", modeOfStudy: "online", language: "English", meetingBy: "Rep", ...(o.enrolment ?? {}) },
   };
 };
-const PART = inv({ enrolment: { declaredPaidMinor: 200_000, declaredPaymentMethod: "card", declaredPayments: [{ method: "card", amountMinor: 200_000, paidOn: "2026-10-20" }] } });
+const PART = inv({ proforma: { at: new Date("2026-10-20") }, enrolment: { declaredPaidMinor: 200_000, declaredPaymentMethod: "card", declaredPayments: [{ method: "card", amountMinor: 200_000, paidOn: "2026-10-20" }] } });
 const FULL = inv({ total: 210_000, enrolment: { declaredPaidMinor: 210_000, declaredPaymentMethod: "cash", declaredPayments: [{ method: "cash", amountMinor: 210_000, paidOn: "2026-10-21" }] } });
 const ELSE = inv({ organizationId: OFF, customerId: CUST2, enrolment: { declaredPaidMinor: 200_000, declaredPaymentMethod: "card", declaredPayments: [{ method: "card", amountMinor: 200_000, paidOn: "2026-10-20" }] } });
 await db.collection("invoices").insertMany([PART, FULL, ELSE] as any[]);
@@ -71,7 +76,7 @@ const scope = { all: true } as never;
 const pay = (amountMinor: number, paidOn: string) => ({ method: "bank_transfer", amountMinor, paidOn, reference: "", notes: "", accountName: "", chargesMinor: 0 }) as never;
 const TAX = vat(550_000);
 
-step("1. Approved part paid — a pro-forma, the close's payment its own tax invoice");
+step("1. A pro-forma from before, approved part paid — the close's payment its own tax invoice");
 let d = await approveInvoice(String(ON), String(PART._id), actor);
 check("a pro-forma", Boolean(d.proforma?.at), show(d.proforma));
 const ti1 = d.payments[0]?.taxInvoice;

@@ -150,24 +150,12 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight">{invoice.invoiceNumber}</h1>
-              <p className="text-xs text-foreground-muted">
-                {invoice.customerName}
-                {/* Converted from its quote at approval (2026-11-11, the Zoho way). */}
-                {invoice.quote && invoice.quote.number !== invoice.invoiceNumber && (
-                  <> · from quote <Link href={`/quotations/${invoice.quote.id}`} className="text-primary hover:underline">{invoice.quote.number}</Link></>
-                )}
-              </p>
+              <p className="text-xs text-foreground-muted">{invoice.customerName}</p>
             </div>
           </div>
           <Badge tone={INVOICE_STATUS_TONE[invoice.status]} className="capitalize ml-1">
             {invoice.status}
           </Badge>
-          {/* An enrolment not approved yet is still its quote: it gets its invoice number when approved. */}
-          {invoice.quote && invoice.approval?.state !== "approved" && invoice.status !== "void" && (
-            <Badge tone="primary" title="An enrolment's quote. Approving it converts it into one invoice for the whole fee — numbered then — and every payment is recorded against that invoice.">
-              {invoice.approval?.state === "returned" ? "Quote · sent back" : "Quote · waiting for approval"}
-            </Badge>
-          )}
           {/* VAT on payments received: each payment below carries its own tax invoice. */}
           {invoice.proforma && (
             <Badge tone="warning" title="Not a tax invoice — VAT is charged on each payment's tax invoice (TI-…)">
@@ -524,11 +512,9 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
                         type="button"
                         onClick={() => void downloadTaxInvoicePdf({ invoice, payment: p, org, customer })}
                         className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                        title={invoice.proforma
-                          ? `Tax invoice for this payment: ${formatMoney(p.taxInvoice.netMinor, invoice.currency)} + ${formatMoney(p.taxInvoice.taxMinor, invoice.currency)} VAT`
-                          : `Sent as tax invoice ${p.taxInvoice.number} while this was a pro-forma. The VAT is on this invoice now — this is the payment's record.`}
+                        title={`Tax invoice for this payment: ${formatMoney(p.taxInvoice.netMinor, invoice.currency)} + ${formatMoney(p.taxInvoice.taxMinor, invoice.currency)} VAT`}
                       >
-                        <Download className="h-3 w-3" /> {invoice.proforma ? p.taxInvoice.number : `was ${p.taxInvoice.number}`}
+                        <Download className="h-3 w-3" /> {p.taxInvoice.number}
                       </button>
                     )}
                   </td>

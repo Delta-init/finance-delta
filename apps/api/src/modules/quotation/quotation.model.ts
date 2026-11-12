@@ -71,23 +71,9 @@ const quotationSchema = new Schema(
     sentAt: Date,
     acceptedAt: Date,
     declinedAt: Date,
-    /**
-     * An enrolment's quote (the user, 2026-11-11: "exact same as the quotation based system same as the Zoho Books
-     * have"): made when the close arrives, for the whole course fee; it waits in Approvals, and approving it converts
-     * it into the one invoice — which `invoiceId` is from the start (enrolment-quote.ts keeps the two in step).
-     * `deleted`: the close was deleted before it was approved.
-     */
-    enrolment: {
-      type: new Schema(
-        { invoiceId: { type: Schema.Types.ObjectId, required: true }, source: String, externalId: String, deleted: Boolean },
-        { _id: false },
-      ),
-      default: undefined,
-    },
   },
   { timestamps: true },
 );
-quotationSchema.index({ organizationId: 1, "enrolment.invoiceId": 1 }, { sparse: true });
 
 quotationSchema.index({ organizationId: 1, quoteNumber: 1 }, { unique: true });
 quotationSchema.index({ organizationId: 1, status: 1, expiryDate: 1 });

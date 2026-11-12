@@ -38,7 +38,7 @@ import {
   ClipboardCheck,
   Coins,
   UserPlus,
-  type LucideIcon, MailCheck, Clock, FileCheck2, FileText
+  type LucideIcon, MailCheck, Clock, FileCheck2
 } from "lucide-react";
 import { hasPermission, type ApprovalType, type Permission } from "@delta/shared";
 import { useApprovalSummary } from "@/features/approvals/api";
@@ -140,9 +140,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/invoices", label: "Invoices", icon: ReceiptText, enabled: true, permission: ["invoice:read", "invoice:read:own"] },
       { href: "/payments", label: "Payments", icon: CreditCard, enabled: true, permission: "invoice:read" },
-      // An enrolment starts as a quote and becomes its invoice at approval (2026-11-11) — so quotes are back in reach.
-      { href: "/quotations", label: "Quotes", icon: FileText, enabled: true, permission: "quotation:read" },
-      { href: "/tax-invoices", label: "Past TIs", icon: FileCheck2, enabled: true, permission: "invoice:read" },
+      { href: "/tax-invoices", label: "Pro-formas & TIs", icon: FileCheck2, enabled: true, permission: "invoice:read" },
       { href: "/customers", label: "Customers", icon: Users2, enabled: true, permission: "customer:read", hideWhenOwnScopedOnly: true, unhideWith: "customer:update" },
     ],
   },

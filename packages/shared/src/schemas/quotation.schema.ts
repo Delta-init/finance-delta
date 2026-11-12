@@ -110,8 +110,6 @@ export const quotationSchema = z.object({
       invoiceIds: z.array(z.string()).default([]),
     })
     .optional(),
-  /** An enrolment's quote: made at the close, decided in Approvals — its invoice is the enrolment itself. */
-  enrolment: z.object({ invoiceId: z.string(), deleted: z.boolean() }).optional(),
   createdAt: z.string(),
 });
 export type Quotation = z.infer<typeof quotationSchema>;

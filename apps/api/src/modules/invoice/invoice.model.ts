@@ -344,13 +344,6 @@ const invoiceSchema = new Schema(
     payments: { type: [paymentSubSchema], default: [] },
     /** A pro-forma, not a tax invoice: VAT charged payment by payment (payment-tax-invoice.ts, 2026-11-01). */
     proforma: { type: new Schema({ at: Date }, { _id: false }), default: undefined },
-    /**
-     * The quote this invoice was converted from (2026-11-11, the Zoho way): an enrolment is a quote until finance
-     * approves it, and carries the quote's number until then (quotation/enrolment-quote.ts).
-     */
-    quote: { type: new Schema({ id: Schema.Types.ObjectId, number: String }, { _id: false }), default: undefined },
-    /** It was a pro-forma until this day — converted back to the one tax invoice it is now (2026-11-11 backfill). */
-    proformaUntil: { type: Date, default: undefined },
     /** Tax invoices of payments since deleted — cancelled, kept for the record. */
     cancelledTaxInvoices: {
       type: [new Schema({ number: String, amountMinor: Number, taxMinor: Number, paidOn: Date, cancelledAt: Date }, { _id: false })],

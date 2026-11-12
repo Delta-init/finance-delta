@@ -1,8 +1,4 @@
 /**
- * RETIRED 2026-11-11 — --write is refused. Enrolments are a quote, then one invoice with each payment recorded against
- * it (quotation/enrolment-quote.ts); pro-formas are being made ordinary invoices again by
- * scripts/enrolment-quotes-backfill.ts. Kept for its --undo and as the record of what was run.
- *
  * VAT on payments received, back to the enrolments approved before it was turned on (the user, 2026-11-01:
  * "backfill October month also" — only October, no email).
  *
@@ -152,7 +148,6 @@ if (import.meta.main) {
       console.log(`Took the pro-forma and tax invoices off ${await undoVatOnPaymentsBackfill(arg("--undo"))} invoice(s), from ${arg("--undo")}.`);
     } else {
       const write = argv.includes("--write");
-      if (write) throw new Error("Retired on 2026-11-11: pro-formas are no longer made. See src/scripts/enrolment-quotes-backfill.ts.");
       const { rows, undoFile } = await backfillVatOnPayments({ write, expect: arg("--expect") ? Number(arg("--expect")) : undefined, from: arg("--from") || undefined, to: arg("--to") || undefined });
       let before = 0, after = 0;
       const byMonth = new Map<string, number>();

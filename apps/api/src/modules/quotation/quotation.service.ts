@@ -31,8 +31,6 @@ import {
 /** Lazily reflect expiry: a draft/sent quote past its expiry date reads as expired. */
 function effectiveStatus(doc: QuotationDoc): QuoteStatus {
   const stored = doc.status as QuoteStatus;
-  // An enrolment's quote waits for finance, not for the client: it doesn't expire (2026-11-11).
-  if (isEnrolmentQuote(doc)) return stored;
   if (
     (stored === "draft" || stored === "sent") &&
     doc.expiryDate &&
@@ -44,13 +42,6 @@ function effectiveStatus(doc: QuotationDoc): QuoteStatus {
 }
 
 const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
-
-/** An enrolment's quote (enrolment-quote.ts): kept in step with its enrolment, decided in Approvals — not from here. */
-const isEnrolmentQuote = (doc: unknown) => Boolean((doc as { enrolment?: { invoiceId?: unknown } | null }).enrolment?.invoiceId);
-function refuseEnrolmentQuote(doc: QuotationDoc, what: string): void {
-  if (!isEnrolmentQuote(doc)) return;
-  throw new AppError("CONFLICT", `${doc.quoteNumber} is an enrolment's quote — it can't be ${what} here. It follows the enrolment: approve it, send it back or change it from Approvals.`);
-}
 
 function toDTO(doc: QuotationDoc): QuotationDTO {
   return {
@@ -80,14 +71,6 @@ function toDTO(doc: QuotationDoc): QuotationDTO {
           invoiceIds: ((doc.convertedTo as unknown as { invoiceIds?: { toString(): string }[] }).invoiceIds ?? []).map((x) => x.toString()),
         }
       : undefined,
-    ...(isEnrolmentQuote(doc)
-      ? {
-          enrolment: {
-            invoiceId: String((doc as unknown as { enrolment: { invoiceId: unknown } }).enrolment.invoiceId),
-            deleted: Boolean((doc as unknown as { enrolment: { deleted?: boolean } }).enrolment.deleted),
-          },
-        }
-      : {}),
     createdAt: doc.createdAt.toISOString(),
   };
 }
@@ -111,21 +94,17 @@ const SORT = {
 export async function listQuotations(
   orgId: string,
   query: QuotationQuery,
-  opts: { enrolments?: boolean } = {},
 ): Promise<Paginated<QuotationDTO>> {
   const now = new Date();
   const and: Record<string, unknown>[] = [];
-  // Enrolments' quotes only for those who may see every invoice (the controller decides).
-  if (opts.enrolments === false) and.push({ "enrolment.invoiceId": { $exists: false } });
   const or = searchOr(query.q, ["quoteNumber", "customerName"]);
   if (or) and.push({ $or: or });
 
   // Expiry-aware status filter
-  // (an enrolment's quote never expires — it waits for finance, not the client)
   if (query.status === "expired") {
-    and.push({ status: { $in: ["draft", "sent"] }, expiryDate: { $lt: now }, "enrolment.invoiceId": { $exists: false } });
+    and.push({ status: { $in: ["draft", "sent"] }, expiryDate: { $lt: now } });
   } else if (query.status === "draft" || query.status === "sent") {
-    and.push({ status: query.status, $or: [{ expiryDate: { $gte: now } }, { "enrolment.invoiceId": { $exists: true } }] });
+    and.push({ status: query.status, expiryDate: { $gte: now } });
   } else if (query.status) {
     and.push({ status: query.status });
   }
@@ -154,12 +133,12 @@ export async function listQuotations(
   };
 }
 
-export async function getQuotation(orgId: string, id: string, opts: { enrolments?: boolean } = {}): Promise<QuotationDTO> {
+export async function getQuotation(orgId: string, id: string): Promise<QuotationDTO> {
   const doc = await Quotation.findOne({ _id: id, organizationId: orgId }).populate(
     "tagIds",
     "name color",
   );
-  if (!doc || (opts.enrolments === false && isEnrolmentQuote(doc))) throw new AppError("NOT_FOUND", "Quotation not found");
+  if (!doc) throw new AppError("NOT_FOUND", "Quotation not found");
   return toDTO(doc as unknown as QuotationDoc);
 }
 
@@ -200,7 +179,6 @@ export async function updateQuotation(
   input: UpdateQuotationInput,
 ): Promise<QuotationDTO> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "changed");
   if (effectiveStatus(doc) !== "draft") {
     throw new AppError("CONFLICT", "Only draft quotations can be edited");
   }
@@ -243,7 +221,6 @@ export async function updateQuotation(
 
 export async function deleteQuotation(orgId: string, id: string): Promise<void> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "deleted");
   if (doc.convertedTo?.salesOrderId) {
     throw new AppError("CONFLICT", "This quotation was converted and cannot be deleted");
   }
@@ -253,7 +230,6 @@ export async function deleteQuotation(orgId: string, id: string): Promise<void> 
 // ── status transitions ──
 export async function sendQuotation(orgId: string, id: string): Promise<QuotationDTO> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "sent");
   const eff = effectiveStatus(doc);
   if (eff === "accepted" || eff === "declined") {
     throw new AppError("CONFLICT", `Cannot send a ${eff} quotation`);
@@ -266,7 +242,6 @@ export async function sendQuotation(orgId: string, id: string): Promise<Quotatio
 
 export async function acceptQuotation(orgId: string, id: string): Promise<QuotationDTO> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "accepted");
   if (doc.convertedTo?.salesOrderId) {
     throw new AppError("CONFLICT", "Quotation already converted");
   }
@@ -278,7 +253,6 @@ export async function acceptQuotation(orgId: string, id: string): Promise<Quotat
 
 export async function declineQuotation(orgId: string, id: string): Promise<QuotationDTO> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "declined");
   doc.status = "declined";
   doc.declinedAt = new Date();
   await doc.save();
@@ -291,7 +265,6 @@ export async function convertQuotation(
   input: ConvertQuotationInput,
 ): Promise<{ quotation: QuotationDTO; salesOrder: SalesOrderDTO }> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "converted");
   if (effectiveStatus(doc) !== "accepted") {
     throw new AppError("CONFLICT", "Only accepted quotations can be converted");
   }
@@ -317,7 +290,6 @@ export async function convertToInvoice(
   input: ConvertToInvoiceInput = { mode: "full" },
 ): Promise<{ quotation: QuotationDTO; invoice: Pick<InvoiceDTO, "id" | "invoiceNumber"> }> {
   const doc = await findDoc(orgId, id);
-  refuseEnrolmentQuote(doc, "converted");
   if (effectiveStatus(doc) !== "accepted") {
     throw new AppError("CONFLICT", "Only accepted quotations can be converted to an invoice");
   }

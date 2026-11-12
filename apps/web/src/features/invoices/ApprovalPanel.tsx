@@ -175,20 +175,9 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
         )}
         {canDecide && pending && (
           <>
-            {/* An enrolment is its quote until now: approving converts it into the invoice, numbered at this moment. */}
             <Button size="sm" loading={approve.isPending}
-              title={invoice.quote ? `Accepts quote ${invoice.quote.number} and converts it into one invoice for the whole fee — the payments declared at the close are recorded against it` : undefined}
-              onClick={async () => {
-                try {
-                  const done = await approve.mutateAsync();
-                  toast.success(invoice.quote && done.invoiceNumber !== invoice.quote.number
-                    ? `Approved — quote ${invoice.quote.number} is now invoice ${done.invoiceNumber}`
-                    : "Invoice approved");
-                } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : "That didn't work");
-                }
-              }}>
-              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />{invoice.quote ? "Approve · make the invoice" : "Approve"}
+              onClick={() => run("Invoice approved", () => approve.mutateAsync())}>
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setReturning(true)}>
               <Undo2 className="mr-1.5 h-3.5 w-3.5" />Send back

@@ -563,6 +563,9 @@ async function invoiceListFilter(orgId: string, query: InvoiceQuery, scope: Scop
   if (query.tagIds?.length) and.push({ tagIds: { $in: query.tagIds } });
   const paid = await paymentListFilter(orgId, query);
   if (paid) and.push(paid);
+  // Pro-formas — part-paid enrolments whose VAT goes on each payment's tax invoice — or everything but them
+  // (2026-11-12). The same test as Sales → Pro-formas & TIs, so the two lists cannot disagree.
+  if (query.proforma) and.push({ "proforma.at": { $exists: query.proforma === "yes" } });
 
   // Not taken from `query`: asking for another salesperson's invoices must
   // narrow the result to nothing, never widen it.

@@ -18,7 +18,7 @@ if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri)) {
   console.error(`Refusing to run: MONGODB_URI must be a scratch e2e database on 127.0.0.1, got "${uri}"`);
   process.exit(1);
 }
-const { approveInvoice, recordPayment, updatePayment, deletePayment, getInvoice } = await import("../modules/invoice/invoice.service");
+const { approveInvoice, recordPayment, updatePayment, deletePayment, getInvoice, listInvoices, invoiceListSummary } = await import("../modules/invoice/invoice.service");
 const { getVATReport } = await import("../modules/reports/reports.service");
 const { getRevenueAnalysis } = await import("../modules/reports/analysis.service");
 const { invoicePdfBuffer, taxInvoiceView } = await import("@delta/shared");
@@ -139,6 +139,18 @@ check("all time: every TI, newest first, adding up to the invoice's VAT", pageAl
 const pageQ = await listProformasAndTaxInvoices(String(ON), { q: "TI-00003" });
 check("search by a TI number finds it and its pro-forma", pageQ.taxInvoices.length === 1 && pageQ.proformas.length === 1, show(pageQ));
 check("the other organization: none", (await listProformasAndTaxInvoices(String(OFF))).proformas.length === 0);
+
+step("6c. The Invoices list: its Type filter");
+const { invoiceQuerySchema } = await import("@delta/shared");
+const listOf = async (q: Record<string, string>) => (await listInvoices(String(ON), invoiceQuerySchema.parse(q), scope)).data.map((i) => i.invoiceNumber).sort().join(",");
+check("Pro-formas: the pro-forma alone", (await listOf({ proforma: "yes" })) === PART.invoiceNumber, await listOf({ proforma: "yes" }));
+check("Ordinary invoices: the rest, the pro-forma not among them", (await listOf({ proforma: "no" })) === FULL.invoiceNumber, await listOf({ proforma: "no" }));
+check("no Type asked for: both", (await listOf({})) === [PART.invoiceNumber, FULL.invoiceNumber].sort().join(","), await listOf({}));
+const listed = (await listInvoices(String(ON), invoiceQuerySchema.parse({ proforma: "yes" }), scope)).data[0]!;
+check("its row says it is one, and what is paid of it", Boolean(listed.proforma?.at) && listed.amountPaidMinor === 550_000 && listed.totalMinor === 550_000, show({ p: listed.proforma, paid: listed.amountPaidMinor }));
+const cards = await invoiceListSummary(String(ON), invoiceQuerySchema.parse({ proforma: "yes" }), scope);
+check("the cards follow the filter", JSON.stringify(cards).includes("550000") && !JSON.stringify(cards).includes("210000"), show(cards));
+check("anything else for Type is refused", !invoiceQuerySchema.safeParse({ proforma: "maybe" }).success);
 
 step("7. The documents");
 const dto = await getInvoice(String(ON), String(PART._id), scope);

@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
+import { PaidProgress, paidPercent } from "@/components/ui/paid-progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
@@ -56,10 +57,13 @@ const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
   { header: "Issue", value: (inv) => inv.issueDate },
   { header: "Due", value: (inv) => inv.dueDate },
   { header: "Status", value: (inv) => inv.status },
+  { header: "Type", value: (inv) => (inv.proforma ? "Pro-forma" : "Invoice") },
   { header: "Paid by", value: (inv) => methodsOf(inv.payments.map((p) => p.method)) },
   { header: "Bank", value: (inv) => accountsOf(inv.payments.map((p) => p.accountName)) },
   { header: "Currency", value: (inv) => inv.currency },
   { header: "Total", value: (inv) => inv.totalMinor / 100 },
+  { header: "Paid", value: (inv) => inv.amountPaidMinor / 100 },
+  { header: "Paid %", value: (inv) => paidPercent(inv.amountPaidMinor, inv.totalMinor) },
   { header: "Balance", value: (inv) => inv.balanceMinor / 100 },
 ];
 
@@ -80,6 +84,8 @@ export function InvoiceManager() {
   // How it was paid and into which account (2026-10-22): any of its payments.
   const [paymentMethod, setPaymentMethod] = useUrlParam("paidBy", "");
   const [bankAccountId, setBankAccountId] = useUrlParam("bank", "");
+  // Pro-formas only, or everything but them (2026-11-12) — a part-paid enrolment with VAT on its payments.
+  const [proforma, setProforma] = useUrlParam<"all" | "yes" | "no">("proforma", "all", { allowed: ["yes", "no"] });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -103,6 +109,7 @@ export function InvoiceManager() {
     tagIds: tagIds.length ? tagIds : undefined,
     paymentMethod: paymentMethod || undefined,
     bankAccountId: bankAccountId || undefined,
+    proforma: proforma === "all" ? undefined : proforma,
   };
   const { data, isLoading, isPlaceholderData } = useInvoices(listParams);
   // The cards above the table: what these same filters match, per currency (2026-10-22).
@@ -204,7 +211,7 @@ export function InvoiceManager() {
 
 
   // The range is on show beside the search, so the button counts the rest.
-  const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds, paymentMethod, bankAccountId);
+  const filterCount = countFilters(status, approval, salespersonId, dueFrom, dueTo, tagIds, paymentMethod, bankAccountId, proforma);
   const hasFilters = filterCount > 0 || issued.range !== "all";
 
   const clear = () => {
@@ -217,6 +224,7 @@ export function InvoiceManager() {
     setTagIds([]);
     setPaymentMethod("");
     setBankAccountId("");
+    setProforma("all");
   };
 
   const columns: Column<Invoice>[] = [
@@ -225,9 +233,15 @@ export function InvoiceManager() {
       header: "Invoice #",
       sortable: true,
       cell: (inv) => (
-        <Link href={`/invoices/${inv.id}`} className="font-medium text-primary hover:underline">
-          {inv.invoiceNumber}
-        </Link>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Link href={`/invoices/${inv.id}`} className="font-medium text-primary hover:underline">
+            {inv.invoiceNumber}
+          </Link>
+          {/* Not a tax invoice: its VAT is on each payment's own (TI-…). Said here, not only once it is opened. */}
+          {inv.proforma && (
+            <Badge tone="warning" title="Not a tax invoice — VAT is charged on each payment's tax invoice (TI-…)">Pro-forma</Badge>
+          )}
+        </span>
       ),
     },
     { key: "customer", header: "Customer", sortable: true, cell: (inv) => inv.customerName },
@@ -273,6 +287,24 @@ export function InvoiceManager() {
       align: "right",
       sortable: true,
       cell: (inv) => <MoneyDisplay minor={inv.totalMinor} currency={inv.currency} className="font-medium" />,
+    },
+    // What has come in so far and how far that is of the total (2026-11-12) — the bar not on a draft or a void one.
+    {
+      key: "paid",
+      header: "Paid",
+      align: "right",
+      cell: (inv) => (
+        <div className="flex flex-col items-end gap-0.5">
+          <MoneyDisplay
+            minor={inv.amountPaidMinor}
+            currency={inv.currency}
+            className={inv.amountPaidMinor > 0 ? "text-success" : "text-foreground-muted"}
+          />
+          {inv.status !== "draft" && inv.status !== "void" && (
+            <PaidProgress paidMinor={inv.amountPaidMinor} totalMinor={inv.totalMinor} />
+          )}
+        </div>
+      ),
     },
     {
       key: "balance",
@@ -389,6 +421,18 @@ export function InvoiceManager() {
         <Field label="Tags"><div className="w-[180px]"><TagPicker value={tagIds} onChange={setTagIds} placeholder="Any tags…" /></div></Field>
         <Field label="Paid by"><PaymentMethodFilter methods={PAYMENT_METHODS} value={paymentMethod} onChange={setPaymentMethod} /></Field>
         <Field label="Bank account"><BankAccountFilter value={bankAccountId} onChange={setBankAccountId} /></Field>
+        <Field label="Type">
+          <Select value={proforma} onValueChange={(v) => setProforma(v as "all" | "yes" | "no")}>
+            <SelectTrigger className="w-[170px]">
+              <SelectValue placeholder="All" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="yes">Pro-formas</SelectItem>
+              <SelectItem value="no">Ordinary invoices</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
 
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clear}>

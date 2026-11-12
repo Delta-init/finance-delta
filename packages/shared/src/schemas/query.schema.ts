@@ -104,6 +104,8 @@ export const invoiceQuerySchema = listQuerySchema.extend({
   /** Invoices with a payment by this method, or into this account ("none": one with no account) — 2026-10-22. */
   paymentMethod: z.enum(PAYMENT_METHODS).optional(),
   bankAccountId: bankAccountFilterSchema,
+  /** Only the pro-formas ("yes") or everything but them ("no") — VAT on payments received (2026-11-12). */
+  proforma: z.enum(["yes", "no"]).optional(),
 });
 export type InvoiceQuery = z.infer<typeof invoiceQuerySchema>;
 

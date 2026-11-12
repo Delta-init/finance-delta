@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { MoneyDisplay } from "@/components/ui/money";
+import { PaidProgress, paidPercent } from "@/components/ui/paid-progress";
 import { ExportButton } from "@/components/ui/export-button";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { useUrlParam } from "@/lib/url-state";
@@ -45,6 +46,7 @@ const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Salesperson", value: (p) => p.salespersonName },
   { header: "Total", value: (p) => p.totalMinor / 100 },
   { header: "Paid", value: (p) => p.amountPaidMinor / 100 },
+  { header: "Paid %", value: (p) => paidPercent(p.amountPaidMinor, p.totalMinor) },
   { header: "Balance", value: (p) => p.balanceMinor / 100 },
   { header: "Currency", value: (p) => p.currency },
   { header: "Tax invoices", value: (p) => p.taxInvoices.join(", ") },
@@ -144,6 +146,8 @@ export default function TaxInvoicesPage() {
     { key: "total", header: "Total", align: "right", cell: (p) => <MoneyDisplay minor={p.totalMinor} currency={p.currency} /> },
     { key: "paid", header: "Paid", align: "right", cell: (p) => <MoneyDisplay minor={p.amountPaidMinor} currency={p.currency} className="text-success" /> },
     { key: "balance", header: "Balance", align: "right", cell: (p) => <MoneyDisplay minor={p.balanceMinor} currency={p.currency} className={p.balanceMinor > 0 ? "font-medium text-warning" : ""} /> },
+    // How far the fee is paid (2026-11-12) — the same bar as on the Invoices list.
+    { key: "progress", header: "Progress", cell: (p) => <PaidProgress paidMinor={p.amountPaidMinor} totalMinor={p.totalMinor} /> },
     { key: "tis", header: "Tax invoices", cell: (p) => <span className="text-xs text-foreground-muted">{p.taxInvoices.join(", ") || "—"}</span> },
   ];
 

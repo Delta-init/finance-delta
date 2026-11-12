@@ -552,6 +552,13 @@ export const paymentSchema = z.object({
    * number (TI-00001) and the amount split into its net and its tax.
    */
   taxInvoice: paymentTaxInvoiceSchema.optional(),
+  /**
+   * As the client paid it, when not in the invoice's currency — rupees into the INR account (2026-11-13): the amount
+   * in that currency, and `rate`, the invoice's currency for one unit of it.
+   */
+  original: z.object({ currency: z.string(), amountMinor: z.number(), rate: z.number() }).optional(),
+  /** No VAT in this payment — it was received in rupees (the user, 2026-11-13: "INR payment doesn't have the VAT"). */
+  vatFree: z.boolean().optional(),
   createdAt: z.string(),
 });
 export type Payment = z.infer<typeof paymentSchema>;

@@ -49,10 +49,21 @@ export interface TaxDocumentRow {
   netMinor: number; taxMinor: number; amountMinor: number;
   /** Of that invoice (for a TI, of its pro-forma): the whole fee, what is paid of it, what is still owed. */
   feeMinor: number; paidMinor: number; balanceMinor: number;
+  /**
+   * Paid in rupees (2026-11-13): how much of this document's amount was, as recorded in the invoice's currency (0 when
+   * none), the rupees themselves in paise (0 when they were not recorded), and the VAT still carried on that part.
+   */
+  inrAedMinor: number; inrMinor: number; inrTaxMinor: number;
+  /** The same for everything paid on the invoice so far, and how much of it has its rupees recorded. */
+  invInrAedMinor: number; invInrMinor: number; invInrKnownAedMinor: number;
 }
-export interface TaxDocumentTotals { count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number }
+export interface TaxDocumentTotals {
+  count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number;
+  /** The documents paid in rupees: how many, the rupees (paise), what they were recorded as, the VAT on them. */
+  inrCount: number; inrMinor: number; inrAedMinor: number; inrTaxMinor: number;
+}
 // A type, not an interface: it goes to the API as query parameters, which want an index signature.
-export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes" };
+export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes"; paidIn?: "aed" | "inr" };
 
 /** All tax documents (2026-11-12): invoices and payment tax invoices in one list, a page at a time from the server. */
 export function useTaxDocuments(params: TaxDocumentParams & { page: number; pageSize: number }) {

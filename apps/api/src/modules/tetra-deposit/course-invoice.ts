@@ -50,6 +50,20 @@ export const courseFigureMinor = (row: Row, aed: unknown): number =>
 
 type Row = any;
 
+/**
+ * The rupees a request was typed in (CS Portal's amount_original, INR), with what one of them came to in the
+ * invoice's currency — only when what is recorded is what was asked: an accountant who approved another amount
+ * changed the figure the rupees stood for. Nothing for a Bangalore request, whose invoice is in rupees already.
+ */
+export function rupeesTyped(row: Row, recordedMinor: number): { currency: string; amountMinor: number; rate: number } | undefined {
+  if (courseCurrencyOf(row) === "INR" || String(row?.amountCurrency ?? "").toUpperCase() !== "INR") return undefined;
+  const rupeesMinor = Math.round((Number(row?.amountOriginal) || 0) * 100);
+  const asked = Number(row?.amountMinor) || 0;
+  const approved = Number(row?.decision?.approvedAmountMinor ?? asked) || 0;
+  if (!(rupeesMinor > 0) || !(recordedMinor > 0) || approved !== asked) return undefined;
+  return { currency: "INR", amountMinor: rupeesMinor, rate: recordedMinor / rupeesMinor };
+}
+
 /** A course upgrade's payment, or a bonus's course payment with money paid now. */
 export function isCoursePayment(row: Row): boolean {
   if (row?.type === "COURSE_UPGRADE") return true;
@@ -164,7 +178,7 @@ async function openInvoiceFor(orgId: Types.ObjectId, customerId: unknown, row: R
  * A new invoice for the course: its price, in AED (rupees for Bangalore), issued on the day it was paid, approved by the
  * accountant who approved the payment — and the CS Portal person who raised it as its salesperson (2026-10-30).
  */
-async function makeInvoice(orgId: Types.ObjectId, customerId: string, salespersonId: string, row: Row, amountMinor: number, flags: string[] = []) {
+async function makeInvoice(orgId: Types.ObjectId, customerId: string, salespersonId: string, row: Row, amountMinor: number, flags: string[] = [], rupees = false) {
   const { Invoice } = await import("../invoice/invoice.model");
   const { createInvoice } = await import("../invoice/invoice.service");
   const { Organization } = await import("../organization/organization.model");
@@ -179,6 +193,8 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
   const externalId = before ? `${key}#${before + 1}` : key;
   const day = dayOf(cp.paidOn || row.requestedAt);
   const total = coursePriceAedMinor(row, amountMinor);
+  // Paid in full now, in rupees: rupees carry no VAT, so the invoice is made without any (2026-11-13).
+  const noVat = rupees && amountMinor >= total && taxes.length > 0;
   const created = await createInvoice(String(orgId), {
     customerId,
     salespersonId,
@@ -193,13 +209,16 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
       courseCurrencyOf(row) === "INR" ? `Bangalore — rupees at ${inrPerAedOf(row).toFixed(4)} per AED, CS Portal's rate` : "",
     ].filter(Boolean).join(" · "),
     taxInclusive: true,
-    lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes }],
+    lineItems: [{ description: upgrade ? `${product} — course upgrade` : `${product} — course`, quantity: 1, unitPriceMinor: total, taxes: noVat ? [] : taxes }],
   } as never, { all: true });
   // Part paid, with VAT on payments received: a pro-forma — this payment and each after it gets its own tax invoice.
   const { vatOnPaymentsFor } = await import("../invoice/payment-tax-invoice");
   const proforma = amountMinor < (created.totalMinor ?? 0) && (created.taxTotalMinor ?? 0) > 0 && await vatOnPaymentsFor(orgId);
   await Invoice.updateOne({ _id: new Types.ObjectId(created.id) }, {
-    $set: { external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent", ...(proforma ? { proforma: { at: new Date() } } : {}) },
+    $set: {
+      external: { source: COURSE_INVOICE_SOURCE, externalId, flags }, status: "sent", ...(proforma ? { proforma: { at: new Date() } } : {}),
+      ...(noVat ? { rupeesNoVat: { at: new Date(), taxMinor: 0 } } : {}),
+    },
   });
   return Invoice.findById(created.id).lean<any>();
 }
@@ -311,6 +330,13 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
   const externalRef = `tetra:${row.externalId}`;
   const amountMinor = coursePaymentAedMinor(row);
   if (!(amountMinor > 0)) return { ok: false, message: "No amount to record" };
+  const method = d.paymentMethod && (PAYMENT_METHODS as readonly string[]).includes(d.paymentMethod) && d.paymentMethod !== "easebuzz_emi"
+    ? (d.paymentMethod as PaymentMethod)
+    : methodFor(d.paymentMethod || row.paymentMethod);
+  // Typed in rupees in CS Portal: what the client handed over, kept on the payment (2026-11-13).
+  const original = rupeesTyped(row, amountMinor);
+  const { isRupeePayment } = await import("../invoice/payment-tax-invoice");
+  const rupees = isRupeePayment({ method, original }, courseCurrencyOf(row));
   const email = String(row.student?.email ?? "").trim().toLowerCase();
   if (!email) return { ok: false, message: `${row.student?.name || "The student"} has no email in CS Portal, so there is no client to invoice` };
   const salespersonId = String(d.decidedById ?? "");
@@ -332,7 +358,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       else {
         // Whose it is: the CS Portal person who raised the payment, not the approver (2026-10-30).
         const seller = await courseSalesperson(orgId, row, { id: salespersonId, name: String(d.decidedByName ?? "") }, { create: true });
-        invoice = await makeInvoice(orgId, customer.id, seller.id, row, amountMinor, seller.flag ? [seller.flag] : []);
+        invoice = await makeInvoice(orgId, customer.id, seller.id, row, amountMinor, seller.flag ? [seller.flag] : [], rupees);
         created = true;
       }
       // Remembered before the payment, so a retry finds this invoice rather than making another.
@@ -341,9 +367,6 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       });
     }
 
-    const method = d.paymentMethod && (PAYMENT_METHODS as readonly string[]).includes(d.paymentMethod) && d.paymentMethod !== "easebuzz_emi"
-      ? (d.paymentMethod as PaymentMethod)
-      : methodFor(d.paymentMethod || row.paymentMethod);
     const paidOn = dayOf(row.coursePayment?.paidOn || row.requestedAt);
     await recordPayment(String(orgId), String(invoice._id), {
       method,
@@ -359,7 +382,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
       ].filter(Boolean).join(" · ").slice(0, 1000),
       accountName: "",
       chargesMinor: 0,
-    }, undefined, { externalRef, proofUrl: row.screenshotUrl || "" });
+    }, undefined, { externalRef, proofUrl: row.screenshotUrl || "", ...(original ? { original } : {}) });
 
     const receipt = await issueReceipt(orgId, invoice._id, externalRef);
     const after = await Invoice.findById(invoice._id).lean<any>();

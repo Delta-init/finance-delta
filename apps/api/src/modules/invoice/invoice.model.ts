@@ -110,6 +110,15 @@ const paymentSubSchema = new Schema(
       type: new Schema({ number: String, netMinor: Number, taxMinor: Number, issuedAt: Date, emailedAt: Date }, { _id: false }),
       default: undefined,
     },
+    /** As the client paid it, when not in the invoice's currency — rupees (2026-11-13). rate: the invoice's
+        currency for one unit of `currency`. Kept for what is shown; the bank line still goes by bankAmountMinor. */
+    original: {
+      type: new Schema({ currency: String, amountMinor: Number, rate: Number }, { _id: false }),
+      default: undefined,
+    },
+    /** No VAT in this payment: received in rupees (payment-tax-invoice.ts isRupeePayment, 2026-11-13). Set when it
+        is recorded; an older rupee payment has it only once scripts/inr-payments-no-vat.ts gave it. */
+    vatFree: { type: Boolean, default: undefined },
     /** The Banking account it went into (payment-bank.ts, 2026-10-16), its line there, and what landed in the
         account's currency — or why it is not in (bankNote). */
     bankAccountId: { type: Schema.Types.ObjectId, default: null },
@@ -344,6 +353,11 @@ const invoiceSchema = new Schema(
     payments: { type: [paymentSubSchema], default: [] },
     /** A pro-forma, not a tax invoice: VAT charged payment by payment (payment-tax-invoice.ts, 2026-11-01). */
     proforma: { type: new Schema({ at: Date }, { _id: false }), default: undefined },
+    /** Paid in full in rupees: the VAT was taken off the invoice (2026-11-13) — when, and what it had carried. */
+    rupeesNoVat: {
+      type: new Schema({ at: Date, taxMinor: Number, lineTaxes: { type: [Schema.Types.Mixed], default: undefined } }, { _id: false }),
+      default: undefined,
+    },
     /** Tax invoices of payments since deleted — cancelled, kept for the record. */
     cancelledTaxInvoices: {
       type: [new Schema({ number: String, amountMinor: Number, taxMinor: Number, paidOn: Date, cancelledAt: Date }, { _id: false })],

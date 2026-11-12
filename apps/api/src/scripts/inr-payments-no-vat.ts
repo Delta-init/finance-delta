@@ -1,0 +1,216 @@
+/**
+ * Rupees carry no VAT (the user, 2026-11-13: "INR payment doesn't have the VAT") — for the rupee payments recorded
+ * before that rule (invoice/payment-tax-invoice.ts), which were given VAT like any other.
+ *
+ * A rupee payment is one by INR Transfer, or one typed in rupees where it was taken (a CRM close, CS Portal), on an
+ * invoice that is not itself in rupees. For each, in every organization:
+ *
+ *   1. the rupees are noted on the payment (`original`) — from the CS Portal request it came from, else what landed
+ *      in the rupee bank account, else the close's own figure. No money figure changes; it is what the screens show.
+ *   2. on a pro-forma, it is marked free of VAT: its tax invoice keeps its number and carries none, and the other
+ *      payments carry the VAT of their own amounts only;
+ *   3. an invoice paid in full, all of it in rupees, has its VAT taken off (the total stays);
+ *   4. an ordinary invoice only partly paid in rupees, or still owing, is listed and left as it is — its VAT was
+ *      counted on the invoice, and one invoice cannot say "VAT on part of it".
+ *
+ * Reads and prints only, unless --write; --write saves an undo file first and adds to it as it goes. Nobody is
+ * emailed. Run it from apps/api on the server:
+ *
+ *   bun src/scripts/inr-payments-no-vat.ts                           # what it would do
+ *   bun src/scripts/inr-payments-no-vat.ts --write --expect <code>   # <code> as the look printed it
+ *   bun src/scripts/inr-payments-no-vat.ts --rupees-only             # only step 1 (add --write --expect <code>)
+ *   bun src/scripts/inr-payments-no-vat.ts --undo <file>
+ */
+import mongoose from "mongoose";
+import { readFileSync, writeFileSync } from "node:fs";
+import { formatMoney } from "@delta/shared";
+
+export interface RupeeRow {
+  invoice: string; kind: "pro-forma" | "invoice"; outcome: "would change" | "changed" | "left as it is" | "nothing to do";
+  detail: string; rupeesNoted: number; vatBeforeMinor: number; vatAfterMinor: number;
+  /** The day its VAT is counted on, for the month it comes off: each TI's paid day, or the invoice's date. */
+  byDay: Array<{ day: string; lessMinor: number }>;
+  taxInvoices: Array<{ number: string; beforeMinor: number; afterMinor: number }>;
+  currency: string;
+}
+type Change = { id: string; number: string; guard: Record<string, unknown>; set: Record<string, unknown>; before: Record<string, unknown>; absent: string[] };
+
+const day = (d: unknown) => new Date(d as Date).toISOString().slice(0, 10);
+const EJSON = () => mongoose.mongo.BSON.EJSON;
+
+export async function correctRupeePayments(o: { write: boolean; expect?: string; rupeesOnly?: boolean; undoFile?: string }): Promise<{ rows: RupeeRow[]; code: string; undoFile?: string }> {
+  const { Invoice } = await import("../modules/invoice/invoice.model");
+  const { TetraDepositModel } = await import("../modules/tetra-deposit/tetra-deposit.model");
+  const { rupeesTyped } = await import("../modules/tetra-deposit/course-invoice");
+  const { RUPEE_METHOD, stripVatForRupees, taxShares } = await import("../modules/invoice/payment-tax-invoice");
+
+  // CS Portal requests typed in rupees, by the reference their payment carries.
+  const requests = await TetraDepositModel.find({ amountCurrency: "INR", amountOriginal: { $gt: 0 } })
+    .select("externalId amountOriginal amountCurrency amountMinor currency academy decision.approvedAmountMinor").lean<any[]>();
+  const typed = new Map<string, any>(requests.map((r) => [`tetra:${r.externalId}`, r]));
+
+  const docs = await Invoice.collection.find({
+    currency: { $ne: "INR" }, status: { $ne: "void" },
+    $or: [{ "payments.method": RUPEE_METHOD }, { "payments.original.currency": "INR" }, ...(typed.size ? [{ "payments.externalRef": { $in: [...typed.keys()] } }] : [])],
+  }).sort({ issueDate: 1, invoiceNumber: 1 }).toArray();
+
+  const rows: RupeeRow[] = [];
+  const changes: Change[] = [];
+  for (const d of docs as any[]) {
+    const cur = String(d.currency ?? "AED");
+    const payments: any[] = d.payments ?? [];
+    const isRupee = (p: any) => p.method === RUPEE_METHOD || String(p.original?.currency ?? "").toUpperCase() === "INR" || typed.has(String(p.externalRef ?? ""));
+    if (!payments.some(isRupee)) continue;
+    const proforma = Boolean(d.proforma?.at);
+    const row: RupeeRow = {
+      invoice: String(d.invoiceNumber), kind: proforma ? "pro-forma" : "invoice", outcome: "nothing to do", detail: "", rupeesNoted: 0,
+      vatBeforeMinor: 0, vatAfterMinor: 0, byDay: [], taxInvoices: [], currency: cur,
+    };
+    const ch: Change = { id: String(d._id), number: row.invoice, guard: {}, set: {}, before: {}, absent: [] };
+    const put = (path: string, value: unknown, had: unknown) => {
+      ch.set[path] = value;
+      if (had === undefined) ch.absent.push(path); else ch.before[path] = had;
+    };
+
+    // 1. The rupees, on each rupee payment that does not say them yet.
+    const declared: any[] = (d.enrolment?.declaredPayments ?? []).filter((x: any) => String(x.original?.currency ?? "").toUpperCase() === "INR");
+    const usedDeclared = new Set<number>();
+    payments.forEach((p, i) => {
+      if (!isRupee(p) || p.original?.currency) return;
+      const amount = Number(p.amountMinor) || 0;
+      const fromRequest = typed.has(String(p.externalRef ?? "")) ? rupeesTyped(typed.get(String(p.externalRef)), amount) : undefined;
+      const fromBank = String(p.bankCurrency ?? "").toUpperCase() === "INR" && Number(p.bankAmountMinor) > 0 && amount > 0
+        ? { currency: "INR", amountMinor: Number(p.bankAmountMinor), rate: amount / Number(p.bankAmountMinor) } : undefined;
+      const di = declared.findIndex((x, k) => !usedDeclared.has(k) && x.amountMinor === amount && x.method === p.method);
+      if (di >= 0) usedDeclared.add(di);
+      const fromClose = di >= 0 ? { currency: "INR", amountMinor: declared[di].original.amountMinor, rate: declared[di].original.rate } : undefined;
+      const original = fromRequest ?? fromBank ?? fromClose;
+      if (!original) return;
+      put(`payments.${i}.original`, original, undefined);
+      ch.guard[`payments.${i}._id`] = p._id;
+      row.rupeesNoted++;
+    });
+
+    // 2–4. The VAT.
+    const tax = Number(d.taxTotalMinor) || 0;
+    const notes: string[] = [];
+    if (!o.rupeesOnly && proforma) {
+      const next = payments.map((p) => ({ ...p, vatFree: p.vatFree === true || isRupee(p) }));
+      const shares = taxShares({ ...d, payments: next });
+      payments.forEach((p, i) => {
+        if (isRupee(p) && p.vatFree !== true) { put(`payments.${i}.vatFree`, true, p.vatFree ?? undefined); ch.guard[`payments.${i}._id`] = p._id; }
+        const ti = p.taxInvoice;
+        if (!ti?.number) return;
+        const was = Number(ti.taxMinor) || 0, now = shares[i]!;
+        row.vatBeforeMinor += was; row.vatAfterMinor += now;
+        if (was === now && Number(ti.netMinor) === (Number(p.amountMinor) || 0) - now) return;
+        put(`payments.${i}.taxInvoice.taxMinor`, now, ti.taxMinor ?? undefined);
+        put(`payments.${i}.taxInvoice.netMinor`, (Number(p.amountMinor) || 0) - now, ti.netMinor ?? undefined);
+        ch.guard[`payments.${i}._id`] = p._id;
+        row.taxInvoices.push({ number: String(ti.number), beforeMinor: was, afterMinor: now });
+        if (was !== now) row.byDay.push({ day: day(p.paidOn), lessMinor: was - now });
+      });
+    } else if (!o.rupeesOnly) {
+      row.vatBeforeMinor = tax; row.vatAfterMinor = tax;
+      const allRupees = payments.length > 0 && payments.every(isRupee);
+      const paidInFull = (Number(d.balanceMinor) || 0) <= 0;
+      if (tax > 0 && allRupees && paidInFull) {
+        const sets: Record<string, unknown> = {};
+        const stripped = stripVatForRupees({ ...d, set: (path: string, value: unknown) => { sets[path] = value; } });
+        if (stripped) {
+          for (const [path, value] of Object.entries(sets)) put(path, value, d[path] ?? undefined);
+          payments.forEach((p, i) => { if (p.vatFree !== true) { put(`payments.${i}.vatFree`, true, p.vatFree ?? undefined); ch.guard[`payments.${i}._id`] = p._id; } });
+          row.vatAfterMinor = 0;
+          row.byDay.push({ day: day(d.issueDate), lessMinor: tax });
+        } else notes.push("priced before tax — taking the VAT off would change its total");
+      } else if (tax > 0) {
+        notes.push(!allRupees ? "only part of it was paid in rupees" : "not paid in full yet");
+      }
+    }
+
+    const touched = Object.keys(ch.set).length > 0;
+    if (touched) changes.push(ch);
+    const left = notes.length > 0;
+    row.outcome = touched ? (o.write ? "changed" : "would change") : left ? "left as it is" : "nothing to do";
+    row.detail = [
+      row.rupeesNoted ? `rupees noted on ${row.rupeesNoted} payment${row.rupeesNoted === 1 ? "" : "s"}` : "",
+      row.vatBeforeMinor !== row.vatAfterMinor ? `VAT ${formatMoney(row.vatBeforeMinor, cur)} → ${formatMoney(row.vatAfterMinor, cur)}` : "",
+      left ? `VAT left as it is: ${notes.join("; ")}` : "",
+    ].filter(Boolean).join(" · ");
+    if (touched || left) rows.push(row);
+  }
+
+  const count = (f: (r: RupeeRow) => boolean) => rows.filter(f).length;
+  const code = [
+    rows.reduce((s, r) => s + r.rupeesNoted, 0),
+    rows.reduce((s, r) => s + r.taxInvoices.length, 0),
+    count((r) => r.kind === "invoice" && r.vatBeforeMinor !== r.vatAfterMinor),
+    count((r) => /left as it is/.test(r.detail)),
+  ].join("-");
+  if (!o.write) return { rows, code };
+  if (o.expect !== code) throw new Error(`--expect ${o.expect ?? "(none)"} is not what there is now (${code}) — look again before writing`);
+  if (!changes.length) return { rows, code };
+
+  const undoFile = o.undoFile ?? `inr-payments-no-vat-undo-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  const done: Change[] = [];
+  const save = () => writeFileSync(undoFile, EJSON().stringify({ invoices: done }, undefined, 2, { relaxed: false }));
+  save();
+  for (const ch of changes) {
+    const r = await Invoice.collection.updateOne({ _id: new mongoose.Types.ObjectId(ch.id), ...ch.guard }, { $set: ch.set });
+    if (!r.matchedCount) throw new Error(`Invoice ${ch.number} changed while this ran — nothing more was written; ${done.length} done so far are in ${undoFile}`);
+    done.push(ch);
+    save();
+  }
+  return { rows, code, undoFile };
+}
+
+/** Puts back what a --write changed, from its undo file. */
+export async function undoRupeeCorrection(file: string): Promise<number> {
+  const { Invoice } = await import("../modules/invoice/invoice.model");
+  const { invoices } = EJSON().parse(readFileSync(file, "utf8"), { relaxed: false }) as { invoices: Change[] };
+  let n = 0;
+  for (const ch of [...invoices].reverse()) {
+    const unset = Object.fromEntries(ch.absent.map((p) => [p, ""]));
+    const r = await Invoice.collection.updateOne({ _id: new mongoose.Types.ObjectId(ch.id) }, {
+      ...(Object.keys(ch.before).length ? { $set: ch.before } : {}),
+      ...(ch.absent.length ? { $unset: unset } : {}),
+    });
+    n += r.matchedCount;
+  }
+  return n;
+}
+
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const arg = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+  const { connectDb } = await import("../config/db");
+  await connectDb();
+  try {
+    const undo = arg("--undo");
+    if (undo) {
+      console.log(`${await undoRupeeCorrection(undo)} invoice(s) put back as they were, from ${undo}`);
+    } else {
+      const write = args.includes("--write"), rupeesOnly = args.includes("--rupees-only");
+      const { rows, code, undoFile } = await correctRupeePayments({ write, expect: arg("--expect"), rupeesOnly });
+      for (const r of rows) {
+        console.log(`${r.invoice.padEnd(12)} ${r.kind.padEnd(9)} ${r.outcome.padEnd(14)} ${r.detail}`);
+        for (const t of r.taxInvoices) console.log(`${" ".repeat(13)}${t.number}: VAT ${formatMoney(t.beforeMinor, r.currency)} → ${formatMoney(t.afterMinor, r.currency)}`);
+      }
+      const byMonth = new Map<string, number>();
+      for (const r of rows) for (const b of r.byDay) byMonth.set(`${b.day.slice(0, 7)} ${r.currency}`, (byMonth.get(`${b.day.slice(0, 7)} ${r.currency}`) ?? 0) + b.lessMinor);
+      if (byMonth.size) {
+        console.log(`\nOutput VAT ${write ? "is" : "would be"} lower by:`);
+        for (const [k, v] of [...byMonth].sort()) console.log(`  ${k.slice(0, 7)}  ${formatMoney(v, k.slice(8))}`);
+      }
+      const changing = rows.filter((r) => r.outcome === "changed" || r.outcome === "would change").length;
+      console.log(`\n${rows.length} invoice(s) with rupee payments: ${changing} ${write ? "changed" : "would change"}, ${rows.filter((r) => /left as it is/.test(r.detail)).length} with VAT left as it is.${rupeesOnly ? " Rupees only — no VAT touched." : ""} Nobody is emailed.`);
+      if (!write && changing) console.log(`To write:  bun src/scripts/inr-payments-no-vat.ts ${rupeesOnly ? "--rupees-only " : ""}--write --expect ${code}`);
+      if (undoFile) console.log(`Undo file: ${undoFile}  (bun src/scripts/inr-payments-no-vat.ts --undo ${undoFile})`);
+    }
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : e);
+    process.exitCode = 1;
+  } finally {
+    await mongoose.disconnect();
+  }
+}

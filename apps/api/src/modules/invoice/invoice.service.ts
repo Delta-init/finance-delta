@@ -43,7 +43,7 @@ import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
 import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
-import { emailTaxInvoices, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, vatOnPaymentsFor } from "./payment-tax-invoice";
+import { closePaidInRupees, emailTaxInvoices, isRupeePayment, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, stripVatForRupees, vatOnPaymentsFor } from "./payment-tax-invoice";
 
 /**
  * Tell CS Portal the enrolment's money changed, if its student went
@@ -280,6 +280,8 @@ export function toDTO(doc: InvoiceDoc): InvoiceDTO {
         proofKey?: string;
         receiptNumber?: string;
         taxInvoice?: { number?: string; netMinor?: number; taxMinor?: number; issuedAt?: Date } | null;
+        original?: { currency?: string; amountMinor?: number; rate?: number } | null;
+        vatFree?: boolean | null;
         bankAccountId?: { toString(): string } | null;
         bankTransactionId?: { toString(): string } | null;
         bankAmountMinor?: number | null;
@@ -316,6 +318,8 @@ export function toDTO(doc: InvoiceDoc): InvoiceDTO {
             issuedAt: new Date(pm.taxInvoice.issuedAt ?? pm.paidOn).toISOString(),
           },
         } : {}),
+        ...(pm.original?.currency ? { original: { currency: pm.original.currency, amountMinor: pm.original.amountMinor ?? 0, rate: pm.original.rate ?? 0 } } : {}),
+        ...(pm.vatFree ? { vatFree: true } : {}),
         ...(pm.bankAccountId
           ? {
               bankAccountId: pm.bankAccountId.toString(),
@@ -1483,8 +1487,11 @@ export async function approveInvoice(
   const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
   for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
   const before = ((doc.payments as unknown[]) ?? []).length;
-  // Part paid at the close, with VAT on payments received: a pro-forma, each payment its own tax invoice.
-  if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
+  // Paid in full at the close, all of it in rupees: rupees carry no VAT, so the invoice carries none (2026-11-13).
+  if (closePaidInRupees(doc)) stripVatForRupees(doc);
+  // Part paid at the close (or paid in full partly in rupees), with VAT on payments received: a pro-forma, each
+  // payment its own tax invoice.
+  else if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
   // In the same save: an approval and the payments it records stand or fall together.
   const recorded = recordDeclaredPayments(doc, accountFor);
   const taxInvoices = await stampTaxInvoices(doc);
@@ -1582,6 +1589,9 @@ function recordDeclaredPayments(
       chargesMinor: 0,
       proofUrl: p.receipt?.url ?? "",
       proofKey: p.receipt?.key ?? "",
+      // What the client handed over, kept on the payment itself (2026-11-13) — and rupees carry no VAT.
+      ...(p.original?.currency ? { original: { currency: p.original.currency, amountMinor: p.original.amountMinor, rate: p.original.rate } } : {}),
+      ...(isRupeePayment(p, currency) ? { vatFree: true } : {}),
     };
     // Its method's bank account — the rupees the client handed over land in a rupee account as they were.
     stampAccount(payment, accountFor.get(p.method) ?? null, currency, p.original);
@@ -2072,6 +2082,11 @@ export async function updatePayment(
   if (file) replaceProof(doc, p, await storeProof(orgId, id, file));
   if (lateNow.next !== undefined) p.lateEntry = lateNow.next;
   if (typedStatement !== undefined) p.statementDate = typedStatement ? new Date(`${typedStatement}T00:00:00.000Z`) : null;
+  // Its method changed to or from INR Transfer: whether it carries VAT follows. Otherwise it stays as it was
+  // recorded — an older rupee payment is corrected by scripts/inr-payments-no-vat.ts, not by an edit.
+  if (p.method !== input.method) {
+    p.vatFree = isRupeePayment({ method: input.method, original: p.original as { currency?: string } | undefined }, doc.currency) ? true : undefined;
+  }
   p.method = input.method;
   p.amountMinor = input.amountMinor;
   p.paidOn = new Date(input.paidOn);
@@ -2253,7 +2268,7 @@ export async function recordPayment(
    * accounts approved: its receipt where it already lives, and the reference
    * that makes recording it again a no-op.
    */
-  from?: { externalRef: string; proofUrl?: string },
+  from?: { externalRef: string; proofUrl?: string; original?: { currency: string; amountMinor: number; rate: number } },
   /** Who is typing it — only the invoice screen passes it: dated too far back, it waits for a manager. */
   late?: LateActor,
 ): Promise<InvoiceDTO> {
@@ -2311,6 +2326,9 @@ export async function recordPayment(
     proofUrl,
     proofKey,
     ...(from?.externalRef ? { externalRef: from.externalRef } : {}),
+    // Typed in another currency where it was taken (rupees in CS Portal): kept as it was paid. Rupees carry no VAT.
+    ...(from?.original?.currency ? { original: from.original } : {}),
+    ...(isRupeePayment({ method: input.method, original: from?.original }, doc.currency) ? { vatFree: true } : {}),
     ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
     ...(input.statementDate ? { statementDate: new Date(`${input.statementDate}T00:00:00.000Z`) } : {}),
   };

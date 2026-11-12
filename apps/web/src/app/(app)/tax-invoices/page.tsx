@@ -55,7 +55,30 @@ const DOC_EXPORT: ExportColumn<TaxDocumentRow>[] = [
   { header: "Paid %", value: (d) => paidPercent(d.paidMinor, d.feeMinor) },
   { header: "Pending", value: (d) => d.balanceMinor / 100 },
   { header: "Currency", value: (d) => d.currency },
+  { header: "Paid in", value: (d) => (d.inrAedMinor > 0 ? "INR" : d.currency) },
+  { header: "Rupees paid (INR)", value: (d) => (d.inrMinor > 0 ? d.inrMinor / 100 : "") },
+  { header: "Rupees recorded as", value: (d) => (d.inrAedMinor > 0 ? d.inrAedMinor / 100 : "") },
+  { header: "INR per unit", value: (d) => { const v = rupeeView(d); return v.rate ? Math.round(v.rate * 10000) / 10000 : ""; } },
+  { header: "Fee (INR)", value: (d) => { const v = rupeeView(d); return v.feeInrMinor ? v.feeInrMinor / 100 : ""; } },
 ];
+
+/**
+ * A document paid in rupees, as it is shown (2026-11-13: "INR never shown converted … the actual amount … the product
+ * amount in INR"): whether its rupees were recorded, whether all of it was rupees, the rate that payment itself was
+ * taken at (rupees for one unit of the invoice's currency), and the fee and what is owed at that rate.
+ */
+function rupeeView(d: TaxDocumentRow) {
+  const isInr = d.inrAedMinor > 0;
+  const known = isInr && d.inrMinor > 0 && (d.kind === "ti" || d.invInrKnownAedMinor >= d.invInrAedMinor);
+  const whole = isInr && d.inrAedMinor >= d.amountMinor;
+  const rate = !known ? 0 : d.kind === "ti" ? d.inrMinor / d.inrAedMinor : d.invInrMinor / d.invInrKnownAedMinor;
+  const rupees = (minor: number) => Math.round((minor * rate) / 100) * 100;
+  // Everything paid on the invoice so far was rupees, each amount recorded: the paid figure can be said in rupees.
+  const allPaidInRupees = known && d.paidMinor > 0 && d.invInrAedMinor >= d.paidMinor && d.invInrKnownAedMinor >= d.invInrAedMinor;
+  return { isInr, known, whole, rate, feeInrMinor: rate ? rupees(d.feeMinor) : 0, pendingInrMinor: rate ? rupees(d.balanceMinor) : 0, allPaidInRupees };
+}
+const rateText = (rate: number, currency: string) => `1 ${currency} = ${rate.toLocaleString("en-US", { maximumFractionDigits: 2 })} INR`;
+const small = "text-[11px] leading-4 text-foreground-muted";
 const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Invoice", value: (p) => p.invoiceNumber },
   { header: "Issued", value: (p) => p.issueDate },
@@ -106,9 +129,14 @@ export default function TaxInvoicesPage() {
   // All tax documents: only the invoices or only the TIs, and only what still has something owed.
   const [docType, setDocType] = useUrlParam<"all" | "invoice" | "ti">("type", "all", { allowed: ["invoice", "ti"] });
   const [pending, setPending] = useUrlParam<"all" | "yes">("pending", "all", { allowed: ["yes"] });
-  const docParams = { ...params, type: docType === "all" ? undefined : docType, pending: pending === "yes" ? ("yes" as const) : undefined };
+  // …and only what was paid in rupees, or only what was not (2026-11-13).
+  const [paidIn, setPaidIn] = useUrlParam<"all" | "aed" | "inr">("paidIn", "all", { allowed: ["aed", "inr"] });
+  const docParams = {
+    ...params, type: docType === "all" ? undefined : docType, pending: pending === "yes" ? ("yes" as const) : undefined,
+    paidIn: paidIn === "all" ? undefined : paidIn,
+  };
   const docs = useTaxDocuments({ ...docParams, page: tab === "all" ? page : 1, pageSize });
-  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending]);
+  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending, paidIn]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function pdf(t: Pick<TaxInvoiceRow, "number" | "invoiceId" | "paymentId" | "customerId">) {
@@ -187,6 +215,7 @@ export default function TaxInvoicesPage() {
             ? <Link href={`/invoices/${d.invoiceId}`} className="font-medium text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{d.number}</Link>
             : <span className="font-medium">{d.number}</span>}
           <Badge tone={d.kind === "ti" ? "success" : "primary"}>{d.kind === "ti" ? "TI" : "Invoice"}</Badge>
+          {d.inrAedMinor > 0 && <Badge tone="warning" title="Paid in rupees">INR</Badge>}
         </span>
       ),
     },
@@ -199,24 +228,81 @@ export default function TaxInvoicesPage() {
         : <span className="text-foreground-muted">—</span>,
     },
     { key: "net", header: "Net", align: "right", cell: (d) => <MoneyDisplay minor={d.netMinor} currency={d.currency} /> },
-    { key: "tax", header: "VAT", align: "right", cell: (d) => <MoneyDisplay minor={d.taxMinor} currency={d.currency} className="font-medium" /> },
-    { key: "amount", header: "Total", align: "right", cell: (d) => <MoneyDisplay minor={d.amountMinor} currency={d.currency} className="font-medium" /> },
+    {
+      // Rupees carry no VAT: said so, rather than a nought, on a rupee document that carries none.
+      key: "tax", header: "VAT", align: "right",
+      cell: (d) => d.taxMinor === 0 && d.inrAedMinor > 0
+        ? <span className="text-foreground-muted">No VAT</span>
+        : <MoneyDisplay minor={d.taxMinor} currency={d.currency} className="font-medium" />,
+    },
+    {
+      // Paid in rupees: the rupees themselves, never only what they were converted to.
+      key: "amount", header: "Total", align: "right",
+      cell: (d) => {
+        const v = rupeeView(d);
+        if (!v.isInr) return <MoneyDisplay minor={d.amountMinor} currency={d.currency} className="font-medium" />;
+        if (!v.known) {
+          return (
+            <div>
+              <MoneyDisplay minor={d.amountMinor} currency={d.currency} className="font-medium" />
+              <p className={small}>paid in rupees — the rupees were not recorded</p>
+            </div>
+          );
+        }
+        if (!v.whole) {
+          return (
+            <div>
+              <MoneyDisplay minor={d.amountMinor} currency={d.currency} className="font-medium" />
+              <p className={small}>{formatMoney(d.inrMinor, "INR")} of it paid in rupees</p>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <span className="font-medium tabular-nums">{formatMoney(d.inrMinor, "INR")}</span>
+            <p className={small}>recorded as {formatMoney(d.amountMinor, d.currency)}</p>
+            <p className={small}>{rateText(v.rate, d.currency)}</p>
+          </div>
+        );
+      },
+    },
     {
       // Of the invoice — for a TI, of its pro-forma: the payment itself is the Total beside it.
       key: "paid", header: "Paid", align: "right",
-      cell: (d) => (
-        <div>
-          <MoneyDisplay minor={d.paidMinor} currency={d.currency} className="text-success" />
-          {d.kind === "ti" && <p className="text-[11px] text-foreground-muted">of {formatMoney(d.feeMinor, d.currency)} fee</p>}
-        </div>
-      ),
+      cell: (d) => {
+        const v = rupeeView(d);
+        if (v.allPaidInRupees) {
+          return (
+            <div>
+              <span className="tabular-nums text-success">{formatMoney(d.invInrMinor, "INR")}</span>
+              <p className={small}>of {formatMoney(v.feeInrMinor, "INR")} fee</p>
+              <p className={small}>fee {formatMoney(d.feeMinor, d.currency)}</p>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <MoneyDisplay minor={d.paidMinor} currency={d.currency} className="text-success" />
+            {d.kind === "ti" && <p className={small}>of {formatMoney(d.feeMinor, d.currency)} fee</p>}
+            {v.known && <p className={small}>fee {formatMoney(v.feeInrMinor, "INR")} at this rate</p>}
+          </div>
+        );
+      },
     },
     { key: "progress", header: "Progress", cell: (d) => <PaidProgress paidMinor={d.paidMinor} totalMinor={d.feeMinor} /> },
     {
+      // What is owed is owed in the invoice's currency; the rupees beside it are that at this payment's rate.
       key: "pending", header: "Pending", align: "right",
-      cell: (d) => d.balanceMinor > 0
-        ? <MoneyDisplay minor={d.balanceMinor} currency={d.currency} className="font-medium text-warning" />
-        : <span className="text-foreground-muted">—</span>,
+      cell: (d) => {
+        if (!(d.balanceMinor > 0)) return <span className="text-foreground-muted">—</span>;
+        const v = rupeeView(d);
+        return (
+          <div>
+            <MoneyDisplay minor={d.balanceMinor} currency={d.currency} className="font-medium text-warning" />
+            {v.known && <p className={small}>about {formatMoney(v.pendingInrMinor, "INR")}</p>}
+          </div>
+        );
+      },
     },
     {
       key: "pdf", header: "", hideInDetail: true,
@@ -293,6 +379,18 @@ export default function TaxInvoicesPage() {
                 </SelectContent>
               </Select>
             </Field>
+            <Field label="Paid in">
+              <Select value={paidIn} onValueChange={(v) => setPaidIn(v as "all" | "aed" | "inr")}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="inr">Rupees (INR)</SelectItem>
+                  <SelectItem value="aed">Not rupees</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
             <Field label="Balance">
               <Select value={pending} onValueChange={(v) => setPending(v as "all" | "yes")}>
                 <SelectTrigger className="w-[150px]">
@@ -308,9 +406,10 @@ export default function TaxInvoicesPage() {
         )}
       </div>
 
-      {/* All tax documents: what the list comes to — its VAT is the VAT report's output VAT for the same days. */}
+      {/* All tax documents: what the list comes to — its VAT is the VAT report's output VAT for the same days. What was
+          paid in rupees is counted on its own (2026-11-13): rupees carry no VAT and are never shown only converted. */}
       {tab === "all" && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {docTotals.length === 0 ? (
             <div className="rounded-lg border border-border bg-surface p-4 text-sm text-foreground-muted">{docs.isLoading ? "Loading…" : "No tax documents in this period."}</div>
           ) : docTotals.flatMap(([cur, t]) => [
@@ -318,18 +417,30 @@ export default function TaxInvoicesPage() {
               <p className="text-xs text-foreground-muted">Documents{docTotals.length > 1 ? ` · ${cur}` : ""}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums">{t.count}</p>
             </div>,
-            <div key={`${cur}-net`} className="rounded-lg border border-border bg-surface p-4">
-              <p className="text-xs text-foreground-muted">Net</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.netMinor, cur)}</p>
+            <div key={`${cur}-a`} className="rounded-lg border border-border bg-surface p-4" title="What the documents come to, without what was paid in rupees">
+              <p className="text-xs text-foreground-muted">Total in {cur}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.amountMinor - t.inrAedMinor, cur)}</p>
             </div>,
-            <div key={`${cur}-vat`} className="rounded-lg border border-border bg-surface p-4">
-              <p className="text-xs text-foreground-muted">VAT</p>
+            <div key={`${cur}-net`} className="rounded-lg border border-border bg-surface p-4" title="Before VAT, without what was paid in rupees">
+              <p className="text-xs text-foreground-muted">Net ({cur})</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.netMinor - (t.inrAedMinor - t.inrTaxMinor), cur)}</p>
+            </div>,
+            <div key={`${cur}-vat`} className="rounded-lg border border-border bg-surface p-4" title="The VAT the VAT report counts for these days">
+              <p className="text-xs text-foreground-muted">VAT ({cur})</p>
               <p className="mt-1 text-lg font-semibold tabular-nums text-primary">{formatMoney(t.taxMinor, cur)}</p>
             </div>,
-            <div key={`${cur}-a`} className="rounded-lg border border-border bg-surface p-4">
-              <p className="text-xs text-foreground-muted">Total</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.amountMinor, cur)}</p>
-            </div>,
+            ...(cur === "INR" ? [] : [
+              <div key={`${cur}-inr`} className="rounded-lg border border-border bg-surface p-4" title="The rupees clients actually paid — no VAT on them">
+                <p className="text-xs text-foreground-muted">Paid in INR</p>
+                <p className={`mt-1 text-lg font-semibold tabular-nums ${t.inrCount > 0 ? "text-warning" : ""}`}>{t.inrCount > 0 ? formatMoney(t.inrMinor, "INR") : "—"}</p>
+                {t.inrCount > 0 && (
+                  <p className={small}>
+                    {t.inrCount} document{t.inrCount === 1 ? "" : "s"} · recorded as {formatMoney(t.inrAedMinor, cur)}
+                    {t.inrTaxMinor > 0 ? ` · ${formatMoney(t.inrTaxMinor, cur)} VAT still on them` : ""}
+                  </p>
+                )}
+              </div>,
+            ]),
             <div key={`${cur}-p`} className="rounded-lg border border-border bg-surface p-4" title="What is still owed on these invoices — each counted once, however many of its tax invoices are listed">
               <p className="text-xs text-foreground-muted">Pending</p>
               <p className={`mt-1 text-lg font-semibold tabular-nums ${t.pendingMinor > 0 ? "text-warning" : ""}`}>{formatMoney(t.pendingMinor, cur)}</p>

@@ -11,14 +11,25 @@
  *
  * Fully paid at the close, or the setting off, nothing changes: the invoice is the tax invoice, as before. Invoices
  * approved before this never become pro-formas.
+ *
+ * Rupees carry no VAT (the user, 2026-11-13: "INR payment doesn't have the VAT"). A payment received in rupees — the
+ * INR Transfer method, or one typed in rupees in a CRM or CS Portal — on an invoice that is not itself in rupees is
+ * marked `vatFree` as it is recorded: on a pro-forma its tax invoice keeps its number and carries no VAT, and the
+ * other payments carry the VAT of their own amounts only. An enrolment paid in full at the close, all of it in rupees,
+ * has the VAT taken off its invoice (stripVatForRupees); paid in full partly in rupees, it is a pro-forma so that each
+ * payment has its own document. The client pays the same; nothing is taken out of the rupees for VAT. A rupee payment
+ * recorded before this is as it was until scripts/inr-payments-no-vat.ts corrects it.
  */
-import { formatMoney } from "@delta/shared";
+import { computeInvoiceLine, formatMoney, sumInvoiceTotals } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 
 type Pay = {
   _id: { toString(): string };
   amountMinor: number;
   paidOn: Date;
+  method?: string;
+  original?: { currency?: string; amountMinor?: number; rate?: number } | null;
+  vatFree?: boolean | null;
   taxInvoice?: { number?: string; netMinor?: number; taxMinor?: number; issuedAt?: Date; emailedAt?: Date } | null;
   toObject?: () => Record<string, unknown>;
 };
@@ -26,12 +37,19 @@ type Doc = {
   _id: unknown;
   organizationId: unknown;
   invoiceNumber: string;
+  currency?: string | null;
+  taxInclusive?: boolean | null;
+  lineItems?: unknown;
+  roundOffMinor?: number | null;
   totalMinor?: number | null;
   taxTotalMinor?: number | null;
   balanceMinor?: number | null;
   payments: unknown;
   proforma?: { at?: Date } | null;
-  enrolment?: { declaredPayments?: { amountMinor: number }[] | null; declaredPaidMinor?: number | null } | null;
+  enrolment?: {
+    declaredPayments?: { amountMinor: number; method?: string; original?: { currency?: string } | null }[] | null;
+    declaredPaidMinor?: number | null;
+  } | null;
   set(path: string, value: unknown): unknown;
   get?(path: string): unknown;
 };
@@ -46,20 +64,80 @@ export function isProforma(doc: unknown): boolean {
   return Boolean((doc as Doc).proforma?.at);
 }
 
+/** The method the rupee account's payments are recorded under — "INR Transfer". */
+export const RUPEE_METHOD = "inr_bank_account";
+
+/**
+ * Received in rupees: the INR Transfer method, or typed in rupees where it was taken — on an invoice that is not
+ * itself in rupees (a Bangalore invoice is, and is taxed as it always was).
+ */
+export function isRupeePayment(p: { method?: string | null; original?: { currency?: string | null } | null } | null | undefined, invoiceCurrency: unknown): boolean {
+  if (String(invoiceCurrency ?? "AED").toUpperCase() === "INR") return false;
+  return p?.method === RUPEE_METHOD || String(p?.original?.currency ?? "").toUpperCase() === "INR";
+}
+
+/** What the close declared, and how much of it in rupees. */
+function declaredAtClose(d: Doc): { declared: number; rupees: number } {
+  const list = d.enrolment?.declaredPayments ?? [];
+  if (!list.length) return { declared: d.enrolment?.declaredPaidMinor ?? 0, rupees: 0 };
+  return {
+    declared: list.reduce((s, p) => s + (p.amountMinor ?? 0), 0),
+    rupees: list.reduce((s, p) => s + (isRupeePayment(p, d.currency) ? p.amountMinor ?? 0 : 0), 0),
+  };
+}
+
+/** An enrolment being approved that was paid in full at the close, every payment in rupees: its invoice carries no VAT. */
+export function closePaidInRupees(doc: unknown): boolean {
+  const d = doc as Doc;
+  if (!d.enrolment || isProforma(d)) return false;
+  const total = d.totalMinor ?? 0;
+  const { declared, rupees } = declaredAtClose(d);
+  return total > 0 && (d.taxTotalMinor ?? 0) > 0 && declared >= total && rupees === declared;
+}
+
+/**
+ * The VAT taken off an invoice paid in rupees, on the document before it is saved: every line untaxed, the total as it
+ * was — the prices are tax-inclusive, so the client's figure does not move. What it carried is kept on `rupeesNoVat`.
+ * Not on one priced before tax (taking the tax off would lower what the client was asked for) — answers false, and
+ * the invoice is left as it is.
+ */
+export function stripVatForRupees(doc: unknown): boolean {
+  const d = doc as Doc;
+  const tax = d.taxTotalMinor ?? 0;
+  if (!(tax > 0) || d.taxInclusive !== true) return false;
+  const lines = ((d.lineItems as unknown[]) ?? []).map((l) => ((l as { toObject?: () => Record<string, any> }).toObject?.() ?? l) as Record<string, any>);
+  if (!lines.length) return false;
+  const inputs = lines.map((l) => ({ quantity: l.quantity ?? 1, unitPriceMinor: l.unitPriceMinor ?? 0, discountPct: l.discountPct ?? 0, taxes: [], taxInclusive: true }));
+  const summed = sumInvoiceTotals(inputs);
+  const roundOff = d.roundOffMinor ?? 0;
+  if (summed.totalMinor + roundOff !== (d.totalMinor ?? 0)) return false;
+  d.set("rupeesNoVat", { at: new Date(), taxMinor: tax, lineTaxes: lines.map((l) => l.taxes ?? []) });
+  d.set("lineItems", lines.map((l, i) => {
+    const b = computeInvoiceLine(inputs[i]!);
+    return { ...l, taxes: [], lineSubtotalMinor: b.lineSubtotalMinor, discountMinor: b.discountMinor, taxableMinor: b.taxableMinor, taxTotalMinor: 0, lineTotalMinor: b.lineTotalMinor };
+  }));
+  d.set("subtotalMinor", summed.subtotalMinor);
+  d.set("discountTotalMinor", summed.discountTotalMinor);
+  d.set("taxBreakdown", []);
+  d.set("taxTotalMinor", 0);
+  return true;
+}
+
 /**
  * Whether an enrolment being approved starts as a pro-forma: it carries VAT and what was collected at the close is
  * less than the invoice. Decided on what the close declared, not on what approval managed to record — a close paid in
  * full by EMI, which approval leaves for accounts to record, is still paid in full.
+ *
+ * Also one paid in full with part of it in rupees (2026-11-13): the rupees carry no VAT and the rest does, which one
+ * invoice cannot say — so each payment gets its own document. (All of it in rupees: closePaidInRupees.)
  */
 export function startsProforma(doc: unknown): boolean {
   const d = doc as Doc;
   if (!d.enrolment || isProforma(d)) return false;
   const total = d.totalMinor ?? 0;
   if (!(total > 0) || !((d.taxTotalMinor ?? 0) > 0)) return false;
-  const declared = d.enrolment.declaredPayments?.length
-    ? d.enrolment.declaredPayments.reduce((s, p) => s + (p.amountMinor ?? 0), 0)
-    : d.enrolment.declaredPaidMinor ?? 0;
-  return declared < total;
+  const { declared, rupees } = declaredAtClose(d);
+  return declared < total || (rupees > 0 && rupees < declared);
 }
 
 /**
@@ -96,6 +174,10 @@ export async function stampTaxInvoices(doc: unknown): Promise<string[]> {
 /**
  * The VAT in each payment on a pro-forma, in the order they are on it: its share of the invoice's VAT at the
  * invoice's rate — the payment that clears the invoice taking whatever is left, so they add up to it exactly.
+ *
+ * A payment marked `vatFree` (received in rupees) carries none. With one on it, the others still carry the VAT of
+ * their own amounts — the last of them, once the invoice is cleared, taking what is left of the VAT on what was not
+ * paid in rupees, never the rupees' share.
  */
 export function taxShares(doc: unknown): number[] {
   const d = doc as Doc;
@@ -104,10 +186,15 @@ export function taxShares(doc: unknown): number[] {
   const tax = d.taxTotalMinor ?? 0;
   const cleared = (d.balanceMinor ?? 0) <= 0;
   const share = (amount: number) => (total > 0 ? Math.round((amount * tax) / total) : 0);
+  const free = payments.map((p) => p.vatFree === true);
+  const taxedSum = payments.reduce((s, p, i) => (free[i] ? s : s + (p.amountMinor ?? 0)), 0);
+  const target = free.some(Boolean) ? share(taxedSum) : tax;
+  const lastTaxed = free.lastIndexOf(false);
   return payments.map((p, i) => {
-    const others = payments.reduce((s, x, j) => (j === i ? s : s + share(x.amountMinor ?? 0)), 0);
-    const last = cleared && i === payments.length - 1;
-    return Math.max(0, Math.min(p.amountMinor ?? 0, last ? tax - others : share(p.amountMinor ?? 0)));
+    if (free[i]) return 0;
+    const others = payments.reduce((s, x, j) => (j === i || free[j] ? s : s + share(x.amountMinor ?? 0)), 0);
+    const last = cleared && i === lastTaxed;
+    return Math.max(0, Math.min(p.amountMinor ?? 0, last ? target - others : share(p.amountMinor ?? 0)));
   });
 }
 
@@ -270,8 +357,20 @@ export interface TaxDocumentRow {
   netMinor: number; taxMinor: number; amountMinor: number;
   /** Of that invoice (for a TI, of its pro-forma): the whole fee, what is paid of it, what is still owed. */
   feeMinor: number; paidMinor: number; balanceMinor: number;
+  /**
+   * Paid in rupees (2026-11-13: "INR never shown converted … the actual amount"): how much of this document's amount
+   * was, as recorded in the invoice's currency (`inrAedMinor`, 0 when none), the rupees themselves in paise
+   * (`inrMinor`, 0 when they were not recorded) and the VAT still carried on that part (`inrTaxMinor`).
+   */
+  inrAedMinor: number; inrMinor: number; inrTaxMinor: number;
+  /** The same for everything paid on the invoice so far, and how much of it has its rupees recorded. */
+  invInrAedMinor: number; invInrMinor: number; invInrKnownAedMinor: number;
 }
-export interface TaxDocumentTotals { count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number }
+export interface TaxDocumentTotals {
+  count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number;
+  /** The documents paid in rupees: how many, the rupees (paise), what they were recorded as, and the VAT on them. */
+  inrCount: number; inrMinor: number; inrAedMinor: number; inrTaxMinor: number;
+}
 
 /**
  * Sales → Pro-formas & tax invoices → All tax documents (the user, 2026-11-12: every tax document in one place, with
@@ -280,10 +379,13 @@ export interface TaxDocumentTotals { count: number; netMinor: number; taxMinor: 
  * day paid — a cancelled one is no longer a tax document and is left out. So the VAT here is the VAT report's for the
  * same days. A TI's paid / pending are its pro-forma's, and `pendingMinor` counts each invoice once however many of
  * its tax invoices are listed. One page at a time: the invoices run to thousands.
+ *
+ * What was paid in rupees is told apart (2026-11-13): each row says how much of it was, with the rupees themselves
+ * when they were recorded, the totals count the rupee documents on their own, and `paidIn` keeps only one kind.
  */
 export async function listTaxDocuments(
   orgId: string,
-  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; page?: number; pageSize?: number } = {},
+  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: "aed" | "inr"; page?: number; pageSize?: number } = {},
 ): Promise<{ rows: TaxDocumentRow[]; total: number; page: number; pageSize: number; totals: Record<string, TaxDocumentTotals> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -297,11 +399,26 @@ export async function listTaxDocuments(
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 25)));
 
+  // A payment received in rupees (isRupeePayment, as an expression) and the rupees themselves: as typed where it was
+  // taken, else what landed in a rupee bank account; 0 when neither was recorded.
+  const upper = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
+  const inRupees = (p: string) => ({ $and: [
+    { $ne: [upper("$currency"), "INR"] },
+    { $or: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $eq: [upper(`${p}.original.currency`), "INR"] }] },
+  ] });
+  const rupeesOf = (p: string) => ({ $cond: [
+    { $and: [{ $eq: [upper(`${p}.original.currency`), "INR"] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
+    { $cond: [{ $and: [{ $eq: [upper(`${p}.bankCurrency`), "INR"] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
+  ] });
+  const fee = { $ifNull: ["$totalMinor", 0] };
+  const invoiceInr = { $min: ["$invInrAedMinor", fee] };
+
   // An aggregation is not cast by the schema: ids and dates go in as what they are.
   const invoices = { "proforma.at": { $exists: false }, ...(ranged ? { issueDate: range } : {}) };
   const proformas = { "proforma.at": { $exists: true }, payments: { $elemMatch: { "taxInvoice.number": { $exists: true }, ...(ranged ? { paidOn: range } : {}) } } };
   const [out] = await Invoice.aggregate<{
-    rows: any[]; totals: Array<{ _id: string; count: number; netMinor: number; taxMinor: number; amountMinor: number }>;
+    rows: any[];
+    totals: Array<{ _id: string; count: number; netMinor: number; taxMinor: number; amountMinor: number; inrCount: number; inrMinor: number; inrAedMinor: number; inrTaxMinor: number }>;
     pending: Array<{ _id: string; pendingMinor: number }>;
   }>([
     {
@@ -312,9 +429,28 @@ export async function listTaxDocuments(
         ...(opts.pending ? { balanceMinor: { $gt: 0 } } : {}),
       },
     },
+    // What was paid on the invoice in rupees: each such payment as recorded, and its rupees.
+    {
+      $addFields: {
+        rupeePayments: {
+          $map: {
+            input: { $filter: { input: { $ifNull: ["$payments", []] }, as: "p", cond: inRupees("$$p") } },
+            as: "p", in: { aed: { $ifNull: ["$$p.amountMinor", 0] }, inr: rupeesOf("$$p") },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        invInrAedMinor: { $sum: "$rupeePayments.aed" },
+        invInrMinor: { $sum: "$rupeePayments.inr" },
+        invInrKnownAedMinor: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, "$$r.aed", 0] } } } },
+      },
+    },
     {
       $project: {
         invoiceNumber: 1, customerId: 1, customerName: 1, currency: 1, totalMinor: 1, amountPaidMinor: 1, balanceMinor: 1,
+        invInrAedMinor: 1, invInrMinor: 1, invInrKnownAedMinor: 1,
         doc: {
           $cond: [
             { $gt: ["$proforma.at", null] },
@@ -325,12 +461,18 @@ export async function listTaxDocuments(
                 in: {
                   kind: "ti", number: "$$p.taxInvoice.number", date: "$$p.paidOn", paymentId: "$$p._id", method: { $ifNull: ["$$p.method", ""] },
                   netMinor: { $ifNull: ["$$p.taxInvoice.netMinor", 0] }, taxMinor: { $ifNull: ["$$p.taxInvoice.taxMinor", 0] }, amountMinor: { $ifNull: ["$$p.amountMinor", 0] },
+                  inrAedMinor: { $cond: [inRupees("$$p"), { $ifNull: ["$$p.amountMinor", 0] }, 0] },
+                  inrMinor: { $cond: [inRupees("$$p"), rupeesOf("$$p"), 0] },
+                  inrTaxMinor: { $cond: [inRupees("$$p"), { $ifNull: ["$$p.taxInvoice.taxMinor", 0] }, 0] },
                 },
               },
             },
             [{
               kind: "invoice", number: "$invoiceNumber", date: "$issueDate", paymentId: null, method: "",
               netMinor: { $subtract: [{ $ifNull: ["$totalMinor", 0] }, { $ifNull: ["$taxTotalMinor", 0] }] }, taxMinor: { $ifNull: ["$taxTotalMinor", 0] }, amountMinor: { $ifNull: ["$totalMinor", 0] },
+              // The part of the invoice paid in rupees, never more than the invoice; its share of the invoice's VAT.
+              inrAedMinor: invoiceInr, inrMinor: "$invInrMinor",
+              inrTaxMinor: { $cond: [{ $gt: [fee, 0] }, { $floor: { $add: [{ $divide: [{ $multiply: [{ $ifNull: ["$taxTotalMinor", 0] }, invoiceInr] }, fee] }, 0.5] } }, 0] },
             }],
           ],
         },
@@ -339,10 +481,16 @@ export async function listTaxDocuments(
     { $unwind: "$doc" },
     ...(ranged ? [{ $match: { "doc.date": range } }] : []),
     ...(like ? [{ $match: { $or: [{ "doc.number": like }, { invoiceNumber: like }, { customerName: like }] } }] : []),
+    ...(opts.paidIn ? [{ $match: { "doc.inrAedMinor": opts.paidIn === "inr" ? { $gt: 0 } : { $lte: 0 } } }] : []),
     {
       $facet: {
         rows: [{ $sort: { "doc.date": -1, "doc.number": -1, _id: -1 } }, { $skip: (page - 1) * pageSize }, { $limit: pageSize }],
-        totals: [{ $group: { _id: { $ifNull: ["$currency", "AED"] }, count: { $sum: 1 }, netMinor: { $sum: "$doc.netMinor" }, taxMinor: { $sum: "$doc.taxMinor" }, amountMinor: { $sum: "$doc.amountMinor" } } }],
+        totals: [{
+          $group: {
+            _id: { $ifNull: ["$currency", "AED"] }, count: { $sum: 1 }, netMinor: { $sum: "$doc.netMinor" }, taxMinor: { $sum: "$doc.taxMinor" }, amountMinor: { $sum: "$doc.amountMinor" },
+            inrCount: { $sum: { $cond: [{ $gt: ["$doc.inrAedMinor", 0] }, 1, 0] } }, inrMinor: { $sum: "$doc.inrMinor" }, inrAedMinor: { $sum: "$doc.inrAedMinor" }, inrTaxMinor: { $sum: "$doc.inrTaxMinor" },
+          },
+        }],
         pending: [
           { $group: { _id: "$_id", currency: { $first: { $ifNull: ["$currency", "AED"] } }, balanceMinor: { $first: { $ifNull: ["$balanceMinor", 0] } } } },
           { $group: { _id: "$currency", pendingMinor: { $sum: "$balanceMinor" } } },
@@ -352,7 +500,12 @@ export async function listTaxDocuments(
   ]);
 
   const totals: Record<string, TaxDocumentTotals> = {};
-  for (const t of out?.totals ?? []) totals[t._id] = { count: t.count, netMinor: t.netMinor, taxMinor: t.taxMinor, amountMinor: t.amountMinor, pendingMinor: 0 };
+  for (const t of out?.totals ?? []) {
+    totals[t._id] = {
+      count: t.count, netMinor: t.netMinor, taxMinor: t.taxMinor, amountMinor: t.amountMinor, pendingMinor: 0,
+      inrCount: t.inrCount ?? 0, inrMinor: t.inrMinor ?? 0, inrAedMinor: t.inrAedMinor ?? 0, inrTaxMinor: t.inrTaxMinor ?? 0,
+    };
+  }
   for (const p of out?.pending ?? []) if (totals[p._id]) totals[p._id]!.pendingMinor = p.pendingMinor;
   const rows: TaxDocumentRow[] = (out?.rows ?? []).map((r) => ({
     kind: r.doc.kind === "ti" ? "ti" : "invoice", number: String(r.doc.number ?? ""), date: day(r.doc.date),
@@ -360,6 +513,8 @@ export async function listTaxDocuments(
     customerId: String(r.customerId ?? ""), customerName: String(r.customerName ?? ""), currency: String(r.currency ?? "AED"),
     netMinor: r.doc.netMinor ?? 0, taxMinor: r.doc.taxMinor ?? 0, amountMinor: r.doc.amountMinor ?? 0,
     feeMinor: r.totalMinor ?? 0, paidMinor: r.amountPaidMinor ?? 0, balanceMinor: r.balanceMinor ?? 0,
+    inrAedMinor: r.doc.inrAedMinor ?? 0, inrMinor: r.doc.inrMinor ?? 0, inrTaxMinor: r.doc.inrTaxMinor ?? 0,
+    invInrAedMinor: r.invInrAedMinor ?? 0, invInrMinor: r.invInrMinor ?? 0, invInrKnownAedMinor: r.invInrKnownAedMinor ?? 0,
   }));
   return { rows, total: Object.values(totals).reduce((s, t) => s + t.count, 0), page, pageSize, totals };
 }

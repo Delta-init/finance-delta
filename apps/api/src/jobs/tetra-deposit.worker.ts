@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import { commissionConfigured } from "../lib/commission-client";
-import { drainTetraDepositDecisions } from "../modules/tetra-deposit/tetra-deposit.service";
+import { drainTetraDepositDecisions, drainTetraDepositDeletions } from "../modules/tetra-deposit/tetra-deposit.service";
 
 /**
  * Gets the accountants' decisions on CS Portal deposits back there.
@@ -19,6 +19,8 @@ async function runPass(): Promise<void> {
   running = true;
   try {
     await drainTetraDepositDecisions();
+    // Requests deleted here that CS Portal deletes too (2026-11-12).
+    await drainTetraDepositDeletions();
   } catch (err) {
     logger.error({ err }, "CS Portal deposit decisions pass failed");
   } finally {

@@ -166,7 +166,7 @@ const NAV: NavGroup[] = [
       // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
       { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
       // Every deposit CS Portal sent — the record; they are decided on Approvals.
-      { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: "tetra_deposit:approve", badge: "tetra_deposit" },
+      { href: "/tetra-deposits", label: "Tetra Deposits", icon: Coins, enabled: true, permission: ["tetra_deposit:approve", "tetra_deposit:delete"], badge: "tetra_deposit" },
     ],
   },
   {

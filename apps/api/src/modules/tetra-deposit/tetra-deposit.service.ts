@@ -11,7 +11,7 @@ import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { sendNotice } from "../../lib/email";
 import { withAccountants } from "../../lib/approval-recipients";
 import {
-  commissionConfigured, sendFundingDecisionToCommission, CommissionRefusedError, type CommissionFundingDecision,
+  commissionConfigured, sendFundingDecisionToCommission, sendFundingDeletedToCommission, CommissionRefusedError, type CommissionFundingDecision,
 } from "../../lib/commission-client";
 import { PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
 import { Role } from "../role/role.model";
@@ -108,7 +108,13 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
         }
       : {}),
     ...(r.closedReason ? { closedReason: r.closedReason } : {}),
-    ...(r.deleted?.at ? { deleted: { at: iso(r.deleted.at), byName: String(r.deleted.byName ?? ""), reason: String(r.deleted.reason ?? ""), previousStatus: String(r.deleted.previousStatus ?? "") } } : {}),
+    ...(r.deleted?.at ? {
+      deleted: {
+        at: iso(r.deleted.at), byName: String(r.deleted.byName ?? ""), reason: String(r.deleted.reason ?? ""), previousStatus: String(r.deleted.previousStatus ?? ""),
+        ...(r.deleted.from ? { from: String(r.deleted.from) } : {}),
+        ...(r.deleted.csPortal?.state ? { csPortal: { state: String(r.deleted.csPortal.state), message: String(r.deleted.csPortal.message ?? "") } } : {}),
+      },
+    } : {}),
     ...(r.enrolmentPayment?.invoiceId
       ? {
           enrolmentPayment: {
@@ -509,11 +515,19 @@ export async function getTetraDeposit(organizationId: string, id: string): Promi
 
 /* ── Deleted by hand ─────────────────────────────────────────────────────── */
 
+/** CS Portal's own funding requests (its funding_transactions) — the ones it deletes when they are deleted here. */
+export const CS_PORTAL_FUNDING_TYPES = ["DEPOSIT", "BONUS"];
+/** Deleted here, a request CS Portal deletes too (2026-11-12): one of its funding requests, pending or rejected. */
+export const tellsCsPortal = (row: { type?: string; status?: string }) =>
+  CS_PORTAL_FUNDING_TYPES.includes(String(row.type ?? "DEPOSIT")) && ["pending", "rejected"].includes(String(row.status));
+
 /**
  * Takes one off the list (the user, 2026-10-28: "a delete option in Tetra deposits") — kept as "deleted", with who,
- * when, why and the status it had. Not one waiting for a decision (reject it: CS Portal is waiting for an
- * answer), nor a decision still on its way there, nor an approval whose payment is still on an invoice (remove that
- * payment first — nothing tied to money goes quietly). CS Portal is not told.
+ * when, why and the status it had. By a Super Admin, an Administrator or a Manager (tetra_deposit:delete, 2026-11-12).
+ * A pending or rejected deposit or bonus is deleted in CS Portal too (the user, 2026-11-12: "it will delete from the
+ * portal it came from") — told on the worker's beat, tried until it answers. Not a course upgrade or balance payment
+ * waiting for a decision (reject it: CS Portal is waiting for an answer), nor a decision still on its way there, nor an
+ * approval whose payment is still on an invoice (remove that payment first — nothing tied to money goes quietly).
  */
 export async function deleteTetraDeposit(auth: AuthContext, id: string, input: DeleteTetraDepositInput): Promise<TetraDeposit> {
   if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
@@ -521,7 +535,7 @@ export async function deleteTetraDeposit(auth: AuthContext, id: string, input: D
   const row = await TetraDepositModel.findOne({ _id: id, organizationId: org }).lean<any>();
   if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
   if (row.status === "deleted") throw new AppError("CONFLICT", "It is deleted already");
-  if (row.status === "pending") throw new AppError("CONFLICT", "It is waiting for a decision — reject it instead, so CS Portal gets an answer");
+  if (row.status === "pending" && !tellsCsPortal(row)) throw new AppError("CONFLICT", "It is waiting for a decision — reject it instead, so CS Portal gets an answer");
   if (["sending", "queued"].includes(String(row.delivery?.state ?? ""))) {
     throw new AppError("CONFLICT", "Its decision is still on its way to CS Portal — delete it once it has arrived (or been turned down)");
   }
@@ -539,16 +553,87 @@ export async function deleteTetraDeposit(auth: AuthContext, id: string, input: D
   }
   const me = await User.findById(auth.userId).select("name").lean();
   const byName = String(me?.name ?? "");
+  const tell = tellsCsPortal(row) && commissionConfigured();
+  const now = new Date();
   const done = await TetraDepositModel.findOneAndUpdate(
     { _id: row._id, status: row.status },
     {
-      $set: { status: "deleted", deleted: { at: new Date(), byId: new Types.ObjectId(auth.userId), byName, reason: input.reason, previousStatus: row.status } },
-      $push: { events: { at: new Date(), kind: "deleted", byName, text: `Deleted (it was ${row.status}): ${input.reason}` } },
+      $set: {
+        status: "deleted",
+        deleted: {
+          at: now, byId: new Types.ObjectId(auth.userId), byName, reason: input.reason, previousStatus: row.status,
+          ...(tell ? { csPortal: { state: "queued", attempts: 0, nextAttemptAt: now } } : {}),
+        },
+      },
+      $push: { events: { at: now, kind: "deleted", byName, text: `Deleted (it was ${row.status}): ${input.reason}${tell ? " — CS Portal deletes it too" : ""}` } },
     },
     { new: true },
   ).lean();
   if (!done) throw new AppError("CONFLICT", "It changed meanwhile — open it again");
-  return tetraDepositDTO(done, true);
+  if (!tell) return tetraDepositDTO(done, true);
+  // Told now, so the answer can show; the worker tries again if CS Portal cannot be reached.
+  await deliverDeletion(done, byName);
+  return tetraDepositDTO(await TetraDepositModel.findById(done._id).lean(), true);
+}
+
+/** CS Portal told that a request was deleted here. Claimed first: the worker and this request never both send it. */
+async function deliverDeletion(row: any, byName?: string): Promise<void> {
+  const claimed = await TetraDepositModel.findOneAndUpdate(
+    { _id: row._id, status: "deleted", "deleted.csPortal.state": row.deleted?.csPortal?.state ?? "queued", ...(row.deleted?.csPortal?.state === "sending" ? { "deleted.csPortal.claimedAt": row.deleted.csPortal.claimedAt } : {}) },
+    { $set: { "deleted.csPortal.state": "sending", "deleted.csPortal.claimedAt": new Date() } },
+    { new: true },
+  ).lean<any>();
+  if (!claimed) return;
+  const attempts = (claimed.deleted?.csPortal?.attempts ?? 0) + 1;
+  const event = (kind: string, text: string) => ({ events: { at: new Date(), kind, byName: "", text } });
+  try {
+    const result = await sendFundingDeletedToCommission({
+      fundingId: String(claimed.externalId), byName: byName ?? String(claimed.deleted?.byName ?? ""), reason: String(claimed.deleted?.reason ?? ""),
+    });
+    const kept = result.outcome === "kept";
+    await TetraDepositModel.updateOne({ _id: claimed._id }, {
+      $set: {
+        "deleted.csPortal.state": kept ? "kept" : "done", "deleted.csPortal.attempts": attempts, "deleted.csPortal.doneAt": new Date(),
+        "deleted.csPortal.message": result.message,
+      },
+      $unset: { "deleted.csPortal.nextAttemptAt": "", "deleted.csPortal.claimedAt": "" },
+      $push: event(kept ? "cs_portal_kept" : "cs_portal_deleted", kept ? `CS Portal kept it: ${result.message}` : result.outcome === "deleted" ? "Deleted in CS Portal too" : `CS Portal: ${result.message}`),
+    });
+    logger.info({ depositId: String(claimed._id), outcome: result.outcome }, "CS Portal told of a deleted request");
+  } catch (err) {
+    const message = (err as Error).message || "CS Portal could not be reached";
+    if (err instanceof CommissionRefusedError) {
+      await TetraDepositModel.updateOne({ _id: claimed._id }, {
+        $set: { "deleted.csPortal.state": "failed", "deleted.csPortal.attempts": attempts, "deleted.csPortal.message": message },
+        $unset: { "deleted.csPortal.nextAttemptAt": "", "deleted.csPortal.claimedAt": "" },
+        $push: event("cs_portal_failed", `CS Portal did not accept it: ${message}`),
+      });
+      return;
+    }
+    await TetraDepositModel.updateOne({ _id: claimed._id }, {
+      $set: {
+        "deleted.csPortal.state": "queued", "deleted.csPortal.attempts": attempts, "deleted.csPortal.message": message,
+        "deleted.csPortal.nextAttemptAt": new Date(Date.now() + backoffMs(attempts)),
+      },
+      $unset: { "deleted.csPortal.claimedAt": "" },
+    });
+    logger.warn({ depositId: String(claimed._id), attempts, err: message }, "CS Portal not told of a deleted request yet — will retry");
+  }
+}
+
+/** The worker's share: deleted requests CS Portal has not been told of yet. */
+export async function drainTetraDepositDeletions(): Promise<number> {
+  if (!commissionConfigured()) return 0;
+  const now = new Date();
+  const due = await TetraDepositModel.find({
+    status: "deleted",
+    $or: [
+      { "deleted.csPortal.state": "queued", "deleted.csPortal.nextAttemptAt": { $lte: now } },
+      { "deleted.csPortal.state": "sending", "deleted.csPortal.claimedAt": { $lt: new Date(now.getTime() - STUCK_MS) } },
+    ],
+  }).sort({ "deleted.csPortal.nextAttemptAt": 1 }).limit(20).lean();
+  for (const row of due) await deliverDeletion(row);
+  return due.length;
 }
 
 /** A deleted one back as it was. */
@@ -558,6 +643,11 @@ export async function restoreTetraDeposit(auth: AuthContext, id: string): Promis
   const row = await TetraDepositModel.findOne({ _id: id, organizationId: org }).lean<any>();
   if (!row) throw new AppError("NOT_FOUND", "Deposit request not found");
   if (row.status !== "deleted") throw new AppError("CONFLICT", "Only a deleted one can be restored");
+  // Gone from CS Portal too (2026-11-12): back here it would wait for a request that is not there — raised again there.
+  if (row.deleted?.from === "cs_portal") throw new AppError("CONFLICT", "It was deleted in CS Portal — raise it again there");
+  if (["queued", "sending", "done"].includes(String(row.deleted?.csPortal?.state ?? ""))) {
+    throw new AppError("CONFLICT", "CS Portal deletes it too — raise it again there");
+  }
   const me = await User.findById(auth.userId).select("name").lean();
   const back = String(row.deleted?.previousStatus ?? "closed");
   const done = await TetraDepositModel.findOneAndUpdate(
@@ -605,7 +695,7 @@ export async function takeOffRecordedPayments(row: any): Promise<RemovedPayment[
 const removedText = (removed: RemovedPayment[]) =>
   removed.map((r) => `${money(r.amountMinor, r.currency)}${r.receiptNumber ? ` (${r.receiptNumber})` : ""} off ${r.invoiceNumber}`).join(", ");
 
-export type WithdrawOutcome = "withdrawn" | "already" | "kept" | "pending" | "unknown";
+export type WithdrawOutcome = "withdrawn" | "already" | "kept" | "pending" | "unknown" | "removed" | "decided";
 export interface WithdrawResult { outcome: WithdrawOutcome; message: string; removed: RemovedPayment[] }
 
 /**
@@ -614,9 +704,13 @@ export interface WithdrawResult { outcome: WithdrawOutcome; message: string; rem
  * Always answers, so CS Portal knows whether to try again: "pending" (being decided here again — later), "kept" (a
  * reconciled bank line: an accountant takes it off by hand), "unknown" (never here). Safe to repeat.
  */
-export async function withdrawTetraDeposit(organizationId: string, input: { externalId: string; byName: string; reason: string }): Promise<WithdrawResult> {
+export async function withdrawTetraDeposit(
+  organizationId: string,
+  input: { externalId: string; byName: string; reason: string; deleted?: boolean },
+): Promise<WithdrawResult> {
   const row = await TetraDepositModel.findOne({ organizationId: new Types.ObjectId(organizationId), externalId: input.externalId }).lean<any>();
   if (!row) return { outcome: "unknown", message: "Finance never had this request", removed: [] };
+  if (input.deleted) return removeDeletedRequest(row, input);
   if (row.status === "pending") return { outcome: "pending", message: "It is being decided in finance again — tried later", removed: [] };
   const who = input.byName ? `${input.byName} (CS Portal)` : "CS Portal";
   const why = `Rejected in CS Portal by ${who}${input.reason ? `: ${input.reason}` : ""}`;
@@ -648,6 +742,34 @@ export async function withdrawTetraDeposit(organizationId: string, input: { exte
   });
   logger.info({ externalId: input.externalId, removed }, "tetra deposit withdrawn by CS Portal");
   return { outcome: "withdrawn", message: removed.length ? removedText(removed) : "No payment was on an invoice", removed };
+}
+
+/**
+ * Deleted in CS Portal while pending or rejected (the user, 2026-11-12): this copy comes off too — kept as "deleted",
+ * marked as CS Portal's doing (Restore is refused). Asked before CS Portal deletes a pending one, so an approval made
+ * here a moment earlier is answered "decided" and the request stays there. Nothing was ever recorded on an invoice for
+ * these, so nothing else moves.
+ */
+async function removeDeletedRequest(row: any, input: { byName: string; reason: string }): Promise<WithdrawResult> {
+  if (row.status === "deleted") return { outcome: "already", message: "Deleted here already", removed: [] };
+  if (!["pending", "rejected", "closed"].includes(String(row.status))) {
+    return { outcome: "decided", message: `Delta Finance ${row.status === "approved" ? "approved" : "decided"} it already — it stays`, removed: [] };
+  }
+  const who = input.byName ? `${input.byName} (CS Portal)` : "CS Portal";
+  const why = `Deleted in CS Portal by ${who}${input.reason ? `: ${input.reason}` : ""}`;
+  const done = await TetraDepositModel.findOneAndUpdate(
+    { _id: row._id, status: row.status },
+    {
+      $set: { status: "deleted", deleted: { at: new Date(), byName: who, reason: why, previousStatus: row.status, from: "cs_portal" } },
+      $push: { events: { at: new Date(), kind: "deleted", byName: who, text: why } },
+    },
+  ).lean();
+  if (!done) {
+    const now = await TetraDepositModel.findById(row._id).lean<any>();
+    return now ? removeDeletedRequest(now, input) : { outcome: "unknown", message: "Finance never had this request", removed: [] };
+  }
+  logger.info({ externalId: row.externalId, was: row.status }, "tetra deposit removed — deleted in CS Portal");
+  return { outcome: "removed", message: `Taken off Delta Finance (it was ${row.status})`, removed: [] };
 }
 
 /* ── Decided, and sent back ──────────────────────────────────────────────── */

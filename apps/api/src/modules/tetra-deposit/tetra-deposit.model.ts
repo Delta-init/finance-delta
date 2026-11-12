@@ -158,6 +158,23 @@ const tetraDepositSchema = new Schema({
       byName: { type: String, default: "" },
       reason: { type: String, default: "" },
       previousStatus: { type: String, required: true },
+      /** "cs_portal" when CS Portal deleted the request and this copy came off with it (2026-11-12); else deleted here. */
+      from: { type: String },
+      /**
+       * Deleted here while pending or rejected, a CS Portal request (2026-11-12): CS Portal is told to delete it too.
+       * queued → sending → done (deleted there, or gone already) | kept (approved there — it stays) | failed (refused).
+       */
+      csPortal: {
+        type: new Schema({
+          state: { type: String, enum: ["queued", "sending", "done", "kept", "failed"], required: true },
+          attempts: { type: Number, default: 0 },
+          nextAttemptAt: { type: Date },
+          claimedAt: { type: Date },
+          message: { type: String, default: "" },
+          doneAt: { type: Date },
+        }, { _id: false }),
+        default: undefined,
+      },
     }, { _id: false }),
     default: undefined,
   },

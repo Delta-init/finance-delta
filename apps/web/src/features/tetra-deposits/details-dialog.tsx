@@ -41,7 +41,11 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
   const delivery = deposit ? deliveryText(deposit) : "";
   const toDo = deposit && (deposit.status === "pending" || deposit.delivery?.state === "failed");
   const { can } = useCan();
-  const mayDelete = can("tetra_deposit:approve");
+  const mayDelete = can("tetra_deposit:delete");
+  const mayDecide = can("tetra_deposit:approve");
+  // Deleted in CS Portal, or deleted there too: raised again there, not restored here (2026-11-12).
+  const restorable = deposit?.status === "deleted" && deposit.deleted?.from !== "cs_portal"
+    && !["queued", "sending", "done"].includes(deposit.deleted?.csPortal?.state ?? "");
   const restore = useRestoreTetraDeposit();
   const [deleting, setDeleting] = useState(false);
 
@@ -120,7 +124,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </Button>
           )}
-          {mayDelete && deposit?.status === "deleted" && (
+          {mayDelete && restorable && (
             <Button type="button" variant="outline" className="mr-auto" disabled={restore.isPending} onClick={async () => {
               try { await restore.mutateAsync(deposit.id); toast.success("Restored"); }
               catch (e) { toast.error(e instanceof ApiError ? e.message : "Could not restore it"); }
@@ -128,7 +132,7 @@ export function TetraDepositDetailsDialog({ id, onClose }: { id: string | null; 
               <RotateCcw className="h-3.5 w-3.5" /> Restore
             </Button>
           )}
-          {toDo && deposit?.status !== "deleted" && (
+          {mayDecide && toDo && deposit?.status !== "deleted" && (
             <Button type="button" variant="outline" onClick={() => router.push("/approvals")}>
               {deposit!.status === "pending" ? "Decide it on Approvals" : "Reopen it on Approvals"} <ArrowRight className="h-3.5 w-3.5" />
             </Button>

@@ -89,7 +89,9 @@ const dayAfter = (day: string) => {
 
 export default function TetraDepositsPage() {
   const { can, ready } = useCan();
-  const allowed = can("tetra_deposit:approve");
+  // Read by whoever decides them and whoever deletes them (a Manager, 2026-11-12); Delete only for the second.
+  const allowed = can("tetra_deposit:approve") || can("tetra_deposit:delete");
+  const mayDelete = can("tetra_deposit:delete");
   const t = useTableQuery({ initialSort: { key: "requestedAt", dir: "desc" }, initialPageSize: 25 });
   // In the address bar (2026-10-22): the tab, and the dates folded away until Filters is pressed.
   const [status, setStatus] = useUrlParam<TetraDepositListStatus>("status", "all", { allowed: TABS.map((tab) => tab.status) });
@@ -221,8 +223,8 @@ export default function TetraDepositsPage() {
       key: "actions",
       header: "",
       align: "right",
-      // Delete (2026-10-28): not one waiting for a decision, nor one still on its way to CS Portal.
-      cell: (d) => canDelete(d) ? (
+      // Delete (2026-10-28): not one still on its way to CS Portal. A pending deposit or bonus too (2026-11-12) — CS Portal deletes it.
+      cell: (d) => mayDelete && canDelete(d) ? (
         <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-foreground-muted hover:text-danger" aria-label={`Delete ${d.student.name}'s`}
           onClick={(e) => { e.stopPropagation(); setDeleting(d); }}>
           <Trash2 className="h-4 w-4" />

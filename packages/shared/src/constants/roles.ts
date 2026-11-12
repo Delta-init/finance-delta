@@ -69,6 +69,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "loan:read",
       "loan:write",
       "organization:read",
+      // CS Portal's deposits and bonuses, to read and delete (2026-11-12) — deciding them stays the accountants'.
+      "tetra_deposit:delete",
     ] satisfies Permission[],
     isSystem: true,
   },

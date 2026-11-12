@@ -159,7 +159,8 @@ export const withdrawTetraDepositHandler = asyncHandler(async (req: Request, res
   if (!/^[a-f0-9]{24}$/i.test(externalId)) throw new AppError("VALIDATION_ERROR", "externalId is CS Portal's request id");
   const byName = String(req.body?.byName ?? "").trim().slice(0, 120);
   const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
-  ok(res, await withdrawTetraDeposit(orgId, { externalId, byName, reason }));
+  // deleted: CS Portal deleted a pending or rejected request, and finance's copy comes off with it (2026-11-12).
+  ok(res, await withdrawTetraDeposit(orgId, { externalId, byName, reason, deleted: req.body?.deleted === true }));
 });
 
 /**

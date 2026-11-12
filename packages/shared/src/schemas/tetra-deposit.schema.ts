@@ -314,7 +314,13 @@ export const tetraDepositSchema = z.object({
     created: z.boolean(),
   }).optional(),
   /** Deleted by hand: who, when, why, and the status it had (Restore puts it back). */
-  deleted: z.object({ at: z.string(), byName: z.string(), reason: z.string(), previousStatus: z.string() }).optional(),
+  deleted: z.object({
+    at: z.string(), byName: z.string(), reason: z.string(), previousStatus: z.string(),
+    /** "cs_portal": CS Portal deleted the request, and this copy came off with it (2026-11-12). */
+    from: z.string().optional(),
+    /** Deleted here: CS Portal deleting it too — queued, sending, done, kept (approved there) or failed. */
+    csPortal: z.object({ state: z.string(), message: z.string() }).optional(),
+  }).optional(),
   /** What happened to it here, oldest first — on a single deposit only. */
   events: z.array(z.object({ at: z.string(), kind: z.string(), byName: z.string(), text: z.string() })).optional(),
 });

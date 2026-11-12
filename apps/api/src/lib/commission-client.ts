@@ -217,6 +217,43 @@ export async function sendFundingDecisionToCommission(input: CommissionFundingDe
   }
 }
 
+/* ── A request deleted here ─────────────────────────────────────────────── */
+
+export interface CommissionFundingDeletedResult { outcome: "deleted" | "already" | "unknown" | "kept"; message: string }
+
+/**
+ * A pending or rejected CS Portal request deleted here by a Super Admin or a Manager (2026-11-12): CS Portal takes it off
+ * too (backend/src/finance/fundingDelete.ts there). A refusal is thrown as CommissionRefusedError; anything else (down,
+ * an older CS Portal answering 404) as a plain Error and tried again.
+ */
+export async function sendFundingDeletedToCommission(input: { fundingId: string; byName: string; reason: string }): Promise<CommissionFundingDeletedResult> {
+  const baseUrl = env.COMMISSION_API_URL.replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/integrations/finance/funding-deleted`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-finance-secret": env.COMMISSION_S2S_SECRET },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const body = (await res.json().catch(() => ({}))) as { data?: CommissionFundingDeletedResult; error?: { code?: string; message?: string } | string };
+    if (!res.ok) {
+      const code = typeof body.error === "object" ? body.error?.code ?? "" : "";
+      const message = (typeof body.error === "object" ? body.error?.message : body.error) ?? `CS Portal refused with ${res.status}`;
+      if ([400, 422].includes(res.status)) throw new CommissionRefusedError(message, res.status, code);
+      throw new Error(message);
+    }
+    if (!body.data) throw new Error("CS Portal returned no result");
+    return body.data;
+  } catch (err) {
+    if ((err as Error).name === "AbortError") throw new Error("CS Portal did not answer in time");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ── An enrolment's money, as it changes ─────────────────────────────────── */
 
 /**

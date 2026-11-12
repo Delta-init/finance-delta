@@ -31,7 +31,7 @@ export function TetraDepositStatusBadge({ status, sentBack }: { status: TetraDep
  */
 export function deliveryText(d: TetraDeposit): string {
   if (d.status === "closed") return d.closedReason ? `Closed — ${d.closedReason}` : "Closed";
-  if (d.status === "deleted") return `Deleted${d.deleted?.byName ? ` by ${d.deleted.byName}` : ""}${d.deleted?.reason ? ` — ${d.deleted.reason}` : ""}`;
+  if (d.status === "deleted") return `Deleted${d.deleted?.byName ? ` by ${d.deleted.byName}` : ""}${d.deleted?.reason ? ` — ${d.deleted.reason}` : ""}${csPortalDeletionText(d)}`;
   if (d.status === "pending" || !d.delivery) return "";
   switch (d.delivery.state) {
     case "delivered":
@@ -45,3 +45,15 @@ export function deliveryText(d: TetraDeposit): string {
 
 export const formatWhen = (iso?: string) =>
   iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "";
+
+/** Deleted here (2026-11-12): where CS Portal is with deleting it too — "" when it was not told. */
+export function csPortalDeletionText(d: TetraDeposit): string {
+  const c = d.deleted?.csPortal;
+  if (!c) return "";
+  switch (c.state) {
+    case "done": return " · deleted in CS Portal too";
+    case "kept": return ` · CS Portal kept it${c.message ? `: ${c.message}` : ""}`;
+    case "failed": return ` · CS Portal did not accept it${c.message ? `: ${c.message}` : ""}`;
+    default: return " · CS Portal is being told";
+  }
+}

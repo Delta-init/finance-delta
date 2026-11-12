@@ -124,6 +124,11 @@ export const PERMISSIONS = [
    * order to decide it.
    */
   "tetra_deposit:approve",
+  /**
+   * Deleting one (2026-11-12: "in finance only the super admin and managers delete the request"): a pending or rejected
+   * deposit or bonus is deleted in CS Portal too. Managers and Administrators; accountants decide, they don't delete.
+   */
+  "tetra_deposit:delete",
 
   // Loans & Credit
   "loan:read",

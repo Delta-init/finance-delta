@@ -109,6 +109,24 @@ export const invoiceQuerySchema = listQuerySchema.extend({
 });
 export type InvoiceQuery = z.infer<typeof invoiceQuerySchema>;
 
+/**
+ * Sales → Pro-formas & tax invoices → All tax documents (2026-11-12: "all in one place"): every tax document in one
+ * list — an invoice by its date, a pro-forma's payments each by their tax invoice (TI-) and the day paid.
+ */
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const taxDocumentQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  q: z.string().trim().max(100).optional(),
+  /** Only the invoices, or only the payment tax invoices. */
+  type: z.enum(["invoice", "ti"]).optional(),
+  /** Only those whose invoice — for a TI, its pro-forma — still has something owed. */
+  pending: z.enum(["yes"]).optional(),
+});
+export type TaxDocumentQuery = z.infer<typeof taxDocumentQuerySchema>;
+
 export const vendorQuerySchema = listQuerySchema.extend({
   status: z.enum(["active", "archived"]).optional(),
 });

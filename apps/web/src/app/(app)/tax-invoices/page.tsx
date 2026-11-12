@@ -8,6 +8,7 @@ import { toast } from "@/lib/toast";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { MoneyDisplay } from "@/components/ui/money";
 import { PaidProgress, paidPercent } from "@/components/ui/paid-progress";
@@ -17,11 +18,12 @@ import { useUrlParam } from "@/lib/url-state";
 import type { ExportColumn } from "@/lib/export";
 import { useOrganization } from "@/features/organization/api";
 import { downloadTaxInvoicePdf } from "@/features/invoices/invoice-pdf";
-import { useTaxInvoices, type ProformaRow, type TaxInvoiceRow } from "@/features/tax-invoices/api";
+import { useTaxDocuments, useTaxInvoices, type ProformaRow, type TaxDocumentRow, type TaxInvoiceRow } from "@/features/tax-invoices/api";
 import { Download, FileCheck2, Search } from "lucide-react";
 
-type Tab = "tis" | "proformas";
+type Tab = "all" | "tis" | "proformas";
 const TABS: Array<{ key: Tab; label: string }> = [
+  { key: "all", label: "All tax documents" },
   { key: "tis", label: "Tax invoices" },
   { key: "proformas", label: "Pro-formas" },
 ];
@@ -37,6 +39,22 @@ const TI_EXPORT: ExportColumn<TaxInvoiceRow>[] = [
   { header: "Total", value: (t) => t.amountMinor / 100 },
   { header: "Currency", value: (t) => t.currency },
   { header: "Emailed", value: (t) => (t.emailed ? "Yes" : "No") },
+];
+const DOC_EXPORT: ExportColumn<TaxDocumentRow>[] = [
+  { header: "Document", value: (d) => d.number },
+  { header: "Type", value: (d) => (d.kind === "ti" ? "Tax invoice (TI)" : "Invoice") },
+  { header: "Date", value: (d) => d.date },
+  { header: "Customer", value: (d) => d.customerName },
+  { header: "Against", value: (d) => (d.kind === "ti" ? d.invoiceNumber : "") },
+  { header: "Method", value: (d) => (d.method ? paymentMethodLabel(d.method) : "") },
+  { header: "Net", value: (d) => d.netMinor / 100 },
+  { header: "VAT", value: (d) => d.taxMinor / 100 },
+  { header: "Total", value: (d) => d.amountMinor / 100 },
+  { header: "Fee", value: (d) => d.feeMinor / 100 },
+  { header: "Paid", value: (d) => d.paidMinor / 100 },
+  { header: "Paid %", value: (d) => paidPercent(d.paidMinor, d.feeMinor) },
+  { header: "Pending", value: (d) => d.balanceMinor / 100 },
+  { header: "Currency", value: (d) => d.currency },
 ];
 const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Invoice", value: (p) => p.invoiceNumber },
@@ -65,10 +83,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  * Sales → Pro-formas & tax invoices (the user, 2026-11-01): with VAT on payments received, a part-paid enrolment's
  * invoice is a pro-forma and each payment towards it its own tax invoice. Both here, by the day paid, with the VAT the
  * tax invoices carry — the figure the VAT report counts.
+ *
+ * All tax documents (2026-11-12, "all in one place … paid, progress, pending"): the first tab — every invoice with
+ * every payment tax invoice in one list, a page at a time from the server, coming to the VAT report's output VAT for
+ * the same days. A TI's paid, progress and pending are its pro-forma's.
  */
 export default function TaxInvoicesPage() {
-  const [tabParam, setTabParam] = useUrlParam("tab", "tis");
-  const tab: Tab = tabParam === "proformas" ? "proformas" : "tis";
+  const [tabParam, setTabParam] = useUrlParam("tab", "all");
+  const tab: Tab = tabParam === "tis" || tabParam === "proformas" ? tabParam : "all";
   const [q, setQ] = useUrlParam("q", "");
   const [search, setSearch] = useState(q);
   useEffect(() => {
@@ -81,10 +103,15 @@ export default function TaxInvoicesPage() {
   const { data: org } = useOrganization();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => setPage(1), [tab, paid.from, paid.to, q]);
+  // All tax documents: only the invoices or only the TIs, and only what still has something owed.
+  const [docType, setDocType] = useUrlParam<"all" | "invoice" | "ti">("type", "all", { allowed: ["invoice", "ti"] });
+  const [pending, setPending] = useUrlParam<"all" | "yes">("pending", "all", { allowed: ["yes"] });
+  const docParams = { ...params, type: docType === "all" ? undefined : docType, pending: pending === "yes" ? ("yes" as const) : undefined };
+  const docs = useTaxDocuments({ ...docParams, page: tab === "all" ? page : 1, pageSize });
+  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending]);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function pdf(t: TaxInvoiceRow) {
+  async function pdf(t: Pick<TaxInvoiceRow, "number" | "invoiceId" | "paymentId" | "customerId">) {
     setBusy(t.number);
     try {
       const invoice = await api.get<Invoice>(`invoices/${t.invoiceId}`);
@@ -151,20 +178,78 @@ export default function TaxInvoicesPage() {
     { key: "tis", header: "Tax invoices", cell: (p) => <span className="text-xs text-foreground-muted">{p.taxInvoices.join(", ") || "—"}</span> },
   ];
 
+  const docColumns: Column<TaxDocumentRow>[] = [
+    {
+      key: "number", header: "Document",
+      cell: (d) => (
+        <span className="inline-flex items-center gap-2">
+          {d.kind === "invoice"
+            ? <Link href={`/invoices/${d.invoiceId}`} className="font-medium text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{d.number}</Link>
+            : <span className="font-medium">{d.number}</span>}
+          <Badge tone={d.kind === "ti" ? "success" : "primary"}>{d.kind === "ti" ? "TI" : "Invoice"}</Badge>
+        </span>
+      ),
+    },
+    { key: "date", header: "Date", cell: (d) => <span className="text-foreground-muted">{d.date}</span> },
+    { key: "customer", header: "Customer", cell: (d) => d.customerName },
+    {
+      key: "against", header: "Against",
+      cell: (d) => d.kind === "ti"
+        ? <Link href={`/invoices/${d.invoiceId}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{d.invoiceNumber}</Link>
+        : <span className="text-foreground-muted">—</span>,
+    },
+    { key: "net", header: "Net", align: "right", cell: (d) => <MoneyDisplay minor={d.netMinor} currency={d.currency} /> },
+    { key: "tax", header: "VAT", align: "right", cell: (d) => <MoneyDisplay minor={d.taxMinor} currency={d.currency} className="font-medium" /> },
+    { key: "amount", header: "Total", align: "right", cell: (d) => <MoneyDisplay minor={d.amountMinor} currency={d.currency} className="font-medium" /> },
+    {
+      // Of the invoice — for a TI, of its pro-forma: the payment itself is the Total beside it.
+      key: "paid", header: "Paid", align: "right",
+      cell: (d) => (
+        <div>
+          <MoneyDisplay minor={d.paidMinor} currency={d.currency} className="text-success" />
+          {d.kind === "ti" && <p className="text-[11px] text-foreground-muted">of {formatMoney(d.feeMinor, d.currency)} fee</p>}
+        </div>
+      ),
+    },
+    { key: "progress", header: "Progress", cell: (d) => <PaidProgress paidMinor={d.paidMinor} totalMinor={d.feeMinor} /> },
+    {
+      key: "pending", header: "Pending", align: "right",
+      cell: (d) => d.balanceMinor > 0
+        ? <MoneyDisplay minor={d.balanceMinor} currency={d.currency} className="font-medium text-warning" />
+        : <span className="text-foreground-muted">—</span>,
+    },
+    {
+      key: "pdf", header: "", hideInDetail: true,
+      cell: (d) => d.kind === "ti" && (
+        <button
+          onClick={(e) => { e.stopPropagation(); void pdf(d); }}
+          disabled={busy === d.number}
+          className="inline-flex items-center gap-1 text-xs text-foreground-muted hover:text-foreground disabled:opacity-50"
+          title="Download this tax invoice"
+        >
+          <Download className="h-3.5 w-3.5" /> PDF
+        </button>
+      ),
+    },
+  ];
+
   const tis = data?.taxInvoices ?? [];
   const proformas = data?.proformas ?? [];
   const rows = tab === "tis" ? tis : proformas;
   const shown = rows.slice((page - 1) * pageSize, page * pageSize);
   const totals = Object.entries(data?.totals ?? {});
-  const exportName = `${tab === "tis" ? "tax-invoices" : "proformas"}${paid.from ? `-${paid.from}` : ""}${paid.to ? `-to-${paid.to}` : ""}`;
+  const docTotals = Object.entries(docs.data?.totals ?? {});
+  const exportName = `${tab === "all" ? "tax-documents" : tab === "tis" ? "tax-invoices" : "proformas"}${paid.from ? `-${paid.from}` : ""}${paid.to ? `-to-${paid.to}` : ""}`;
 
   return (
     <div className="space-y-4 p-6">
       <PageHeader
         icon={FileCheck2}
         title="Pro-formas & tax invoices"
-        description="Part-paid enrolments are pro-formas; each payment towards one has its own tax invoice with the VAT on that payment"
-        action={tab === "tis" ? (
+        description="Every tax document in one place: the invoices, and for a part-paid enrolment (a pro-forma) a tax invoice for each payment, with the VAT on that payment"
+        action={tab === "all" ? (
+          <ExportButton resource="invoices/tax-documents" params={docParams} columns={DOC_EXPORT} filename={exportName} title="Tax documents" size="md" />
+        ) : tab === "tis" ? (
           <ExportButton resource="invoices/tax-invoices" params={params} fetchRows={async () => tis} columns={TI_EXPORT} filename={exportName} title="Tax invoices" size="md" />
         ) : (
           <ExportButton resource="invoices/tax-invoices" params={params} fetchRows={async () => proformas} columns={PROFORMA_EXPORT} filename={exportName} title="Pro-formas" size="md" />
@@ -181,7 +266,7 @@ export default function TaxInvoicesPage() {
             className={`rounded-md px-3 py-1.5 font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-surface-muted"}`}
           >
             {t.label}
-            <span className="ml-1.5 tabular-nums">({t.key === "tis" ? tis.filter((x) => !x.cancelled).length : proformas.length})</span>
+            <span className="ml-1.5 tabular-nums">({t.key === "all" ? (docs.data?.total ?? 0) : t.key === "tis" ? tis.filter((x) => !x.cancelled).length : proformas.length})</span>
           </button>
         ))}
       </div>
@@ -193,11 +278,68 @@ export default function TaxInvoicesPage() {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="TI-, IN- or customer…" className="pl-8 w-56" />
           </div>
         </Field>
-        <Field label={tab === "tis" ? "Paid" : "Issued or paid"}><DateRangeQuick value={paid} /></Field>
+        <Field label={tab === "all" ? "Date" : tab === "tis" ? "Paid" : "Issued or paid"}><DateRangeQuick value={paid} /></Field>
+        {tab === "all" && (
+          <>
+            <Field label="Type">
+              <Select value={docType} onValueChange={(v) => setDocType(v as "all" | "invoice" | "ti")}>
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="invoice">Invoices</SelectItem>
+                  <SelectItem value="ti">Tax invoices (TI)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Balance">
+              <Select value={pending} onValueChange={(v) => setPending(v as "all" | "yes")}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="yes">Pending only</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </>
+        )}
       </div>
 
+      {/* All tax documents: what the list comes to — its VAT is the VAT report's output VAT for the same days. */}
+      {tab === "all" && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {docTotals.length === 0 ? (
+            <div className="rounded-lg border border-border bg-surface p-4 text-sm text-foreground-muted">{docs.isLoading ? "Loading…" : "No tax documents in this period."}</div>
+          ) : docTotals.flatMap(([cur, t]) => [
+            <div key={`${cur}-n`} className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs text-foreground-muted">Documents{docTotals.length > 1 ? ` · ${cur}` : ""}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{t.count}</p>
+            </div>,
+            <div key={`${cur}-net`} className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs text-foreground-muted">Net</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.netMinor, cur)}</p>
+            </div>,
+            <div key={`${cur}-vat`} className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs text-foreground-muted">VAT</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums text-primary">{formatMoney(t.taxMinor, cur)}</p>
+            </div>,
+            <div key={`${cur}-a`} className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs text-foreground-muted">Total</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(t.amountMinor, cur)}</p>
+            </div>,
+            <div key={`${cur}-p`} className="rounded-lg border border-border bg-surface p-4" title="What is still owed on these invoices — each counted once, however many of its tax invoices are listed">
+              <p className="text-xs text-foreground-muted">Pending</p>
+              <p className={`mt-1 text-lg font-semibold tabular-nums ${t.pendingMinor > 0 ? "text-warning" : ""}`}>{formatMoney(t.pendingMinor, cur)}</p>
+            </div>,
+          ])}
+        </div>
+      )}
+
       {/* What the tax invoices in the period come to — the VAT the VAT report counts for them. */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {tab !== "all" && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {totals.length === 0 ? (
           <div className="rounded-lg border border-border bg-surface p-4 text-sm text-foreground-muted">No tax invoices in this period.</div>
         ) : totals.flatMap(([cur, t]) => [
@@ -218,9 +360,23 @@ export default function TaxInvoicesPage() {
             <p className="mt-1 text-lg font-semibold tabular-nums text-primary">{formatMoney(t.taxMinor, cur)}</p>
           </div>,
         ])}
-      </div>
+      </div>}
 
-      {tab === "tis" ? (
+      {tab === "all" ? (
+        <DataTable
+          columns={docColumns}
+          data={docs.isLoading ? undefined : docs.data?.rows}
+          getRowId={(d) => `${d.kind}-${d.number}-${d.invoiceId}`}
+          total={docs.data?.total ?? 0}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+          isLoading={docs.isLoading}
+          isFetching={docs.isPlaceholderData}
+          emptyMessage="No tax documents in this period."
+        />
+      ) : tab === "tis" ? (
         <DataTable
           columns={tiColumns}
           data={isLoading ? undefined : (shown as TaxInvoiceRow[])}

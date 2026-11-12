@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, type PageMeta } from "@/lib/api";
 
 /** A pro-forma (VAT on payments received): the enrolment's invoice, not itself a tax invoice. */
 export interface ProformaRow {
@@ -35,3 +35,34 @@ export function useTaxInvoices(params: { from?: string; to?: string; q?: string 
     placeholderData: (prev) => prev,
   });
 }
+
+/** One tax document: an invoice (IN-…), or one payment's tax invoice (TI-…) against its pro-forma. */
+export interface TaxDocumentRow {
+  kind: "invoice" | "ti";
+  number: string;
+  /** The invoice's date, or the day the payment was paid — the day the VAT report counts it on. */
+  date: string;
+  /** The invoice itself; for a TI, the pro-forma it is against. */
+  invoiceId: string; invoiceNumber: string;
+  paymentId: string; method: string;
+  customerId: string; customerName: string; currency: string;
+  netMinor: number; taxMinor: number; amountMinor: number;
+  /** Of that invoice (for a TI, of its pro-forma): the whole fee, what is paid of it, what is still owed. */
+  feeMinor: number; paidMinor: number; balanceMinor: number;
+}
+export interface TaxDocumentTotals { count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number }
+// A type, not an interface: it goes to the API as query parameters, which want an index signature.
+export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes" };
+
+/** All tax documents (2026-11-12): invoices and payment tax invoices in one list, a page at a time from the server. */
+export function useTaxDocuments(params: TaxDocumentParams & { page: number; pageSize: number }) {
+  return useQuery({
+    queryKey: ["invoices", "tax-documents", params],
+    queryFn: async () => {
+      const { data, meta } = await api.getList<TaxDocumentRow>("invoices/tax-documents", params);
+      return { rows: data, total: meta.total, totals: (meta as PageMeta & { totals?: Record<string, TaxDocumentTotals> }).totals ?? {} };
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+

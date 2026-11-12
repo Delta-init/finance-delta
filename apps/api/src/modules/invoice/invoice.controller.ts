@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { invoiceQuerySchema } from "@delta/shared";
+import { invoiceQuerySchema, taxDocumentQuerySchema } from "@delta/shared";
 import { asyncHandler, created, ok, AppError } from "../../lib/http";
 import { parseQuery } from "../../middleware/validate";
 import { resolveScope } from "../../lib/ownership";
@@ -28,6 +28,14 @@ export const taxInvoices = asyncHandler(async (req, res) => {
   const { listProformasAndTaxInvoices } = await import("./payment-tax-invoice");
   const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
   ok(res, await listProformasAndTaxInvoices(orgId(req), { from: day(req.query.from), to: day(req.query.to), q: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : undefined }));
+});
+
+/** …→ All tax documents: invoices and payment tax invoices in one list, a page at a time, with what they come to. */
+export const taxDocuments = asyncHandler(async (req, res) => {
+  const { listTaxDocuments } = await import("./payment-tax-invoice");
+  const query = parseQuery(taxDocumentQuerySchema, req.query);
+  const r = await listTaxDocuments(orgId(req), { ...query, pending: query.pending === "yes" });
+  ok(res, r.rows, { page: r.page, pageSize: r.pageSize, total: r.total, pageCount: Math.max(1, Math.ceil(r.total / r.pageSize)), totals: r.totals });
 });
 
 /** The list's cards: what its filters match (2026-10-22). */

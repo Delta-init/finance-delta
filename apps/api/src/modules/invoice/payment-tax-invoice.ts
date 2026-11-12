@@ -255,3 +255,111 @@ export async function listProformasAndTaxInvoices(
   }
   return { proformas, taxInvoices, totals };
 }
+
+/** One tax document: an invoice (IN-…), or one payment's tax invoice (TI-…) against its pro-forma. */
+export interface TaxDocumentRow {
+  kind: "invoice" | "ti";
+  number: string;
+  /** The day the VAT report counts it on: the invoice's date, or the day the payment was paid. */
+  date: string;
+  /** The invoice itself — for a TI, the pro-forma it is against. */
+  invoiceId: string; invoiceNumber: string;
+  /** A TI's payment; "" for an invoice. */
+  paymentId: string; method: string;
+  customerId: string; customerName: string; currency: string;
+  netMinor: number; taxMinor: number; amountMinor: number;
+  /** Of that invoice (for a TI, of its pro-forma): the whole fee, what is paid of it, what is still owed. */
+  feeMinor: number; paidMinor: number; balanceMinor: number;
+}
+export interface TaxDocumentTotals { count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number }
+
+/**
+ * Sales → Pro-formas & tax invoices → All tax documents (the user, 2026-11-12: every tax document in one place, with
+ * what is paid and what is pending). Exactly what the VAT report's output VAT counts (reports.service outputTax): each
+ * invoice that is not a draft, void or a pro-forma, on its date; and for a pro-forma, each payment's tax invoice on the
+ * day paid — a cancelled one is no longer a tax document and is left out. So the VAT here is the VAT report's for the
+ * same days. A TI's paid / pending are its pro-forma's, and `pendingMinor` counts each invoice once however many of
+ * its tax invoices are listed. One page at a time: the invoices run to thousands.
+ */
+export async function listTaxDocuments(
+  orgId: string,
+  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; page?: number; pageSize?: number } = {},
+): Promise<{ rows: TaxDocumentRow[]; total: number; page: number; pageSize: number; totals: Record<string, TaxDocumentTotals> }> {
+  const { Invoice } = await import("./invoice.model");
+  const { Types } = await import("mongoose");
+  const day = (d: unknown) => new Date(d as Date).toISOString().slice(0, 10);
+  const lo = opts.from ? new Date(`${opts.from}T00:00:00.000Z`) : null;
+  const hi = opts.to ? new Date(`${opts.to}T23:59:59.999Z`) : null;
+  const range = { ...(lo ? { $gte: lo } : {}), ...(hi ? { $lte: hi } : {}) };
+  const ranged = Boolean(lo || hi);
+  const q = (opts.q ?? "").trim();
+  const like = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
+  const page = Math.max(1, Math.floor(opts.page ?? 1));
+  const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 25)));
+
+  // An aggregation is not cast by the schema: ids and dates go in as what they are.
+  const invoices = { "proforma.at": { $exists: false }, ...(ranged ? { issueDate: range } : {}) };
+  const proformas = { "proforma.at": { $exists: true }, payments: { $elemMatch: { "taxInvoice.number": { $exists: true }, ...(ranged ? { paidOn: range } : {}) } } };
+  const [out] = await Invoice.aggregate<{
+    rows: any[]; totals: Array<{ _id: string; count: number; netMinor: number; taxMinor: number; amountMinor: number }>;
+    pending: Array<{ _id: string; pendingMinor: number }>;
+  }>([
+    {
+      $match: {
+        organizationId: new Types.ObjectId(orgId),
+        status: { $nin: ["draft", "void"] },
+        ...(opts.type === "invoice" ? invoices : opts.type === "ti" ? proformas : { $or: [invoices, proformas] }),
+        ...(opts.pending ? { balanceMinor: { $gt: 0 } } : {}),
+      },
+    },
+    {
+      $project: {
+        invoiceNumber: 1, customerId: 1, customerName: 1, currency: 1, totalMinor: 1, amountPaidMinor: 1, balanceMinor: 1,
+        doc: {
+          $cond: [
+            { $gt: ["$proforma.at", null] },
+            {
+              $map: {
+                input: { $filter: { input: { $ifNull: ["$payments", []] }, as: "p", cond: { $gt: ["$$p.taxInvoice.number", null] } } },
+                as: "p",
+                in: {
+                  kind: "ti", number: "$$p.taxInvoice.number", date: "$$p.paidOn", paymentId: "$$p._id", method: { $ifNull: ["$$p.method", ""] },
+                  netMinor: { $ifNull: ["$$p.taxInvoice.netMinor", 0] }, taxMinor: { $ifNull: ["$$p.taxInvoice.taxMinor", 0] }, amountMinor: { $ifNull: ["$$p.amountMinor", 0] },
+                },
+              },
+            },
+            [{
+              kind: "invoice", number: "$invoiceNumber", date: "$issueDate", paymentId: null, method: "",
+              netMinor: { $subtract: [{ $ifNull: ["$totalMinor", 0] }, { $ifNull: ["$taxTotalMinor", 0] }] }, taxMinor: { $ifNull: ["$taxTotalMinor", 0] }, amountMinor: { $ifNull: ["$totalMinor", 0] },
+            }],
+          ],
+        },
+      },
+    },
+    { $unwind: "$doc" },
+    ...(ranged ? [{ $match: { "doc.date": range } }] : []),
+    ...(like ? [{ $match: { $or: [{ "doc.number": like }, { invoiceNumber: like }, { customerName: like }] } }] : []),
+    {
+      $facet: {
+        rows: [{ $sort: { "doc.date": -1, "doc.number": -1, _id: -1 } }, { $skip: (page - 1) * pageSize }, { $limit: pageSize }],
+        totals: [{ $group: { _id: { $ifNull: ["$currency", "AED"] }, count: { $sum: 1 }, netMinor: { $sum: "$doc.netMinor" }, taxMinor: { $sum: "$doc.taxMinor" }, amountMinor: { $sum: "$doc.amountMinor" } } }],
+        pending: [
+          { $group: { _id: "$_id", currency: { $first: { $ifNull: ["$currency", "AED"] } }, balanceMinor: { $first: { $ifNull: ["$balanceMinor", 0] } } } },
+          { $group: { _id: "$currency", pendingMinor: { $sum: "$balanceMinor" } } },
+        ],
+      },
+    },
+  ]);
+
+  const totals: Record<string, TaxDocumentTotals> = {};
+  for (const t of out?.totals ?? []) totals[t._id] = { count: t.count, netMinor: t.netMinor, taxMinor: t.taxMinor, amountMinor: t.amountMinor, pendingMinor: 0 };
+  for (const p of out?.pending ?? []) if (totals[p._id]) totals[p._id]!.pendingMinor = p.pendingMinor;
+  const rows: TaxDocumentRow[] = (out?.rows ?? []).map((r) => ({
+    kind: r.doc.kind === "ti" ? "ti" : "invoice", number: String(r.doc.number ?? ""), date: day(r.doc.date),
+    invoiceId: String(r._id), invoiceNumber: String(r.invoiceNumber ?? ""), paymentId: r.doc.paymentId ? String(r.doc.paymentId) : "", method: String(r.doc.method ?? ""),
+    customerId: String(r.customerId ?? ""), customerName: String(r.customerName ?? ""), currency: String(r.currency ?? "AED"),
+    netMinor: r.doc.netMinor ?? 0, taxMinor: r.doc.taxMinor ?? 0, amountMinor: r.doc.amountMinor ?? 0,
+    feeMinor: r.totalMinor ?? 0, paidMinor: r.amountPaidMinor ?? 0, balanceMinor: r.balanceMinor ?? 0,
+  }));
+  return { rows, total: Object.values(totals).reduce((s, t) => s + t.count, 0), page, pageSize, totals };
+}

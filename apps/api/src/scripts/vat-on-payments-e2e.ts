@@ -6,7 +6,8 @@
  * close gets TI-00001 with 95.24 VAT; a balance payment gets the next TI with its own share; editing it keeps its
  * number and follows the amount; deleting it keeps its TI as cancelled, and the number is not used again; the payment
  * that clears the invoice takes the VAT left, so the TIs add up to the invoice's VAT exactly; each TI is emailed; the
- * VAT report and Revenue's Invoiced view count the TIs by the day paid, and not the pro-forma; the PDFs draw. An
+ * VAT report and Revenue's Invoiced view count the TIs by the day paid, and not the pro-forma; All tax documents lists
+ * the invoices with the TIs and comes to the VAT report's figure; the PDFs draw. An
  * enrolment approved paid in full, and any in an organization with the setting off, are untouched.
  *
  * Run through scripts/vat-on-payments-e2e.sh (throwaway mongod, no .env anywhere).
@@ -151,6 +152,59 @@ check("its row says it is one, and what is paid of it", Boolean(listed.proforma?
 const cards = await invoiceListSummary(String(ON), invoiceQuerySchema.parse({ proforma: "yes" }), scope);
 check("the cards follow the filter", JSON.stringify(cards).includes("550000") && !JSON.stringify(cards).includes("210000"), show(cards));
 check("anything else for Type is refused", !invoiceQuerySchema.safeParse({ proforma: "maybe" }).success);
+
+step("6d. All tax documents: invoices and payment tax invoices in one list");
+const { listTaxDocuments } = await import("../modules/invoice/payment-tax-invoice");
+const { taxDocumentQuerySchema } = await import("@delta/shared");
+const paidRow = (amountMinor: number, paidOn: string, ti?: { number: string; taxMinor: number }) => ({
+  _id: new Types.ObjectId(), method: "card", amountMinor, paidOn: new Date(paidOn), reference: "", notes: "", accountName: "", chargesMinor: 0,
+  ...(ti ? { taxInvoice: { number: ti.number, netMinor: amountMinor - ti.taxMinor, taxMinor: ti.taxMinor, issuedAt: new Date(paidOn) } } : {}),
+});
+// A part-paid ordinary invoice, a draft, a void one, and a pro-forma still owing with two payments.
+const OWING = inv({ total: 120_000, status: "partial", issueDate: new Date("2026-11-15"), amountPaidMinor: 50_000, balanceMinor: 70_000, approval: { state: "not_required" }, payments: [paidRow(50_000, "2026-11-15")] });
+const DRAFT = inv({ total: 100_000, status: "draft", issueDate: new Date("2026-11-16") });
+const VOID = inv({ total: 100_000, status: "void", issueDate: new Date("2026-11-16"), approval: { state: "approved" } });
+const pf2Paid = [paidRow(40_000, "2026-11-18", { number: "TI-00005", taxMinor: 1_905 }), paidRow(60_000, "2026-11-20", { number: "TI-00006", taxMinor: 2_857 })];
+const PF2 = inv({
+  total: 200_000, status: "partial", issueDate: new Date("2026-11-18"), amountPaidMinor: 100_000, balanceMinor: 100_000, approval: { state: "approved" }, proforma: { at: new Date("2026-11-18") },
+  payments: pf2Paid,
+});
+await db.collection("invoices").insertMany([OWING, DRAFT, VOID, PF2] as any[]);
+const docsAll = await listTaxDocuments(String(ON));
+const order = (r: { rows: Array<{ number: string }> }) => r.rows.map((x) => x.number).join(",");
+check("all time, newest first: each invoice and each payment tax invoice — no pro-forma, draft, void or cancelled TI",
+  order(docsAll) === `TI-00004,TI-00006,TI-00005,${OWING.invoiceNumber},TI-00003,TI-00001,${FULL.invoiceNumber}` && docsAll.total === 7, order(docsAll));
+const fullRow = docsAll.rows.find((x) => x.number === FULL.invoiceNumber)!;
+check("an invoice row: its date, net + VAT = total, paid in full, nothing pending",
+  fullRow.kind === "invoice" && fullRow.date === "2026-10-20" && fullRow.amountMinor === 210_000 && fullRow.taxMinor === vat(210_000) && fullRow.netMinor === 210_000 - vat(210_000)
+  && fullRow.paidMinor === 210_000 && fullRow.balanceMinor === 0 && fullRow.paymentId === "", show(fullRow));
+const ti5 = docsAll.rows.find((x) => x.number === "TI-00005")!;
+check("a TI row: the day paid, its own net + VAT, against its pro-forma — whose fee, paid and pending it shows",
+  ti5.kind === "ti" && ti5.date === "2026-11-18" && ti5.amountMinor === 40_000 && ti5.taxMinor === 1_905 && ti5.netMinor === 38_095 && ti5.invoiceNumber === PF2.invoiceNumber
+  && ti5.invoiceId === String(PF2._id) && ti5.paymentId === String(pf2Paid[0]!._id) && ti5.feeMinor === 200_000 && ti5.paidMinor === 100_000 && ti5.balanceMinor === 100_000, show(ti5));
+check("pending counts each invoice once: 700 on the part-paid invoice + 1,000 on the pro-forma with two TIs", docsAll.totals.AED?.pendingMinor === 70_000 + 100_000, show(docsAll.totals));
+for (const [label, from, to] of [["October", "2026-10-01", "2026-10-31"], ["November", "2026-11-01", "2026-11-30"], ["December", "2026-12-01", "2026-12-31"], ["the quarter", "2026-10-01", "2026-12-31"]] as const) {
+  const [list, report] = await Promise.all([listTaxDocuments(String(ON), { from, to }), getVATReport(String(ON), from, to)]);
+  check(`${label}: its VAT is the VAT report's output VAT`, (list.totals.AED?.taxMinor ?? 0) === report.outputTaxMinor && report.outputTaxMinor > 0, show({ list: list.totals, report: report.outputTaxMinor }));
+}
+const docsNov = await listTaxDocuments(String(ON), { from: "2026-11-01", to: "2026-11-30" });
+check("November: the invoice dated in it and the TIs paid in it, not the pro-forma's other TIs", order(docsNov) === `TI-00006,TI-00005,${OWING.invoiceNumber},TI-00003`
+  && docsNov.totals.AED?.amountMinor === 60_000 + 40_000 + 120_000 + 150_000 && docsNov.totals.AED?.netMinor === docsNov.totals.AED!.amountMinor - docsNov.totals.AED!.taxMinor, show(docsNov.totals));
+check("Type: invoices only", order(await listTaxDocuments(String(ON), { type: "invoice" })) === `${OWING.invoiceNumber},${FULL.invoiceNumber}`);
+check("Type: TIs only", order(await listTaxDocuments(String(ON), { type: "ti" })) === "TI-00004,TI-00006,TI-00005,TI-00003,TI-00001");
+const docsPending = await listTaxDocuments(String(ON), { pending: true });
+check("Pending only: the part-paid invoice and the owing pro-forma's TIs", order(docsPending) === `TI-00006,TI-00005,${OWING.invoiceNumber}` && docsPending.totals.AED?.pendingMinor === 170_000, order(docsPending));
+const p1 = await listTaxDocuments(String(ON), { page: 1, pageSize: 3 }), p2 = await listTaxDocuments(String(ON), { page: 2, pageSize: 3 }), p3 = await listTaxDocuments(String(ON), { page: 3, pageSize: 3 });
+check("a page at a time, the totals still the whole list's", order(p1) === "TI-00004,TI-00006,TI-00005" && order(p2) === `${OWING.invoiceNumber},TI-00003,TI-00001` && order(p3) === FULL.invoiceNumber
+  && [p1, p2, p3].every((p) => p.total === 7 && p.totals.AED?.taxMinor === docsAll.totals.AED?.taxMinor), show([order(p1), order(p2), order(p3)]));
+check("search: a TI number", order(await listTaxDocuments(String(ON), { q: "ti-00005" })) === "TI-00005");
+check("search: a pro-forma's number finds its tax invoices", order(await listTaxDocuments(String(ON), { q: PF2.invoiceNumber })) === "TI-00006,TI-00005");
+const docsOff = await listTaxDocuments(String(OFF));
+check("the other organization: its invoice whole, with what is owed on it — no TIs", order(docsOff) === ELSE.invoiceNumber && docsOff.totals.AED?.taxMinor === TAX && docsOff.totals.AED?.pendingMinor === 250_000, show(docsOff.totals));
+check("nothing matching: no rows, no totals", (await listTaxDocuments(String(ON), { q: "no such thing" })).total === 0);
+check("the query: a wrong Type, a wrong day or 500 rows a page are refused; the defaults are page 1 of 25",
+  !taxDocumentQuerySchema.safeParse({ type: "maybe" }).success && !taxDocumentQuerySchema.safeParse({ from: "2026-1-1" }).success && !taxDocumentQuerySchema.safeParse({ pageSize: "500" }).success
+  && taxDocumentQuerySchema.parse({}).page === 1 && taxDocumentQuerySchema.parse({}).pageSize === 25 && taxDocumentQuerySchema.parse({ type: "ti", pending: "yes", from: "2026-11-01" }).pending === "yes");
 
 step("7. The documents");
 const dto = await getInvoice(String(ON), String(PART._id), scope);

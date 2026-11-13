@@ -22,7 +22,7 @@
  * document. The client pays the same; nothing is taken out for VAT. A payment recorded before this is as it was until
  * scripts/inr-payments-no-vat.ts corrects it.
  */
-import { computeInvoiceLine, formatMoney, isRupeePayment, isVatFreePayment, paidAmountMinor, paidCurrency, paidInOtherCurrencies, RUPEE_METHOD, sumInvoiceTotals, type PaidInCurrency } from "@delta/shared";
+import { computeInvoiceLine, formatMoney, isRupeePayment, isVatFreePayment, paidAmountMinor, paidCurrency, paidInOtherCurrencies, RUPEE_METHOD, RUPEE_METHODS, sumInvoiceTotals, type PaidInCurrency } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 
 type Pay = {
@@ -67,7 +67,7 @@ export function isProforma(doc: unknown): boolean {
 }
 
 // What a payment in another currency is, and its amount: @delta/shared (the web shows them by the same rule).
-export { isRupeePayment, isVatFreePayment, RUPEE_METHOD };
+export { isRupeePayment, isVatFreePayment, RUPEE_METHOD, RUPEE_METHODS };
 
 // The same, as aggregation expressions over a payment `p` of the invoice in hand.
 const upperOf = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
@@ -77,7 +77,7 @@ const paidCurrencyExpr = (p: string) => ({
   $switch: {
     branches: [
       { case: { $and: [{ $ne: [upperOf(`${p}.original.currency`), ""] }, { $ne: [upperOf(`${p}.original.currency`), ownCurrencyExpr] }] }, then: upperOf(`${p}.original.currency`) },
-      { case: { $and: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $ne: [ownCurrencyExpr, "INR"] }] }, then: "INR" },
+      { case: { $and: [{ $in: [`${p}.method`, [...RUPEE_METHODS]] }, { $ne: [ownCurrencyExpr, "INR"] }] }, then: "INR" },
     ],
     default: "",
   },

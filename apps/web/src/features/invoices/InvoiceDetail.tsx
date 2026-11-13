@@ -11,7 +11,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
+  formatMoney, PAYMENT_METHODS, paymentMethodChoices, emiDetailInputSchema,
   type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, paidAmountMinor, paidCurrency, paidInOtherCurrencies, paidRateText,} from "@delta/shared";
 
 const NO_ACCOUNT = "__none__";
@@ -839,7 +839,7 @@ export function PaymentDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_METHODS.map((m) => (
+                  {paymentMethodChoices(method).map((m) => (
                     <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>
                   ))}
                 </SelectContent>

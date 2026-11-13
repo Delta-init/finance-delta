@@ -11,6 +11,9 @@ export const PAYMENT_METHODS = [
   "bank_transfer",
   "cheque",
   "card",
+  // The card machine at the desk (the user, 2026-11-13: "a new payment method in every software: POS") — its own
+  // method beside Card, so each can land in its own account.
+  "pos",
   "easebuzz_emi",
   "tabby",
   // Buy-now-pay-later and the instalment portal, beside Tabby: from the
@@ -23,9 +26,22 @@ export const PAYMENT_METHODS = [
   // than a note on a bank transfer, because "which account did it land in" is
   // the question somebody asks when the two are reconciled separately.
   "inr_bank_account",
+  // Razorpay (the user, 2026-11-13): it pays out in rupees, so a payment by it is taken as rupees like the INR
+  // account's — see RUPEE_METHODS in money.
+  "razorpay",
+  // No longer offered for a new payment (PAYMENT_METHOD_CHOICES): kept for the payments already recorded with it,
+  // and for a method another portal names that finance does not know.
   "other",
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * What can be picked for a new payment (the user, 2026-11-13: "remove the Other"): every method but "other". A
+ * payment already recorded as "other" keeps it — pass its method as `current` and it stays in its own list.
+ */
+export function paymentMethodChoices(current?: string | null): PaymentMethod[] {
+  return PAYMENT_METHODS.filter((m) => m !== "other" || current === "other");
+}
 
 /**
  * `external.source` of an invoice brought in from the old books (Zoho, 2024-01 → 2026-10; scripts/invoice-import.ts,
@@ -45,11 +61,13 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   bank_transfer: "Bank transfer",
   cheque: "Cheque",
   card: "Card",
+  pos: "POS",
   easebuzz_emi: "Easebuzz EMI",
   tabby: "Tabby",
   tamara: "Tamara",
   billexpro: "Smart Invoice / BillExPro",
   inr_bank_account: "INR Bank Account",
+  razorpay: "Razorpay",
   other: "Other",
 };
 

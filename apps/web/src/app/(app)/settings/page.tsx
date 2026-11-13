@@ -412,7 +412,8 @@ export default function SettingsPage() {
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            {PAYMENT_METHODS.map((m) => (
+            {/* "Other" is no longer a method to pick (2026-11-13): shown only where it already has an account, for its old payments. */}
+            {PAYMENT_METHODS.filter((m) => m !== "other" || !!org?.paymentAccounts?.other).map((m) => (
               <div key={m} className="space-y-1">
                 <label className="text-sm font-medium text-foreground">{paymentMethodLabel(m)}</label>
                 <select {...register(`paymentAccounts.${m}` as const)} className={FIELD}>

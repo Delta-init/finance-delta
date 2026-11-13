@@ -51,7 +51,7 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
   const { Invoice } = await import("../modules/invoice/invoice.model");
   const { TetraDepositModel } = await import("../modules/tetra-deposit/tetra-deposit.model");
   const { rupeesTyped } = await import("../modules/tetra-deposit/course-invoice");
-  const { RUPEE_METHOD, stripVatForOtherCurrency, taxShares } = await import("../modules/invoice/payment-tax-invoice");
+  const { RUPEE_METHODS, stripVatForOtherCurrency, taxShares } = await import("../modules/invoice/payment-tax-invoice");
 
   // CS Portal requests typed in rupees, by the reference their payment carries.
   const requests = await TetraDepositModel.find({ amountCurrency: "INR", amountOriginal: { $gt: 0 } })
@@ -61,7 +61,7 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
   const docs = await Invoice.collection.find({
     status: { $ne: "void" },
     $or: [
-      { "payments.method": RUPEE_METHOD }, { "payments.original.currency": { $exists: true } }, { "enrolment.declaredPayments.original.currency": { $exists: true } },
+      { "payments.method": { $in: [...RUPEE_METHODS] } }, { "payments.original.currency": { $exists: true } }, { "enrolment.declaredPayments.original.currency": { $exists: true } },
       ...(typed.size ? [{ "payments.externalRef": { $in: [...typed.keys()] } }] : []),
     ],
   }).sort({ issueDate: 1, invoiceNumber: 1 }).toArray();

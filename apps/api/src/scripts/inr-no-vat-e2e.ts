@@ -130,6 +130,18 @@ e = await updatePayment(String(ON), String(E._id), e.payments[1]!.id, pay("card"
 check("its method corrected to card: it carries VAT again (142.86), its number kept", !e.payments[1]?.vatFree && e.payments[1]?.taxInvoice?.taxMinor === 14_286 && e.payments[1]?.taxInvoice?.number === (await getInvoice(String(ON), String(E._id), scope)).payments[1]?.taxInvoice?.number, show(e.payments[1]?.taxInvoice));
 e = await updatePayment(String(ON), String(E._id), e.payments[1]!.id, pay("inr_bank_account", 300_000, "2026-11-15"));
 check("…and back to INR Transfer: none again", e.payments[1]?.vatFree === true && e.payments[1]?.taxInvoice?.taxMinor === 0);
+// POS and Razorpay (the user, 2026-11-13). Razorpay pays out in rupees: rupees by itself, like INR Transfer. POS is
+// the card machine: an ordinary method, with VAT. "Other" is no longer offered, but stays on what was recorded with it.
+e = await updatePayment(String(ON), String(E._id), e.payments[1]!.id, pay("razorpay", 300_000, "2026-11-15"));
+check("its method changed to Razorpay: still no VAT", e.payments[1]?.vatFree === true && e.payments[1]?.taxInvoice?.taxMinor === 0 && e.payments[1]?.method === "razorpay", show(e.payments[1]));
+e = await updatePayment(String(ON), String(E._id), e.payments[1]!.id, pay("pos", 300_000, "2026-11-15"));
+check("…to POS: VAT again (142.86), as by card", !e.payments[1]?.vatFree && e.payments[1]?.taxInvoice?.taxMinor === 14_286 && e.payments[1]?.method === "pos", show(e.payments[1]?.taxInvoice));
+e = await updatePayment(String(ON), String(E._id), e.payments[1]!.id, pay("inr_bank_account", 300_000, "2026-11-15"));
+const methodsNow = await import("@delta/shared");
+check("the lists: POS and Razorpay can be picked, Other cannot — except on a payment that already has it; Razorpay is a rupee method",
+  methodsNow.paymentMethodChoices().includes("pos") && methodsNow.paymentMethodChoices().includes("razorpay") && !methodsNow.paymentMethodChoices().includes("other")
+  && methodsNow.paymentMethodChoices("other").includes("other") && methodsNow.PAYMENT_METHOD_LABELS.pos === "POS" && methodsNow.PAYMENT_METHOD_LABELS.razorpay === "Razorpay"
+  && isRupeePayment({ method: "razorpay" }, "AED") && !isRupeePayment({ method: "razorpay" }, "INR") && isVatFreePayment({ method: "razorpay" }, "AED") && !isVatFreePayment({ method: "pos" }, "AED"));
 
 step("6. An invoice that is itself in rupees");
 const g = await approveInvoice(String(RUPEE_ORG), String(G._id), actor);

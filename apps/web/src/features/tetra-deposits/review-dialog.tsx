@@ -27,7 +27,8 @@ import { useDecideTetraDeposit } from "./api";
 /** CS Portal's own list of deposit payment methods — Pay by link and the sales CRMs' too (2026-10-06). */
 const PAYMENT_METHODS = [
   "AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Pay by link",
-  "Cash", "Bank Transfer", "Cheque", "Card", "Easebuzz EMI", "Tabby", "Tamara", "BillExPro", "Other",
+  // POS and Razorpay added, Other no longer offered (the user, 2026-11-13) — a deposit sent as "Other" keeps it below.
+  "Cash", "Bank Transfer", "Cheque", "Card", "POS", "Easebuzz EMI", "Tabby", "Tamara", "BillExPro", "Razorpay",
 ];
 
 const levelLabel = (level: string) => (level === "LEVEL_1" ? "Level 1" : level === "LEVEL_2" ? "Level 2" : level);
@@ -78,7 +79,7 @@ function financeMethodFor(raw: string): string {
   if (/bank|transfer|wire|neft|imps|rtgs/.test(v)) return "bank_transfer";
   return "other";
 }
-const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi");
+const FINANCE_METHOD_CHOICES = FINANCE_METHODS.filter((m) => m !== "easebuzz_emi" && m !== "other");
 
 /**
  * A bonus's MT5 bonus, in dollars — what the broker admin credits in CS Portal, never the amount here, which is

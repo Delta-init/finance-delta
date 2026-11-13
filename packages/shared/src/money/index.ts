@@ -413,6 +413,12 @@ export function fromBaseMinor(baseMinor: number, rate: number): number {
 
 /** The method the rupee account's payments are recorded under — "INR Transfer". */
 export const RUPEE_METHOD = "inr_bank_account";
+/**
+ * The methods that are rupees by themselves: the INR account's, and Razorpay (the user, 2026-11-13: Razorpay added,
+ * taken like INR Transfer — it pays out in rupees). A payment by one of them is in INR wherever the invoice is not.
+ */
+export const RUPEE_METHODS: readonly string[] = [RUPEE_METHOD, "razorpay"];
+export const isRupeeMethod = (method: unknown): boolean => RUPEE_METHODS.includes(String(method ?? ""));
 
 type PaidAsk = {
   method?: string | null;
@@ -433,7 +439,7 @@ export function paidCurrency(p: PaidAsk | null | undefined, invoiceCurrency: unk
   const own = upperOf(invoiceCurrency) || "AED";
   const typed = upperOf(p?.original?.currency);
   if (typed && typed !== own) return typed;
-  if (p?.method === RUPEE_METHOD && own !== "INR") return "INR";
+  if (isRupeeMethod(p?.method) && own !== "INR") return "INR";
   return null;
 }
 

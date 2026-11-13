@@ -11,6 +11,7 @@ import { GraduationCap, User, Wallet, Paperclip, X, FileText } from "lucide-reac
 import {
   MODES_OF_STUDY,
   PAYMENT_METHODS,
+  paymentMethodChoices,
   paymentMethodLabel,
   computeInvoiceLine,
   toMinor,
@@ -496,7 +497,7 @@ export function EnrolmentForm() {
               <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>Not taken yet</SelectItem>
-                {PAYMENT_METHODS.map((m) => (
+                {paymentMethodChoices().map((m) => (
                   <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>
                 ))}
               </SelectContent>

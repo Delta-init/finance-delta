@@ -49,7 +49,7 @@ const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateStri
  */
 type Pick = { crm: CrmCommissionCrm; person: CrmCommissionPerson; part?: "inr" };
 /** Rupees whole, as they are paid. */
-const inr = (minor: number) => `INR ${Math.round(minor / 100).toLocaleString("en-IN")}`;
+const inr = (minor: number) => `INR ${Math.round(minor / 100).toLocaleString("en-US")}`;
 
 export default function CrmCommissionPage() {
   const [month, setMonth] = useState(thisMonth);

@@ -24,6 +24,7 @@ import {
 } from "@/features/crm-commission/api";
 import { InvoiceDetail } from "@/features/invoices/InvoiceDetail";
 import { useOrganization } from "@/features/organization/api";
+import { useBankAccounts } from "@/features/banking/api";
 
 /*
  * The sales CRMs' commission (the user, 2026-10-21: "commission of each CRM needs to show here, a manager approves,
@@ -42,7 +43,13 @@ const money = (minor: number, currency: string) => `${currency} ${(minor / 100).
 const plusOther = (list: { currency: string; amountMinor: number }[] | undefined) => (list ?? []).map((o) => ` + ${money(o.amountMinor, o.currency)}`).join("");
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
-type Pick = { crm: CrmCommissionCrm; person: CrmCommissionPerson };
+/**
+ * `part: "inr"` (the user, 2026-11-13: "INR payment only gets commission in INR"): the part of the person's month
+ * earned on what clients paid in rupees — approved with the rest, paid on its own from an account in INR.
+ */
+type Pick = { crm: CrmCommissionCrm; person: CrmCommissionPerson; part?: "inr" };
+/** Rupees whole, as they are paid. */
+const inr = (minor: number) => `INR ${Math.round(minor / 100).toLocaleString("en-IN")}`;
 
 export default function CrmCommissionPage() {
   const [month, setMonth] = useState(thisMonth);
@@ -89,6 +96,8 @@ export default function CrmCommissionPage() {
                 <Card key={c.code} className="p-4">
                   <p className="text-sm font-semibold">{c.name}</p>
                   <p className="mt-1 text-xl font-bold font-numeric">{c.payError ? "—" : money(c.totalMinor, c.currency)}</p>
+                  {/* Earned on what clients paid in rupees (2026-11-13): payable in INR, apart from the figure above. */}
+                  {!c.payError && (c.inrTotalMinor ?? 0) > 0 && <p className="text-sm font-semibold font-numeric text-warning">+ {inr(c.inrTotalMinor ?? 0)}</p>}
                   <p className="mt-1 text-xs text-foreground-muted">
                     payable of {money(c.earnedTotalMinor, c.currency)} earned · {c.people.length} {c.people.length === 1 ? "person" : "people"}
                   </p>
@@ -103,7 +112,7 @@ export default function CrmCommissionPage() {
           </div>
           {data.crms.map((c) => (
             <CrmTable key={c.code} crm={c} month={month} canApprove={data.me.canApprove} canPay={data.me.canPay}
-              onApprove={(person) => setApproving({ crm: c, person })} onPay={(person) => setPaying({ crm: c, person })} />
+              onApprove={(person) => setApproving({ crm: c, person })} onPay={(person, part) => setPaying({ crm: c, person, part })} />
           ))}
         </>
       )}
@@ -116,14 +125,15 @@ export default function CrmCommissionPage() {
 
 function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
   crm: CrmCommissionCrm; month: string; canApprove: boolean; canPay: boolean;
-  onApprove: (p: CrmCommissionPerson) => void; onPay: (p: CrmCommissionPerson) => void;
+  onApprove: (p: CrmCommissionPerson) => void; onPay: (p: CrmCommissionPerson, part?: "inr") => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [invoiceOpen, setInvoiceOpen] = useState<string | null>(null);
   const revoke = useRevokeCrmCommission();
-  const takeBack = async (p: CrmCommissionPerson) => {
+  // Both parts, unless one is named: the rupee part alone when the main one is paid or on a payroll run.
+  const takeBack = async (p: CrmCommissionPerson, part?: "inr") => {
     try {
-      await revoke.mutateAsync({ crm: crm.code, month, userId: p.userId });
+      await revoke.mutateAsync({ crm: crm.code, month, userId: p.userId, ...(part ? { part } : {}) });
       toast.success(`${p.name}'s approval taken back`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not take it back");
@@ -199,12 +209,29 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                             CRM counts {money(p.amountMinor, crm.currency)} now
                           </span>
                         )}
+                        {/* The part earned in rupees (2026-11-13): payable in INR, never added to the figure above. */}
+                        {p.inr && (
+                          <span className="mt-1 block border-t border-border/60 pt-1 text-warning" title="Earned on what clients paid in rupees, at the courses' rupee amounts — paid in INR">
+                            + {inr(p.inr.payout ? p.inr.payout.amountMinor : p.inr.amountMinor)}
+                            <span className="block text-xs font-normal text-foreground-muted">
+                              {p.percent !== null ? `${p.percent}% of ` : ""}{inr(p.inr.earnedMinor)} earned in rupees
+                            </span>
+                            {p.inr.changed && <span className="block text-xs font-normal text-warning">CRM counts {inr(p.inr.amountMinor)} now</span>}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5">
-                        <StatusCell p={p} />
+                        <StatusCell payout={p.payout} />
+                        {p.inr && (
+                          <div className="mt-1.5 border-t border-border/60 pt-1.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-muted">Rupee part</p>
+                            <StatusCell payout={p.inr.payout} />
+                          </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                        {p.state === "earned" && canApprove && p.payableKnown && p.amountMinor > 0 && (
+                        {/* One approval covers both parts: whichever is still only earned. */}
+                        {canApprove && p.payableKnown && ((p.state === "earned" && p.amountMinor > 0) || (p.inr?.state === "earned" && p.inr.amountMinor > 0)) && (
                           <Button size="sm" onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
                         )}
                         {/* Commission through payroll (2026-11-01): on a run, it is paid with it — not here. */}
@@ -219,10 +246,22 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
                             {canPay && <Button size="sm" onClick={() => onPay(p)}><Wallet className="h-3.5 w-3.5" /> Mark paid</Button>}
                           </div>
                         )}
-                        {p.state === "earned" && p.payableKnown && p.amountMinor === 0 && (
+                        {/* The rupee part, once approved: paid on its own, from an account in INR — or with an INR payslip. */}
+                        {p.inr?.state === "approved" && p.inr.payout?.payrollRunNumber && (
+                          <span className="mt-1 block text-xs text-foreground-muted">Rupee part in payroll {p.inr.payout.payrollRunNumber} — paid with it</span>
+                        )}
+                        {p.inr?.state === "approved" && !p.inr.payout?.payrollRunNumber && (
+                          <div className="mt-1 flex justify-end gap-2">
+                            {canApprove && (p.state !== "approved" || !!p.payout?.payrollRunNumber) && (
+                              <Button size="sm" variant="ghost" loading={revoke.isPending} onClick={() => void takeBack(p, "inr")}><X className="h-3.5 w-3.5" /> Take back</Button>
+                            )}
+                            {canPay && <Button size="sm" variant="outline" onClick={() => onPay(p, "inr")}><Wallet className="h-3.5 w-3.5" /> Mark INR paid</Button>}
+                          </div>
+                        )}
+                        {p.state === "earned" && p.payableKnown && p.amountMinor === 0 && !p.inr && (
                           <span className="text-xs text-foreground-muted">{p.earnedMinor === 0 && (p.waitingMinor ?? 0) > 0 ? "Nothing yet — waiting for full payment" : "Nothing payable at this level"}</span>
                         )}
-                        {p.state === "earned" && !canApprove && p.amountMinor > 0 && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
+                        {!canApprove && ((p.state === "earned" && p.amountMinor > 0) || (p.inr?.state === "earned" && p.inr.amountMinor > 0)) && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
                         {p.state === "approved" && !p.payout?.payrollRunNumber && !canPay && !canApprove && <span className="text-xs text-foreground-muted">Waiting for payroll</span>}
                       </td>
                     </tr>
@@ -249,9 +288,10 @@ function CrmTable({ crm, month, canApprove, canPay, onApprove, onPay }: {
   );
 }
 
-function StatusCell({ p }: { p: CrmCommissionPerson }) {
-  if (!p.payout) return <Badge tone="neutral">Earned</Badge>;
-  const o = p.payout;
+/** Where a payout stands — a person's main part, or their rupee part (2026-11-13). */
+function StatusCell({ payout }: { payout: CrmCommissionPerson["payout"] }) {
+  if (!payout) return <Badge tone="neutral">Earned</Badge>;
+  const o = payout;
   if (o.state === "approved") {
     return (
       <div className="space-y-0.5">
@@ -299,6 +339,9 @@ function ApproveDialog({ pick, month, onClose }: { pick: Pick | null; month: str
           <DialogTitle>Approve commission</DialogTitle>
           <DialogDescription>
             {pick ? `${pick.person.name} · ${pick.crm.name} · ${monthLabel(month)} — ${money(pick.person.amountMinor, pick.crm.currency)} payable (${pick.person.percent ?? 0}% of ${money(pick.person.earnedMinor, pick.crm.currency)} earned on ${pick.person.sales} sale${pick.person.sales === 1 ? "" : "s"}${pick.person.level ? `, ${pick.person.level}` : ""}). The amount is frozen as approved; accounts then pay it, and the CRM's My Pay shows it.` : ""}
+            {/* The rupee part is approved with it, and paid on its own in INR (2026-11-13). */}
+            {pick?.person.inr && pick.person.inr.amountMinor > 0 && pick.person.inr.state === "earned"
+              ? ` Also ${inr(pick.person.inr.amountMinor)} for the part clients paid in rupees (${pick.person.percent ?? 0}% of ${inr(pick.person.inr.earnedMinor)}) — approved with it, paid separately from an INR account.` : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -323,12 +366,17 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
   const [receipt, setReceipt] = useState<UploadedExpenseFile | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // The rupee part (2026-11-13) goes out of an account in INR, picked here — never the method's AED account.
+  const rupees = pick?.part === "inr";
+  const accounts = useBankAccounts({ isActive: "true", pageSize: 100 });
+  const inrAccounts = (accounts.data?.data ?? []).filter((a) => a.currency.trim().toUpperCase() === "INR" && a.isActive);
+  const [account, setAccount] = useState("");
 
   const categoryList = categories.data ?? [];
   // Sales Commission › Sales Commission, or › Team Leader Commission for someone paid only as a team leader.
   const tlOnly = !!pick && pick.person.roles.length > 0 && pick.person.roles.every((r) => r === "tl");
   const cat = useCategoryChoice(categoryList, tlOnly ? EXPENSE_DEFAULTS.crmCommissionTeamLeader : EXPENSE_DEFAULTS.crmCommission);
-  const reset = () => { setPayout(emptyPayout()); cat.reset(); setDepartment(NO_DEPARTMENT); setReceipt(null); };
+  const reset = () => { setPayout(emptyPayout()); cat.reset(); setDepartment(NO_DEPARTMENT); setReceipt(null); setAccount(""); };
   const close = () => { reset(); onClose(); };
 
   const pickFile = async (file: File) => {
@@ -357,6 +405,7 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
         crm: pick.crm.code, month, userId: pick.person.userId, ...payout, category: cat.value.category, subcategory: cat.value.subcategory || undefined,
         departmentId: department === NO_DEPARTMENT ? "" : department,
         receipt: { name: receipt.name, key: receipt.key, size: receipt.size, mimeType: receipt.mimeType },
+        ...(rupees ? { part: "inr" as const, bankAccountId: account } : { bankAccountId: "" }),
       });
       toast.success(`Paid — ${res.expense.expenseNumber} recorded with the receipt`);
       close();
@@ -365,19 +414,35 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
     }
   };
 
-  const amount = pick?.person.payout?.amountMinor ?? 0;
+  const approved = rupees ? pick?.person.inr?.payout : pick?.person.payout;
+  const amount = approved?.amountMinor ?? 0;
   return (
     <Dialog open={!!pick} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Mark commission paid</DialogTitle>
+          <DialogTitle>{rupees ? "Mark the rupee part paid" : "Mark commission paid"}</DialogTitle>
           <DialogDescription>
-            {pick ? `${pick.person.name} · ${pick.crm.name} · ${monthLabel(month)} — ${money(amount, pick.crm.currency)}, as approved by ${pick.person.payout?.approvedByName ?? "a manager"}. It is recorded as a paid expense with the receipt.` : ""}
+            {pick ? `${pick.person.name} · ${pick.crm.name} · ${monthLabel(month)} — ${rupees ? inr(amount) : money(amount, pick.crm.currency)}, as approved by ${approved?.approvedByName ?? "a manager"}. It is recorded as a paid expense with the receipt.` : ""}
+            {rupees ? " This is the part earned on what clients paid in rupees: it is paid in INR, from an INR account." : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-3">
           <PayoutFields value={payout} onChange={setPayout} idPrefix="crm-commission" />
         </div>
+        {rupees && (
+          <div className="space-y-1.5">
+            <Label htmlFor="crm-commission-account">INR account it was paid from *</Label>
+            <Select value={account} onValueChange={setAccount} disabled={accounts.isLoading || !inrAccounts.length}>
+              <SelectTrigger id="crm-commission-account"><SelectValue placeholder={inrAccounts.length ? "Pick an account" : "No active INR account in this organization"} /></SelectTrigger>
+              <SelectContent>
+                {inrAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.accountName}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {!accounts.isLoading && !inrAccounts.length && (
+              <p className="text-xs text-warning">Switch to the organization that holds the rupee account, or add one under Banking.</p>
+            )}
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-3">
           <CategoryPicker categories={categoryList} value={cat.value} onChange={cat.set} idPrefix="crm-commission" loading={categories.isLoading} />
           <div className="space-y-1.5">
@@ -412,7 +477,7 @@ function PayDialog({ pick, month, onClose }: { pick: Pick | null; month: string;
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={close}>Cancel</Button>
-          <Button loading={pay.isPending} disabled={!receipt || uploading || !cat.complete || !payoutValid(payout)} onClick={() => void submit()}>
+          <Button loading={pay.isPending} disabled={!receipt || uploading || !cat.complete || !payoutValid(payout) || (rupees && !account)} onClick={() => void submit()}>
             <Wallet className="h-4 w-4" /> Mark paid
           </Button>
         </DialogFooter>
@@ -531,6 +596,13 @@ function SalesBreakdown({ p, crm, onInvoice }: { p: CrmCommissionPerson; crm: Cr
                 </td>
                 <td className="py-1 text-right font-numeric">
                   {money(Math.round(l.amount * 100), crm.currency)}
+                  {/* Paid in rupees, earned in rupees (2026-11-13): that share of the fee at the course's rupee amount. */}
+                  {(l.amountInr ?? 0) > 0 && (
+                    <span className="block text-warning" title={`${Math.round((l.rupeeShare ?? 0) * 1000) / 10}% of the fee was paid in rupees — that share of ${inr(Math.round((l.planInr ?? 0) * 100))}; the rest of ${money(Math.round((l.plan ?? 0) * 100), crm.currency)} in ${crm.currency}`}>
+                      + {inr(Math.round((l.amountInr ?? 0) * 100))}
+                      <span className="block text-[10px] text-foreground-muted">{Math.round((l.rupeeShare ?? 0) * 1000) / 10}% paid in rupees</span>
+                    </span>
+                  )}
                   {(l.waiting ?? 0) > 0 && <span className="block text-[10px] text-warning">{money(Math.round((l.waiting ?? 0) * 100), crm.currency)} waiting — client still paying</span>}
                   {(l.waiting ?? 0) === 0 && l.paidInFullAt && l.paidInFullAt.slice(0, 10) !== l.saleDate.slice(0, 10) && (
                     <span className="block text-[10px] text-foreground-muted">paid in full {l.paidInFullAt.slice(0, 10)}</span>
@@ -551,6 +623,7 @@ function SalesBreakdown({ p, crm, onInvoice }: { p: CrmCommissionPerson; crm: Cr
             const fees = known.reduce((t, l) => t + (l.feeMinor ?? 0), 0);
             const earned = shown.reduce((t, l) => t + Math.round(l.amount * 100), 0);
             const waiting = shown.reduce((t, l) => t + Math.round((l.waiting ?? 0) * 100), 0);
+            const earnedInr = shown.reduce((t, l) => t + Math.round((l.amountInr ?? 0) * 100), 0);
             return (
               <tfoot>
                 <tr className="border-t-2 border-border font-semibold">
@@ -562,6 +635,7 @@ function SalesBreakdown({ p, crm, onInvoice }: { p: CrmCommissionPerson; crm: Cr
                   <td />
                   <td className="py-1.5 text-right font-numeric">
                     {money(earned, crm.currency)}
+                    {earnedInr > 0 && <span className="block text-warning">+ {inr(earnedInr)}</span>}
                     {waiting > 0 && <span className="block text-[10px] font-normal text-warning">+{money(waiting, crm.currency)} waiting</span>}
                   </td>
                 </tr>

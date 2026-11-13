@@ -403,7 +403,9 @@ async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { us
       unread.push(monthName(month));
     }
   }
-  const emails = [...new Set(payouts.map((p) => emailOf.get(String(p.key))).filter(Boolean) as string[])];
+  // The person's own key: a rupee part's payout (2026-11-13, its key ending ":INR") is the same person's.
+  const personKey = (p: { crm?: string; month?: string; userId?: string }) => `${p.crm}:${p.month}:${p.userId}`;
+  const emails = [...new Set(payouts.map((p) => emailOf.get(personKey(p))).filter(Boolean) as string[])];
   const employees = emails.length ? await Employee.find({
     organizationId: oid(orgId), hrmsOrgId: run.hrmsOrgId, email: { $in: emails }, hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
   }).lean() : [];
@@ -411,17 +413,19 @@ async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { us
   const payoutIds: Types.ObjectId[] = [];
   const missed: string[] = [];
   for (const p of payouts) {
-    const email = emailOf.get(String(p.key));
+    const email = emailOf.get(personKey(p));
     const employee = email ? employeeOf.get(email) : undefined;
     const line = employee ? run.lines.find((l) => l.hrmsEmployeeId === employee.hrmsEmployeeId) : undefined;
     const lineCurrency = (line?.currency || run.currency || "AED").toUpperCase();
+    // A payslip carries one currency: the rupee part goes on a rupee payslip only — otherwise it is paid by receipt.
+    const rupees = p.part === "inr";
     if (!line || lineCurrency !== String(p.currency || "AED").toUpperCase()) {
-      missed.push(`${p.personName} (${p.crmName || p.crm}, ${monthName(p.month)})`);
+      missed.push(`${p.personName} (${p.crmName || p.crm}, ${monthName(p.month)}${rupees ? ", the part in rupees" : ""})`);
       continue;
     }
     if (p.amountMinor <= 0) continue;
     const externalId = makeExternalId(run.runNumber, String(line._id), nextSeq(run, String(line._id)));
-    const label = `Sales commission (CRM) — ${p.crmName || p.crm}, ${monthName(p.month)}`;
+    const label = `Sales commission (CRM) — ${p.crmName || p.crm}, ${monthName(p.month)}${rupees ? " (earned in rupees)" : ""}`;
     run.adjustments.push({
       externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "crm_commission", label, amountMinor: p.amountMinor,
       notes: `Approved by ${p.approvedByName || "a manager"}`.slice(0, 500), commissionRecordIds: [], crmPayoutIds: [p._id],

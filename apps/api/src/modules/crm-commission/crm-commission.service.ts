@@ -11,6 +11,7 @@ import { Organization } from "../organization/organization.model";
 import { Department } from "../department/department.model";
 import { Expense } from "../expense/expense.model";
 import { placeExpenseInBank, uploadFormFile } from "../expense/expense.service";
+import { debitAccount } from "../banking/money-out";
 import { resolveExpenseCategory } from "../expense-category/expense-category.service";
 import { nextNumber } from "../sequence/sequence.service";
 import { isManager } from "../late-entry/late-entry.service";
@@ -41,6 +42,8 @@ interface RootPerson {
   payable?: number | null; percent?: number | null; level?: string | null;
   /** Their login's email in the CRM (2026-11-01) — how payroll finds their payslip; absent from an older Root. */
   email?: string;
+  /** Earned in INR this month and what the level pays of it (2026-11-13); absent from an older Root, null like `payable`. */
+  amountInr?: number; payableInr?: number | null;
 }
 interface RootCrm {
   code: string; name: string; currency: string; error: string | null; people: RootPerson[]; total: number; pending: { progress: number; waiting: number };
@@ -49,9 +52,17 @@ interface RootCrm {
   waitingTotal?: number;
   /** 1 AED = this many rupees, the CRM's own rate (2026-10-31); absent from a Root not yet updated. */
   inrPerAed?: number | null;
+  /** Earned and payable in INR this month, everyone (2026-11-13); absent from an older Root. */
+  totalInr?: number; payableInrTotal?: number | null;
 }
 
-const keyOf = (crm: string, month: string, userId: string) => `${crm}:${month}:${userId}`;
+/**
+ * Paid in rupees, earned in rupees (the user, 2026-11-13: "INR payment only gets commission in INR"): the part of a
+ * person's month earned on what clients paid in rupees is its own payout beside the main one — its key ends ":INR",
+ * it is in INR, and it is paid from an account in INR. Both are approved together; each is paid on its own.
+ */
+export type CommissionPart = "main" | "inr";
+export const keyOf = (crm: string, month: string, userId: string, part?: CommissionPart) => `${crm}:${month}:${userId}${part === "inr" ? ":INR" : ""}`;
 const minor = (major: number) => Math.round((Number(major) || 0) * 100);
 
 /** The month's counted commission of every sales CRM, from Root. */
@@ -231,9 +242,16 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
         monthCollectedTotalMinor: t.monthCollectedMinor, monthCollectedOther: t.monthCollectedOther, feesTotalMinor: t.feesMinor,
       };
     })(),
+    // The rupee part (2026-11-13), paise — apart from the totals above.
+    inrTotalMinor: minor(c.payableInrTotal ?? 0),
+    inrEarnedTotalMinor: minor(c.totalInr ?? 0),
     people: (c.people ?? []).map((p) => {
       const payout = byKey.get(keyOf(c.code, month, p.userId));
       const payable = typeof p.payable === "number" ? minor(p.payable) : null;
+      // The part earned in rupees: its own payout, approved with the main one and paid on its own.
+      const inrPayout = byKey.get(keyOf(c.code, month, p.userId, "inr"));
+      const payableInr = typeof p.payableInr === "number" ? minor(p.payableInr) : null;
+      const earnedInr = minor(p.amountInr ?? 0);
       return {
         userId: p.userId, name: p.name, roles: p.roles ?? [], amountMinor: payable ?? 0, payableKnown: payable !== null,
         earnedMinor: minor(p.amount), waitingMinor: minor(p.waiting ?? 0), percent: p.percent ?? null, level: p.level ?? null, sales: p.sales ?? 0,
@@ -241,16 +259,30 @@ export async function crmCommissionMonth(orgId: string, userId: string, permissi
         state: payout ? payout.state : "earned",
         payout: payout ? view(payout) : null,
         changed: !!payout && payable !== null && payout.amountMinor !== payable,
+        ...((payableInr ?? 0) > 0 || earnedInr > 0 || inrPayout ? {
+          inr: {
+            amountMinor: payableInr ?? 0, earnedMinor: earnedInr, state: inrPayout ? inrPayout.state : "earned" as const,
+            payout: inrPayout ? view(inrPayout) : null,
+            changed: !!inrPayout && payableInr !== null && inrPayout.amountMinor !== payableInr,
+          },
+        } : {}),
       };
     }),
   }));
   // Approved or paid, yet no longer in the CRM's month (every sale reversed): still shown, so nothing paid goes missing.
   for (const p of payouts) {
     const crm = out.find((c) => c.code === p.crm);
-    if (!crm || crm.people.some((x) => x.userId === p.userId)) continue;
+    if (!crm) continue;
+    const rupees = p.part === "inr";
+    const there = crm.people.find((x) => x.userId === p.userId);
+    // In the month still: its payouts are on the person already — unless only its rupee part's person was added here.
+    if (there && !(rupees && !there.inr)) continue;
+    const gone = { amountMinor: 0, earnedMinor: 0, state: p.state, payout: view(p), changed: true };
+    if (there) { there.inr = gone; continue; }
     crm.people.push({
       userId: p.userId, name: p.personName, roles: p.roles ?? [], amountMinor: 0, payableKnown: true, earnedMinor: 0, waitingMinor: 0, percent: null, level: null,
-      sales: 0, collectedMinor: 0, collectedOther: [], monthCollectedMinor: 0, monthCollectedOther: [], feesMinor: 0, lines: [], state: p.state, payout: view(p), changed: true,
+      sales: 0, collectedMinor: 0, collectedOther: [], monthCollectedMinor: 0, monthCollectedOther: [], feesMinor: 0, lines: [],
+      ...(rupees ? { state: "earned" as const, payout: null, changed: false, inr: gone } : { state: p.state, payout: view(p), changed: true }),
     });
   }
 
@@ -271,37 +303,56 @@ async function personNow(input: { crm: string; month: string; userId: string }) 
   if (typeof person.payable !== "number") {
     throw new AppError("UNAVAILABLE", `${crm.name}'s My Pay figures aren't available${crm.payError ? ` (${crm.payError})` : ""} — what is payable can't be known yet.`);
   }
-  if (!(person.payable > 0)) throw new AppError("CONFLICT", `Nothing is payable to ${person.name} for this month — their slab level pays ${person.percent ?? 0}% of the commission.`);
-  return { crm, person, payable: person.payable };
+  // The part earned in rupees (2026-11-13): payable in INR, apart from `payable`.
+  const payableInr = typeof person.payableInr === "number" && person.payableInr > 0 ? person.payableInr : 0;
+  if (!(person.payable > 0) && !(payableInr > 0)) throw new AppError("CONFLICT", `Nothing is payable to ${person.name} for this month — their slab level pays ${person.percent ?? 0}% of the commission.`);
+  return { crm, person, payable: person.payable, payableInr };
 }
 
-/** A manager approves a person's month: its amount is frozen as the CRM counts it now. */
+/**
+ * A manager approves a person's month: its amount is frozen as the CRM counts it now — the main part and, where
+ * clients paid in rupees, the rupee part, each as its own payout. A part approved already is left as it is.
+ */
 export async function approveCrmCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: ApproveCrmCommissionInput) {
   if (!isSuperAdmin && !(await canApprove(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager approves commission");
-  const { crm, person, payable } = await personNow(input);
-  const key = keyOf(input.crm, input.month, input.userId);
-  if (await CrmCommissionPayout.exists({ key })) throw new AppError("CONFLICT", `${person.name}'s ${input.month} commission is already approved`);
-  try {
-    await CrmCommissionPayout.create({
-      key, organizationId: new Types.ObjectId(orgId), crm: crm.code, crmName: crm.name, month: input.month, userId: input.userId,
-      personName: person.name, roles: person.roles, currency: crm.currency || "AED", amountMinor: minor(payable), earnedMinor: minor(person.amount),
-      percent: person.percent ?? null, level: person.level ?? null, sales: person.sales,
-      saleIds: [...new Set(person.lines.map((l) => l.saleId))], state: "approved",
-      approvedById: new Types.ObjectId(userId), approvedByName: await userName(userId), approvedAt: new Date(), approvalNote: input.note ?? "",
-    });
-  } catch (err) {
-    if ((err as { code?: number }).code === 11000) throw new AppError("CONFLICT", `${person.name}'s ${input.month} commission is already approved`);
-    throw err;
+  const { crm, person, payable, payableInr } = await personNow(input);
+  const parts: Array<{ part: CommissionPart; amount: number; earned: number; currency: string }> = [
+    { part: "main", amount: payable, earned: person.amount, currency: crm.currency || "AED" },
+    { part: "inr", amount: payableInr, earned: person.amountInr ?? 0, currency: "INR" },
+  ];
+  const approvedByName = await userName(userId);
+  let made = 0;
+  for (const p of parts) {
+    if (!(p.amount > 0)) continue;
+    const key = keyOf(input.crm, input.month, input.userId, p.part);
+    if (await CrmCommissionPayout.exists({ key })) continue;
+    try {
+      await CrmCommissionPayout.create({
+        key, organizationId: new Types.ObjectId(orgId), crm: crm.code, crmName: crm.name, month: input.month, userId: input.userId,
+        personName: person.name, roles: person.roles, currency: p.currency, amountMinor: minor(p.amount), earnedMinor: minor(p.earned),
+        ...(p.part === "inr" ? { part: "inr" } : {}),
+        percent: person.percent ?? null, level: person.level ?? null, sales: person.sales,
+        saleIds: [...new Set(person.lines.map((l) => l.saleId))], state: "approved",
+        approvedById: new Types.ObjectId(userId), approvedByName, approvedAt: new Date(), approvalNote: input.note ?? "",
+      });
+      made++;
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) throw err;   // somebody approved it at the same moment
+    }
   }
+  if (!made) throw new AppError("CONFLICT", `${person.name}'s ${input.month} commission is already approved`);
   return { approved: true };
 }
 
-/** A manager takes an approval back — only before it is paid. */
+/** A manager takes an approval back — only before it is paid. Both parts unless one is named; what is paid or on payroll stays. */
 export async function revokeCrmCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: RevokeCrmCommissionInput) {
   if (!isSuperAdmin && !(await canApprove(orgId, userId))) throw new AppError("FORBIDDEN", "Only somebody tagged Manager approves commission");
-  const inPayroll = await CrmCommissionPayout.findOne({ key: keyOf(input.crm, input.month, input.userId), payrollRunId: { $ne: null } }).select("payrollRunNumber").lean<any>();
+  const parts: CommissionPart[] = input.part ? [input.part] : ["main", "inr"];
+  const keys = parts.map((p) => keyOf(input.crm, input.month, input.userId, p));
+  // On a payroll run: off the run first — also when only one of the two is on it, unless the other is named.
+  const inPayroll = await CrmCommissionPayout.findOne({ key: { $in: keys }, payrollRunId: { $ne: null } }).select("payrollRunNumber").lean<any>();
   if (inPayroll) throw new AppError("CONFLICT", `It is on payroll ${inPayroll.payrollRunNumber} — take it off the run first`);
-  const r = await CrmCommissionPayout.deleteOne({ key: keyOf(input.crm, input.month, input.userId), state: "approved" });
+  const r = await CrmCommissionPayout.deleteMany({ key: { $in: keys }, state: "approved" });
   if (!r.deletedCount) throw new AppError("CONFLICT", "It is not waiting to be paid — paid already, or not approved");
   return { revoked: true };
 }
@@ -316,7 +367,17 @@ export async function uploadReceipt(orgId: string, file: ParsedFile) {
  * receipt attached. Claimed first, so two people paying at once make one expense.
  */
 export async function payCrmCommission(orgId: string, userId: string, input: PayCrmCommissionInput) {
-  const key = keyOf(input.crm, input.month, input.userId);
+  // The rupee part (2026-11-13) is its own payout, in INR — out of an account in INR, never the method's AED one.
+  const rupees = input.part === "inr";
+  const key = keyOf(input.crm, input.month, input.userId, rupees ? "inr" : "main");
+  let account: { id: string; name: string } | null = null;
+  if (input.bankAccountId || rupees) {
+    if (!input.bankAccountId) throw new AppError("VALIDATION_ERROR", "Pick the INR account the rupees were paid from");
+    const waiting = await CrmCommissionPayout.findOne({ key }).select("currency").lean<{ currency?: string } | null>();
+    const acc = await debitAccount(orgId, input.bankAccountId, rupees ? "INR" : waiting?.currency || "AED");
+    if ("note" in acc) throw new AppError("VALIDATION_ERROR", acc.note);
+    account = acc;
+  }
   // Commission through payroll (2026-11-01): one on a run is paid with it, never here.
   const inPayroll = await CrmCommissionPayout.findOne({ key, payrollRunId: { $ne: null } }).select("payrollRunNumber").lean<any>();
   if (inPayroll) throw new AppError("CONFLICT", `It is paid through payroll ${inPayroll.payrollRunNumber} — not here`);
@@ -351,7 +412,8 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
       categoryName: resolveCategoryName(cat.category, cat.categoryName, ""),
       subcategory: cat.subcategory,
       subcategoryName: cat.subcategoryName,
-      description: `Sales commission — ${claimed.personName} (${claimed.crmName}, ${claimed.month})`,
+      description: `Sales commission — ${claimed.personName} (${claimed.crmName}, ${claimed.month})${rupees ? " — the part earned in rupees" : ""}`,
+      ...(account ? { bankAccountId: new Types.ObjectId(account.id), paymentAccount: account.name } : {}),
       expenseDate: new Date(`${input.paidOn}T00:00:00.000Z`),
       amountMinor: netMinor, taxPct: 0, taxInclusive: false, taxMinor, totalMinor,
       currency: claimed.currency || "AED",
@@ -365,6 +427,7 @@ export async function payCrmCommission(orgId: string, userId: string, input: Pay
       attachments: [{ ...receipt, uploadedAt: now }],
       notes: [
         `${claimed.crmName} commission for ${claimed.month}: ${claimed.personName} (${roles || "salesperson"}), ${claimed.sales} sale${claimed.sales === 1 ? "" : "s"}.`,
+        ...(rupees ? ["The part earned on what clients paid in rupees, at the courses' rupee amounts — paid in INR."] : []),
         `Approved by ${claimed.approvedByName}${claimed.approvalNote ? ` — ${claimed.approvalNote}` : ""}.`,
       ].join("\n"),
     });
@@ -397,16 +460,23 @@ export async function commissionInvoice(id: string) {
 /** A CRM's payouts for a month — what its My Pay shows (GET /integrations/crm-commission/payouts, 2026-10-21). */
 export async function payoutsForCrm(crm: string, month: string) {
   const rows = await CrmCommissionPayout.find({ crm, month }).lean<any[]>();
-  return rows.map((p) => ({
-    userId: String(p.userId),
-    state: p.state as "approved" | "paid",
-    amount: (p.amountMinor ?? 0) / 100,
-    currency: p.currency ?? "AED",
-    approvedByName: p.approvedByName ?? "",
-    approvedAt: new Date(p.approvedAt).toISOString(),
-    paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : null,
-    paymentMethod: p.paymentMethod ?? null,
-    reference: p.reference ?? null,
-  }));
+  // One row a person, as before — the main part: a CRM from before the rupee part keeps reading it as their month.
+  // The rupee part (2026-11-13) rides on it as `inr`; somebody with only a rupee part has no row here.
+  const inrOf = new Map(rows.filter((p) => p.part === "inr").map((p) => [String(p.userId), p]));
+  return rows.filter((p) => p.part !== "inr").map((p) => {
+    const inr = inrOf.get(String(p.userId));
+    return {
+      userId: String(p.userId),
+      state: p.state as "approved" | "paid",
+      amount: (p.amountMinor ?? 0) / 100,
+      currency: p.currency ?? "AED",
+      approvedByName: p.approvedByName ?? "",
+      approvedAt: new Date(p.approvedAt).toISOString(),
+      paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : null,
+      paymentMethod: p.paymentMethod ?? null,
+      reference: p.reference ?? null,
+      ...(inr ? { inr: { state: inr.state as "approved" | "paid", amount: (inr.amountMinor ?? 0) / 100, paidOn: inr.paidOn ? new Date(inr.paidOn).toISOString().slice(0, 10) : null } } : {}),
+    };
+  });
 }
 

@@ -16,6 +16,11 @@ const payoutSchema = new Schema(
     personName: { type: String, default: "" },
     roles: { type: [String], default: [] },
     currency: { type: String, default: "AED" },
+    /**
+     * "inr": the part of the month earned in rupees (2026-11-13) — its own payout beside the main one (key ending
+     * ":INR"), in INR, paid from an account in INR. Absent: the main part, in the CRM's currency.
+     */
+    part: { type: String, enum: ["inr"] },
     /** What the manager approved — My Pay's commission payable then (2026-10-21), frozen. */
     amountMinor: { type: Number, required: true, min: 0 },
     /** The commission earned it is a share of, the slab level's percent and its name — as they stood then. */

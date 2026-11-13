@@ -267,6 +267,68 @@ check("the pop-up: the invoice whole, from another organization, with its organi
 check("…not an invoice no CRM raised, not a made-up id: not found", /not found/i.test(await refusal(svc.commissionInvoice("6a0000000000000000000abc"))) && /not found/i.test(await refusal(svc.commissionInvoice("nope"))));
 root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== HANA);
 
+/* ── 9 ── */
+step("9. Paid in rupees, earned in rupees (2026-11-13)");
+// Ina: one sale a quarter in rupees (AED 750 + INR 5,000 of 1,000 / INR 20,000), on a level paying half. Omar: all of
+// his in rupees — nothing in AED at all.
+const INA = new Types.ObjectId().toString(), OMAR = new Types.ObjectId().toString();
+const inrLine = (role: string, amount: number, amountInr: number, student: string, rupeeShare: number, plan: number, planInr: number) =>
+  ({ ...line(role, amount, student), amountInr, rupeeShare, plan, planInr });
+root.crms[0].people.push(
+  { userId: INA, name: "Ina", roles: ["sales"], amount: 750, payable: 375, percent: 50, level: "Level 2", sales: 1, amountInr: 5000, payableInr: 2500, lines: [inrLine("sales", 750, 5000, "S20", 0.25, 1000, 20000)] },
+  { userId: OMAR, name: "Omar", roles: ["sales"], amount: 0, payable: 0, percent: 100, level: "Level 1", sales: 1, amountInr: 8000, payableInr: 8000, lines: [inrLine("sales", 0, 8000, "S21", 1, 400, 8000)] },
+);
+root.crms[0].totalInr = 13000;
+root.crms[0].payableInrTotal = 10500;
+const { BankAccount } = await import("../modules/banking/bank-account.model");
+const { BankTransaction } = await import("../modules/banking/bank-transaction.model");
+const acct = (name: string, currency: string) => BankAccount.create({ organizationId: org._id, accountName: name, accountType: "current", currency, openingDate: new Date("2026-01-01") });
+const inrAcc = await acct("Rupee account", "INR"), aedAcc = await acct("Dirham account", "AED");
+const deltaNow = async () => (await svc.crmCommissionMonth(ORG, ASHA, ["commission:write"], false, M)).crms.find((c) => c.code === "delta")!;
+let delta9 = await deltaNow();
+let ina = delta9.people.find((p) => p.userId === INA)!, omar = delta9.people.find((p) => p.userId === OMAR)!;
+check("the page: Ina's AED 375 payable with INR 2,500 beside it — earned 750 and INR 5,000, each line's split",
+  ina.amountMinor === 37500 && ina.earnedMinor === 75000 && ina.inr?.amountMinor === 250000 && ina.inr.earnedMinor === 500000 && ina.inr.state === "earned"
+  && ina.lines[0]?.amountInr === 5000 && ina.lines[0]?.rupeeShare === 0.25 && ina.lines[0]?.planInr === 20000, j(ina));
+check("…the CRM's rupee totals apart from its AED ones", delta9.inrTotalMinor === 1050000 && delta9.inrEarnedTotalMinor === 1300000, j({ t: delta9.inrTotalMinor, e: delta9.inrEarnedTotalMinor }));
+check("…somebody without rupees has no rupee part", delta9.people.find((p) => p.userId === ABRAR)?.inr === undefined);
+await approve(MONA, INA);
+delta9 = await deltaNow();
+ina = delta9.people.find((p) => p.userId === INA)!;
+check("approved in one go: the AED part frozen at 375, the rupee part at INR 2,500 — two payouts", ina.state === "approved" && ina.payout?.amountMinor === 37500
+  && ina.inr?.state === "approved" && ina.inr.payout?.amountMinor === 250000, j({ a: ina.payout, i: ina.inr }));
+check("…again: already approved", /already approved/.test(await refusal(approve(MONA, INA))));
+await approve(MONA, OMAR);
+omar = (await deltaNow()).people.find((p) => p.userId === OMAR)!;
+check("all in rupees: nothing in AED to approve, the INR 8,000 approved", omar.state === "earned" && omar.payout === null && omar.inr?.state === "approved" && omar.inr.payout?.amountMinor === 800000, j(omar));
+check("the rupee part needs its INR account", /INR account/.test(await refusal(pay(INA, ORG, { part: "inr" }))));
+check("…not an AED one", /is in AED, this is in INR/.test(await refusal(pay(INA, ORG, { part: "inr", bankAccountId: String(aedAcc._id) }))));
+const paidInr = await pay(INA, ORG, { part: "inr", bankAccountId: String(inrAcc._id), reference: "INR-1" });
+const expInr = await Expense.findById(paidInr.expense.id).lean<any>();
+check("paid: an expense in INR for the 2,500, out of the rupee account", expInr?.currency === "INR" && expInr.totalMinor === 250000 && String(expInr.bankAccountId) === String(inrAcc._id)
+  && /the part earned in rupees/.test(expInr.description), j({ c: expInr?.currency, t: expInr?.totalMinor, d: expInr?.description, n: expInr?.bankNote }));
+const inrOut = await BankTransaction.find({ accountId: inrAcc._id }).lean<any[]>();
+check("…its money-out line in that account, nothing in the dirham one", inrOut.length === 1 && inrOut[0].amountMinor === -250000 && (await BankTransaction.countDocuments({ accountId: aedAcc._id })) === 0, j(inrOut));
+ina = (await deltaNow()).people.find((p) => p.userId === INA)!;
+check("the rupee part paid, the AED part still waiting to be paid", ina.inr?.state === "paid" && ina.inr.payout?.reference === "INR-1" && ina.state === "approved", j({ s: ina.state, i: ina.inr?.state }));
+check("…never twice", /paid already/.test(await refusal(pay(INA, ORG, { part: "inr", bankAccountId: String(inrAcc._id) }))));
+const paidAed = await pay(INA);
+const expAed = await Expense.findById(paidAed.expense.id).lean<any>();
+check("the AED part paid as ever: AED 375, its own expense", expAed?.currency === "AED" && expAed.totalMinor === 37500 && !/rupees/.test(expAed.description), j({ c: expAed?.currency, t: expAed?.totalMinor }));
+await svc.revokeCrmCommission(ORG, MONA, false, { crm: "delta", month: M, userId: OMAR });
+omar = (await deltaNow()).people.find((p) => p.userId === OMAR)!;
+check("an approval taken back takes the rupee part back too", omar.inr?.state === "earned" && omar.inr.payout === null, j(omar.inr));
+const back9 = await svc.payoutsForCrm("delta", M);
+const backIna = back9.find((x) => x.userId === INA) as any;
+check("the CRM reads one row a person: Ina's AED 375 paid, her rupee part on it; nobody twice", backIna?.amount === 375 && backIna.currency === "AED" && backIna.inr?.amount === 2500 && backIna.inr.state === "paid"
+  && back9.filter((x) => x.userId === INA).length === 1 && !back9.some((x) => x.userId === OMAR), j(backIna));
+root.crms[0].people.find((p: any) => p.userId === INA).payableInr = 2000;
+ina = (await deltaNow()).people.find((p) => p.userId === INA)!;
+check("the CRM's rupee figure moves after approval: flagged on the rupee part only", ina.inr?.changed === true && ina.changed === false, j({ i: ina.inr?.changed, a: ina.changed }));
+root.crms[0].people = root.crms[0].people.filter((p: any) => p.userId !== INA && p.userId !== OMAR);
+const gone9 = (await deltaNow()).people.find((p) => p.userId === INA);
+check("both parts still shown once the sales are gone", gone9?.state === "paid" && gone9.inr?.state === "paid" && gone9.inr.changed, j(gone9));
+
 /* ── 5 ── */
 step("5. Root not set up, out of date, down");
 root.mode = "old";

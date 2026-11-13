@@ -25,11 +25,20 @@ const who = {
 export const approveCrmCommissionSchema = z.object({ ...who, note: z.string().trim().max(500).optional().default("") });
 export type ApproveCrmCommissionInput = z.infer<typeof approveCrmCommissionSchema>;
 
-export const revokeCrmCommissionSchema = z.object(who);
+/**
+ * Which part of a person's month (2026-11-13): "inr" the part earned in rupees, "main" the rest in the CRM's
+ * currency. Left out: both for taking an approval back, the main one for paying.
+ */
+const part = z.enum(["main", "inr"]).optional();
+
+export const revokeCrmCommissionSchema = z.object({ ...who, part });
 export type RevokeCrmCommissionInput = z.infer<typeof revokeCrmCommissionSchema>;
 
 export const payCrmCommissionSchema = z.object({
   ...who,
+  part,
+  /** The account it went out of. Needed for the rupee part — an account in INR; else the method's own account. */
+  bankAccountId: z.union([z.literal(""), z.string().regex(/^[a-f\d]{24}$/i, "Invalid account")]).optional().default(""),
   /** The day the money went. */
   paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date it was paid"),
   paymentMethod: expensePaymentMethodSchema,
@@ -82,6 +91,30 @@ export interface CrmCommissionLine {
   /** The sale's salesperson and team leader, from Root (2026-10-31); "" when none. */
   salesName?: string;
   tlName?: string;
+  /**
+   * Paid in rupees, earned in rupees (the user, 2026-11-13: "INR payment only gets commission in INR… separate INR
+   * commission for each course"). `amountInr` is what the line earned in INR this month: the share of the fee the
+   * client paid in rupees (`rupeeShare`, 0–1) at the course's own rupee amount in Root's plan (`planInr`); `amount`
+   * is then only the rest of the line's whole AED amount (`plan`). Major units, as `amount`. Absent from an older Root.
+   */
+  amountInr?: number;
+  rupeeShare?: number;
+  plan?: number;
+  planInr?: number;
+}
+
+/**
+ * The part of a person's month earned in rupees (2026-11-13): approved together with the rest, paid on its own from
+ * an account in INR — never added to, or converted into, the CRM's currency. Minor units are paise.
+ */
+export interface CrmCommissionInrPart {
+  /** Payable in INR now: what was earned in rupees × the slab level's percent. */
+  amountMinor: number;
+  earnedMinor: number;
+  state: CrmCommissionState;
+  payout: CrmCommissionPayoutView | null;
+  /** Approved or paid at a different figure than the CRM counts now. */
+  changed: boolean;
 }
 
 /** Collected in a currency that couldn't be put in the CRM's — shown apart, never added in (2026-10-31). */
@@ -128,6 +161,8 @@ export interface CrmCommissionPerson {
   payout: CrmCommissionPayoutView | null;
   /** Approved or paid at a different figure than the CRM counts now (a sale reversed or added since). */
   changed: boolean;
+  /** The part earned in rupees, when there is any (2026-11-13); `amountMinor` above is then the AED part only. */
+  inr?: CrmCommissionInrPart;
 }
 
 export interface CrmCommissionCrm {
@@ -137,6 +172,9 @@ export interface CrmCommissionCrm {
   earnedTotalMinor: number;
   /** Commission waiting for clients to pay in full, everyone (2026-10-31). */
   waitingTotalMinor: number;
+  /** Payable and earned in INR this month, everyone (2026-11-13), paise; apart from the totals above. */
+  inrTotalMinor?: number;
+  inrEarnedTotalMinor?: number;
   /** What the month's counted sales collected (each sale once, their invoices here), minor units (2026-10-26). */
   collectedTotalMinor: number;
   collectedOther?: CrmCommissionOtherMoney[];

@@ -241,10 +241,15 @@ async function main() {
     payout("crm-ghost", "Ghost", seed.month, 100_00, "approved"),
     payout("crm-aisha", "Aisha", prev, 150_00, "paid"),
     payout("crm-aisha", "Aisha", "2099-01", 999_00, "approved"),
+    // The part of her month earned in rupees (2026-11-13): its own payout, in INR — her payslip is in AED.
+    { ...payout("crm-aisha", "Aisha", seed.month, 2_500_00, "approved"), key: `delta:${seed.month}:crm-aisha:INR`, currency: "INR", part: "inr" },
   ]);
   const pulled = await adjustments.pullCommissions(orgId, runId, actor);
   check("commission pulled onto the run: hers, and her approved CRM commission", pulled.pulled === 2, pulled.message);
   check("…the approved CRM commission of somebody not on this run said, not added", /Ghost \(Sales CRM/.test(pulled.message), pulled.message);
+  check("…her rupee part is not put on an AED payslip: said, left to be paid by receipt", /Aisha \(Sales CRM, [^)]*the part in rupees\)/.test(pulled.message)
+    && (await CrmCommissionPayout.findOne({ key: `delta:${seed.month}:crm-aisha:INR` }).lean())?.payrollRunId == null, pulled.message);
+  await CrmCommissionPayout.deleteOne({ key: `delta:${seed.month}:crm-aisha:INR` });
 
   run = await payroll.getRun(orgId, runId);
   const aisha = run.lines.find((l) => l.employeeCode === "E2E001")!;

@@ -227,7 +227,21 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
   const key = keyOf(input.kind, input.period, input.recipientId);
   if (await CsCommissionPayout.exists({ key })) throw new AppError("CONFLICT", "It is already approved here");
   const by = await userName(userId);
-  const done = await fromPortal(() => approvePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance", early));
+  const ask = (e?: { reason: string }) => approvePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance", e);
+  const done = await fromPortal(async () => {
+    try {
+      return await ask(early);
+    } catch (err) {
+      // Somebody whose counting is stopped, in a period still running (2026-11-13): the CS Portal's broker admin and
+      // academic head cannot approve an open period, so finance's approval is the one there is — released there as
+      // finance's, with the reason their counting was stopped. Anybody else waits for them as before.
+      if (early || !(err instanceof CsCommissionRefusedError) || err.code !== "NOT_READY") throw err;
+      const list = await portalCsCommission(input.kind, input.period);
+      const person = list.people.find((x) => x.recipient_id === input.recipientId);
+      if (list.ended || !person?.stopped) throw err;
+      return ask({ reason: `Commission counting stopped — ${person.stopped.reason}`.slice(0, 300) });
+    }
+  });
   const currency = currencyOf(done.location);
   // What is frozen and paid (2026-11-13): the commission plus the period's additions, less its deductions — as the
   // CS Portal has them at this release.

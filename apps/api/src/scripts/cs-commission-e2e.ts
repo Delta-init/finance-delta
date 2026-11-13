@@ -344,6 +344,20 @@ await takeOff(MONA, big.adjustment!.id);
 v = await period();
 check("a deduction taken off again: back to AED 417.00", row(v, TARA).adjustments?.length === 2 && row(v, TARA).payableMinor === 41700 && /NOT_FOUND/.test(await refusal(takeOff(MONA, "adj-nope"))), j(row(v, TARA).adjustments));
 
+// Approve alone, for somebody stopped in a running period: the CS Portal's own approvals can't run there, so finance's
+// goes through as finance's, with the reason their counting stopped. Somebody still counted waits as ever.
+const URMI = "65a00000000000000000000b";
+portal.people.push({ recipient_id: URMI, name: "Mentor Urmi", email: "mentor.urmi@e2e-cs.test", location: "dubai", total_usd: 50, credits: [credit("c11", 50)],
+  approval: { overall_status: "pending_broker_approval", broker: stage(), academic: stage(), finance: stage(), released_at: null, released_by: "", by_finance: false } });
+check("still counted, still running: approving alone is refused", /still running/.test(await refusal(approve(MONA, URMI))));
+await svc.stopCsCommission(ORG, MONA, false, { recipientId: URMI, reason: "Resigned" });
+const alone = await approve(MONA, URMI);
+const urmiPayout = await CsCommissionPayout.findOne({ recipientId: URMI }).lean<any>();
+check("stopped: approved alone though it waits in the CS Portal — released there as finance's, saying why", alone.approved && urmiPayout?.state === "approved" && urmiPayout.amountMinor === 18350 && urmiPayout.beforePortal === true
+  && portal.asked.some((a) => a.path.endsWith("/approve") && a.body?.recipient_id === URMI && a.body?.force === true && a.body?.reason === "Commission counting stopped — Resigned"), j(urmiPayout));
+await revoke(MONA, URMI);
+portal.people = portal.people.filter((p) => p.recipient_id !== URMI);
+
 const early = await record(MONA, TARA, { reason: "Last working day" });
 const earlyExp = await Expense.findById(early.expense.id).lean<any>();
 const taraPayout = await CsCommissionPayout.findOne({ recipientId: TARA }).lean<any>();

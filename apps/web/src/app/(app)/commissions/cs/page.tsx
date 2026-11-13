@@ -351,7 +351,8 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                       {/* Once the period has ended — or sooner for someone whose counting is stopped: nothing more is added to theirs (2026-11-13). */}
                       {(p.state === "waiting" || p.state === "ready") && (ended || !!p.stopped) && payMinor(p) > 0 && canApprove && (
                         <div className="flex justify-end gap-2">
-                          {p.state === "ready" && (
+                          {/* Stopped, in a period still running: the CS Portal's own approvals cannot run there, so finance's is the one there is. */}
+                          {(p.state === "ready" || (!!p.stopped && !ended)) && (
                             <Button size="sm" variant={canPay ? "outline" : undefined} onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
                           )}
                           {/* Approve and pay in one step — while it waits in the CS Portal too, with a reason (2026-11-06). */}

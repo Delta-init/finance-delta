@@ -12,8 +12,11 @@
  *   2. on a pro-forma, it is marked free of VAT: its tax invoice keeps its number and carries none, and the other
  *      payments carry the VAT of their own amounts only;
  *   3. an invoice paid in full, all of it in other currencies, has its VAT taken off (the total stays);
- *   4. an ordinary invoice only partly paid so, or still owing, is listed and left as it is — its VAT was counted
- *      on the invoice, and one invoice cannot say "VAT on part of it".
+ *   4. an ordinary invoice only partly paid so, or still owing, becomes a pro-forma (2026-11-13: "why VAT added" on
+ *      two such invoices) — one invoice cannot say "VAT on part of it", so each of its payments gets its own tax
+ *      invoice, numbered on from the last in the order paid: none on the other currency, the VAT of their own
+ *      amounts on the rest. Where the organization does not have VAT on payments received on, it is listed and
+ *      left as it is.
  *
  * An invoice that is itself in rupees (Bangalore) has what was paid noted, and its VAT never touched.
  *
@@ -34,7 +37,9 @@ export interface RupeeRow {
   detail: string; rupeesNoted: number; vatBeforeMinor: number; vatAfterMinor: number;
   /** The day its VAT is counted on, for the month it comes off: each TI's paid day, or the invoice's date. */
   byDay: Array<{ day: string; lessMinor: number }>;
-  taxInvoices: Array<{ number: string; beforeMinor: number; afterMinor: number }>;
+  taxInvoices: Array<{ number: string; beforeMinor: number; afterMinor: number; /** Issued by this run, on an invoice it made a pro-forma. */ fresh?: boolean }>;
+  /** An ordinary invoice this run makes a pro-forma. */
+  madeProforma?: boolean;
   currency: string;
 }
 type Change = { id: string; number: string; guard: Record<string, unknown>; set: Record<string, unknown>; before: Record<string, unknown>; absent: string[] };
@@ -61,8 +66,16 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
     ],
   }).sort({ issueDate: 1, invoiceNumber: 1 }).toArray();
 
+  const { Organization } = await import("../modules/organization/organization.model");
+  const { Sequence } = await import("../modules/sequence/sequence.model");
+  const { nextNumber } = await import("../modules/sequence/sequence.service");
+  // Where a part-paid enrolment is a pro-forma at all: only there can an ordinary invoice be made one.
+  const proformaOrgs = new Set((await Organization.find({ vatOnPayments: true }).select("_id").lean<any[]>()).map((x) => String(x._id)));
+
   const rows: RupeeRow[] = [];
   const changes: Change[] = [];
+  /** Ordinary invoices to make pro-formas: each payment's VAT, its tax invoice numbered once every one is known. */
+  const converts: Array<{ d: any; ch: Change; row: RupeeRow; shares: number[] }> = [];
   for (const d of docs as any[]) {
     const cur = String(d.currency ?? "AED");
     const own = cur.toUpperCase();
@@ -140,9 +153,28 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
           payments.forEach((p, i) => { if (p.vatFree !== true) { put(`payments.${i}.vatFree`, true, p.vatFree ?? undefined); ch.guard[`payments.${i}._id`] = p._id; } });
           row.vatAfterMinor = 0;
           row.byDay.push({ day: day(d.issueDate), lessMinor: tax });
-        } else notes.push("priced before tax — taking the VAT off would change its total");
-      } else if (tax > 0) {
-        notes.push(!allRupees ? "only part of it was paid in another currency" : "not paid in full yet");
+        }
+      }
+      // Not taken off the invoice — part of it in the invoice's own currency, still owing, or priced before tax:
+      // a pro-forma from here on, the VAT on each payment's own tax invoice.
+      if (tax > 0 && row.vatAfterMinor === tax) {
+        if (proformaOrgs.has(String(d.organizationId))) {
+          const next = payments.map((p) => ({ ...p, vatFree: p.vatFree === true || isRupee(p) }));
+          const shares = taxShares({ ...d, payments: next });
+          put("proforma", { at: new Date(d.approval?.at ?? d.createdAt ?? d.issueDate) }, undefined);
+          payments.forEach((p, i) => {
+            if (isRupee(p) && p.vatFree !== true) put(`payments.${i}.vatFree`, true, p.vatFree ?? undefined);
+            ch.guard[`payments.${i}._id`] = p._id;
+          });
+          converts.push({ d, ch, row, shares });
+          row.madeProforma = true;
+          row.vatAfterMinor = shares.reduce((t, x) => t + x, 0);
+          // Off the day the invoice was dated; back on the days its dirhams were paid.
+          row.byDay.push({ day: day(d.issueDate), lessMinor: tax });
+          payments.forEach((p, i) => { if (shares[i]! > 0) row.byDay.push({ day: day(p.paidOn), lessMinor: -shares[i]! }); });
+        } else {
+          notes.push(`${!allRupees ? "only part of it was paid in another currency" : !paidInFull ? "not paid in full yet" : "priced before tax"}, and its organization does not have VAT on payments received on`);
+        }
       }
     }
 
@@ -152,22 +184,55 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
     row.outcome = touched ? (o.write ? "changed" : "would change") : left ? "left as it is" : "nothing to do";
     row.detail = [
       row.rupeesNoted ? `what was paid noted on ${row.rupeesNoted} payment${row.rupeesNoted === 1 ? "" : "s"}` : "",
+      row.madeProforma ? "becomes a pro-forma, each payment its own tax invoice" : "",
       row.vatBeforeMinor !== row.vatAfterMinor ? `VAT ${formatMoney(row.vatBeforeMinor, cur)} → ${formatMoney(row.vatAfterMinor, cur)}` : "",
       left ? `VAT left as it is: ${notes.join("; ")}` : "",
     ].filter(Boolean).join(" · ");
     if (touched || left) rows.push(row);
   }
 
+  // The new pro-formas' tax invoices: numbered on from each organization's last, in the order paid across them all.
+  const queue = converts.flatMap((c) => (c.d.payments as any[]).map((p, i) => ({ c, p, i })))
+    .sort((a, b) => new Date(a.p.paidOn).getTime() - new Date(b.p.paidOn).getTime() || a.c.row.invoice.localeCompare(b.c.row.invoice) || a.i - b.i);
+  const counters = new Map<string, number>();
+  const predicted = new Map<unknown, string>();
+  for (const { c, p } of queue) {
+    const k = String(c.d.organizationId);
+    if (!counters.has(k)) counters.set(k, (await Sequence.findOne({ organizationId: c.d.organizationId, key: "tax_invoice" }).lean<any>())?.next ?? 0);
+    counters.set(k, counters.get(k)! + 1);
+    predicted.set(p, `TI-${String(counters.get(k)).padStart(5, "0")}`);
+  }
+  const listed = (numberOf: (p: any) => string) => {
+    for (const c of converts) {
+      c.row.taxInvoices = (c.d.payments as any[]).map((p, i) => ({ number: numberOf(p), beforeMinor: 0, afterMinor: c.shares[i]!, fresh: true }));
+    }
+  };
+  listed((p) => predicted.get(p)!);
+
   const count = (f: (r: RupeeRow) => boolean) => rows.filter(f).length;
   const code = [
     rows.reduce((s, r) => s + r.rupeesNoted, 0),
-    rows.reduce((s, r) => s + r.taxInvoices.length, 0),
-    count((r) => r.kind === "invoice" && r.vatBeforeMinor !== r.vatAfterMinor),
+    rows.reduce((s, r) => s + r.taxInvoices.filter((t) => !t.fresh).length, 0),
+    count((r) => r.kind === "invoice" && !r.madeProforma && r.vatBeforeMinor !== r.vatAfterMinor),
+    count((r) => r.madeProforma === true),
     count((r) => /left as it is/.test(r.detail)),
   ].join("-");
   if (!o.write) return { rows, code };
   if (o.expect !== code) throw new Error(`--expect ${o.expect ?? "(none)"} is not what there is now (${code}) — look again before writing`);
   if (!changes.length) return { rows, code };
+
+  // Now that it is certain: the numbers themselves (never given back, as any tax invoice's), on each payment.
+  const given = new Map<unknown, string>();
+  for (const { c, p } of queue) given.set(p, await nextNumber(String(c.d.organizationId), "tax_invoice", "TI-"));
+  const now = new Date();
+  for (const c of converts) {
+    (c.d.payments as any[]).forEach((p, i) => {
+      const taxMinor = c.shares[i]!;
+      c.ch.set[`payments.${i}.taxInvoice`] = { number: given.get(p), netMinor: (Number(p.amountMinor) || 0) - taxMinor, taxMinor, issuedAt: now };
+      c.ch.absent.push(`payments.${i}.taxInvoice`);
+    });
+  }
+  listed((p) => given.get(p)!);
 
   const undoFile = o.undoFile ?? `inr-payments-no-vat-undo-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   const done: Change[] = [];
@@ -212,16 +277,18 @@ if (import.meta.main) {
       const { rows, code, undoFile } = await correctRupeePayments({ write, expect: arg("--expect"), rupeesOnly });
       for (const r of rows) {
         console.log(`${r.invoice.padEnd(12)} ${r.kind.padEnd(9)} ${r.outcome.padEnd(14)} ${r.detail}`);
-        for (const t of r.taxInvoices) console.log(`${" ".repeat(13)}${t.number}: VAT ${formatMoney(t.beforeMinor, r.currency)} → ${formatMoney(t.afterMinor, r.currency)}`);
+        for (const t of r.taxInvoices) {
+          console.log(`${" ".repeat(13)}${t.number}${t.fresh ? " (new)" : ""}: VAT ${t.fresh ? "" : `${formatMoney(t.beforeMinor, r.currency)} → `}${formatMoney(t.afterMinor, r.currency)}`);
+        }
       }
       const byMonth = new Map<string, number>();
       for (const r of rows) for (const b of r.byDay) byMonth.set(`${b.day.slice(0, 7)} ${r.currency}`, (byMonth.get(`${b.day.slice(0, 7)} ${r.currency}`) ?? 0) + b.lessMinor);
       if (byMonth.size) {
-        console.log(`\nOutput VAT ${write ? "is" : "would be"} lower by:`);
+        console.log(`\nOutput VAT ${write ? "is" : "would be"} lower by (a minus: higher):`);
         for (const [k, v] of [...byMonth].sort()) console.log(`  ${k.slice(0, 7)}  ${formatMoney(v, k.slice(8))}`);
       }
       const changing = rows.filter((r) => r.outcome === "changed" || r.outcome === "would change").length;
-      console.log(`\n${rows.length} invoice(s) with payments in another currency: ${changing} ${write ? "changed" : "would change"}, ${rows.filter((r) => /left as it is/.test(r.detail)).length} with VAT left as it is.${rupeesOnly ? " Amounts only — no VAT touched." : ""} Nobody is emailed.`);
+      console.log(`\n${rows.length} invoice(s) with payments in another currency: ${changing} ${write ? "changed" : "would change"}, ${rows.filter((r) => r.madeProforma).length} of them ${write ? "made" : "to be made"} pro-formas, ${rows.filter((r) => /left as it is/.test(r.detail)).length} with VAT left as it is.${rupeesOnly ? " Amounts only — no VAT touched." : ""} Nobody is emailed.`);
       if (!write && changing) console.log(`To write:  bun src/scripts/inr-payments-no-vat.ts ${rupeesOnly ? "--rupees-only " : ""}--write --expect ${code}`);
       if (undoFile) console.log(`Undo file: ${undoFile}  (bun src/scripts/inr-payments-no-vat.ts --undo ${undoFile})`);
     }

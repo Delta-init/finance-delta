@@ -17,6 +17,7 @@ import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quic
 import { useUrlParam } from "@/lib/url-state";
 import type { ExportColumn } from "@/lib/export";
 import { useOrganization } from "@/features/organization/api";
+import { useCurrency } from "@/lib/currency-context";
 import { downloadTaxInvoicePdf } from "@/features/invoices/invoice-pdf";
 import { useTaxDocuments, useTaxInvoices, type ProformaRow, type TaxDocumentRow, type TaxInvoiceRow } from "@/features/tax-invoices/api";
 import { Download, FileCheck2, Search } from "lucide-react";
@@ -135,8 +136,12 @@ export default function TaxInvoicesPage() {
   const [docType, setDocType] = useUrlParam<"all" | "invoice" | "ti">("type", "all", { allowed: ["invoice", "ti"] });
   const [pending, setPending] = useUrlParam<"all" | "yes">("pending", "all", { allowed: ["yes"] });
   // …and only what was paid in rupees, or only what was not (2026-11-13).
+  // Paid in: the organization's own currency, one other by its code, or any other (2026-11-13: "filter in AED
+  // payments and … USD payment also") — AED, INR and USD are always offered, and whatever else is in the list.
+  const { baseCurrency } = useCurrency();
   const [paidInParam, setPaidIn] = useUrlParam("paidIn", "all");
-  const paidIn = /^(own|other|[A-Za-z]{3})$/.test(paidInParam) ? paidInParam : "all";
+  const paidInCode = /^[A-Za-z]{3}$/.test(paidInParam) && !/^(all|own)$/i.test(paidInParam) ? paidInParam.toUpperCase() : "";
+  const paidIn = /^(own|other)$/.test(paidInParam) ? paidInParam : paidInCode === baseCurrency ? "own" : paidInCode || "all";
   const docParams = {
     ...params, type: docType === "all" ? undefined : docType, pending: pending === "yes" ? ("yes" as const) : undefined,
     paidIn: paidIn === "all" ? undefined : paidIn,
@@ -360,8 +365,9 @@ export default function TaxInvoicesPage() {
   const shown = rows.slice((page - 1) * pageSize, page * pageSize);
   const totals = Object.entries(data?.totals ?? {});
   const docTotals = Object.entries(docs.data?.totals ?? {});
-  // The currencies the Paid in filter offers: those in the list, and the one picked (it may now be the only one).
-  const paidInCurrencies = [...new Set([...docTotals.flatMap(([, t]) => (t.foreign ?? []).map((f) => f.currency)), ...(/^[A-Za-z]{3}$/.test(paidIn) && paidIn !== "all" && paidIn !== "own" ? [paidIn.toUpperCase()] : [])])].sort();
+  // The other currencies the Paid in filter offers: rupees and dollars always, those in the list, and the one picked.
+  const paidInCurrencies = [...new Set(["INR", "USD", ...docTotals.flatMap(([, t]) => (t.foreign ?? []).map((f) => f.currency)), ...(paidInCode ? [paidInCode] : [])])]
+    .filter((c) => c !== baseCurrency).sort();
   const exportName = `${tab === "all" ? "tax-documents" : tab === "tis" ? "tax-invoices" : "proformas"}${paid.from ? `-${paid.from}` : ""}${paid.to ? `-to-${paid.to}` : ""}`;
 
   return (
@@ -423,9 +429,9 @@ export default function TaxInvoicesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="other">Other currencies</SelectItem>
-                  <SelectItem value="own">The invoice's currency</SelectItem>
-                  {paidInCurrencies.map((c) => <SelectItem key={c} value={c}>{c} only</SelectItem>)}
+                  <SelectItem value="own">{baseCurrency} payments</SelectItem>
+                  {paidInCurrencies.map((c) => <SelectItem key={c} value={c}>{c} payments</SelectItem>)}
+                  <SelectItem value="other">Any but {baseCurrency}</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

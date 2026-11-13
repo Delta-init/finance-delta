@@ -246,7 +246,11 @@ const O2 = old({ total: 1_200_000, status: "partial", amountPaidMinor: 500_000, 
 const O3 = old({ total: 1_200_000, amountPaidMinor: 1_200_000, balanceMinor: 0, payments: [paid("cash", 600_000), paid("inr_bank_account", 600_000)] });
 const O4 = old({ currency: "INR", total: 5_000_000, amountPaidMinor: 5_000_000, balanceMinor: 0, payments: [paid("inr_bank_account", 5_000_000)] });
 const O5 = old({ status: "void", amountPaidMinor: 2_000_000, balanceMinor: 0, payments: [paid("inr_bank_account", 2_000_000)] });
-const oldDocs = [P1, P2, O1, O2, O3, O4, O5];
+// …and one in an organization where a part-paid enrolment is not a pro-forma at all.
+const NO_PF = new Types.ObjectId();
+await Organization.create([{ _id: NO_PF, name: "No pro-formas here", baseCurrency: "AED", taxRates: VAT5 }] as never);
+const O6 = old({ organizationId: NO_PF, total: 1_200_000, amountPaidMinor: 1_200_000, balanceMinor: 0, payments: [paid("cash", 600_000), paid("inr_bank_account", 600_000)] });
+const oldDocs = [P1, P2, O1, O2, O3, O4, O5, O6];
 await invoices.insertMany(oldDocs as any[]);
 const snapshot = async () => mongoose.mongo.BSON.EJSON.stringify(await invoices.find({ organizationId: OLD }).sort({ invoiceNumber: 1 }).toArray());
 const before = await snapshot();
@@ -254,36 +258,45 @@ const vatBefore = (await getVATReport(String(OLD), "2026-11-01", "2026-11-30")).
 
 const look = await correctRupeePayments({ write: false });
 const byNo = (rows: typeof look.rows, d: { invoiceNumber: string }) => rows.find((r) => r.invoice === d.invoiceNumber);
-check("the look: the five that have rupee payments in dirham invoices — not the rupee invoice, not the void one", look.rows.map((r) => r.invoice).sort().join(",") === [P1, P2, O1, O2, O3].map((x) => x.invoiceNumber).sort().join(","), show(look.rows.map((r) => [r.invoice, r.outcome, r.detail])));
-check("its code: 4 rupee amounts to note, 2 tax invoices, 1 invoice's VAT, 2 left as they are", look.code === "4-2-1-2", look.code);
+check("the look: the six that have rupee payments in dirham invoices — not the rupee invoice, not the void one", look.rows.map((r) => r.invoice).sort().join(",") === [P1, P2, O1, O2, O3, O6].map((x) => x.invoiceNumber).sort().join(","), show(look.rows.map((r) => [r.invoice, r.outcome, r.detail])));
+check("its code: 4 rupee amounts to note, 2 tax invoices, 1 invoice's VAT, 2 to make pro-formas, 1 left as it is", look.code === "4-2-1-2-1", look.code);
 check("a pro-forma's rupee tax invoice: 558.17 → none", byNo(look.rows, P1)?.taxInvoices[0]?.beforeMinor === 55_817 && byNo(look.rows, P1)?.taxInvoices[0]?.afterMinor === 0);
-check("an invoice partly in rupees, and one still owing: left, and said why", /only part of it was paid in another currency/.test(byNo(look.rows, O3)?.detail ?? "") && /not paid in full yet/.test(byNo(look.rows, O2)?.detail ?? "") && byNo(look.rows, O2)?.rupeesNoted === 1, show([byNo(look.rows, O2), byNo(look.rows, O3)]));
+check("an invoice still owing, and one only partly in rupees: each to become a pro-forma, its payments numbered on in the order paid",
+  byNo(look.rows, O2)?.madeProforma === true && byNo(look.rows, O2)?.rupeesNoted === 1 && byNo(look.rows, O2)?.taxInvoices.map((t) => `${t.number}:${t.afterMinor}:${t.fresh}`).join(" ") === "TI-00001:0:true"
+  && byNo(look.rows, O3)?.madeProforma === true && byNo(look.rows, O3)?.taxInvoices.map((t) => `${t.number}:${t.afterMinor}`).join(" ") === "TI-00002:28572 TI-00003:0"
+  && byNo(look.rows, O3)?.vatBeforeMinor === vat(1_200_000) && byNo(look.rows, O3)?.vatAfterMinor === 28_572, show([byNo(look.rows, O2), byNo(look.rows, O3)]));
+check("where a part-paid enrolment is not a pro-forma, it is left, and said why", byNo(look.rows, O6)?.outcome === "left as it is" && /only part of it was paid in another currency, and its organization does not have VAT on payments received on/.test(byNo(look.rows, O6)?.detail ?? ""), show(byNo(look.rows, O6)));
 check("the look wrote nothing", (await snapshot()) === before);
 let refused = "";
 try { await correctRupeePayments({ write: true, expect: "9-9-9-9" }); } catch (err) { refused = (err as Error).message; }
-check("a wrong --expect is refused and nothing is written", /is not what there is now \(4-2-1-2\)/.test(refused) && (await snapshot()) === before, refused);
+check("a wrong --expect is refused and nothing is written", /is not what there is now \(4-2-1-2-1\)/.test(refused) && (await snapshot()) === before, refused);
 
 const UNDO = `${process.env.TMPDIR ?? "/tmp"}/inr-no-vat-e2e-undo-${Date.now()}.json`;
-const wrote = await correctRupeePayments({ write: true, expect: "4-2-1-2", undoFile: UNDO });
+const wrote = await correctRupeePayments({ write: true, expect: "4-2-1-2-1", undoFile: UNDO });
 const p1 = await raw(P1._id), p2 = await raw(P2._id), o1 = await raw(O1._id), o2 = await raw(O2._id), o3 = await raw(O3._id);
-check("written, with an undo file", wrote.undoFile === UNDO && wrote.rows.filter((r) => r.outcome === "changed").length === 4);
+check("written, with an undo file", wrote.undoFile === UNDO && wrote.rows.filter((r) => r.outcome === "changed").length === 5);
 check("P1: the rupees from its CS Portal request (INR 300,000), marked, TI-09001 kept with no VAT", p1.payments[0].original?.amountMinor === 30_000_000 && p1.payments[0].vatFree === true && p1.payments[0].taxInvoice.number === "TI-09001" && p1.payments[0].taxInvoice.taxMinor === 0 && p1.payments[0].taxInvoice.netMinor === 1_172_160, show(p1.payments[0]));
 check("P2: the rupees from the bank account; its card payment keeps the VAT of its own 7,000", p2.payments[0].original?.amountMinor === 11_375_000 && p2.payments[0].taxInvoice.taxMinor === 0 && p2.payments[1].taxInvoice.taxMinor === 33_333 && !p2.payments[1].vatFree, show(p2.payments.map((p: any) => p.taxInvoice)));
 check("O1, paid in full in rupees: its VAT off, its total as it was, what it carried kept", o1.taxTotalMinor === 0 && o1.totalMinor === 2_000_000 && o1.subtotalMinor === 2_000_000 && o1.lineItems[0].taxes.length === 0 && o1.rupeesNoVat?.taxMinor === vat(2_000_000) && o1.payments[0].vatFree === true && o1.payments[0].original?.amountMinor === 45_500_000, show({ tax: o1.taxTotalMinor, total: o1.totalMinor }));
-check("O2, still owing: its rupees noted from the close, its VAT untouched", o2.payments[0].original?.amountMinor === 11_375_000 && o2.taxTotalMinor === vat(1_200_000) && !o2.payments[0].vatFree);
-check("O3, partly rupees: untouched", mongoose.mongo.BSON.EJSON.stringify(o3) === mongoose.mongo.BSON.EJSON.stringify(O3));
+check("O2, still owing: a pro-forma now — its rupees noted from the close, TI-00001 with no VAT; what the invoice says of itself untouched",
+  Boolean(o2.proforma?.at) && o2.payments[0].original?.amountMinor === 11_375_000 && o2.payments[0].vatFree === true && o2.payments[0].taxInvoice?.number === "TI-00001" && o2.payments[0].taxInvoice.taxMinor === 0 && o2.payments[0].taxInvoice.netMinor === 500_000
+  && o2.taxTotalMinor === vat(1_200_000) && o2.balanceMinor === 700_000, show(o2.payments[0]));
+check("O3, half in cash and half in rupees: a pro-forma now — the cash with the VAT of its own 6,000 (285.72), the rupees with none",
+  Boolean(o3.proforma?.at) && o3.payments[0].taxInvoice?.number === "TI-00002" && o3.payments[0].taxInvoice.taxMinor === 28_572 && o3.payments[0].taxInvoice.netMinor === 600_000 - 28_572 && !o3.payments[0].vatFree
+  && o3.payments[1].taxInvoice?.number === "TI-00003" && o3.payments[1].taxInvoice.taxMinor === 0 && o3.payments[1].vatFree === true && !o3.payments[1].original, show(o3.payments.map((x: any) => x.taxInvoice)));
+check("O6, where there are no pro-formas: untouched", mongoose.mongo.BSON.EJSON.stringify(await raw(O6._id)) === mongoose.mongo.BSON.EJSON.stringify(O6));
 const vatAfter = (await getVATReport(String(OLD), "2026-11-01", "2026-11-30")).outputTaxMinor;
-check("the VAT report is lower by exactly what came off: 558.17 + 238.10 + 952.38", vatBefore - vatAfter === 55_817 + 23_810 + vat(2_000_000), show({ vatBefore, vatAfter }));
+check("the VAT report is lower by exactly what came off: 558.17 + 238.10 + 952.38, the 571.43 of the one still owing, and all but 285.72 of the mixed one", vatBefore - vatAfter === 55_817 + 23_810 + vat(2_000_000) + vat(1_200_000) + (vat(1_200_000) - 28_572), show({ vatBefore, vatAfter }));
 const again = await correctRupeePayments({ write: false });
-check("run again: nothing more to change — only the two left as they are", again.code === "0-0-0-2" && again.rows.every((r) => r.outcome === "left as it is"), show(again.rows.map((r) => [r.invoice, r.outcome])));
+check("run again: nothing more to change — only the one left as it is", again.code === "0-0-0-0-1" && again.rows.length === 1 && again.rows[0]!.invoice === O6.invoiceNumber, show(again.rows.map((r) => [r.invoice, r.outcome])));
 
 step("10. Undo, and rupees only");
 const undone = await undoRupeeCorrection(UNDO);
-check("every invoice exactly as it was before", undone === 4 && (await snapshot()) === before);
+check("every invoice exactly as it was before — no longer pro-formas, their new tax invoices gone", undone === 5 && (await snapshot()) === before);
 const onlyLook = await correctRupeePayments({ write: false, rupeesOnly: true });
-check("rupees only: 4 amounts to note, no VAT touched", onlyLook.code === "4-0-0-0", onlyLook.code);
+check("rupees only: 4 amounts to note, no VAT touched, nothing made a pro-forma", onlyLook.code === "4-0-0-0-0", onlyLook.code);
 const UNDO2 = `${process.env.TMPDIR ?? "/tmp"}/inr-no-vat-e2e-undo2-${Date.now()}.json`;
-await correctRupeePayments({ write: true, expect: "4-0-0-0", rupeesOnly: true, undoFile: UNDO2 });
+await correctRupeePayments({ write: true, expect: "4-0-0-0-0", rupeesOnly: true, undoFile: UNDO2 });
 const p1b = await raw(P1._id), o1b = await raw(O1._id);
 check("…the rupees are on the payments, every VAT figure as it was", p1b.payments[0].original?.amountMinor === 30_000_000 && p1b.payments[0].taxInvoice.taxMinor === 55_817 && !p1b.payments[0].vatFree && o1b.taxTotalMinor === vat(2_000_000)
   && (await getVATReport(String(OLD), "2026-11-01", "2026-11-30")).outputTaxMinor === vatBefore);

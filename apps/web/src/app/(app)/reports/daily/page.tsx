@@ -177,24 +177,36 @@ export default function DailyReportPage() {
                 <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
                   <Icon className="h-3.5 w-3.5" /> {label}
                 </p>
-                {perCurrency && perCurrency.length > 1 ? (
-                  // A line per currency, never added together (2026-11-07); the table below is the switched one's.
-                  <div className="mt-2 space-y-0.5">
-                    {perCurrency.map((t) => {
-                      const v = kind === "income" ? t.incomeMinor : kind === "expense" ? t.expenseMinor : kind === "revenue" ? t.revenueMinor : t.netMinor;
-                      return (
-                        <p key={t.currency} className={`font-numeric font-bold ${t.currency === shown ? "text-xl" : "text-base opacity-80"} ${kind === "net" ? (v >= 0 ? "text-success" : "text-danger") : className}`}>
-                          {moneyIn(t.currency, v)}
-                        </p>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
-                    {money(value)}
+                {/* The shown currency alone (2026-11-13); every other one has a card of its own below. */}
+                <p className={`mt-2 text-2xl font-bold font-numeric ${className}`}>
+                  {money(value)}
+                </p>
+                <p className="mt-1 text-xs text-foreground-subtle">Click for the breakdown</p>
+                {kind === "income" && shown !== "INR" && (data?.rupeeIncome?.notRecordedCount ?? 0) > 0 && (
+                  <p className="mt-1 text-xs text-foreground-muted">
+                    {data!.rupeeIncome!.notRecordedCount} rupee payment{data!.rupeeIncome!.notRecordedCount === 1 ? "" : "s"} without the rupees recorded — still here ({moneyIn(shown, data!.rupeeIncome!.notRecordedMinor)})
                   </p>
                 )}
-                <p className="mt-1 text-xs text-foreground-subtle">Click for the breakdown</p>
+              </Card>
+            </button>
+          ))}
+          {/* Each other currency on its own, never added in or converted (the user, 2026-11-13: "separate INR stats
+              card"): what was paid in rupees is income in rupees. Click it for its days. */}
+          {(perCurrency ?? []).filter((t) => t.currency !== shown).map((t) => (
+            <button key={t.currency} type="button" onClick={() => setCur(t.currency)} className="text-left sm:col-span-2" title={`Show the days in ${t.currency}`}>
+              <Card className="border-warning/40 p-5 transition-colors hover:border-primary/50 hover:bg-surface-muted/40">
+                <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">{t.currency === "INR" ? "In rupees (INR)" : `In ${t.currency}`}</p>
+                <div className="mt-2 grid grid-cols-3 gap-3 text-sm">
+                  <div><p className="text-xs text-foreground-muted">Income</p><p className="font-numeric text-lg font-bold text-success">{moneyIn(t.currency, t.incomeMinor)}</p></div>
+                  <div><p className="text-xs text-foreground-muted">Expenses</p><p className="font-numeric text-lg font-bold text-danger">{moneyIn(t.currency, t.expenseMinor)}</p></div>
+                  <div><p className="text-xs text-foreground-muted">Net</p><p className={`font-numeric text-lg font-bold ${t.netMinor >= 0 ? "text-success" : "text-danger"}`}>{moneyIn(t.currency, t.netMinor)}</p></div>
+                </div>
+                <p className="mt-1 text-xs text-foreground-subtle">
+                  {t.currency === "INR" && (data?.rupeeIncome?.rupeesMinor ?? 0) > 0 && shown !== "INR"
+                    ? `${moneyIn("INR", data!.rupeeIncome!.rupeesMinor)} of the income was paid on ${shown} invoices (recorded as ${moneyIn(shown, data!.rupeeIncome!.recordedMinor)}) · `
+                    : ""}
+                  Click for its days
+                </p>
               </Card>
             </button>
           ))}

@@ -20,7 +20,7 @@
  * payment has its own document. The client pays the same; nothing is taken out of the rupees for VAT. A rupee payment
  * recorded before this is as it was until scripts/inr-payments-no-vat.ts corrects it.
  */
-import { computeInvoiceLine, formatMoney, sumInvoiceTotals } from "@delta/shared";
+import { computeInvoiceLine, formatMoney, isRupeePayment, RUPEE_METHOD, rupeesOnInvoice, rupeesPaidMinor, sumInvoiceTotals } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 
 type Pay = {
@@ -64,17 +64,33 @@ export function isProforma(doc: unknown): boolean {
   return Boolean((doc as Doc).proforma?.at);
 }
 
-/** The method the rupee account's payments are recorded under — "INR Transfer". */
-export const RUPEE_METHOD = "inr_bank_account";
+// What a rupee payment is, and its rupees: @delta/shared (the web shows them by the same rule).
+export { isRupeePayment, RUPEE_METHOD };
 
+// The same, as aggregation expressions over a payment `p` of the invoice in hand.
+const upperOf = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
+const inRupeesExpr = (p: string) => ({ $and: [
+  { $ne: [upperOf("$currency"), "INR"] },
+  { $or: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $eq: [upperOf(`${p}.original.currency`), "INR"] }] },
+] });
+const rupeesOfExpr = (p: string) => ({ $cond: [
+  { $and: [{ $eq: [upperOf(`${p}.original.currency`), "INR"] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
+  { $cond: [{ $and: [{ $eq: [upperOf(`${p}.bankCurrency`), "INR"] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
+] });
 /**
- * Received in rupees: the INR Transfer method, or typed in rupees where it was taken — on an invoice that is not
- * itself in rupees (a Bangalore invoice is, and is taxed as it always was).
+ * An aggregation stage over invoices: `rupeePayments` — each payment received in rupees, as recorded in the invoice's
+ * currency (`aed`) and its rupees in paise (`inr`, 0 when they were never recorded).
  */
-export function isRupeePayment(p: { method?: string | null; original?: { currency?: string | null } | null } | null | undefined, invoiceCurrency: unknown): boolean {
-  if (String(invoiceCurrency ?? "AED").toUpperCase() === "INR") return false;
-  return p?.method === RUPEE_METHOD || String(p?.original?.currency ?? "").toUpperCase() === "INR";
-}
+export const rupeePaymentsStage = {
+  $addFields: {
+    rupeePayments: {
+      $map: {
+        input: { $filter: { input: { $ifNull: ["$payments", []] }, as: "p", cond: inRupeesExpr("$$p") } },
+        as: "p", in: { aed: { $ifNull: ["$$p.amountMinor", 0] }, inr: rupeesOfExpr("$$p") },
+      },
+    },
+  },
+};
 
 /** What the close declared, and how much of it in rupees. */
 function declaredAtClose(d: Doc): { declared: number; rupees: number } {
@@ -266,11 +282,15 @@ export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
+  /** Of what is paid, the part paid in rupees: the rupees (paise) and what they were recorded as (2026-11-13). */
+  inrMinor: number; inrRecordedMinor: number;
 }
 export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
   paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
   emailed: boolean; cancelled: boolean;
+  /** Paid in rupees: the rupees (paise; 0 when not a rupee payment or never recorded), and whether it was one. */
+  inrMinor: number; inRupees: boolean;
 }
 
 /**
@@ -313,12 +333,14 @@ export async function listProformasAndTaxInvoices(
         ...base, number: p.taxInvoice.number, paymentId: String(p._id), paidOn: day(p.paidOn), amountMinor: p.amountMinor ?? 0,
         netMinor: p.taxInvoice.netMinor ?? 0, taxMinor: p.taxInvoice.taxMinor ?? 0, method: String(p.method ?? ""),
         emailed: Boolean(p.taxInvoice.emailedAt), cancelled: false,
+        inrMinor: rupeesPaidMinor(p, base.currency), inRupees: isRupeePayment(p, base.currency),
       });
     }
     for (const c of d.cancelledTaxInvoices ?? []) {
       tis.push({
         ...base, number: c.number, paymentId: "", paidOn: day(c.paidOn), amountMinor: c.amountMinor ?? 0,
         netMinor: (c.amountMinor ?? 0) - (c.taxMinor ?? 0), taxMinor: c.taxMinor ?? 0, method: "", emailed: false, cancelled: true,
+        inrMinor: 0, inRupees: false,
       });
     }
     const course = String(d.enrolment?.course || d.lineItems?.[0]?.description || "");
@@ -328,6 +350,7 @@ export async function listProformasAndTaxInvoices(
         salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
         totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
         status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
+        inrMinor: rupeesOnInvoice(d.payments, base.currency).rupeesMinor, inrRecordedMinor: rupeesOnInvoice(d.payments, base.currency).recordedMinor,
       });
     }
     for (const t of tis) if ((!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
@@ -399,17 +422,7 @@ export async function listTaxDocuments(
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 25)));
 
-  // A payment received in rupees (isRupeePayment, as an expression) and the rupees themselves: as typed where it was
-  // taken, else what landed in a rupee bank account; 0 when neither was recorded.
-  const upper = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
-  const inRupees = (p: string) => ({ $and: [
-    { $ne: [upper("$currency"), "INR"] },
-    { $or: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $eq: [upper(`${p}.original.currency`), "INR"] }] },
-  ] });
-  const rupeesOf = (p: string) => ({ $cond: [
-    { $and: [{ $eq: [upper(`${p}.original.currency`), "INR"] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
-    { $cond: [{ $and: [{ $eq: [upper(`${p}.bankCurrency`), "INR"] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
-  ] });
+  const inRupees = inRupeesExpr, rupeesOf = rupeesOfExpr;
   const fee = { $ifNull: ["$totalMinor", 0] };
   const invoiceInr = { $min: ["$invInrAedMinor", fee] };
 
@@ -430,16 +443,7 @@ export async function listTaxDocuments(
       },
     },
     // What was paid on the invoice in rupees: each such payment as recorded, and its rupees.
-    {
-      $addFields: {
-        rupeePayments: {
-          $map: {
-            input: { $filter: { input: { $ifNull: ["$payments", []] }, as: "p", cond: inRupees("$$p") } },
-            as: "p", in: { aed: { $ifNull: ["$$p.amountMinor", 0] }, inr: rupeesOf("$$p") },
-          },
-        },
-      },
-    },
+    rupeePaymentsStage,
     {
       $addFields: {
         invInrAedMinor: { $sum: "$rupeePayments.aed" },

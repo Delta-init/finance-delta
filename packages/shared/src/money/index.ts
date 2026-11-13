@@ -408,3 +408,55 @@ export function fromBaseMinor(baseMinor: number, rate: number): number {
   if (!Number.isFinite(rate) || rate <= 0) return baseMinor;
   return Math.round(baseMinor * rate);
 }
+
+// ── Rupees ────────────────────────────────────────────────────────────────────
+
+/** The method the rupee account's payments are recorded under — "INR Transfer". */
+export const RUPEE_METHOD = "inr_bank_account";
+
+type RupeeAsk = {
+  method?: string | null;
+  original?: { currency?: string | null; amountMinor?: number | null } | null;
+  bankCurrency?: string | null;
+  bankAmountMinor?: number | null;
+};
+
+/**
+ * Received in rupees (the user, 2026-11-13): the INR Transfer method, or typed in rupees where it was taken — on an
+ * invoice that is not itself in rupees (a Bangalore invoice is, and is as it always was).
+ */
+export function isRupeePayment(p: RupeeAsk | null | undefined, invoiceCurrency: unknown): boolean {
+  if (String(invoiceCurrency ?? "AED").toUpperCase() === "INR") return false;
+  return p?.method === RUPEE_METHOD || String(p?.original?.currency ?? "").toUpperCase() === "INR";
+}
+
+/**
+ * The rupees a rupee payment was paid in, in paise — shown as they are, never as what they were converted to (the
+ * user, 2026-11-13: "no need to convert anywhere"): as typed where it was taken, else what landed in a rupee bank
+ * account. 0 when it is not a rupee payment, or its rupees were never recorded.
+ */
+export function rupeesPaidMinor(p: RupeeAsk | null | undefined, invoiceCurrency: unknown): number {
+  if (!p || !isRupeePayment(p, invoiceCurrency)) return 0;
+  if (String(p.original?.currency ?? "").toUpperCase() === "INR" && Number(p.original?.amountMinor) > 0) return Number(p.original!.amountMinor);
+  if (String(p.bankCurrency ?? "").toUpperCase() === "INR" && Number(p.bankAmountMinor) > 0) return Number(p.bankAmountMinor);
+  return 0;
+}
+
+/**
+ * Everything paid on an invoice in rupees: the rupees recorded (paise), what those payments were recorded as in the
+ * invoice's currency, and the rupee payments whose rupees were never recorded.
+ */
+export function rupeesOnInvoice(
+  payments: Array<RupeeAsk & { amountMinor?: number | null }> | null | undefined,
+  invoiceCurrency: unknown,
+): { rupeesMinor: number; recordedMinor: number; unknownCount: number; unknownMinor: number } {
+  const out = { rupeesMinor: 0, recordedMinor: 0, unknownCount: 0, unknownMinor: 0 };
+  for (const p of payments ?? []) {
+    if (!isRupeePayment(p, invoiceCurrency)) continue;
+    const rupees = rupeesPaidMinor(p, invoiceCurrency);
+    if (rupees > 0) { out.rupeesMinor += rupees; out.recordedMinor += Number(p.amountMinor) || 0; }
+    else { out.unknownCount++; out.unknownMinor += Number(p.amountMinor) || 0; }
+  }
+  return out;
+}
+

@@ -24,7 +24,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, isRupeePayment, rupeesPaidMinor, type PaymentMethod } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
@@ -297,6 +297,7 @@ export async function getDailyReport(
   })
     .select("salespersonId issueDate totalMinor currency payments")
     .lean();
+  const rupeeIncome = { rupeesMinor: 0, recordedMinor: 0, notRecordedCount: 0, notRecordedMinor: 0 };
 
   for (const inv of invoices) {
     const d = inv as unknown as {
@@ -304,7 +305,7 @@ export async function getDailyReport(
       issueDate?: Date;
       totalMinor?: number;
       currency?: string;
-      payments?: { amountMinor: number; paidOn: Date }[];
+      payments?: { amountMinor: number; paidOn: Date; method?: string; original?: { currency?: string; amountMinor?: number }; bankCurrency?: string; bankAmountMinor?: number }[];
     };
     if (salespersonFilter && !salespersonFilter.has(String(d.salespersonId))) continue;
 
@@ -317,6 +318,19 @@ export async function getDailyReport(
     for (const p of d.payments ?? []) {
       const paidOn = new Date(p.paidOn);
       if (paidOn >= fromDate && paidOn <= toDate) {
+        // Paid in rupees: income in rupees, under INR — never what it was converted to (the user, 2026-11-13). One
+        // whose rupees were never recorded stays where it was recorded, and is counted for the note.
+        const rupees = rupeesPaidMinor(p, d.currency ?? base);
+        if (rupees > 0) {
+          row("INR", dateOnly(paidOn)).incomeMinor += rupees;
+          rupeeIncome.rupeesMinor += rupees;
+          rupeeIncome.recordedMinor += p.amountMinor ?? 0;
+          continue;
+        }
+        if (isRupeePayment(p, d.currency ?? base)) {
+          rupeeIncome.notRecordedCount++;
+          rupeeIncome.notRecordedMinor += p.amountMinor ?? 0;
+        }
         row(d.currency ?? base, dateOnly(paidOn)).incomeMinor += p.amountMinor ?? 0;
       }
     }
@@ -358,7 +372,10 @@ export async function getDailyReport(
   const totals = totalsOf(rows);
   const byCurrency = currencies.map((c) => ({ currency: c, ...totalsOf(rowsOf(c)) }));
 
-  return { from, to, currency, departmentId: departmentId ?? null, rows, totals, currencies, byCurrency };
+  return {
+    from, to, currency, departmentId: departmentId ?? null, rows, totals, currencies, byCurrency,
+    ...(rupeeIncome.rupeesMinor || rupeeIncome.notRecordedCount ? { rupeeIncome } : {}),
+  };
 }
 
 /** The organization's own currency. */
@@ -434,10 +451,13 @@ export async function getDailyBreakdown(
         const paidOn = new Date(p.paidOn);
         if (paidOn < fromDate || paidOn > toDate) continue;
         const method = PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? "—");
+        // As the report: a rupee payment in rupees, under INR; what it was recorded as is said beside it.
+        const rupees = rupeesPaidMinor(p, inv.currency ?? "AED");
         records.push({
           id: `${inv._id}:${p._id ?? paidOn.getTime()}`, date: dateOnly(paidOn), number: p.receiptNumber || inv.invoiceNumber,
-          title: inv.customerName ?? "", detail: [inv.invoiceNumber, method].filter(Boolean).join(" · "),
-          amountMinor: p.amountMinor ?? 0, currency: inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { method, salesperson, crm },
+          title: inv.customerName ?? "",
+          detail: [inv.invoiceNumber, method, rupees > 0 ? `recorded as ${formatMoney(p.amountMinor ?? 0, inv.currency ?? "AED")}` : ""].filter(Boolean).join(" · "),
+          amountMinor: rupees > 0 ? rupees : p.amountMinor ?? 0, currency: rupees > 0 ? "INR" : inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { method, salesperson, crm },
         });
       }
     }

@@ -737,6 +737,16 @@ export interface InvoiceListSummaryCurrency {
   /** Of that, past its due date. */
   overdueMinor: number;
   overdueCount: number;
+  /**
+   * Paid in rupees (2026-11-13: a card of its own, never converted): the rupees (paise), what those payments were
+   * recorded as in this currency, and how many invoices have any. Then the rupee payments whose rupees were never
+   * recorded — those stay in `paidMinor` as they are.
+   */
+  inrMinor?: number;
+  inrRecordedMinor?: number;
+  inrCount?: number;
+  inrUnknownMinor?: number;
+  inrUnknownCount?: number;
 }
 
 /** The Invoices list's cards: what its filters match, per currency. */

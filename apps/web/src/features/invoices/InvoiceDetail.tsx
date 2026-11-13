@@ -12,7 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel,} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, isRupeePayment, rupeesPaidMinor,} from "@delta/shared";
 
 const NO_ACCOUNT = "__none__";
 const paymentFormSchema = z.object({
@@ -539,7 +539,19 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
                   </td>
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
                   <td className="px-4 py-2.5 text-right align-top">
-                    <span className="font-numeric font-medium text-success">{formatMoney(p.amountMinor, invoice.currency)}</span>
+                    {/* Paid in rupees: the rupees, with what they were recorded as beneath (2026-11-13). */}
+                    {rupeesPaidMinor(p, invoice.currency) > 0 ? (
+                      <>
+                        <span className="font-numeric font-medium text-success">{formatMoney(rupeesPaidMinor(p, invoice.currency), "INR")}</span>
+                        <span className="mt-0.5 block text-xs text-foreground-muted">recorded as {formatMoney(p.amountMinor, invoice.currency)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-numeric font-medium text-success">{formatMoney(p.amountMinor, invoice.currency)}</span>
+                        {isRupeePayment(p, invoice.currency) && <span className="mt-0.5 block text-xs text-foreground-muted">paid in rupees — the rupees were not recorded</span>}
+                      </>
+                    )}
+                    {p.vatFree && <span className="mt-0.5 block text-xs text-foreground-muted">no VAT — rupees</span>}
                     {p.chargesMinor > 0 && (
                       <span className="mt-0.5 block text-xs text-foreground-muted">
                         charges {formatMoney(p.chargesMinor, invoice.currency)}

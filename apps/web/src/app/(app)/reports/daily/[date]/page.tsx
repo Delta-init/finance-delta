@@ -4,7 +4,7 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight, DollarSign, Loader2, Search, TrendingDown, TrendingUp, Wallet, X } from "lucide-react";
-import type { DailyBreakdown, DailyBreakdownKind, DailyBreakdownRecord } from "@delta/shared";
+import { formatMoney, type DailyBreakdown, type DailyBreakdownKind, type DailyBreakdownRecord } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -87,16 +87,32 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
   const income = useDailyBreakdown(q("income"));
   const revenue = useDailyBreakdown(q("revenue"));
   const expense = useDailyBreakdown(q("expense"));
-  const loading = income.isLoading || revenue.isLoading || expense.isLoading;
+  // What came in or went out in rupees that day, when the day's own currency is another (2026-11-13: a payment made
+  // in rupees is income in rupees, never what it was converted to) — listed as rupees, and totalled on their own.
+  const main = income.data?.currency ?? expense.data?.currency ?? "";
+  const rupeesToo = (d: DailyBreakdown | undefined) => !!d && d.currency !== "INR" && (d.currencies ?? []).includes("INR");
+  const inr = (kind: DailyBreakdownKind, on: boolean) => (valid && on ? { kind, from: date, to: date, departmentId: scope, currency: "INR" } : null);
+  const incomeInr = useDailyBreakdown(inr("income", rupeesToo(income.data)));
+  const expenseInr = useDailyBreakdown(inr("expense", rupeesToo(expense.data)));
+  const loading = income.isLoading || revenue.isLoading || expense.isLoading || incomeInr.isLoading || expenseInr.isLoading;
   const failed = income.error ?? revenue.error ?? expense.error;
+  const isRupees = (r: DayRow) => r.currency === "INR" && main !== "INR";
+  const amount = (r: DayRow) => (isRupees(r) ? formatMoney(r.amountMinor, "INR") : money(r.amountMinor));
 
-  const all: DayRow[] = [...rowsOf("income", income.data), ...rowsOf("revenue", revenue.data), ...rowsOf("expense", expense.data)];
+  const all: DayRow[] = [
+    ...rowsOf("income", income.data), ...rowsOf("income", incomeInr.data), ...rowsOf("revenue", revenue.data),
+    ...rowsOf("expense", expense.data), ...rowsOf("expense", expenseInr.data),
+  ];
   const needle = search.trim().toLowerCase();
   const rows = all.filter((r) =>
     (type === "all" || r.kind === type) &&
     (!needle || [r.number, r.title, r.detail, r.who, r.extra, TYPE_LABEL[r.kind]].some((v) => v?.toLowerCase().includes(needle))),
   );
-  const sum = (kind: DailyBreakdownKind, list: DayRow[]) => list.filter((r) => r.kind === kind).reduce((t, r) => t + r.amountMinor, 0);
+  const sum = (kind: DailyBreakdownKind, list: DayRow[], rupees = false) => list.filter((r) => r.kind === kind && isRupees(r) === rupees).reduce((t, r) => t + r.amountMinor, 0);
+  // The day's rupees, whatever is filtered below; and those of the rows shown.
+  const dayInr = { income: incomeInr.data?.totalMinor ?? 0, expense: expenseInr.data?.totalMinor ?? 0 };
+  const hasRupees = dayInr.income > 0 || dayInr.expense > 0;
+  const shownInr = { income: sum("income", rows, true), expense: sum("expense", rows, true) };
   // The day as the report has it, whatever is filtered below.
   const day = { income: income.data?.totalMinor ?? 0, expense: expense.data?.totalMinor ?? 0, revenue: revenue.data?.totalMinor ?? 0 };
   const shown = { income: sum("income", rows), expense: sum("expense", rows), revenue: sum("revenue", rows) };
@@ -205,6 +221,17 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
         ))}
       </div>
 
+      {hasRupees && (
+        <Card className="border-warning/40 p-5">
+          <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">In rupees (INR) — not in the figures above</p>
+          <div className="mt-2 grid grid-cols-3 gap-3 sm:max-w-xl">
+            <div><p className="text-xs text-foreground-muted">Income</p><p className="font-numeric text-lg font-bold text-success">{formatMoney(dayInr.income, "INR")}</p></div>
+            <div><p className="text-xs text-foreground-muted">Expenses</p><p className="font-numeric text-lg font-bold text-danger">{formatMoney(dayInr.expense, "INR")}</p></div>
+            <div><p className="text-xs text-foreground-muted">Net</p><p className={`font-numeric text-lg font-bold ${dayInr.income - dayInr.expense >= 0 ? "text-success" : "text-danger"}`}>{formatMoney(dayInr.income - dayInr.expense, "INR")}</p></div>
+          </div>
+        </Card>
+      )}
+
       <Card className="overflow-hidden p-0">
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-foreground-muted" /></div>
@@ -244,8 +271,8 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
                       {r.kind === "expense" && r.extra && <span className="text-xs text-foreground-subtle">{r.extra}</span>}
                     </td>
                     <td className="px-4 py-3 text-foreground-muted">{r.who || "—"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-success">{r.kind === "income" ? money(r.amountMinor) : ""}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-danger">{r.kind === "expense" ? money(r.amountMinor) : ""}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-success">{r.kind === "income" ? amount(r) : ""}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-danger">{r.kind === "expense" ? amount(r) : ""}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-numeric">{r.kind === "revenue" ? money(r.amountMinor) : ""}</td>
                   </tr>
                 ))}
@@ -260,6 +287,14 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
                   <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-danger">{money(shown.expense)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-numeric">{money(shown.revenue)}</td>
                 </tr>
+                {(shownInr.income > 0 || shownInr.expense > 0) && (
+                  <tr className="bg-surface-muted/50 text-sm font-semibold">
+                    <td className="px-4 pb-3" colSpan={5}>In rupees — on their own, never added to the totals above</td>
+                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-success">{shownInr.income ? formatMoney(shownInr.income, "INR") : ""}</td>
+                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-danger">{shownInr.expense ? formatMoney(shownInr.expense, "INR") : ""}</td>
+                    <td />
+                  </tr>
+                )}
                 <tr className="bg-surface-muted/50 text-sm">
                   <td className="px-4 pb-3" colSpan={5}>Net (in − out)</td>
                   <td className={`whitespace-nowrap px-4 pb-3 text-right font-numeric font-semibold ${shown.income - shown.expense >= 0 ? "text-success" : "text-danger"}`} colSpan={2}>

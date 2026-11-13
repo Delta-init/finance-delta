@@ -8,6 +8,8 @@ export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
+  /** Of what is paid, the part paid in rupees: the rupees (paise) and what they were recorded as (2026-11-13). */
+  inrMinor?: number; inrRecordedMinor?: number;
 }
 
 /** One payment's tax invoice (TI-…) — or one cancelled, its payment since deleted. */
@@ -15,6 +17,8 @@ export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
   paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
   emailed: boolean; cancelled: boolean;
+  /** Paid in rupees: the rupees (paise; 0 when never recorded), and whether it was a rupee payment at all. */
+  inrMinor?: number; inRupees?: boolean;
 }
 
 export interface TaxInvoicesAnswer {

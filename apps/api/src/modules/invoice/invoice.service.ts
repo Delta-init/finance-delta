@@ -43,7 +43,7 @@ import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
 import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
-import { closePaidInRupees, emailTaxInvoices, isRupeePayment, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, stripVatForRupees, vatOnPaymentsFor } from "./payment-tax-invoice";
+import { closePaidInRupees, emailTaxInvoices, isRupeePayment, noteCancelledTaxInvoice, rupeePaymentsStage, stampTaxInvoices, startsProforma, stripVatForRupees, vatOnPaymentsFor } from "./payment-tax-invoice";
 
 /**
  * Tell CS Portal the enrolment's money changed, if its student went
@@ -621,9 +621,16 @@ export async function invoiceListSummary(orgId: string, query: InvoiceQuery, sco
     Invoice.countDocuments(filter),
     Invoice.aggregate<{ _id: string | null } & Omit<InvoiceListSummaryCurrency, "currency">>([
       { $match: { ...filter, status: { $nin: notMoney } } },
+      // What was paid in rupees, for a card of its own (2026-11-13): its rupees, never what they were converted to.
+      rupeePaymentsStage,
       {
         $group: {
           _id: "$currency",
+          inrMinor: { $sum: { $sum: "$rupeePayments.inr" } },
+          inrRecordedMinor: { $sum: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, "$$r.aed", 0] } } } } },
+          inrCount: sumIf({ $gt: [{ $sum: "$rupeePayments.inr" }, 0] }, 1),
+          inrUnknownMinor: { $sum: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, 0, "$$r.aed"] } } } } },
+          inrUnknownCount: { $sum: { $size: { $filter: { input: "$rupeePayments", as: "r", cond: { $lte: ["$$r.inr", 0] } } } } },
           count: { $sum: 1 },
           totalMinor: { $sum: { $ifNull: ["$totalMinor", 0] } },
           paidMinor: { $sum: { $ifNull: ["$amountPaidMinor", 0] } },

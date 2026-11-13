@@ -39,6 +39,7 @@ const TI_EXPORT: ExportColumn<TaxInvoiceRow>[] = [
   { header: "Total", value: (t) => t.amountMinor / 100 },
   { header: "Currency", value: (t) => t.currency },
   { header: "Emailed", value: (t) => (t.emailed ? "Yes" : "No") },
+  { header: "Rupees paid (INR)", value: (t) => ((t.inrMinor ?? 0) > 0 ? (t.inrMinor ?? 0) / 100 : "") },
 ];
 const DOC_EXPORT: ExportColumn<TaxDocumentRow>[] = [
   { header: "Document", value: (d) => d.number },
@@ -91,6 +92,7 @@ const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Balance", value: (p) => p.balanceMinor / 100 },
   { header: "Currency", value: (p) => p.currency },
   { header: "Tax invoices", value: (p) => p.taxInvoices.join(", ") },
+  { header: "Rupees paid (INR)", value: (p) => ((p.inrMinor ?? 0) > 0 ? (p.inrMinor ?? 0) / 100 : "") },
 ];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -173,7 +175,21 @@ export default function TaxInvoicesPage() {
     { key: "method", header: "Method", cell: (t) => <span className="text-foreground-muted">{t.method ? paymentMethodLabel(t.method) : "—"}</span> },
     { key: "net", header: "Net", align: "right", cell: (t) => <MoneyDisplay minor={t.netMinor} currency={t.currency} /> },
     { key: "tax", header: "VAT", align: "right", cell: (t) => <MoneyDisplay minor={t.taxMinor} currency={t.currency} className="font-medium" /> },
-    { key: "amount", header: "Total", align: "right", cell: (t) => <MoneyDisplay minor={t.amountMinor} currency={t.currency} className="font-medium text-success" /> },
+    {
+      // Paid in rupees: the rupees, never only what they were converted to (2026-11-13).
+      key: "amount", header: "Total", align: "right",
+      cell: (t) => (t.inrMinor ?? 0) > 0 ? (
+        <div>
+          <span className="font-medium tabular-nums text-success">{formatMoney(t.inrMinor ?? 0, "INR")}</span>
+          <p className={small}>recorded as {formatMoney(t.amountMinor, t.currency)}</p>
+        </div>
+      ) : (
+        <div>
+          <MoneyDisplay minor={t.amountMinor} currency={t.currency} className="font-medium text-success" />
+          {t.inRupees && <p className={small}>paid in rupees — the rupees were not recorded</p>}
+        </div>
+      ),
+    },
     { key: "emailed", header: "Emailed", cell: (t) => (t.cancelled ? "—" : t.emailed ? <Badge tone="success">Sent</Badge> : <Badge tone="neutral">Not sent</Badge>) },
     {
       key: "pdf", header: "", hideInDetail: true,
@@ -199,7 +215,27 @@ export default function TaxInvoicesPage() {
     { key: "customer", header: "Customer", cell: (p) => p.customerName },
     { key: "course", header: "Course", cell: (p) => <span className="text-foreground-muted">{p.course || "—"}</span> },
     { key: "total", header: "Total", align: "right", cell: (p) => <MoneyDisplay minor={p.totalMinor} currency={p.currency} /> },
-    { key: "paid", header: "Paid", align: "right", cell: (p) => <MoneyDisplay minor={p.amountPaidMinor} currency={p.currency} className="text-success" /> },
+    {
+      key: "paid", header: "Paid", align: "right",
+      cell: (p) => {
+        const rupees = p.inrMinor ?? 0, recorded = p.inrRecordedMinor ?? 0;
+        // All of it in rupees: the rupees. Part of it: the rupees beside what the rest came to.
+        if (rupees > 0 && recorded >= p.amountPaidMinor) {
+          return (
+            <div>
+              <span className="tabular-nums text-success">{formatMoney(rupees, "INR")}</span>
+              <p className={small}>recorded as {formatMoney(p.amountPaidMinor, p.currency)}</p>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <MoneyDisplay minor={p.amountPaidMinor - recorded} currency={p.currency} className="text-success" />
+            {rupees > 0 && <p className={small}>+ {formatMoney(rupees, "INR")} in rupees</p>}
+          </div>
+        );
+      },
+    },
     { key: "balance", header: "Balance", align: "right", cell: (p) => <MoneyDisplay minor={p.balanceMinor} currency={p.currency} className={p.balanceMinor > 0 ? "font-medium text-warning" : ""} /> },
     // How far the fee is paid (2026-11-12) — the same bar as on the Invoices list.
     { key: "progress", header: "Progress", cell: (p) => <PaidProgress paidMinor={p.amountPaidMinor} totalMinor={p.totalMinor} /> },

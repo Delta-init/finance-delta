@@ -8,6 +8,8 @@ import {
   INVOICE_STATUSES,
   INVOICE_APPROVALS,
   PAYMENT_METHODS,
+  formatMoney,
+  rupeesOnInvoice,
   type Invoice,
   type InvoiceStatus,
   type InvoiceApproval,
@@ -64,6 +66,7 @@ const INVOICE_EXPORT_COLUMNS: ExportColumn<Invoice>[] = [
   { header: "Total", value: (inv) => inv.totalMinor / 100 },
   { header: "Paid", value: (inv) => inv.amountPaidMinor / 100 },
   { header: "Paid %", value: (inv) => paidPercent(inv.amountPaidMinor, inv.totalMinor) },
+  { header: "Paid in rupees (INR)", value: (inv) => { const r = rupeesOnInvoice(inv.payments, inv.currency); return r.rupeesMinor > 0 ? r.rupeesMinor / 100 : ""; } },
   { header: "Balance", value: (inv) => inv.balanceMinor / 100 },
 ];
 
@@ -293,18 +296,28 @@ export function InvoiceManager() {
       key: "paid",
       header: "Paid",
       align: "right",
-      cell: (inv) => (
-        <div className="flex flex-col items-end gap-0.5">
-          <MoneyDisplay
-            minor={inv.amountPaidMinor}
-            currency={inv.currency}
-            className={inv.amountPaidMinor > 0 ? "text-success" : "text-foreground-muted"}
-          />
-          {inv.status !== "draft" && inv.status !== "void" && (
-            <PaidProgress paidMinor={inv.amountPaidMinor} totalMinor={inv.totalMinor} />
-          )}
-        </div>
-      ),
+      cell: (inv) => {
+        // Paid in rupees: the rupees themselves, never only what they were converted to (2026-11-13).
+        const r = rupeesOnInvoice(inv.payments, inv.currency);
+        const allRupees = r.rupeesMinor > 0 && r.recordedMinor >= inv.amountPaidMinor;
+        return (
+          <div className="flex flex-col items-end gap-0.5">
+            {allRupees ? (
+              <span className="tabular-nums text-success" title={`Recorded as ${formatMoney(inv.amountPaidMinor, inv.currency)}`}>{formatMoney(r.rupeesMinor, "INR")}</span>
+            ) : (
+              <MoneyDisplay
+                minor={inv.amountPaidMinor - r.recordedMinor}
+                currency={inv.currency}
+                className={inv.amountPaidMinor > 0 ? "text-success" : "text-foreground-muted"}
+              />
+            )}
+            {!allRupees && r.rupeesMinor > 0 && <span className="text-[11px] leading-4 text-foreground-muted">+ {formatMoney(r.rupeesMinor, "INR")} in rupees</span>}
+            {inv.status !== "draft" && inv.status !== "void" && (
+              <PaidProgress paidMinor={inv.amountPaidMinor} totalMinor={inv.totalMinor} />
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "balance",

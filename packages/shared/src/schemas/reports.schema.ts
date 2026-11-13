@@ -86,11 +86,11 @@ export type DailyReport = {
   currencies?: string[];
   byCurrency?: Array<DailyReport["totals"] & { currency: string }>;
   /**
-   * Income paid in rupees on invoices in another currency (2026-11-13): counted under INR in rupees, not in the
-   * invoice's currency — the rupees, what they were recorded as, and the rupee payments still counted in the
-   * invoice's currency because their rupees were never recorded.
+   * Income paid in a currency other than its invoice's (2026-11-13): counted under that currency as it was paid, not
+   * in the invoice's — a line for each with what it was recorded as, and the payments still counted in the invoice's
+   * currency because their amount was never recorded.
    */
-  rupeeIncome?: { rupeesMinor: number; recordedMinor: number; notRecordedCount: number; notRecordedMinor: number };
+  otherCurrencyIncome?: { lines: Array<{ currency: string; amountMinor: number; recordedMinor: number }>; notRecordedCount: number; notRecordedMinor: number };
 };
 
 /**

@@ -12,7 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, isRupeePayment, rupeesPaidMinor,} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, paidAmountMinor, paidCurrency, paidInOtherCurrencies, paidRateText,} from "@delta/shared";
 
 const NO_ACCOUNT = "__none__";
 const paymentFormSchema = z.object({
@@ -480,6 +480,16 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
           {invoice.amountPaidMinor > 0 && (
             <TotalRow label="Paid" value={invoice.amountPaidMinor} currency={invoice.currency} />
           )}
+          {/* What that was actually paid in, when not all of it was the invoice's own currency (2026-11-13). */}
+          {paidInOtherCurrencies(invoice.payments, invoice.currency).lines.length > 0 && (
+            <p className="text-right text-xs text-foreground-muted">
+              paid as {[
+                invoice.amountPaidMinor - paidInOtherCurrencies(invoice.payments, invoice.currency).recordedMinor > 0
+                  ? formatMoney(invoice.amountPaidMinor - paidInOtherCurrencies(invoice.payments, invoice.currency).recordedMinor, invoice.currency) : "",
+                ...paidInOtherCurrencies(invoice.payments, invoice.currency).lines.map((f) => formatMoney(f.amountMinor, f.currency)),
+              ].filter(Boolean).join(" + ")}
+            </p>
+          )}
           <TotalRow label="Balance due" value={invoice.balanceMinor} currency={invoice.currency} strong={invoice.balanceMinor > 0} />
         </div>
       </div>
@@ -539,19 +549,20 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
                   </td>
                   <td className="px-4 py-2.5 text-foreground-muted align-top">{p.reference || p.emi?.transactionId || "—"}</td>
                   <td className="px-4 py-2.5 text-right align-top">
-                    {/* Paid in rupees: the rupees, with what they were recorded as beneath (2026-11-13). */}
-                    {rupeesPaidMinor(p, invoice.currency) > 0 ? (
+                    {/* In the currency it was paid in, with what it was recorded as and the rate beneath (2026-11-13). */}
+                    {paidAmountMinor(p, invoice.currency) > 0 ? (
                       <>
-                        <span className="font-numeric font-medium text-success">{formatMoney(rupeesPaidMinor(p, invoice.currency), "INR")}</span>
+                        <span className="font-numeric font-medium text-success">{formatMoney(paidAmountMinor(p, invoice.currency), paidCurrency(p, invoice.currency)!)}</span>
                         <span className="mt-0.5 block text-xs text-foreground-muted">recorded as {formatMoney(p.amountMinor, invoice.currency)}</span>
+                        <span className="mt-0.5 block text-xs text-foreground-muted">{paidRateText(paidCurrency(p, invoice.currency)!, paidAmountMinor(p, invoice.currency), invoice.currency, p.amountMinor)}</span>
                       </>
                     ) : (
                       <>
                         <span className="font-numeric font-medium text-success">{formatMoney(p.amountMinor, invoice.currency)}</span>
-                        {isRupeePayment(p, invoice.currency) && <span className="mt-0.5 block text-xs text-foreground-muted">paid in rupees — the rupees were not recorded</span>}
+                        {paidCurrency(p, invoice.currency) && <span className="mt-0.5 block text-xs text-foreground-muted">paid in {paidCurrency(p, invoice.currency)} — the amount was not recorded</span>}
                       </>
                     )}
-                    {p.vatFree && <span className="mt-0.5 block text-xs text-foreground-muted">no VAT — rupees</span>}
+                    {p.vatFree && <span className="mt-0.5 block text-xs text-foreground-muted">no VAT — not paid in {invoice.currency}</span>}
                     {p.chargesMinor > 0 && (
                       <span className="mt-0.5 block text-xs text-foreground-muted">
                         charges {formatMoney(p.chargesMinor, invoice.currency)}

@@ -409,54 +409,93 @@ export function fromBaseMinor(baseMinor: number, rate: number): number {
   return Math.round(baseMinor * rate);
 }
 
-// ── Rupees ────────────────────────────────────────────────────────────────────
+// ── The currency a payment was made in ────────────────────────────────────────
 
 /** The method the rupee account's payments are recorded under — "INR Transfer". */
 export const RUPEE_METHOD = "inr_bank_account";
 
-type RupeeAsk = {
+type PaidAsk = {
   method?: string | null;
+  amountMinor?: number | null;
   original?: { currency?: string | null; amountMinor?: number | null } | null;
   bankCurrency?: string | null;
   bankAmountMinor?: number | null;
 };
+const upperOf = (v: unknown) => String(v ?? "").trim().toUpperCase();
 
 /**
- * Received in rupees (the user, 2026-11-13): the INR Transfer method, or typed in rupees where it was taken — on an
- * invoice that is not itself in rupees (a Bangalore invoice is, and is as it always was).
+ * The currency a payment was made in, when that is not the invoice's own (the user, 2026-11-13: "whichever currency
+ * they are giving, that currency needs to reflect — no need to convert anywhere"): the one typed where it was taken
+ * (a CRM close's currency and rate, rupees in CS Portal), or rupees for the INR Transfer method. Null when it was
+ * paid in the invoice's currency — and only ever said where it was stated, never guessed from a bank account.
  */
-export function isRupeePayment(p: RupeeAsk | null | undefined, invoiceCurrency: unknown): boolean {
-  if (String(invoiceCurrency ?? "AED").toUpperCase() === "INR") return false;
-  return p?.method === RUPEE_METHOD || String(p?.original?.currency ?? "").toUpperCase() === "INR";
+export function paidCurrency(p: PaidAsk | null | undefined, invoiceCurrency: unknown): string | null {
+  const own = upperOf(invoiceCurrency) || "AED";
+  const typed = upperOf(p?.original?.currency);
+  if (typed && typed !== own) return typed;
+  if (p?.method === RUPEE_METHOD && own !== "INR") return "INR";
+  return null;
 }
 
 /**
- * The rupees a rupee payment was paid in, in paise — shown as they are, never as what they were converted to (the
- * user, 2026-11-13: "no need to convert anywhere"): as typed where it was taken, else what landed in a rupee bank
- * account. 0 when it is not a rupee payment, or its rupees were never recorded.
+ * What was paid in that currency, in its minor units — shown as it is, never as what it was converted to: as typed
+ * where it was taken, else what landed in a bank account of that currency. 0 when the payment was in the invoice's
+ * currency, or the amount was never recorded.
  */
-export function rupeesPaidMinor(p: RupeeAsk | null | undefined, invoiceCurrency: unknown): number {
-  if (!p || !isRupeePayment(p, invoiceCurrency)) return 0;
-  if (String(p.original?.currency ?? "").toUpperCase() === "INR" && Number(p.original?.amountMinor) > 0) return Number(p.original!.amountMinor);
-  if (String(p.bankCurrency ?? "").toUpperCase() === "INR" && Number(p.bankAmountMinor) > 0) return Number(p.bankAmountMinor);
+export function paidAmountMinor(p: PaidAsk | null | undefined, invoiceCurrency: unknown): number {
+  const cur = paidCurrency(p, invoiceCurrency);
+  if (!p || !cur) return 0;
+  if (upperOf(p.original?.currency) === cur && Number(p.original?.amountMinor) > 0) return Number(p.original!.amountMinor);
+  if (upperOf(p.bankCurrency) === cur && Number(p.bankAmountMinor) > 0) return Number(p.bankAmountMinor);
   return 0;
 }
 
 /**
- * Everything paid on an invoice in rupees: the rupees recorded (paise), what those payments were recorded as in the
- * invoice's currency, and the rupee payments whose rupees were never recorded.
+ * No VAT in this payment (the user, 2026-11-13: "only AED payments carry VAT"): it was made in a currency other than
+ * the invoice's. Not on an invoice that is itself in rupees — a Bangalore invoice is taxed as it always was, whatever
+ * its payments were made in.
  */
-export function rupeesOnInvoice(
-  payments: Array<RupeeAsk & { amountMinor?: number | null }> | null | undefined,
-  invoiceCurrency: unknown,
-): { rupeesMinor: number; recordedMinor: number; unknownCount: number; unknownMinor: number } {
-  const out = { rupeesMinor: 0, recordedMinor: 0, unknownCount: 0, unknownMinor: 0 };
-  for (const p of payments ?? []) {
-    if (!isRupeePayment(p, invoiceCurrency)) continue;
-    const rupees = rupeesPaidMinor(p, invoiceCurrency);
-    if (rupees > 0) { out.rupeesMinor += rupees; out.recordedMinor += Number(p.amountMinor) || 0; }
-    else { out.unknownCount++; out.unknownMinor += Number(p.amountMinor) || 0; }
-  }
-  return out;
+export function isVatFreePayment(p: PaidAsk | null | undefined, invoiceCurrency: unknown): boolean {
+  return upperOf(invoiceCurrency) !== "INR" && paidCurrency(p, invoiceCurrency) !== null;
 }
 
+/** How one currency's rate against the invoice's is said, the way it is spoken: "1 AED = 25.59 INR", "1 USD = 3.6725 AED". */
+export function paidRateText(currency: string, paidMinor: number, invoiceCurrency: string, recordedMinor: number): string {
+  if (!(paidMinor > 0) || !(recordedMinor > 0)) return "";
+  const perUnit = recordedMinor / paidMinor;
+  const shown = (n: number) => Number(n.toPrecision(5)).toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return perUnit < 1 ? `1 ${invoiceCurrency} = ${shown(1 / perUnit)} ${currency}` : `1 ${currency} = ${shown(perUnit)} ${invoiceCurrency}`;
+}
+
+/** One other currency paid on an invoice: what was paid in it, and what those payments were recorded as. */
+export interface PaidInCurrency { currency: string; amountMinor: number; recordedMinor: number }
+
+/**
+ * Everything paid on an invoice in other currencies, a line for each: the amount in that currency and what those
+ * payments were recorded as in the invoice's. `recordedMinor` adds those up; payments known to be in another currency
+ * whose amount was never recorded are counted apart, and are not in the lines.
+ */
+export function paidInOtherCurrencies(
+  payments: PaidAsk[] | null | undefined,
+  invoiceCurrency: unknown,
+): { lines: PaidInCurrency[]; recordedMinor: number; unknownCount: number; unknownMinor: number } {
+  const by = new Map<string, PaidInCurrency>();
+  let recordedMinor = 0, unknownCount = 0, unknownMinor = 0;
+  for (const p of payments ?? []) {
+    const cur = paidCurrency(p, invoiceCurrency);
+    if (!cur) continue;
+    const amount = paidAmountMinor(p, invoiceCurrency), recorded = Number(p.amountMinor) || 0;
+    if (!(amount > 0)) { unknownCount++; unknownMinor += recorded; continue; }
+    const line = by.get(cur) ?? { currency: cur, amountMinor: 0, recordedMinor: 0 };
+    line.amountMinor += amount;
+    line.recordedMinor += recorded;
+    by.set(cur, line);
+    recordedMinor += recorded;
+  }
+  return { lines: [...by.values()].sort((a, b) => b.recordedMinor - a.recordedMinor), recordedMinor, unknownCount, unknownMinor };
+}
+
+/** Received in rupees on an invoice not itself in rupees — the first case of paidCurrency, kept by name. */
+export function isRupeePayment(p: PaidAsk | null | undefined, invoiceCurrency: unknown): boolean {
+  return paidCurrency(p, invoiceCurrency) === "INR";
+}

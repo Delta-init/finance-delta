@@ -335,8 +335,10 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
     : methodFor(d.paymentMethod || row.paymentMethod);
   // Typed in rupees in CS Portal: what the client handed over, kept on the payment (2026-11-13).
   const original = rupeesTyped(row, amountMinor);
-  const { isRupeePayment } = await import("../invoice/payment-tax-invoice");
-  const rupees = isRupeePayment({ method, original }, courseCurrencyOf(row));
+  // Rupees are the only other currency a request states (its dollars are CS Portal's own unit, not what the client
+  // handed over — 2026-11-13: left as they are).
+  const { isVatFreePayment } = await import("../invoice/payment-tax-invoice");
+  const rupees = isVatFreePayment({ method, original }, courseCurrencyOf(row));
   const email = String(row.student?.email ?? "").trim().toLowerCase();
   if (!email) return { ok: false, message: `${row.student?.name || "The student"} has no email in CS Portal, so there is no client to invoice` };
   const salespersonId = String(d.decidedById ?? "");

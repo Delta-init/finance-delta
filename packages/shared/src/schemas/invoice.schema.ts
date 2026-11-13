@@ -557,7 +557,7 @@ export const paymentSchema = z.object({
    * in that currency, and `rate`, the invoice's currency for one unit of it.
    */
   original: z.object({ currency: z.string(), amountMinor: z.number(), rate: z.number() }).optional(),
-  /** No VAT in this payment — it was received in rupees (the user, 2026-11-13: "INR payment doesn't have the VAT"). */
+  /** No VAT in this payment — it was made in a currency other than the invoice's (the user, 2026-11-13: "only AED payments carry VAT"). */
   vatFree: z.boolean().optional(),
   createdAt: z.string(),
 });
@@ -738,15 +738,11 @@ export interface InvoiceListSummaryCurrency {
   overdueMinor: number;
   overdueCount: number;
   /**
-   * Paid in rupees (2026-11-13: a card of its own, never converted): the rupees (paise), what those payments were
-   * recorded as in this currency, and how many invoices have any. Then the rupee payments whose rupees were never
-   * recorded — those stay in `paidMinor` as they are.
+   * Paid in other currencies (2026-11-13: a card of their own, never converted) — a line for each: the amount in it,
+   * what those payments were recorded as in this currency (to take out of `paidMinor`), and how many invoices have
+   * any. Then the payments in that currency whose amount was never recorded — those stay in `paidMinor`.
    */
-  inrMinor?: number;
-  inrRecordedMinor?: number;
-  inrCount?: number;
-  inrUnknownMinor?: number;
-  inrUnknownCount?: number;
+  foreign?: Array<{ currency: string; amountMinor: number; recordedMinor: number; count: number; unknownCount: number; unknownMinor: number }>;
 }
 
 /** The Invoices list's cards: what its filters match, per currency. */

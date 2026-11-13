@@ -1,17 +1,21 @@
 /**
- * Rupees carry no VAT (the user, 2026-11-13: "INR payment doesn't have the VAT") — for the rupee payments recorded
- * before that rule (invoice/payment-tax-invoice.ts), which were given VAT like any other.
+ * Only payments in the invoice's own currency carry VAT (the user, 2026-11-13: "INR payment doesn't have the VAT",
+ * then "only AED payments carry VAT") — for the payments in another currency recorded before that rule
+ * (invoice/payment-tax-invoice.ts), which were given VAT like any other. Named for its first case, rupees.
  *
- * A rupee payment is one by INR Transfer, or one typed in rupees where it was taken (a CRM close, CS Portal), on an
- * invoice that is not itself in rupees. For each, in every organization:
+ * A payment in another currency is one by INR Transfer, or one typed in another currency where it was taken (a CRM
+ * close with its currency and rate, rupees in CS Portal). For each, in every organization:
  *
- *   1. the rupees are noted on the payment (`original`) — from the CS Portal request it came from, else what landed
- *      in the rupee bank account, else the close's own figure. No money figure changes; it is what the screens show.
+ *   1. what was paid is noted on the payment (`original`) — from the CS Portal request it came from, else the close's
+ *      own figure, else what landed in a bank account of that currency. No money figure changes; it is what the
+ *      screens show.
  *   2. on a pro-forma, it is marked free of VAT: its tax invoice keeps its number and carries none, and the other
  *      payments carry the VAT of their own amounts only;
- *   3. an invoice paid in full, all of it in rupees, has its VAT taken off (the total stays);
- *   4. an ordinary invoice only partly paid in rupees, or still owing, is listed and left as it is — its VAT was
- *      counted on the invoice, and one invoice cannot say "VAT on part of it".
+ *   3. an invoice paid in full, all of it in other currencies, has its VAT taken off (the total stays);
+ *   4. an ordinary invoice only partly paid so, or still owing, is listed and left as it is — its VAT was counted
+ *      on the invoice, and one invoice cannot say "VAT on part of it".
+ *
+ * An invoice that is itself in rupees (Bangalore) has what was paid noted, and its VAT never touched.
  *
  * Reads and prints only, unless --write; --write saves an undo file first and adds to it as it goes. Nobody is
  * emailed. Run it from apps/api on the server:
@@ -23,7 +27,7 @@
  */
 import mongoose from "mongoose";
 import { readFileSync, writeFileSync } from "node:fs";
-import { formatMoney } from "@delta/shared";
+import { formatMoney, paidCurrency } from "@delta/shared";
 
 export interface RupeeRow {
   invoice: string; kind: "pro-forma" | "invoice"; outcome: "would change" | "changed" | "left as it is" | "nothing to do";
@@ -42,7 +46,7 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
   const { Invoice } = await import("../modules/invoice/invoice.model");
   const { TetraDepositModel } = await import("../modules/tetra-deposit/tetra-deposit.model");
   const { rupeesTyped } = await import("../modules/tetra-deposit/course-invoice");
-  const { RUPEE_METHOD, stripVatForRupees, taxShares } = await import("../modules/invoice/payment-tax-invoice");
+  const { RUPEE_METHOD, stripVatForOtherCurrency, taxShares } = await import("../modules/invoice/payment-tax-invoice");
 
   // CS Portal requests typed in rupees, by the reference their payment carries.
   const requests = await TetraDepositModel.find({ amountCurrency: "INR", amountOriginal: { $gt: 0 } })
@@ -50,16 +54,39 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
   const typed = new Map<string, any>(requests.map((r) => [`tetra:${r.externalId}`, r]));
 
   const docs = await Invoice.collection.find({
-    currency: { $ne: "INR" }, status: { $ne: "void" },
-    $or: [{ "payments.method": RUPEE_METHOD }, { "payments.original.currency": "INR" }, ...(typed.size ? [{ "payments.externalRef": { $in: [...typed.keys()] } }] : [])],
+    status: { $ne: "void" },
+    $or: [
+      { "payments.method": RUPEE_METHOD }, { "payments.original.currency": { $exists: true } }, { "enrolment.declaredPayments.original.currency": { $exists: true } },
+      ...(typed.size ? [{ "payments.externalRef": { $in: [...typed.keys()] } }] : []),
+    ],
   }).sort({ issueDate: 1, invoiceNumber: 1 }).toArray();
 
   const rows: RupeeRow[] = [];
   const changes: Change[] = [];
   for (const d of docs as any[]) {
     const cur = String(d.currency ?? "AED");
+    const own = cur.toUpperCase();
     const payments: any[] = d.payments ?? [];
-    const isRupee = (p: any) => p.method === RUPEE_METHOD || String(p.original?.currency ?? "").toUpperCase() === "INR" || typed.has(String(p.externalRef ?? ""));
+    // What each payment was made in, where that was stated and is not on the payment yet: the CS Portal request it
+    // came from, else the close's own entry for it (same amount and method), else a bank account of its currency.
+    const declared: any[] = (d.enrolment?.declaredPayments ?? []).filter((x: any) => x.original?.currency && String(x.original.currency).toUpperCase() !== own && Number(x.original.amountMinor) > 0);
+    const usedDeclared = new Set<number>();
+    const found = payments.map((p) => {
+      if (p.original?.currency) return undefined;
+      const amount = Number(p.amountMinor) || 0;
+      const fromRequest = own !== "INR" && typed.has(String(p.externalRef ?? "")) ? rupeesTyped(typed.get(String(p.externalRef)), amount) : undefined;
+      if (fromRequest) return fromRequest;
+      const di = declared.findIndex((x, k) => !usedDeclared.has(k) && x.amountMinor === amount && x.method === p.method);
+      if (di >= 0) {
+        usedDeclared.add(di);
+        return { currency: String(declared[di].original.currency).toUpperCase(), amountMinor: Number(declared[di].original.amountMinor), rate: Number(declared[di].original.rate) || amount / Number(declared[di].original.amountMinor) };
+      }
+      const paidIn = paidCurrency(p, own);
+      return paidIn && String(p.bankCurrency ?? "").toUpperCase() === paidIn && Number(p.bankAmountMinor) > 0 && amount > 0
+        ? { currency: paidIn, amountMinor: Number(p.bankAmountMinor), rate: amount / Number(p.bankAmountMinor) } : undefined;
+    });
+    // In another currency: as the payment says, or will say once what was found is noted on it.
+    const isRupee = (p: any) => paidCurrency({ ...p, original: p.original?.currency ? p.original : found[payments.indexOf(p)] }, own) !== null;
     if (!payments.some(isRupee)) continue;
     const proforma = Boolean(d.proforma?.at);
     const row: RupeeRow = {
@@ -72,29 +99,20 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
       if (had === undefined) ch.absent.push(path); else ch.before[path] = had;
     };
 
-    // 1. The rupees, on each rupee payment that does not say them yet.
-    const declared: any[] = (d.enrolment?.declaredPayments ?? []).filter((x: any) => String(x.original?.currency ?? "").toUpperCase() === "INR");
-    const usedDeclared = new Set<number>();
+    // 1. What was paid, on each such payment that does not say it yet.
     payments.forEach((p, i) => {
-      if (!isRupee(p) || p.original?.currency) return;
-      const amount = Number(p.amountMinor) || 0;
-      const fromRequest = typed.has(String(p.externalRef ?? "")) ? rupeesTyped(typed.get(String(p.externalRef)), amount) : undefined;
-      const fromBank = String(p.bankCurrency ?? "").toUpperCase() === "INR" && Number(p.bankAmountMinor) > 0 && amount > 0
-        ? { currency: "INR", amountMinor: Number(p.bankAmountMinor), rate: amount / Number(p.bankAmountMinor) } : undefined;
-      const di = declared.findIndex((x, k) => !usedDeclared.has(k) && x.amountMinor === amount && x.method === p.method);
-      if (di >= 0) usedDeclared.add(di);
-      const fromClose = di >= 0 ? { currency: "INR", amountMinor: declared[di].original.amountMinor, rate: declared[di].original.rate } : undefined;
-      const original = fromRequest ?? fromBank ?? fromClose;
+      const original = found[i];
       if (!original) return;
       put(`payments.${i}.original`, original, undefined);
       ch.guard[`payments.${i}._id`] = p._id;
       row.rupeesNoted++;
     });
 
-    // 2–4. The VAT.
+    // 2–4. The VAT — never on an invoice that is itself in rupees.
     const tax = Number(d.taxTotalMinor) || 0;
     const notes: string[] = [];
-    if (!o.rupeesOnly && proforma) {
+    const vatRule = !o.rupeesOnly && own !== "INR";
+    if (vatRule && proforma) {
       const next = payments.map((p) => ({ ...p, vatFree: p.vatFree === true || isRupee(p) }));
       const shares = taxShares({ ...d, payments: next });
       payments.forEach((p, i) => {
@@ -110,13 +128,13 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
         row.taxInvoices.push({ number: String(ti.number), beforeMinor: was, afterMinor: now });
         if (was !== now) row.byDay.push({ day: day(p.paidOn), lessMinor: was - now });
       });
-    } else if (!o.rupeesOnly) {
+    } else if (vatRule) {
       row.vatBeforeMinor = tax; row.vatAfterMinor = tax;
       const allRupees = payments.length > 0 && payments.every(isRupee);
       const paidInFull = (Number(d.balanceMinor) || 0) <= 0;
       if (tax > 0 && allRupees && paidInFull) {
         const sets: Record<string, unknown> = {};
-        const stripped = stripVatForRupees({ ...d, set: (path: string, value: unknown) => { sets[path] = value; } });
+        const stripped = stripVatForOtherCurrency({ ...d, set: (path: string, value: unknown) => { sets[path] = value; } });
         if (stripped) {
           for (const [path, value] of Object.entries(sets)) put(path, value, d[path] ?? undefined);
           payments.forEach((p, i) => { if (p.vatFree !== true) { put(`payments.${i}.vatFree`, true, p.vatFree ?? undefined); ch.guard[`payments.${i}._id`] = p._id; } });
@@ -124,7 +142,7 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
           row.byDay.push({ day: day(d.issueDate), lessMinor: tax });
         } else notes.push("priced before tax — taking the VAT off would change its total");
       } else if (tax > 0) {
-        notes.push(!allRupees ? "only part of it was paid in rupees" : "not paid in full yet");
+        notes.push(!allRupees ? "only part of it was paid in another currency" : "not paid in full yet");
       }
     }
 
@@ -133,7 +151,7 @@ export async function correctRupeePayments(o: { write: boolean; expect?: string;
     const left = notes.length > 0;
     row.outcome = touched ? (o.write ? "changed" : "would change") : left ? "left as it is" : "nothing to do";
     row.detail = [
-      row.rupeesNoted ? `rupees noted on ${row.rupeesNoted} payment${row.rupeesNoted === 1 ? "" : "s"}` : "",
+      row.rupeesNoted ? `what was paid noted on ${row.rupeesNoted} payment${row.rupeesNoted === 1 ? "" : "s"}` : "",
       row.vatBeforeMinor !== row.vatAfterMinor ? `VAT ${formatMoney(row.vatBeforeMinor, cur)} → ${formatMoney(row.vatAfterMinor, cur)}` : "",
       left ? `VAT left as it is: ${notes.join("; ")}` : "",
     ].filter(Boolean).join(" · ");
@@ -203,7 +221,7 @@ if (import.meta.main) {
         for (const [k, v] of [...byMonth].sort()) console.log(`  ${k.slice(0, 7)}  ${formatMoney(v, k.slice(8))}`);
       }
       const changing = rows.filter((r) => r.outcome === "changed" || r.outcome === "would change").length;
-      console.log(`\n${rows.length} invoice(s) with rupee payments: ${changing} ${write ? "changed" : "would change"}, ${rows.filter((r) => /left as it is/.test(r.detail)).length} with VAT left as it is.${rupeesOnly ? " Rupees only — no VAT touched." : ""} Nobody is emailed.`);
+      console.log(`\n${rows.length} invoice(s) with payments in another currency: ${changing} ${write ? "changed" : "would change"}, ${rows.filter((r) => /left as it is/.test(r.detail)).length} with VAT left as it is.${rupeesOnly ? " Amounts only — no VAT touched." : ""} Nobody is emailed.`);
       if (!write && changing) console.log(`To write:  bun src/scripts/inr-payments-no-vat.ts ${rupeesOnly ? "--rupees-only " : ""}--write --expect ${code}`);
       if (undoFile) console.log(`Undo file: ${undoFile}  (bun src/scripts/inr-payments-no-vat.ts --undo ${undoFile})`);
     }

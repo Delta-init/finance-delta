@@ -182,16 +182,17 @@ export default function DailyReportPage() {
                   {money(value)}
                 </p>
                 <p className="mt-1 text-xs text-foreground-subtle">Click for the breakdown</p>
-                {kind === "income" && shown !== "INR" && (data?.rupeeIncome?.notRecordedCount ?? 0) > 0 && (
+                {kind === "income" && (data?.otherCurrencyIncome?.notRecordedCount ?? 0) > 0 && (
                   <p className="mt-1 text-xs text-foreground-muted">
-                    {data!.rupeeIncome!.notRecordedCount} rupee payment{data!.rupeeIncome!.notRecordedCount === 1 ? "" : "s"} without the rupees recorded — still here ({moneyIn(shown, data!.rupeeIncome!.notRecordedMinor)})
+                    {data!.otherCurrencyIncome!.notRecordedCount} payment{data!.otherCurrencyIncome!.notRecordedCount === 1 ? "" : "s"} made in another currency without the amount recorded — still counted as recorded ({moneyIn(baseCurrency, data!.otherCurrencyIncome!.notRecordedMinor)})
                   </p>
                 )}
               </Card>
             </button>
           ))}
           {/* Each other currency on its own, never added in or converted (the user, 2026-11-13: "separate INR stats
-              card"): what was paid in rupees is income in rupees. Click it for its days. */}
+              card … whichever currency they are giving"): what was paid in rupees is income in rupees, dollars in
+              dollars. Click it for its days. */}
           {(perCurrency ?? []).filter((t) => t.currency !== shown).map((t) => (
             <button key={t.currency} type="button" onClick={() => setCur(t.currency)} className="text-left sm:col-span-2" title={`Show the days in ${t.currency}`}>
               <Card className="border-warning/40 p-5 transition-colors hover:border-primary/50 hover:bg-surface-muted/40">
@@ -202,9 +203,10 @@ export default function DailyReportPage() {
                   <div><p className="text-xs text-foreground-muted">Net</p><p className={`font-numeric text-lg font-bold ${t.netMinor >= 0 ? "text-success" : "text-danger"}`}>{moneyIn(t.currency, t.netMinor)}</p></div>
                 </div>
                 <p className="mt-1 text-xs text-foreground-subtle">
-                  {t.currency === "INR" && (data?.rupeeIncome?.rupeesMinor ?? 0) > 0 && shown !== "INR"
-                    ? `${moneyIn("INR", data!.rupeeIncome!.rupeesMinor)} of the income was paid on ${shown} invoices (recorded as ${moneyIn(shown, data!.rupeeIncome!.recordedMinor)}) · `
-                    : ""}
+                  {(() => {
+                    const line = data?.otherCurrencyIncome?.lines.find((l) => l.currency === t.currency);
+                    return line ? `${moneyIn(t.currency, line.amountMinor)} of the income was paid on ${baseCurrency} invoices (recorded as ${moneyIn(baseCurrency, line.recordedMinor)}) · ` : "";
+                  })()}
                   Click for its days
                 </p>
               </Card>

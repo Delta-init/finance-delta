@@ -13,9 +13,9 @@ import { useCurrency } from "@/lib/currency-context";
  * together. From the server with the table's own filters, so the two always agree. Drafts and voided invoices are
  * counted but are not money.
  *
- * What was paid in rupees has a card of its own (the user, 2026-11-13: "separate INR stats card … no need to convert
- * anywhere"): the rupees as they were paid, and Paid without them. A rupee payment whose rupees were never recorded
- * stays in Paid, and the card says how many there are.
+ * What was paid in other currencies has a card of its own (the user, 2026-11-13: "separate INR stats card … whichever
+ * currency they are giving … no need to convert anywhere"): a line for each as it was paid, and Paid without them. A
+ * payment in another currency whose amount was never recorded stays in Paid, and the card says how many there are.
  */
 export function InvoiceSummaryCards({ summary, loading, refreshing = false }: { summary: InvoiceListSummary | undefined; loading: boolean; /** The last filters' figures, while the new ones load (2026-10-24). */ refreshing?: boolean }) {
   const { baseCurrency } = useCurrency();
@@ -41,11 +41,12 @@ export function InvoiceSummaryCards({ summary, loading, refreshing = false }: { 
     </Card>
   );
 
-  // Rupees paid on invoices in another currency: a line for each such currency (there is one in practice).
-  const rupeeRows = rows.filter((g) => g.currency !== "INR" && ((g.inrCount ?? 0) > 0 || (g.inrUnknownCount ?? 0) > 0));
+  // What was paid in other currencies, on the invoices of each currency (there is one in practice).
+  const otherRows = rows.filter((g) => (g.foreign ?? []).length > 0);
+  const recordedOf = (g: InvoiceListSummaryCurrency) => (g.foreign ?? []).reduce((n, f) => n + f.recordedMinor, 0);
 
   return (
-    <div className={cn("grid grid-cols-2 gap-3 transition-opacity duration-150 md:grid-cols-3", rupeeRows.length ? "xl:grid-cols-6" : "xl:grid-cols-5", refreshing && "opacity-60")} aria-busy={refreshing}>
+    <div className={cn("grid grid-cols-2 gap-3 transition-opacity duration-150 md:grid-cols-3", otherRows.length ? "xl:grid-cols-6" : "xl:grid-cols-5", refreshing && "opacity-60")} aria-busy={refreshing}>
       <Card className="space-y-1.5 p-4">
         <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-foreground-muted">Invoices{refreshing && <Loader2 className="h-3 w-3 animate-spin" aria-label="Loading" />}</p>
         {loading && !summary ? (
@@ -63,23 +64,24 @@ export function InvoiceSummaryCards({ summary, loading, refreshing = false }: { 
         )}
       </Card>
       {money("Invoiced", (g) => g.totalMinor, (g) => g.count)}
-      {money("Paid", (g) => g.paidMinor - (g.inrRecordedMinor ?? 0), (g) => g.paidCount, "text-success")}
-      {rupeeRows.length > 0 && (
-        <Card className="space-y-1.5 border-warning/40 p-4" title="The rupees clients actually paid — not in Paid, and never converted">
-          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Paid in INR</p>
-          {rupeeRows.map((g) => (
+      {money("Paid", (g) => g.paidMinor - recordedOf(g), (g) => g.paidCount, "text-success")}
+      {otherRows.length > 0 && (
+        <Card className="space-y-1.5 border-warning/40 p-4" title="What clients actually paid in other currencies — not in Paid, and never converted">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Paid in other currencies</p>
+          {otherRows.map((g) => (
             <div key={g.currency}>
-              <p className="whitespace-nowrap text-lg font-semibold tabular-nums text-warning">{(g.inrCount ?? 0) > 0 ? formatMoney(g.inrMinor ?? 0, "INR") : "—"}</p>
-              {(g.inrCount ?? 0) > 0 && (
-                <p className="text-xs text-foreground-muted">
-                  {(g.inrCount ?? 0).toLocaleString("en-US")} {g.inrCount === 1 ? "invoice" : "invoices"} · recorded as {formatMoney(g.inrRecordedMinor ?? 0, g.currency)}
+              {(g.foreign ?? []).filter((f) => f.count > 0).map((f) => (
+                <div key={f.currency} className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <span className="whitespace-nowrap text-lg font-semibold tabular-nums text-warning">{formatMoney(f.amountMinor, f.currency)}</span>
+                  <span className="shrink-0 text-xs text-foreground-muted">{f.count.toLocaleString("en-US")} {f.count === 1 ? "invoice" : "invoices"}</span>
+                </div>
+              ))}
+              {recordedOf(g) > 0 && <p className="text-xs text-foreground-muted">recorded as {formatMoney(recordedOf(g), g.currency)}</p>}
+              {(g.foreign ?? []).filter((f) => f.unknownCount > 0).map((f) => (
+                <p key={f.currency} className="text-xs text-foreground-muted">
+                  {f.unknownCount} {f.currency} payment{f.unknownCount === 1 ? "" : "s"} without the amount recorded — still in Paid ({formatMoney(f.unknownMinor, g.currency)})
                 </p>
-              )}
-              {(g.inrUnknownCount ?? 0) > 0 && (
-                <p className="text-xs text-foreground-muted">
-                  {g.inrUnknownCount} rupee payment{g.inrUnknownCount === 1 ? "" : "s"} without the rupees recorded — still in Paid ({formatMoney(g.inrUnknownMinor ?? 0, g.currency)})
-                </p>
-              )}
+              ))}
             </div>
           ))}
         </Card>

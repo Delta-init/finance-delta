@@ -83,36 +83,31 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
   const scope = departmentId === ALL ? undefined : departmentId;
   const valid = isDay(date);
 
-  const q = (kind: DailyBreakdownKind) => (valid ? { kind, from: date, to: date, departmentId: scope } : null);
+  // Every currency's records at once (2026-11-13: whichever currency it was paid in, never converted) — a payment or
+  // an expense in another currency is listed as it was made and totalled on its own. An API before this answers with
+  // the organization's currency alone, as the page showed before.
+  const q = (kind: DailyBreakdownKind) => (valid ? { kind, from: date, to: date, departmentId: scope, currency: "ALL" } : null);
   const income = useDailyBreakdown(q("income"));
   const revenue = useDailyBreakdown(q("revenue"));
   const expense = useDailyBreakdown(q("expense"));
-  // What came in or went out in rupees that day, when the day's own currency is another (2026-11-13: a payment made
-  // in rupees is income in rupees, never what it was converted to) — listed as rupees, and totalled on their own.
-  const main = income.data?.currency ?? expense.data?.currency ?? "";
-  const rupeesToo = (d: DailyBreakdown | undefined) => !!d && d.currency !== "INR" && (d.currencies ?? []).includes("INR");
-  const inr = (kind: DailyBreakdownKind, on: boolean) => (valid && on ? { kind, from: date, to: date, departmentId: scope, currency: "INR" } : null);
-  const incomeInr = useDailyBreakdown(inr("income", rupeesToo(income.data)));
-  const expenseInr = useDailyBreakdown(inr("expense", rupeesToo(expense.data)));
-  const loading = income.isLoading || revenue.isLoading || expense.isLoading || incomeInr.isLoading || expenseInr.isLoading;
+  const loading = income.isLoading || revenue.isLoading || expense.isLoading;
   const failed = income.error ?? revenue.error ?? expense.error;
-  const isRupees = (r: DayRow) => r.currency === "INR" && main !== "INR";
-  const amount = (r: DayRow) => (isRupees(r) ? formatMoney(r.amountMinor, "INR") : money(r.amountMinor));
+  const main = income.data?.currency ?? expense.data?.currency ?? revenue.data?.currency ?? "";
+  const isOther = (r: DayRow) => !!main && r.currency !== main;
+  const amount = (r: DayRow) => (isOther(r) ? formatMoney(r.amountMinor, r.currency) : money(r.amountMinor));
 
-  const all: DayRow[] = [
-    ...rowsOf("income", income.data), ...rowsOf("income", incomeInr.data), ...rowsOf("revenue", revenue.data),
-    ...rowsOf("expense", expense.data), ...rowsOf("expense", expenseInr.data),
-  ];
+  const all: DayRow[] = [...rowsOf("income", income.data), ...rowsOf("revenue", revenue.data), ...rowsOf("expense", expense.data)];
   const needle = search.trim().toLowerCase();
   const rows = all.filter((r) =>
     (type === "all" || r.kind === type) &&
     (!needle || [r.number, r.title, r.detail, r.who, r.extra, TYPE_LABEL[r.kind]].some((v) => v?.toLowerCase().includes(needle))),
   );
-  const sum = (kind: DailyBreakdownKind, list: DayRow[], rupees = false) => list.filter((r) => r.kind === kind && isRupees(r) === rupees).reduce((t, r) => t + r.amountMinor, 0);
-  // The day's rupees, whatever is filtered below; and those of the rows shown.
-  const dayInr = { income: incomeInr.data?.totalMinor ?? 0, expense: expenseInr.data?.totalMinor ?? 0 };
-  const hasRupees = dayInr.income > 0 || dayInr.expense > 0;
-  const shownInr = { income: sum("income", rows, true), expense: sum("expense", rows, true) };
+  // In the day's own currency — or, given one, in that other currency alone.
+  const sum = (kind: DailyBreakdownKind, list: DayRow[], cur?: string) => list.filter((r) => r.kind === kind && (cur ? r.currency === cur : !isOther(r))).reduce((t, r) => t + r.amountMinor, 0);
+  // The day's other currencies, whatever is filtered below; and those of the rows shown.
+  const others = [...new Set(all.filter(isOther).map((r) => r.currency))].sort();
+  const dayOther = others.map((c) => ({ currency: c, income: sum("income", all, c), expense: sum("expense", all, c) }));
+  const shownOther = others.map((c) => ({ currency: c, income: sum("income", rows, c), expense: sum("expense", rows, c) })).filter((o) => o.income > 0 || o.expense > 0);
   // The day as the report has it, whatever is filtered below.
   const day = { income: income.data?.totalMinor ?? 0, expense: expense.data?.totalMinor ?? 0, revenue: revenue.data?.totalMinor ?? 0 };
   const shown = { income: sum("income", rows), expense: sum("expense", rows), revenue: sum("revenue", rows) };
@@ -221,16 +216,16 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
         ))}
       </div>
 
-      {hasRupees && (
-        <Card className="border-warning/40 p-5">
-          <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">In rupees (INR) — not in the figures above</p>
+      {dayOther.map((o) => (
+        <Card key={o.currency} className="border-warning/40 p-5">
+          <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">{o.currency === "INR" ? "In rupees (INR)" : `In ${o.currency}`} — not in the figures above</p>
           <div className="mt-2 grid grid-cols-3 gap-3 sm:max-w-xl">
-            <div><p className="text-xs text-foreground-muted">Income</p><p className="font-numeric text-lg font-bold text-success">{formatMoney(dayInr.income, "INR")}</p></div>
-            <div><p className="text-xs text-foreground-muted">Expenses</p><p className="font-numeric text-lg font-bold text-danger">{formatMoney(dayInr.expense, "INR")}</p></div>
-            <div><p className="text-xs text-foreground-muted">Net</p><p className={`font-numeric text-lg font-bold ${dayInr.income - dayInr.expense >= 0 ? "text-success" : "text-danger"}`}>{formatMoney(dayInr.income - dayInr.expense, "INR")}</p></div>
+            <div><p className="text-xs text-foreground-muted">Income</p><p className="font-numeric text-lg font-bold text-success">{formatMoney(o.income, o.currency)}</p></div>
+            <div><p className="text-xs text-foreground-muted">Expenses</p><p className="font-numeric text-lg font-bold text-danger">{formatMoney(o.expense, o.currency)}</p></div>
+            <div><p className="text-xs text-foreground-muted">Net</p><p className={`font-numeric text-lg font-bold ${o.income - o.expense >= 0 ? "text-success" : "text-danger"}`}>{formatMoney(o.income - o.expense, o.currency)}</p></div>
           </div>
         </Card>
-      )}
+      ))}
 
       <Card className="overflow-hidden p-0">
         {loading ? (
@@ -273,7 +268,7 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
                     <td className="px-4 py-3 text-foreground-muted">{r.who || "—"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-success">{r.kind === "income" ? amount(r) : ""}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-danger">{r.kind === "expense" ? amount(r) : ""}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric">{r.kind === "revenue" ? money(r.amountMinor) : ""}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-numeric">{r.kind === "revenue" ? amount(r) : ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -287,14 +282,14 @@ export default function DailyDayPage({ params }: { params: Promise<{ date: strin
                   <td className="whitespace-nowrap px-4 py-3 text-right font-numeric text-danger">{money(shown.expense)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-right font-numeric">{money(shown.revenue)}</td>
                 </tr>
-                {(shownInr.income > 0 || shownInr.expense > 0) && (
-                  <tr className="bg-surface-muted/50 text-sm font-semibold">
-                    <td className="px-4 pb-3" colSpan={5}>In rupees — on their own, never added to the totals above</td>
-                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-success">{shownInr.income ? formatMoney(shownInr.income, "INR") : ""}</td>
-                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-danger">{shownInr.expense ? formatMoney(shownInr.expense, "INR") : ""}</td>
+                {shownOther.map((o) => (
+                  <tr key={o.currency} className="bg-surface-muted/50 text-sm font-semibold">
+                    <td className="px-4 pb-3" colSpan={5}>In {o.currency} — on its own, never added to the totals above</td>
+                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-success">{o.income ? formatMoney(o.income, o.currency) : ""}</td>
+                    <td className="whitespace-nowrap px-4 pb-3 text-right font-numeric text-danger">{o.expense ? formatMoney(o.expense, o.currency) : ""}</td>
                     <td />
                   </tr>
-                )}
+                ))}
                 <tr className="bg-surface-muted/50 text-sm">
                   <td className="px-4 pb-3" colSpan={5}>Net (in − out)</td>
                   <td className={`whitespace-nowrap px-4 pb-3 text-right font-numeric font-semibold ${shown.income - shown.expense >= 0 ? "text-success" : "text-danger"}`} colSpan={2}>

@@ -124,8 +124,11 @@ export const taxDocumentQuerySchema = z.object({
   type: z.enum(["invoice", "ti"]).optional(),
   /** Only those whose invoice — for a TI, its pro-forma — still has something owed. */
   pending: z.enum(["yes"]).optional(),
-  /** Only what was paid in rupees, or only what was not (2026-11-13). */
-  paidIn: z.enum(["aed", "inr"]).optional(),
+  /**
+   * Only what was paid in the invoice's own currency ("own"), in any other ("other"), or in one — its code
+   * (2026-11-13). "aed" and "inr" as the filter was first sent.
+   */
+  paidIn: z.string().trim().regex(/^(own|other|[A-Za-z]{3})$/).optional(),
 });
 export type TaxDocumentQuery = z.infer<typeof taxDocumentQuerySchema>;
 

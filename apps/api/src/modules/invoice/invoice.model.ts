@@ -116,8 +116,9 @@ const paymentSubSchema = new Schema(
       type: new Schema({ currency: String, amountMinor: Number, rate: Number }, { _id: false }),
       default: undefined,
     },
-    /** No VAT in this payment: received in rupees (payment-tax-invoice.ts isRupeePayment, 2026-11-13). Set when it
-        is recorded; an older rupee payment has it only once scripts/inr-payments-no-vat.ts gave it. */
+    /** No VAT in this payment: made in a currency other than the invoice's (@delta/shared isVatFreePayment,
+        2026-11-13 — rupees first, then any). Set when it is recorded; an older payment has it only once
+        scripts/inr-payments-no-vat.ts gave it. */
     vatFree: { type: Boolean, default: undefined },
     /** The Banking account it went into (payment-bank.ts, 2026-10-16), its line there, and what landed in the
         account's currency — or why it is not in (bankNote). */
@@ -353,7 +354,8 @@ const invoiceSchema = new Schema(
     payments: { type: [paymentSubSchema], default: [] },
     /** A pro-forma, not a tax invoice: VAT charged payment by payment (payment-tax-invoice.ts, 2026-11-01). */
     proforma: { type: new Schema({ at: Date }, { _id: false }), default: undefined },
-    /** Paid in full in rupees: the VAT was taken off the invoice (2026-11-13) — when, and what it had carried. */
+    /** Paid in full in another currency (rupees first, hence the name): the VAT was taken off the invoice
+        (2026-11-13) — when, and what it had carried. */
     rupeesNoVat: {
       type: new Schema({ at: Date, taxMinor: Number, lineTaxes: { type: [Schema.Types.Mixed], default: undefined } }, { _id: false }),
       default: undefined,

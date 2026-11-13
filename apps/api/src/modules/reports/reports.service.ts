@@ -24,7 +24,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, isRupeePayment, rupeesPaidMinor, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
@@ -297,7 +297,8 @@ export async function getDailyReport(
   })
     .select("salespersonId issueDate totalMinor currency payments")
     .lean();
-  const rupeeIncome = { rupeesMinor: 0, recordedMinor: 0, notRecordedCount: 0, notRecordedMinor: 0 };
+  const other = new Map<string, { currency: string; amountMinor: number; recordedMinor: number }>();
+  const notRecorded = { count: 0, amountMinor: 0 };
 
   for (const inv of invoices) {
     const d = inv as unknown as {
@@ -318,18 +319,20 @@ export async function getDailyReport(
     for (const p of d.payments ?? []) {
       const paidOn = new Date(p.paidOn);
       if (paidOn >= fromDate && paidOn <= toDate) {
-        // Paid in rupees: income in rupees, under INR — never what it was converted to (the user, 2026-11-13). One
-        // whose rupees were never recorded stays where it was recorded, and is counted for the note.
-        const rupees = rupeesPaidMinor(p, d.currency ?? base);
-        if (rupees > 0) {
-          row("INR", dateOnly(paidOn)).incomeMinor += rupees;
-          rupeeIncome.rupeesMinor += rupees;
-          rupeeIncome.recordedMinor += p.amountMinor ?? 0;
+        // Paid in another currency: income in that currency, as it was paid — never what it was converted to (the
+        // user, 2026-11-13). One whose amount was never recorded stays where it was recorded, counted for the note.
+        const paidIn = paidCurrency(p, d.currency ?? base), paid = paidAmountMinor(p, d.currency ?? base);
+        if (paidIn && paid > 0) {
+          row(paidIn, dateOnly(paidOn)).incomeMinor += paid;
+          const line = other.get(paidIn) ?? { currency: paidIn, amountMinor: 0, recordedMinor: 0 };
+          line.amountMinor += paid;
+          line.recordedMinor += p.amountMinor ?? 0;
+          other.set(paidIn, line);
           continue;
         }
-        if (isRupeePayment(p, d.currency ?? base)) {
-          rupeeIncome.notRecordedCount++;
-          rupeeIncome.notRecordedMinor += p.amountMinor ?? 0;
+        if (paidIn) {
+          notRecorded.count++;
+          notRecorded.amountMinor += p.amountMinor ?? 0;
         }
         row(d.currency ?? base, dateOnly(paidOn)).incomeMinor += p.amountMinor ?? 0;
       }
@@ -374,7 +377,9 @@ export async function getDailyReport(
 
   return {
     from, to, currency, departmentId: departmentId ?? null, rows, totals, currencies, byCurrency,
-    ...(rupeeIncome.rupeesMinor || rupeeIncome.notRecordedCount ? { rupeeIncome } : {}),
+    ...(other.size || notRecorded.count
+      ? { otherCurrencyIncome: { lines: [...other.values()].sort((a, b) => b.recordedMinor - a.recordedMinor), notRecordedCount: notRecorded.count, notRecordedMinor: notRecorded.amountMinor } }
+      : {}),
   };
 }
 
@@ -451,13 +456,15 @@ export async function getDailyBreakdown(
         const paidOn = new Date(p.paidOn);
         if (paidOn < fromDate || paidOn > toDate) continue;
         const method = PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? "—");
-        // As the report: a rupee payment in rupees, under INR; what it was recorded as is said beside it.
-        const rupees = rupeesPaidMinor(p, inv.currency ?? "AED");
+        // As the report: a payment in another currency as it was paid, under that currency; what it was recorded as
+        // is said beside it.
+        const paidIn = paidCurrency(p, inv.currency ?? "AED"), paid = paidAmountMinor(p, inv.currency ?? "AED");
+        const rupees = paidIn && paid > 0 ? paid : 0;
         records.push({
           id: `${inv._id}:${p._id ?? paidOn.getTime()}`, date: dateOnly(paidOn), number: p.receiptNumber || inv.invoiceNumber,
           title: inv.customerName ?? "",
           detail: [inv.invoiceNumber, method, rupees > 0 ? `recorded as ${formatMoney(p.amountMinor ?? 0, inv.currency ?? "AED")}` : ""].filter(Boolean).join(" · "),
-          amountMinor: rupees > 0 ? rupees : p.amountMinor ?? 0, currency: rupees > 0 ? "INR" : inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { method, salesperson, crm },
+          amountMinor: rupees > 0 ? rupees : p.amountMinor ?? 0, currency: rupees > 0 ? paidIn! : inv.currency ?? "AED", href: `/invoices/${inv._id}`, groups: { method, salesperson, crm },
         });
       }
     }
@@ -493,12 +500,16 @@ export async function getDailyBreakdown(
   const n = new Map<string, number>();
   for (const r of records) n.set(r.currency, (n.get(r.currency) ?? 0) + 1);
   const currencies = [...n.keys()].sort((a, b) => (a === base ? -1 : b === base ? 1 : (n.get(b)! - n.get(a)!) || a.localeCompare(b)));
+  // "ALL": every currency's records at once, each saying its own (the full-day page lists them together and totals
+  // each on its own — 2026-11-13); its total and groups are then the organization's currency's, as without it.
+  const everything = want.toUpperCase() === "ALL";
   const currency = currencies.includes(want.toUpperCase()) ? want.toUpperCase() : currencies.includes(base) ? base : currencies[0] ?? base;
   const byCurrency = currencies.map((c) => {
     const rs = records.filter((r) => r.currency === c);
     return { currency: c, totalMinor: rs.reduce((t, r) => t + r.amountMinor, 0), count: rs.length };
   });
   const shown = records.filter((r) => r.currency === currency);
+  if (everything) records.sort((a, b) => b.date.localeCompare(a.date) || (a.currency === currency ? -1 : b.currency === currency ? 1 : a.currency.localeCompare(b.currency)) || b.amountMinor - a.amountMinor);
 
   shown.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
   const groups: DailyBreakdownGroup[] = DAILY_GROUPS[kind].map(({ key, label }) => {
@@ -514,7 +525,7 @@ export async function getDailyBreakdown(
   });
   return {
     kind, from, to, departmentId: departmentId ?? null, currency,
-    totalMinor: shown.reduce((t, r) => t + r.amountMinor, 0), count: shown.length, groups, records: shown,
+    totalMinor: shown.reduce((t, r) => t + r.amountMinor, 0), count: shown.length, groups, records: everything ? records : shown,
     currencies, byCurrency,
   };
 }

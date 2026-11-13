@@ -12,15 +12,17 @@
  * Fully paid at the close, or the setting off, nothing changes: the invoice is the tax invoice, as before. Invoices
  * approved before this never become pro-formas.
  *
- * Rupees carry no VAT (the user, 2026-11-13: "INR payment doesn't have the VAT"). A payment received in rupees — the
- * INR Transfer method, or one typed in rupees in a CRM or CS Portal — on an invoice that is not itself in rupees is
- * marked `vatFree` as it is recorded: on a pro-forma its tax invoice keeps its number and carries no VAT, and the
- * other payments carry the VAT of their own amounts only. An enrolment paid in full at the close, all of it in rupees,
- * has the VAT taken off its invoice (stripVatForRupees); paid in full partly in rupees, it is a pro-forma so that each
- * payment has its own document. The client pays the same; nothing is taken out of the rupees for VAT. A rupee payment
- * recorded before this is as it was until scripts/inr-payments-no-vat.ts corrects it.
+ * Only payments in the invoice's own currency carry VAT (the user, 2026-11-13: first "INR payment doesn't have the
+ * VAT", then "only AED payments carry VAT"). A payment made in another currency — typed so where it was taken (a CRM
+ * close's currency and rate, rupees in CS Portal) or by INR Transfer — is marked `vatFree` as it is recorded
+ * (@delta/shared isVatFreePayment; never on an invoice itself in rupees, which is taxed as it always was): on a
+ * pro-forma its tax invoice keeps its number and carries no VAT, and the other payments carry the VAT of their own
+ * amounts only. An enrolment paid in full at the close, all of it in other currencies, has the VAT taken off its
+ * invoice (stripVatForOtherCurrency); paid in full partly so, it is a pro-forma so that each payment has its own
+ * document. The client pays the same; nothing is taken out for VAT. A payment recorded before this is as it was until
+ * scripts/inr-payments-no-vat.ts corrects it.
  */
-import { computeInvoiceLine, formatMoney, isRupeePayment, RUPEE_METHOD, rupeesOnInvoice, rupeesPaidMinor, sumInvoiceTotals } from "@delta/shared";
+import { computeInvoiceLine, formatMoney, isRupeePayment, isVatFreePayment, paidAmountMinor, paidCurrency, paidInOtherCurrencies, RUPEE_METHOD, sumInvoiceTotals, type PaidInCurrency } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 
 type Pay = {
@@ -47,7 +49,7 @@ type Doc = {
   payments: unknown;
   proforma?: { at?: Date } | null;
   enrolment?: {
-    declaredPayments?: { amountMinor: number; method?: string; original?: { currency?: string } | null }[] | null;
+    declaredPayments?: { amountMinor: number; method?: string; original?: { currency?: string; amountMinor?: number } | null }[] | null;
     declaredPaidMinor?: number | null;
   } | null;
   set(path: string, value: unknown): unknown;
@@ -64,60 +66,86 @@ export function isProforma(doc: unknown): boolean {
   return Boolean((doc as Doc).proforma?.at);
 }
 
-// What a rupee payment is, and its rupees: @delta/shared (the web shows them by the same rule).
-export { isRupeePayment, RUPEE_METHOD };
+// What a payment in another currency is, and its amount: @delta/shared (the web shows them by the same rule).
+export { isRupeePayment, isVatFreePayment, RUPEE_METHOD };
 
 // The same, as aggregation expressions over a payment `p` of the invoice in hand.
 const upperOf = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
-const inRupeesExpr = (p: string) => ({ $and: [
-  { $ne: [upperOf("$currency"), "INR"] },
-  { $or: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $eq: [upperOf(`${p}.original.currency`), "INR"] }] },
-] });
-const rupeesOfExpr = (p: string) => ({ $cond: [
-  { $and: [{ $eq: [upperOf(`${p}.original.currency`), "INR"] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
-  { $cond: [{ $and: [{ $eq: [upperOf(`${p}.bankCurrency`), "INR"] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
+const ownCurrencyExpr = { $cond: [{ $eq: [upperOf("$currency"), ""] }, "AED", upperOf("$currency")] };
+/** paidCurrency: the currency it was made in when not the invoice's — "" when it was. */
+const paidCurrencyExpr = (p: string) => ({
+  $switch: {
+    branches: [
+      { case: { $and: [{ $ne: [upperOf(`${p}.original.currency`), ""] }, { $ne: [upperOf(`${p}.original.currency`), ownCurrencyExpr] }] }, then: upperOf(`${p}.original.currency`) },
+      { case: { $and: [{ $eq: [`${p}.method`, RUPEE_METHOD] }, { $ne: [ownCurrencyExpr, "INR"] }] }, then: "INR" },
+    ],
+    default: "",
+  },
+});
+/** paidAmountMinor, for the currency `cur` it was made in: 0 when the amount was never recorded. */
+const paidAmountExpr = (p: string, cur: unknown) => ({ $cond: [
+  { $and: [{ $eq: [upperOf(`${p}.original.currency`), cur] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
+  { $cond: [{ $and: [{ $eq: [upperOf(`${p}.bankCurrency`), cur] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
 ] });
 /**
- * An aggregation stage over invoices: `rupeePayments` — each payment received in rupees, as recorded in the invoice's
- * currency (`aed`) and its rupees in paise (`inr`, 0 when they were never recorded).
+ * An aggregation stage over invoices: `foreignPayments` — each payment made in a currency other than the invoice's:
+ * that currency (`cur`), what it was recorded as in the invoice's (`aed`) and the amount in its own, in minor units
+ * (`amt`, 0 when it was never recorded).
  */
-export const rupeePaymentsStage = {
+export const foreignPaymentsStage = {
   $addFields: {
-    rupeePayments: {
-      $map: {
-        input: { $filter: { input: { $ifNull: ["$payments", []] }, as: "p", cond: inRupeesExpr("$$p") } },
-        as: "p", in: { aed: { $ifNull: ["$$p.amountMinor", 0] }, inr: rupeesOfExpr("$$p") },
+    foreignPayments: {
+      $filter: {
+        input: {
+          $map: {
+            input: { $ifNull: ["$payments", []] }, as: "p",
+            in: { $let: { vars: { cur: paidCurrencyExpr("$$p") }, in: { cur: "$$cur", aed: { $ifNull: ["$$p.amountMinor", 0] }, amt: paidAmountExpr("$$p", "$$cur") } } },
+          },
+        },
+        as: "f", cond: { $ne: ["$$f.cur", ""] },
       },
     },
   },
 };
+/** `foreignPayments` added up by currency: [{ cur, amt, aed, known }] — `known` what the payments with an amount were recorded as. */
+const foreignByCurrencyExpr = {
+  $map: {
+    input: { $setUnion: ["$foreignPayments.cur", []] }, as: "c",
+    in: {
+      cur: "$$c",
+      amt: { $sum: { $map: { input: "$foreignPayments", as: "f", in: { $cond: [{ $eq: ["$$f.cur", "$$c"] }, "$$f.amt", 0] } } } },
+      aed: { $sum: { $map: { input: "$foreignPayments", as: "f", in: { $cond: [{ $eq: ["$$f.cur", "$$c"] }, "$$f.aed", 0] } } } },
+      known: { $sum: { $map: { input: "$foreignPayments", as: "f", in: { $cond: [{ $and: [{ $eq: ["$$f.cur", "$$c"] }, { $gt: ["$$f.amt", 0] }] }, "$$f.aed", 0] } } } },
+    },
+  },
+};
 
-/** What the close declared, and how much of it in rupees. */
-function declaredAtClose(d: Doc): { declared: number; rupees: number } {
+/** What the close declared, and how much of it in currencies that carry no VAT. */
+function declaredAtClose(d: Doc): { declared: number; free: number } {
   const list = d.enrolment?.declaredPayments ?? [];
-  if (!list.length) return { declared: d.enrolment?.declaredPaidMinor ?? 0, rupees: 0 };
+  if (!list.length) return { declared: d.enrolment?.declaredPaidMinor ?? 0, free: 0 };
   return {
     declared: list.reduce((s, p) => s + (p.amountMinor ?? 0), 0),
-    rupees: list.reduce((s, p) => s + (isRupeePayment(p, d.currency) ? p.amountMinor ?? 0 : 0), 0),
+    free: list.reduce((s, p) => s + (isVatFreePayment(p, d.currency) ? p.amountMinor ?? 0 : 0), 0),
   };
 }
 
-/** An enrolment being approved that was paid in full at the close, every payment in rupees: its invoice carries no VAT. */
-export function closePaidInRupees(doc: unknown): boolean {
+/** An enrolment being approved that was paid in full at the close, every payment in another currency: its invoice carries no VAT. */
+export function closePaidInOtherCurrency(doc: unknown): boolean {
   const d = doc as Doc;
   if (!d.enrolment || isProforma(d)) return false;
   const total = d.totalMinor ?? 0;
-  const { declared, rupees } = declaredAtClose(d);
-  return total > 0 && (d.taxTotalMinor ?? 0) > 0 && declared >= total && rupees === declared;
+  const { declared, free } = declaredAtClose(d);
+  return total > 0 && (d.taxTotalMinor ?? 0) > 0 && declared >= total && free === declared;
 }
 
 /**
- * The VAT taken off an invoice paid in rupees, on the document before it is saved: every line untaxed, the total as it
- * was — the prices are tax-inclusive, so the client's figure does not move. What it carried is kept on `rupeesNoVat`.
- * Not on one priced before tax (taking the tax off would lower what the client was asked for) — answers false, and
- * the invoice is left as it is.
+ * The VAT taken off an invoice paid in another currency, on the document before it is saved: every line untaxed, the
+ * total as it was — the prices are tax-inclusive, so the client's figure does not move. What it carried is kept on
+ * `rupeesNoVat` (named for its first case, rupees). Not on one priced before tax (taking the tax off would lower
+ * what the client was asked for) — answers false, and the invoice is left as it is.
  */
-export function stripVatForRupees(doc: unknown): boolean {
+export function stripVatForOtherCurrency(doc: unknown): boolean {
   const d = doc as Doc;
   const tax = d.taxTotalMinor ?? 0;
   if (!(tax > 0) || d.taxInclusive !== true) return false;
@@ -144,16 +172,16 @@ export function stripVatForRupees(doc: unknown): boolean {
  * less than the invoice. Decided on what the close declared, not on what approval managed to record — a close paid in
  * full by EMI, which approval leaves for accounts to record, is still paid in full.
  *
- * Also one paid in full with part of it in rupees (2026-11-13): the rupees carry no VAT and the rest does, which one
- * invoice cannot say — so each payment gets its own document. (All of it in rupees: closePaidInRupees.)
+ * Also one paid in full with part of it in another currency (2026-11-13): that part carries no VAT and the rest
+ * does, which one invoice cannot say — so each payment gets its own document. (All of it: closePaidInOtherCurrency.)
  */
 export function startsProforma(doc: unknown): boolean {
   const d = doc as Doc;
   if (!d.enrolment || isProforma(d)) return false;
   const total = d.totalMinor ?? 0;
   if (!(total > 0) || !((d.taxTotalMinor ?? 0) > 0)) return false;
-  const { declared, rupees } = declaredAtClose(d);
-  return declared < total || (rupees > 0 && rupees < declared);
+  const { declared, free } = declaredAtClose(d);
+  return declared < total || (free > 0 && free < declared);
 }
 
 /**
@@ -191,9 +219,9 @@ export async function stampTaxInvoices(doc: unknown): Promise<string[]> {
  * The VAT in each payment on a pro-forma, in the order they are on it: its share of the invoice's VAT at the
  * invoice's rate — the payment that clears the invoice taking whatever is left, so they add up to it exactly.
  *
- * A payment marked `vatFree` (received in rupees) carries none. With one on it, the others still carry the VAT of
+ * A payment marked `vatFree` (made in another currency) carries none. With one on it, the others still carry the VAT of
  * their own amounts — the last of them, once the invoice is cleared, taking what is left of the VAT on what was not
- * paid in rupees, never the rupees' share.
+ * paid in another currency, never that part's share.
  */
 export function taxShares(doc: unknown): number[] {
   const d = doc as Doc;
@@ -282,15 +310,15 @@ export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
-  /** Of what is paid, the part paid in rupees: the rupees (paise) and what they were recorded as (2026-11-13). */
-  inrMinor: number; inrRecordedMinor: number;
+  /** Of what is paid, what was paid in other currencies — a line each — and what all of that was recorded as (2026-11-13). */
+  foreign: PaidInCurrency[]; foreignRecordedMinor: number;
 }
 export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
   paidOn: string; currency: string; amountMinor: number; netMinor: number; taxMinor: number; method: string;
   emailed: boolean; cancelled: boolean;
-  /** Paid in rupees: the rupees (paise; 0 when not a rupee payment or never recorded), and whether it was one. */
-  inrMinor: number; inRupees: boolean;
+  /** The currency it was paid in when not the invoice's ("" when it was), and the amount in it (0 when never recorded). */
+  paidCurrency: string; paidAmountMinor: number;
 }
 
 /**
@@ -333,14 +361,14 @@ export async function listProformasAndTaxInvoices(
         ...base, number: p.taxInvoice.number, paymentId: String(p._id), paidOn: day(p.paidOn), amountMinor: p.amountMinor ?? 0,
         netMinor: p.taxInvoice.netMinor ?? 0, taxMinor: p.taxInvoice.taxMinor ?? 0, method: String(p.method ?? ""),
         emailed: Boolean(p.taxInvoice.emailedAt), cancelled: false,
-        inrMinor: rupeesPaidMinor(p, base.currency), inRupees: isRupeePayment(p, base.currency),
+        paidCurrency: paidCurrency(p, base.currency) ?? "", paidAmountMinor: paidAmountMinor(p, base.currency),
       });
     }
     for (const c of d.cancelledTaxInvoices ?? []) {
       tis.push({
         ...base, number: c.number, paymentId: "", paidOn: day(c.paidOn), amountMinor: c.amountMinor ?? 0,
         netMinor: (c.amountMinor ?? 0) - (c.taxMinor ?? 0), taxMinor: c.taxMinor ?? 0, method: "", emailed: false, cancelled: true,
-        inrMinor: 0, inRupees: false,
+        paidCurrency: "", paidAmountMinor: 0,
       });
     }
     const course = String(d.enrolment?.course || d.lineItems?.[0]?.description || "");
@@ -350,7 +378,7 @@ export async function listProformasAndTaxInvoices(
         salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
         totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
         status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
-        inrMinor: rupeesOnInvoice(d.payments, base.currency).rupeesMinor, inrRecordedMinor: rupeesOnInvoice(d.payments, base.currency).recordedMinor,
+        foreign: paidInOtherCurrencies(d.payments, base.currency).lines, foreignRecordedMinor: paidInOtherCurrencies(d.payments, base.currency).recordedMinor,
       });
     }
     for (const t of tis) if ((!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
@@ -381,18 +409,23 @@ export interface TaxDocumentRow {
   /** Of that invoice (for a TI, of its pro-forma): the whole fee, what is paid of it, what is still owed. */
   feeMinor: number; paidMinor: number; balanceMinor: number;
   /**
-   * Paid in rupees (2026-11-13: "INR never shown converted … the actual amount"): how much of this document's amount
-   * was, as recorded in the invoice's currency (`inrAedMinor`, 0 when none), the rupees themselves in paise
-   * (`inrMinor`, 0 when they were not recorded) and the VAT still carried on that part (`inrTaxMinor`).
+   * Paid in another currency (2026-11-13: "whichever currency they are giving … no need to convert anywhere"): the
+   * part(s) of this document's amount that were — a line per currency, with the amount in it (0 when never recorded)
+   * and what it was recorded as — what all of that was recorded as, and the VAT still carried on it.
    */
-  inrAedMinor: number; inrMinor: number; inrTaxMinor: number;
-  /** The same for everything paid on the invoice so far, and how much of it has its rupees recorded. */
-  invInrAedMinor: number; invInrMinor: number; invInrKnownAedMinor: number;
+  foreign: PaidInCurrency[]; foreignRecordedMinor: number; foreignTaxMinor: number;
+  /** The same for everything paid on the invoice so far, and how much of it has its amount recorded. */
+  invForeign: PaidInCurrency[]; invForeignRecordedMinor: number; invForeignKnownMinor: number;
 }
 export interface TaxDocumentTotals {
   count: number; netMinor: number; taxMinor: number; amountMinor: number; pendingMinor: number;
-  /** The documents paid in rupees: how many, the rupees (paise), what they were recorded as, and the VAT on them. */
-  inrCount: number; inrMinor: number; inrAedMinor: number; inrTaxMinor: number;
+  /** What of these documents was paid in other currencies, as recorded in this one, and the VAT still on that part. */
+  foreignRecordedMinor: number; foreignTaxMinor: number;
+  /**
+   * …and a line for each such currency: how many documents, the amount in it, what that was recorded as and the VAT
+   * on it — then those whose amount was never recorded (they are not in `amountMinor` / `recordedMinor`).
+   */
+  foreign: Array<{ currency: string; count: number; amountMinor: number; recordedMinor: number; taxMinor: number; unknownCount: number; unknownMinor: number }>;
 }
 
 /**
@@ -403,12 +436,13 @@ export interface TaxDocumentTotals {
  * same days. A TI's paid / pending are its pro-forma's, and `pendingMinor` counts each invoice once however many of
  * its tax invoices are listed. One page at a time: the invoices run to thousands.
  *
- * What was paid in rupees is told apart (2026-11-13): each row says how much of it was, with the rupees themselves
- * when they were recorded, the totals count the rupee documents on their own, and `paidIn` keeps only one kind.
+ * What was paid in another currency is told apart (2026-11-13): each row says how much of it was and in what, with
+ * the amount as it was paid when that was recorded; the totals count each currency on its own; and `paidIn` keeps
+ * the documents paid in the invoice's own currency ("own"), in any other ("other"), or in one (its code).
  */
 export async function listTaxDocuments(
   orgId: string,
-  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: "aed" | "inr"; page?: number; pageSize?: number } = {},
+  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: string; page?: number; pageSize?: number } = {},
 ): Promise<{ rows: TaxDocumentRow[]; total: number; page: number; pageSize: number; totals: Record<string, TaxDocumentTotals> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -422,16 +456,22 @@ export async function listTaxDocuments(
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 25)));
 
-  const inRupees = inRupeesExpr, rupeesOf = rupeesOfExpr;
   const fee = { $ifNull: ["$totalMinor", 0] };
-  const invoiceInr = { $min: ["$invInrAedMinor", fee] };
+  const half = (x: unknown) => ({ $floor: { $add: [x, 0.5] } });
+  const paidIn = (opts.paidIn ?? "").trim().toLowerCase();
+  // "aed" and "inr" are how the filter was first sent (188314c).
+  const paidInMatch = !paidIn ? null
+    : paidIn === "own" || paidIn === "aed" ? { "doc.foreignRecordedMinor": { $lte: 0 } }
+      : paidIn === "other" ? { "doc.foreignRecordedMinor": { $gt: 0 } }
+        : { "doc.parts.cur": paidIn.toUpperCase() };
 
   // An aggregation is not cast by the schema: ids and dates go in as what they are.
   const invoices = { "proforma.at": { $exists: false }, ...(ranged ? { issueDate: range } : {}) };
   const proformas = { "proforma.at": { $exists: true }, payments: { $elemMatch: { "taxInvoice.number": { $exists: true }, ...(ranged ? { paidOn: range } : {}) } } };
   const [out] = await Invoice.aggregate<{
     rows: any[];
-    totals: Array<{ _id: string; count: number; netMinor: number; taxMinor: number; amountMinor: number; inrCount: number; inrMinor: number; inrAedMinor: number; inrTaxMinor: number }>;
+    totals: Array<{ _id: string; count: number; netMinor: number; taxMinor: number; amountMinor: number; foreignRecordedMinor: number; foreignTaxMinor: number }>;
+    foreign: Array<{ _id: { c: string; f: string }; count: number; amountMinor: number; recordedMinor: number; taxMinor: number; unknownCount: number; unknownMinor: number }>;
     pending: Array<{ _id: string; pendingMinor: number }>;
   }>([
     {
@@ -442,19 +482,19 @@ export async function listTaxDocuments(
         ...(opts.pending ? { balanceMinor: { $gt: 0 } } : {}),
       },
     },
-    // What was paid on the invoice in rupees: each such payment as recorded, and its rupees.
-    rupeePaymentsStage,
+    // What was paid on the invoice in other currencies: each such payment, then a line per currency.
+    foreignPaymentsStage,
     {
       $addFields: {
-        invInrAedMinor: { $sum: "$rupeePayments.aed" },
-        invInrMinor: { $sum: "$rupeePayments.inr" },
-        invInrKnownAedMinor: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, "$$r.aed", 0] } } } },
+        invForeign: foreignByCurrencyExpr,
+        invForeignRecordedMinor: { $sum: "$foreignPayments.aed" },
+        invForeignKnownMinor: { $sum: { $map: { input: "$foreignPayments", as: "f", in: { $cond: [{ $gt: ["$$f.amt", 0] }, "$$f.aed", 0] } } } },
       },
     },
     {
       $project: {
         invoiceNumber: 1, customerId: 1, customerName: 1, currency: 1, totalMinor: 1, amountPaidMinor: 1, balanceMinor: 1,
-        invInrAedMinor: 1, invInrMinor: 1, invInrKnownAedMinor: 1,
+        invForeign: 1, invForeignRecordedMinor: 1, invForeignKnownMinor: 1,
         doc: {
           $cond: [
             { $gt: ["$proforma.at", null] },
@@ -465,36 +505,67 @@ export async function listTaxDocuments(
                 in: {
                   kind: "ti", number: "$$p.taxInvoice.number", date: "$$p.paidOn", paymentId: "$$p._id", method: { $ifNull: ["$$p.method", ""] },
                   netMinor: { $ifNull: ["$$p.taxInvoice.netMinor", 0] }, taxMinor: { $ifNull: ["$$p.taxInvoice.taxMinor", 0] }, amountMinor: { $ifNull: ["$$p.amountMinor", 0] },
-                  inrAedMinor: { $cond: [inRupees("$$p"), { $ifNull: ["$$p.amountMinor", 0] }, 0] },
-                  inrMinor: { $cond: [inRupees("$$p"), rupeesOf("$$p"), 0] },
-                  inrTaxMinor: { $cond: [inRupees("$$p"), { $ifNull: ["$$p.taxInvoice.taxMinor", 0] }, 0] },
+                  // Its own payment, when that was in another currency: one part, the whole of it.
+                  parts: {
+                    $let: {
+                      vars: { cur: paidCurrencyExpr("$$p") },
+                      in: {
+                        $cond: [{ $ne: ["$$cur", ""] }, [{
+                          cur: "$$cur", amt: paidAmountExpr("$$p", "$$cur"), aed: { $ifNull: ["$$p.amountMinor", 0] },
+                          known: { $cond: [{ $gt: [paidAmountExpr("$$p", "$$cur"), 0] }, { $ifNull: ["$$p.amountMinor", 0] }, 0] },
+                          tax: { $ifNull: ["$$p.taxInvoice.taxMinor", 0] },
+                        }], []],
+                      },
+                    },
+                  },
                 },
               },
             },
             [{
               kind: "invoice", number: "$invoiceNumber", date: "$issueDate", paymentId: null, method: "",
               netMinor: { $subtract: [{ $ifNull: ["$totalMinor", 0] }, { $ifNull: ["$taxTotalMinor", 0] }] }, taxMinor: { $ifNull: ["$taxTotalMinor", 0] }, amountMinor: { $ifNull: ["$totalMinor", 0] },
-              // The part of the invoice paid in rupees, never more than the invoice; its share of the invoice's VAT.
-              inrAedMinor: invoiceInr, inrMinor: "$invInrMinor",
-              inrTaxMinor: { $cond: [{ $gt: [fee, 0] }, { $floor: { $add: [{ $divide: [{ $multiply: [{ $ifNull: ["$taxTotalMinor", 0] }, invoiceInr] }, fee] }, 0.5] } }, 0] },
+              // What of the invoice was paid in each other currency, with its share of the invoice's VAT.
+              parts: {
+                $map: {
+                  input: "$invForeign", as: "f",
+                  in: {
+                    cur: "$$f.cur", amt: "$$f.amt", aed: "$$f.aed", known: "$$f.known",
+                    tax: { $cond: [{ $gt: [fee, 0] }, half({ $divide: [{ $multiply: [{ $ifNull: ["$taxTotalMinor", 0] }, "$$f.aed"] }, fee] }), 0] },
+                  },
+                },
+              },
             }],
           ],
         },
       },
     },
     { $unwind: "$doc" },
+    { $addFields: { "doc.foreignRecordedMinor": { $sum: "$doc.parts.aed" }, "doc.foreignTaxMinor": { $sum: "$doc.parts.tax" } } },
     ...(ranged ? [{ $match: { "doc.date": range } }] : []),
     ...(like ? [{ $match: { $or: [{ "doc.number": like }, { invoiceNumber: like }, { customerName: like }] } }] : []),
-    ...(opts.paidIn ? [{ $match: { "doc.inrAedMinor": opts.paidIn === "inr" ? { $gt: 0 } : { $lte: 0 } } }] : []),
+    ...(paidInMatch ? [{ $match: paidInMatch }] : []),
     {
       $facet: {
         rows: [{ $sort: { "doc.date": -1, "doc.number": -1, _id: -1 } }, { $skip: (page - 1) * pageSize }, { $limit: pageSize }],
         totals: [{
           $group: {
             _id: { $ifNull: ["$currency", "AED"] }, count: { $sum: 1 }, netMinor: { $sum: "$doc.netMinor" }, taxMinor: { $sum: "$doc.taxMinor" }, amountMinor: { $sum: "$doc.amountMinor" },
-            inrCount: { $sum: { $cond: [{ $gt: ["$doc.inrAedMinor", 0] }, 1, 0] } }, inrMinor: { $sum: "$doc.inrMinor" }, inrAedMinor: { $sum: "$doc.inrAedMinor" }, inrTaxMinor: { $sum: "$doc.inrTaxMinor" },
+            foreignRecordedMinor: { $sum: "$doc.foreignRecordedMinor" }, foreignTaxMinor: { $sum: "$doc.foreignTaxMinor" },
           },
         }],
+        // Each other currency on its own, never added to another.
+        foreign: [
+          { $unwind: "$doc.parts" },
+          {
+            $group: {
+              _id: { c: { $ifNull: ["$currency", "AED"] }, f: "$doc.parts.cur" }, count: { $sum: 1 },
+              amountMinor: { $sum: "$doc.parts.amt" }, recordedMinor: { $sum: "$doc.parts.known" }, taxMinor: { $sum: "$doc.parts.tax" },
+              unknownCount: { $sum: { $cond: [{ $gt: ["$doc.parts.aed", "$doc.parts.known"] }, 1, 0] } },
+              unknownMinor: { $sum: { $subtract: ["$doc.parts.aed", "$doc.parts.known"] } },
+            },
+          },
+          { $sort: { recordedMinor: -1, "_id.f": 1 } },
+        ],
         pending: [
           { $group: { _id: "$_id", currency: { $first: { $ifNull: ["$currency", "AED"] } }, balanceMinor: { $first: { $ifNull: ["$balanceMinor", 0] } } } },
           { $group: { _id: "$currency", pendingMinor: { $sum: "$balanceMinor" } } },
@@ -507,18 +578,25 @@ export async function listTaxDocuments(
   for (const t of out?.totals ?? []) {
     totals[t._id] = {
       count: t.count, netMinor: t.netMinor, taxMinor: t.taxMinor, amountMinor: t.amountMinor, pendingMinor: 0,
-      inrCount: t.inrCount ?? 0, inrMinor: t.inrMinor ?? 0, inrAedMinor: t.inrAedMinor ?? 0, inrTaxMinor: t.inrTaxMinor ?? 0,
+      foreignRecordedMinor: t.foreignRecordedMinor ?? 0, foreignTaxMinor: t.foreignTaxMinor ?? 0, foreign: [],
     };
   }
+  for (const f of out?.foreign ?? []) {
+    totals[f._id.c]?.foreign.push({
+      currency: f._id.f, count: f.count, amountMinor: f.amountMinor ?? 0, recordedMinor: f.recordedMinor ?? 0, taxMinor: f.taxMinor ?? 0,
+      unknownCount: f.unknownCount ?? 0, unknownMinor: f.unknownMinor ?? 0,
+    });
+  }
   for (const p of out?.pending ?? []) if (totals[p._id]) totals[p._id]!.pendingMinor = p.pendingMinor;
+  const lines = (list: any[] | undefined): PaidInCurrency[] => (list ?? []).map((f) => ({ currency: String(f.cur), amountMinor: f.amt ?? 0, recordedMinor: f.aed ?? 0 }));
   const rows: TaxDocumentRow[] = (out?.rows ?? []).map((r) => ({
     kind: r.doc.kind === "ti" ? "ti" : "invoice", number: String(r.doc.number ?? ""), date: day(r.doc.date),
     invoiceId: String(r._id), invoiceNumber: String(r.invoiceNumber ?? ""), paymentId: r.doc.paymentId ? String(r.doc.paymentId) : "", method: String(r.doc.method ?? ""),
     customerId: String(r.customerId ?? ""), customerName: String(r.customerName ?? ""), currency: String(r.currency ?? "AED"),
     netMinor: r.doc.netMinor ?? 0, taxMinor: r.doc.taxMinor ?? 0, amountMinor: r.doc.amountMinor ?? 0,
     feeMinor: r.totalMinor ?? 0, paidMinor: r.amountPaidMinor ?? 0, balanceMinor: r.balanceMinor ?? 0,
-    inrAedMinor: r.doc.inrAedMinor ?? 0, inrMinor: r.doc.inrMinor ?? 0, inrTaxMinor: r.doc.inrTaxMinor ?? 0,
-    invInrAedMinor: r.invInrAedMinor ?? 0, invInrMinor: r.invInrMinor ?? 0, invInrKnownAedMinor: r.invInrKnownAedMinor ?? 0,
+    foreign: lines(r.doc.parts), foreignRecordedMinor: r.doc.foreignRecordedMinor ?? 0, foreignTaxMinor: r.doc.foreignTaxMinor ?? 0,
+    invForeign: lines(r.invForeign), invForeignRecordedMinor: r.invForeignRecordedMinor ?? 0, invForeignKnownMinor: r.invForeignKnownMinor ?? 0,
   }));
   return { rows, total: Object.values(totals).reduce((s, t) => s + t.count, 0), page, pageSize, totals };
 }

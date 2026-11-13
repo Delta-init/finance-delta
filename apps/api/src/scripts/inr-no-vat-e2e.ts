@@ -25,7 +25,7 @@ if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri)) {
 const { approveInvoice, recordPayment, updatePayment, getInvoice, invoiceListSummary } = await import("../modules/invoice/invoice.service");
 const { getVATReport, getDailyReport, getDailyBreakdown } = await import("../modules/reports/reports.service");
 const { listTaxDocuments, listProformasAndTaxInvoices } = await import("../modules/invoice/payment-tax-invoice");
-const { invoiceQuerySchema, isRupeePayment, rupeesPaidMinor, rupeesOnInvoice } = await import("@delta/shared");
+const { invoiceQuerySchema, isRupeePayment, isVatFreePayment, paidCurrency, paidAmountMinor, paidInOtherCurrencies, paidRateText } = await import("@delta/shared");
 const { recordCoursePayment, rupeesTyped } = await import("../modules/tetra-deposit/course-invoice");
 const { TetraDepositModel } = await import("../modules/tetra-deposit/tetra-deposit.model");
 const { correctRupeePayments, undoRupeeCorrection } = await import("./inr-payments-no-vat");
@@ -173,41 +173,50 @@ check("November: only the dirhams' VAT — nothing for any rupee payment", repor
 const list = await listTaxDocuments(String(ON), { from: "2026-11-01", to: "2026-11-30", pageSize: 100 });
 const t = list.totals.AED!;
 check("the list comes to the same VAT", t.taxMinor === report.outputTaxMinor, show(t));
-const rowOf = (invoiceId: unknown, kind: string, rupee: boolean) => list.rows.find((r) => r.invoiceId === String(invoiceId) && r.kind === kind && (r.inrAedMinor > 0) === rupee)!;
+const rowOf = (invoiceId: unknown, kind: string, other: boolean) => list.rows.find((r) => r.invoiceId === String(invoiceId) && r.kind === kind && (r.foreignRecordedMinor > 0) === other)!;
 const aInr = rowOf(A._id, "ti", true);
-check("a rupee tax invoice: recorded as 11,721.60, paid as INR 300,000, no VAT", aInr.amountMinor === 1_172_160 && aInr.inrAedMinor === 1_172_160 && aInr.inrMinor === 30_000_000 && aInr.taxMinor === 0 && aInr.inrTaxMinor === 0 && aInr.feeMinor === 2_000_000, show(aInr));
-check("…its enrolment's dirham payment is not a rupee document, and knows the enrolment was partly rupees", rowOf(A._id, "ti", false).inrAedMinor === 0 && rowOf(A._id, "ti", false).invInrAedMinor === 1_172_160 && rowOf(A._id, "ti", false).invInrMinor === 30_000_000);
+check("a rupee tax invoice: recorded as 11,721.60, paid as INR 300,000, no VAT", aInr.amountMinor === 1_172_160 && aInr.foreignRecordedMinor === 1_172_160 && aInr.foreign.length === 1 && aInr.foreign[0]!.currency === "INR" && aInr.foreign[0]!.amountMinor === 30_000_000 && aInr.taxMinor === 0 && aInr.foreignTaxMinor === 0 && aInr.feeMinor === 2_000_000, show(aInr));
+check("…its enrolment's dirham payment is not a rupee document, and knows the enrolment was partly rupees", rowOf(A._id, "ti", false).foreign.length === 0 && rowOf(A._id, "ti", false).invForeignRecordedMinor === 1_172_160 && rowOf(A._id, "ti", false).invForeign[0]?.amountMinor === 30_000_000);
 const bRow = rowOf(B._id, "invoice", true);
-check("an invoice paid in full in rupees: all of it, INR 455,000, no VAT", bRow.inrAedMinor === 2_000_000 && bRow.inrMinor === 45_500_000 && bRow.taxMinor === 0 && bRow.invInrKnownAedMinor === 2_000_000, show(bRow));
+check("an invoice paid in full in rupees: all of it, INR 455,000, no VAT", bRow.foreignRecordedMinor === 2_000_000 && bRow.foreign[0]?.currency === "INR" && bRow.foreign[0]?.amountMinor === 45_500_000 && bRow.taxMinor === 0 && bRow.invForeignKnownMinor === 2_000_000, show(bRow));
 const eInr = rowOf(E._id, "ti", true);
-check("a rupee payment whose rupees were never given: a rupee document, the rupees unknown", eInr.inrAedMinor === 300_000 && eInr.inrMinor === 0 && eInr.invInrKnownAedMinor === 0);
+check("a rupee payment whose rupees were never given: a rupee document, the rupees unknown", eInr.foreignRecordedMinor === 300_000 && eInr.foreign[0]?.currency === "INR" && eInr.foreign[0]?.amountMinor === 0 && eInr.invForeignKnownMinor === 0);
 const rupeeAed = 1_172_160 + 2_000_000 + 1_000_000 + 300_000 + 1_172_160 + 1_200_000 + 1_172_160;
-check("the totals count the rupee documents on their own: seven, their rupees, what they were recorded as, no VAT on them",
-  t.inrCount === 7 && t.inrAedMinor === rupeeAed && t.inrMinor === 30_000_000 + 45_500_000 + 22_750_000 + 0 + 30_000_000 + 30_700_000 + 30_000_000 && t.inrTaxMinor === 0, show(t));
-const onlyInr = await listTaxDocuments(String(ON), { paidIn: "inr", pageSize: 100 }), onlyAed = await listTaxDocuments(String(ON), { paidIn: "aed", pageSize: 100 });
-check("Paid in INR: those seven; Paid in AED: the rest, with no rupees among them", onlyInr.total === 7 && onlyInr.rows.every((r) => r.inrAedMinor > 0) && onlyAed.total === list.total - 7 && onlyAed.rows.every((r) => r.inrAedMinor === 0) && (onlyAed.totals.AED?.inrCount ?? 0) === 0,
+const inrLine = t.foreign.find((f) => f.currency === "INR")!;
+check("the totals count the rupee documents on their own: seven, their rupees, what they were recorded as, no VAT on them — and the one whose rupees are not known",
+  t.foreign.length === 1 && inrLine.count === 7 && t.foreignRecordedMinor === rupeeAed && inrLine.amountMinor === 30_000_000 + 45_500_000 + 22_750_000 + 0 + 30_000_000 + 30_700_000 + 30_000_000
+  && inrLine.recordedMinor === rupeeAed - 300_000 && inrLine.unknownCount === 1 && inrLine.unknownMinor === 300_000 && t.foreignTaxMinor === 0 && inrLine.taxMinor === 0, show(t));
+const onlyInr = await listTaxDocuments(String(ON), { paidIn: "INR", pageSize: 100 }), onlyAed = await listTaxDocuments(String(ON), { paidIn: "own", pageSize: 100 });
+check("Paid in INR: those seven; paid in the invoice's own currency: the rest, with nothing else among them", onlyInr.total === 7 && onlyInr.rows.every((r) => r.foreignRecordedMinor > 0) && onlyAed.total === list.total - 7 && onlyAed.rows.every((r) => r.foreignRecordedMinor === 0) && (onlyAed.totals.AED?.foreign.length ?? 0) === 0
+  && (await listTaxDocuments(String(ON), { paidIn: "other" })).total === 7 && (await listTaxDocuments(String(ON), { paidIn: "inr" })).total === 7 && (await listTaxDocuments(String(ON), { paidIn: "aed" })).total === list.total - 7,
   show({ inr: onlyInr.total, aed: onlyAed.total, all: list.total }));
-check("the rupee books: an INR invoice's payment is not a rupee document", (await listTaxDocuments(String(RUPEE_ORG))).rows.every((r) => r.inrAedMinor === 0));
+check("the rupee books: an INR invoice's payment by INR Transfer is in its own currency", (await listTaxDocuments(String(RUPEE_ORG))).rows.every((r) => r.foreignRecordedMinor === 0));
 check("nothing here needs the correction", (await correctRupeePayments({ write: false })).rows.length === 0, show((await correctRupeePayments({ write: false })).rows));
 
 step("8b. Rupees as rupees, never converted: the Invoices cards, the Daily report, the other tabs");
 // What was paid in this organization: 124,443.20 in all, of which six payments in rupees with their rupees recorded
 // (recorded as 77,164.80) and one by INR Transfer whose rupees were never given (3,000).
 const RUPEES = 30_000_000 + 45_500_000 + 22_750_000 + 30_000_000 + 30_700_000 + 30_000_000, RECORDED = 1_172_160 + 2_000_000 + 1_000_000 + 1_172_160 + 1_200_000 + 1_172_160, PAID = 12_444_320;
-check("the rule, said once for the API and the screens: a rupee payment, its rupees, and none on a rupee invoice",
-  isRupeePayment({ method: "inr_bank_account" }, "AED") && !isRupeePayment({ method: "inr_bank_account" }, "INR") && isRupeePayment({ method: "card", original: { currency: "inr" } }, "AED") && !isRupeePayment({ method: "card" }, "AED")
-  && rupeesPaidMinor({ method: "inr_bank_account", original: { currency: "INR", amountMinor: 5 } }, "AED") === 5 && rupeesPaidMinor({ method: "inr_bank_account", bankCurrency: "INR", bankAmountMinor: 7 }, "AED") === 7
-  && rupeesPaidMinor({ method: "inr_bank_account" }, "AED") === 0 && rupeesPaidMinor({ method: "card", bankCurrency: "INR", bankAmountMinor: 7 }, "AED") === 0
-  && JSON.stringify(rupeesOnInvoice([{ method: "inr_bank_account", amountMinor: 10, original: { currency: "INR", amountMinor: 250 } }, { method: "inr_bank_account", amountMinor: 4 }, { method: "cash", amountMinor: 9 }], "AED")) === JSON.stringify({ rupeesMinor: 250, recordedMinor: 10, unknownCount: 1, unknownMinor: 4 }));
+check("the rule, said once for the API and the screens: the currency a payment was made in, its amount, and whether it carries VAT",
+  isRupeePayment({ method: "inr_bank_account" }, "AED") && !isRupeePayment({ method: "inr_bank_account" }, "INR") && paidCurrency({ method: "card", original: { currency: "inr" } }, "AED") === "INR" && paidCurrency({ method: "card" }, "AED") === null
+  && paidCurrency({ method: "bank_transfer", original: { currency: "usd", amountMinor: 5 } }, "AED") === "USD" && paidAmountMinor({ method: "bank_transfer", original: { currency: "USD", amountMinor: 5 } }, "AED") === 5
+  && paidCurrency({ method: "cash", original: { currency: "AED", amountMinor: 3 } }, "AED") === null && paidCurrency({ method: "cash", original: { currency: "AED", amountMinor: 3 } }, "INR") === "AED"
+  && isVatFreePayment({ method: "bank_transfer", original: { currency: "USD" } }, "AED") && isVatFreePayment({ method: "inr_bank_account" }, "AED") && !isVatFreePayment({ method: "card" }, "AED") && !isVatFreePayment({ method: "cash", original: { currency: "AED" } }, "INR")
+  && paidAmountMinor({ method: "inr_bank_account", bankCurrency: "INR", bankAmountMinor: 7 }, "AED") === 7 && paidAmountMinor({ method: "inr_bank_account" }, "AED") === 0 && paidAmountMinor({ method: "card", bankCurrency: "INR", bankAmountMinor: 7 }, "AED") === 0
+  && JSON.stringify(paidInOtherCurrencies([{ method: "inr_bank_account", amountMinor: 10, original: { currency: "INR", amountMinor: 250 } }, { method: "inr_bank_account", amountMinor: 4 }, { method: "cash", amountMinor: 9 }, { method: "card", amountMinor: 20, original: { currency: "USD", amountMinor: 6 } }], "AED"))
+    === JSON.stringify({ lines: [{ currency: "USD", amountMinor: 6, recordedMinor: 20 }, { currency: "INR", amountMinor: 250, recordedMinor: 10 }], recordedMinor: 30, unknownCount: 1, unknownMinor: 4 })
+  && paidRateText("INR", 30_000_000, "AED", 1_172_160) === "1 AED = 25.594 INR" && paidRateText("USD", 100_000, "AED", 367_250) === "1 USD = 3.6725 AED" && paidRateText("USD", 0, "AED", 5) === "");
 const cards = (await invoiceListSummary(String(ON), invoiceQuerySchema.parse({}), scope)).byCurrency.find((g) => g.currency === "AED")!;
-check("Invoices cards: the rupees paid on their own — six invoices — and what they were recorded as, to take out of Paid", cards.paidMinor === PAID && cards.inrMinor === RUPEES && cards.inrRecordedMinor === RECORDED && cards.inrCount === 6, show(cards));
-check("…the rupee payment with no rupees recorded is counted apart, and stays in Paid", cards.inrUnknownCount === 1 && cards.inrUnknownMinor === 300_000);
-check("…the rupee books have none", ((await invoiceListSummary(String(RUPEE_ORG), invoiceQuerySchema.parse({}), scope)).byCurrency[0]?.inrCount ?? 0) === 0);
+const cardInr = cards.foreign?.find((f) => f.currency === "INR");
+check("Invoices cards: the rupees paid on their own — six invoices — and what they were recorded as, to take out of Paid", cards.paidMinor === PAID && cards.foreign?.length === 1 && cardInr?.amountMinor === RUPEES && cardInr?.recordedMinor === RECORDED && cardInr?.count === 6, show(cards));
+check("…the rupee payment with no rupees recorded is counted apart, and stays in Paid", cardInr?.unknownCount === 1 && cardInr?.unknownMinor === 300_000);
+check("…the rupee books have none", !((await invoiceListSummary(String(RUPEE_ORG), invoiceQuerySchema.parse({}), scope)).byCurrency[0]?.foreign?.length));
 const daily = await getDailyReport(String(ON), "2026-11-01", "2026-11-30");
 const dInr = daily.byCurrency?.find((c) => c.currency === "INR"), dAed = daily.byCurrency?.find((c) => c.currency === "AED");
 check("Daily report: what was paid in rupees is income in rupees, under INR", dInr?.incomeMinor === RUPEES && dInr?.netMinor === RUPEES && (daily.currencies ?? []).join(",") === "AED,INR", show(daily.byCurrency));
 check("…and AED income is what was paid in dirhams, plus the one whose rupees are not known", daily.currency === "AED" && dAed?.incomeMinor === PAID - RECORDED && daily.totals.incomeMinor === PAID - RECORDED, show(dAed));
-check("…with the note's figures: the rupees, what they were recorded as, and the one not recorded", daily.rupeeIncome?.rupeesMinor === RUPEES && daily.rupeeIncome?.recordedMinor === RECORDED && daily.rupeeIncome?.notRecordedCount === 1 && daily.rupeeIncome?.notRecordedMinor === 300_000, show(daily.rupeeIncome));
+check("…with the note's figures: the rupees, what they were recorded as, and the one not recorded", daily.otherCurrencyIncome?.lines.length === 1 && daily.otherCurrencyIncome.lines[0]!.currency === "INR" && daily.otherCurrencyIncome.lines[0]!.amountMinor === RUPEES
+  && daily.otherCurrencyIncome.lines[0]!.recordedMinor === RECORDED && daily.otherCurrencyIncome.notRecordedCount === 1 && daily.otherCurrencyIncome.notRecordedMinor === 300_000, show(daily.otherCurrencyIncome));
 check("…revenue is as invoiced, untouched", dAed?.revenueMinor === 2_000_000 * 5 + 1_200_000 * 4 && (dInr?.revenueMinor ?? 0) === 0, show(dAed));
 const inrDays = await getDailyReport(String(ON), "2026-11-01", "2026-11-30", undefined, "INR");
 check("…switched to INR: its days in rupees", inrDays.currency === "INR" && inrDays.rows.reduce((t, r) => t + r.incomeMinor, 0) === RUPEES && inrDays.rows.some((r) => r.date === "2026-11-11"));
@@ -216,9 +225,9 @@ check("where it came from: the six rupee payments in rupees, each saying what it
 check("…the dirham breakdown has none of them, and adds up to the report", bAed.currency === "AED" && bAed.totalMinor === PAID - RECORDED && bAed.records.every((r) => !/recorded as/.test(r.detail)));
 const tabs = await listProformasAndTaxInvoices(String(ON));
 const aTi = tabs.taxInvoices.find((x) => x.number === "TI-00001")!, aPf = tabs.proformas.find((x) => x.id === String(A._id))!, ePf = tabs.proformas.find((x) => x.id === String(E._id))!;
-check("Tax invoices tab: a rupee tax invoice says its rupees; a dirham one none", aTi.inRupees && aTi.inrMinor === 30_000_000 && tabs.taxInvoices.filter((x) => x.invoiceId === String(A._id) && !x.inRupees).every((x) => x.inrMinor === 0));
-check("…one whose rupees were never recorded is still said to be rupees", tabs.taxInvoices.some((x) => x.invoiceId === String(E._id) && x.inRupees && x.inrMinor === 0));
-check("Pro-formas tab: the part of what is paid that was rupees", aPf.inrMinor === 30_000_000 && aPf.inrRecordedMinor === 1_172_160 && ePf.inrMinor === 0 && ePf.inrRecordedMinor === 0, show([aPf.inrMinor, ePf.inrMinor]));
+check("Tax invoices tab: a rupee tax invoice says its rupees; a dirham one none", aTi.paidCurrency === "INR" && aTi.paidAmountMinor === 30_000_000 && tabs.taxInvoices.filter((x) => x.invoiceId === String(A._id) && !x.paidCurrency).every((x) => x.paidAmountMinor === 0));
+check("…one whose rupees were never recorded is still said to be rupees", tabs.taxInvoices.some((x) => x.invoiceId === String(E._id) && x.paidCurrency === "INR" && x.paidAmountMinor === 0));
+check("Pro-formas tab: the part of what is paid that was rupees", aPf.foreign[0]?.currency === "INR" && aPf.foreign[0]?.amountMinor === 30_000_000 && aPf.foreignRecordedMinor === 1_172_160 && ePf.foreign.length === 0 && ePf.foreignRecordedMinor === 0, show([aPf.foreign, ePf.foreign]));
 
 step("9. Rupee payments from before the rule: the correction");
 const old = (o: Record<string, any>) => ({ ...inv({ organizationId: OLD, customerId: CUST_O, approval: { state: "approved", at: NOV }, status: "paid", ...o }), invoiceNumber: `OLD-${String(++n).padStart(3, "0")}` });
@@ -248,7 +257,7 @@ const byNo = (rows: typeof look.rows, d: { invoiceNumber: string }) => rows.find
 check("the look: the five that have rupee payments in dirham invoices — not the rupee invoice, not the void one", look.rows.map((r) => r.invoice).sort().join(",") === [P1, P2, O1, O2, O3].map((x) => x.invoiceNumber).sort().join(","), show(look.rows.map((r) => [r.invoice, r.outcome, r.detail])));
 check("its code: 4 rupee amounts to note, 2 tax invoices, 1 invoice's VAT, 2 left as they are", look.code === "4-2-1-2", look.code);
 check("a pro-forma's rupee tax invoice: 558.17 → none", byNo(look.rows, P1)?.taxInvoices[0]?.beforeMinor === 55_817 && byNo(look.rows, P1)?.taxInvoices[0]?.afterMinor === 0);
-check("an invoice partly in rupees, and one still owing: left, and said why", /only part of it was paid in rupees/.test(byNo(look.rows, O3)?.detail ?? "") && /not paid in full yet/.test(byNo(look.rows, O2)?.detail ?? "") && byNo(look.rows, O2)?.rupeesNoted === 1, show([byNo(look.rows, O2), byNo(look.rows, O3)]));
+check("an invoice partly in rupees, and one still owing: left, and said why", /only part of it was paid in another currency/.test(byNo(look.rows, O3)?.detail ?? "") && /not paid in full yet/.test(byNo(look.rows, O2)?.detail ?? "") && byNo(look.rows, O2)?.rupeesNoted === 1, show([byNo(look.rows, O2), byNo(look.rows, O3)]));
 check("the look wrote nothing", (await snapshot()) === before);
 let refused = "";
 try { await correctRupeePayments({ write: true, expect: "9-9-9-9" }); } catch (err) { refused = (err as Error).message; }
@@ -278,9 +287,81 @@ await correctRupeePayments({ write: true, expect: "4-0-0-0", rupeesOnly: true, u
 const p1b = await raw(P1._id), o1b = await raw(O1._id);
 check("…the rupees are on the payments, every VAT figure as it was", p1b.payments[0].original?.amountMinor === 30_000_000 && p1b.payments[0].taxInvoice.taxMinor === 55_817 && !p1b.payments[0].vatFree && o1b.taxTotalMinor === vat(2_000_000)
   && (await getVATReport(String(OLD), "2026-11-01", "2026-11-30")).outputTaxMinor === vatBefore);
-const oldList = await listTaxDocuments(String(OLD), { paidIn: "inr", pageSize: 100 });
-check("the list then shows those rupees, with the VAT they still carry", oldList.rows.some((r) => r.number === "TI-09001" && r.inrMinor === 30_000_000 && r.inrTaxMinor === 55_817) && (oldList.totals.AED?.inrTaxMinor ?? 0) > 0, show(oldList.totals));
+const oldList = await listTaxDocuments(String(OLD), { paidIn: "INR", pageSize: 100 });
+check("the list then shows those rupees, with the VAT they still carry", oldList.rows.some((r) => r.number === "TI-09001" && r.foreign[0]?.amountMinor === 30_000_000 && r.foreignTaxMinor === 55_817) && (oldList.totals.AED?.foreignTaxMinor ?? 0) > 0, show(oldList.totals));
 for (const f of [UNDO, UNDO2]) rmSync(f, { force: true });
+
+step("11. Any other currency: only the invoice's own carries VAT, and each is shown as it was paid");
+const FX = new Types.ObjectId(), OLD_FX = new Types.ObjectId(), CUST_F = new Types.ObjectId();
+await Organization.create([
+  { _id: FX, name: "Other currencies", baseCurrency: "AED", vatOnPayments: true, taxRates: VAT5 },
+  { _id: OLD_FX, name: "Dollars before the rule", baseCurrency: "AED", vatOnPayments: true, taxRates: VAT5 },
+] as never);
+await db.collection("customers").insertOne({ _id: CUST_F, organizationId: FX, customerCode: "CUST-90001", name: "Student", email: "s@e2e.local", phone: "+971500000000" });
+const dollars = (aedMinor: number, cents: number) => ({ method: "bank_transfer", amountMinor: aedMinor, paidOn: "2026-11-11", original: { currency: "USD", amountMinor: cents, rate: aedMinor / cents } });
+const fx = (o: Record<string, any>) => inv({ organizationId: FX, customerId: CUST_F, ...o });
+// The example the rule was agreed on: a 20,000 fee paid INR 300,000 + USD 1,000 + 4,605.90 by card — VAT 219.33.
+const U1 = fx({ enrolment: close(rupees(1_172_160, 30_000_000), dollars(367_250, 100_000)) });
+const U2 = fx({ total: 734_500, enrolment: close(dollars(734_500, 200_000)) });
+const U3 = fx({ total: 1_200_000, enrolment: close(dirhams("cash", 600_000), dollars(600_000, 163_376)) });
+await invoices.insertMany([U1, U2, U3] as any[]);
+let u1 = await approveInvoice(String(FX), String(U1._id), actor);
+check("part paid in rupees and dollars: a pro-forma, neither payment with VAT, each keeping what was paid", Boolean(u1.proforma?.at) && u1.payments.length === 2 && u1.payments.every((p) => p.vatFree === true && p.taxInvoice?.taxMinor === 0)
+  && u1.payments[1]?.original?.currency === "USD" && u1.payments[1]?.original?.amountMinor === 100_000, show(u1.payments.map((p) => [p.method, p.vatFree, p.taxInvoice?.taxMinor, p.original])));
+u1 = await recordPayment(String(FX), String(U1._id), pay("card", 460_590, "2026-11-25"));
+check("the 4,605.90 by card that clears it carries 219.33 — the VAT of the dirhams alone", u1.status === "paid" && u1.payments[2]?.taxInvoice?.taxMinor === 21_933 && !u1.payments[2]?.vatFree && u1.payments.reduce((s, p) => s + (p.taxInvoice?.taxMinor ?? 0), 0) === 21_933, show(u1.payments.map((p) => p.taxInvoice)));
+const u2 = await approveInvoice(String(FX), String(U2._id), actor);
+check("paid in full in dollars: no VAT on the invoice, its total as it was", !u2.proforma && u2.taxTotalMinor === 0 && u2.totalMinor === 734_500 && u2.payments[0]?.vatFree === true && u2.payments[0]?.original?.amountMinor === 200_000, show({ tax: u2.taxTotalMinor, total: u2.totalMinor }));
+const u3 = await approveInvoice(String(FX), String(U3._id), actor);
+check("paid in full, half in dollars: a pro-forma — the cash with its own 285.72, the dollars with none", Boolean(u3.proforma?.at) && u3.payments.find((p) => p.method === "cash")?.taxInvoice?.taxMinor === 28_572 && u3.payments.find((p) => p.method === "bank_transfer")?.taxInvoice?.taxMinor === 0, show(u3.payments.map((p) => p.taxInvoice)));
+const fxVat = await getVATReport(String(FX), "2026-11-01", "2026-11-30");
+const fxList = await listTaxDocuments(String(FX), { pageSize: 100 });
+const ft = fxList.totals.AED!;
+check("the VAT report: 219.33 + 285.72, and the list agrees", fxVat.outputTaxMinor === 21_933 + 28_572 && ft.taxMinor === fxVat.outputTaxMinor, show({ report: fxVat.outputTaxMinor, list: ft.taxMinor }));
+check("the list's totals: each currency on its own — dollars (three documents), rupees (one) — never added together",
+  ft.count === 6 && ft.foreign.map((f) => f.currency).join(",") === "USD,INR" && ft.foreign[0]!.count === 3 && ft.foreign[0]!.amountMinor === 100_000 + 200_000 + 163_376 && ft.foreign[0]!.recordedMinor === 367_250 + 734_500 + 600_000
+  && ft.foreign[1]!.count === 1 && ft.foreign[1]!.amountMinor === 30_000_000 && ft.foreignRecordedMinor === 1_172_160 + 367_250 + 734_500 + 600_000 && ft.foreignTaxMinor === 0, show(ft));
+const u1Usd = fxList.rows.find((r) => r.invoiceId === String(U1._id) && r.foreign[0]?.currency === "USD")!, u1Card = fxList.rows.find((r) => r.invoiceId === String(U1._id) && r.foreign.length === 0)!;
+check("a dollar tax invoice: USD 1,000.00, recorded as 3,672.50, no VAT; the enrolment paid in two other currencies", u1Usd.foreign[0]!.amountMinor === 100_000 && u1Usd.foreignRecordedMinor === 367_250 && u1Usd.taxMinor === 0
+  && u1Card.invForeign.map((f) => f.currency).sort().join(",") === "INR,USD" && u1Card.invForeignRecordedMinor === 1_539_410 && u1Card.taxMinor === 21_933, show([u1Usd.foreign, u1Card.invForeign]));
+check("Paid in: one currency, any other, or the invoice's own", (await listTaxDocuments(String(FX), { paidIn: "USD" })).total === 3 && (await listTaxDocuments(String(FX), { paidIn: "INR" })).total === 1
+  && (await listTaxDocuments(String(FX), { paidIn: "other" })).total === 4 && (await listTaxDocuments(String(FX), { paidIn: "own" })).total === 2);
+const fxCards = (await invoiceListSummary(String(FX), invoiceQuerySchema.parse({}), scope)).byCurrency.find((g) => g.currency === "AED")!;
+check("Invoices cards: a line for dollars and one for rupees", fxCards.paidMinor === 3_934_500 && fxCards.foreign?.map((f) => `${f.currency}:${f.amountMinor}:${f.recordedMinor}:${f.count}`).join(" ") === "USD:463376:1701750:3 INR:30000000:1172160:1", show(fxCards.foreign));
+const fxDaily = await getDailyReport(String(FX), "2026-11-01", "2026-11-30");
+const inCur = (c: string) => fxDaily.byCurrency?.find((x) => x.currency === c)?.incomeMinor ?? 0;
+check("Daily report: dollars are income in dollars, rupees in rupees, and AED only what was paid in dirhams", inCur("USD") === 463_376 && inCur("INR") === 30_000_000 && inCur("AED") === 460_590 + 600_000 && fxDaily.currency === "AED"
+  && fxDaily.otherCurrencyIncome?.lines.map((l) => l.currency).join(",") === "USD,INR", show(fxDaily.byCurrency));
+const allIncome = await getDailyBreakdown(String(FX), "income", "2026-11-01", "2026-11-30", undefined, "ALL"), ownIncome = await getDailyBreakdown(String(FX), "income", "2026-11-01", "2026-11-30");
+check("the day's records, every currency at once: six payments, each in what it was paid; without that, the dirhams alone",
+  allIncome.records.length === 6 && allIncome.records.map((r) => r.currency).sort().join(",") === "AED,AED,INR,USD,USD,USD" && allIncome.currency === "AED" && allIncome.totalMinor === 1_060_590
+  && ownIncome.records.length === 2 && ownIncome.records.every((r) => r.currency === "AED"), show(allIncome.records.map((r) => [r.currency, r.amountMinor])));
+const fxTabs = await listProformasAndTaxInvoices(String(FX));
+check("the other tabs: a dollar tax invoice says USD 1,000.00; the pro-forma says what was paid in each currency", fxTabs.taxInvoices.some((x) => x.paidCurrency === "USD" && x.paidAmountMinor === 100_000)
+  && fxTabs.proformas.find((x) => x.id === String(U1._id))?.foreign.map((f) => `${f.currency}:${f.amountMinor}`).sort().join(" ") === "INR:30000000 USD:100000");
+
+step("12. An invoice itself in rupees, part paid in dirhams: shown as paid, taxed as it always was");
+const G2 = inv({ organizationId: RUPEE_ORG, customerId: CUST_R, currency: "INR", total: 5_000_000, enrolment: close({ method: "cash", amountMinor: 2_275_000, paidOn: "2026-11-11", original: { currency: "AED", amountMinor: 100_000, rate: 22.75 } } as never) });
+await invoices.insertOne(G2 as any);
+const g2 = await approveInvoice(String(RUPEE_ORG), String(G2._id), actor);
+check("its payment carries its share of the tax and is not marked free of it", Boolean(g2.proforma?.at) && !g2.payments[0]?.vatFree && g2.payments[0]?.taxInvoice?.taxMinor === Math.round((2_275_000 * vat(5_000_000)) / 5_000_000) && g2.payments[0]?.original?.currency === "AED", show(g2.payments[0]));
+const g2Row = (await listTaxDocuments(String(RUPEE_ORG))).rows.find((r) => r.invoiceId === String(G2._id))!;
+check("…and the list shows the dirhams it was paid in: AED 1,000.00, recorded as INR 22,750", g2Row.foreign[0]?.currency === "AED" && g2Row.foreign[0]?.amountMinor === 100_000 && g2Row.foreignRecordedMinor === 2_275_000 && g2Row.taxMinor > 0, show(g2Row.foreign));
+
+step("13. A dollar payment from before the rule: the correction");
+const X1 = old({ organizationId: OLD_FX, status: "partial", proforma: { at: NOV }, amountPaidMinor: 367_250, balanceMinor: 1_632_750,
+  payments: [paid("bank_transfer", 367_250, ti("TI-09101", 367_250, 17_488))],
+  enrolment: { declaredPayments: [{ method: "bank_transfer", amountMinor: 367_250, paidOn: "2026-11-11", original: { currency: "USD", amountMinor: 100_000, rate: 3.6725 } }] } });
+await invoices.insertOne(X1 as any);
+const fxLook = await correctRupeePayments({ write: false });
+const x1Look = fxLook.rows.find((r) => r.invoice === X1.invoiceNumber);
+check("the look: its dollars to note from the close, and its tax invoice's 174.88 to take off", x1Look?.rupeesNoted === 1 && x1Look?.taxInvoices[0]?.beforeMinor === 17_488 && x1Look?.taxInvoices[0]?.afterMinor === 0, show(x1Look));
+const UNDO3 = `${process.env.TMPDIR ?? "/tmp"}/inr-no-vat-e2e-undo3-${Date.now()}.json`;
+await correctRupeePayments({ write: true, expect: fxLook.code, undoFile: UNDO3 });
+const x1 = await raw(X1._id);
+check("written: USD 1,000.00 on the payment, marked, TI-09101 kept with no VAT", x1.payments[0].original?.currency === "USD" && x1.payments[0].original?.amountMinor === 100_000 && x1.payments[0].vatFree === true && x1.payments[0].taxInvoice.number === "TI-09101" && x1.payments[0].taxInvoice.taxMinor === 0, show(x1.payments[0]));
+check("…and nothing is left to change anywhere", (await correctRupeePayments({ write: false })).rows.every((r) => r.outcome === "left as it is"));
+rmSync(UNDO3, { force: true });
 
 await settle();
 await mongoose.disconnect();

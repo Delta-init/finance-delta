@@ -43,7 +43,7 @@ import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
 import { applyInstalmentDue } from "./instalments";
 import { lateView } from "../late-entry/late-entry.model";
 import { lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
-import { closePaidInRupees, emailTaxInvoices, isRupeePayment, noteCancelledTaxInvoice, rupeePaymentsStage, stampTaxInvoices, startsProforma, stripVatForRupees, vatOnPaymentsFor } from "./payment-tax-invoice";
+import { closePaidInOtherCurrency, emailTaxInvoices, foreignPaymentsStage, isVatFreePayment, noteCancelledTaxInvoice, stampTaxInvoices, startsProforma, stripVatForOtherCurrency, vatOnPaymentsFor } from "./payment-tax-invoice";
 
 /**
  * Tell CS Portal the enrolment's money changed, if its student went
@@ -617,20 +617,13 @@ export async function invoiceListSummary(orgId: string, query: InvoiceQuery, sco
     $and: [owing, { $in: ["$status", ["sent", "viewed", "partial", "overdue"]] }, { $ne: [{ $ifNull: ["$dueDate", null] }, null] }, { $lt: ["$dueDate", now] }],
   };
   const sumIf = (cond: unknown, what: unknown) => ({ $sum: { $cond: [cond, what, 0] } });
-  const [all, groups] = await Promise.all([
+  const [all, groups, foreign] = await Promise.all([
     Invoice.countDocuments(filter),
     Invoice.aggregate<{ _id: string | null } & Omit<InvoiceListSummaryCurrency, "currency">>([
       { $match: { ...filter, status: { $nin: notMoney } } },
-      // What was paid in rupees, for a card of its own (2026-11-13): its rupees, never what they were converted to.
-      rupeePaymentsStage,
       {
         $group: {
           _id: "$currency",
-          inrMinor: { $sum: { $sum: "$rupeePayments.inr" } },
-          inrRecordedMinor: { $sum: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, "$$r.aed", 0] } } } } },
-          inrCount: sumIf({ $gt: [{ $sum: "$rupeePayments.inr" }, 0] }, 1),
-          inrUnknownMinor: { $sum: { $sum: { $map: { input: "$rupeePayments", as: "r", in: { $cond: [{ $gt: ["$$r.inr", 0] }, 0, "$$r.aed"] } } } } },
-          inrUnknownCount: { $sum: { $size: { $filter: { input: "$rupeePayments", as: "r", cond: { $lte: ["$$r.inr", 0] } } } } },
           count: { $sum: 1 },
           totalMinor: { $sum: { $ifNull: ["$totalMinor", 0] } },
           paidMinor: { $sum: { $ifNull: ["$amountPaidMinor", 0] } },
@@ -643,8 +636,29 @@ export async function invoiceListSummary(orgId: string, query: InvoiceQuery, sco
       },
       { $sort: { totalMinor: -1 } },
     ]),
+    // What was paid in other currencies, for a card of its own (2026-11-13): each as it was paid, never converted.
+    Invoice.aggregate<{ _id: { c: string | null; f: string }; amountMinor: number; recordedMinor: number; invoices: unknown[]; unknownCount: number; unknownMinor: number }>([
+      { $match: { ...filter, status: { $nin: notMoney } } },
+      foreignPaymentsStage,
+      { $unwind: "$foreignPayments" },
+      {
+        $group: {
+          _id: { c: "$currency", f: "$foreignPayments.cur" },
+          amountMinor: { $sum: "$foreignPayments.amt" },
+          recordedMinor: sumIf({ $gt: ["$foreignPayments.amt", 0] }, "$foreignPayments.aed"),
+          invoices: { $addToSet: { $cond: [{ $gt: ["$foreignPayments.amt", 0] }, "$_id", "$$REMOVE"] } },
+          unknownCount: sumIf({ $lte: ["$foreignPayments.amt", 0] }, 1),
+          unknownMinor: sumIf({ $lte: ["$foreignPayments.amt", 0] }, "$foreignPayments.aed"),
+        },
+      },
+      { $sort: { recordedMinor: -1, "_id.f": 1 } },
+    ]),
   ]);
-  const byCurrency = groups.map(({ _id, ...g }) => ({ currency: _id || "AED", ...g }));
+  const byCurrency = groups.map(({ _id, ...g }) => {
+    const lines = foreign.filter((f) => (f._id.c || "AED") === (_id || "AED"))
+      .map((f) => ({ currency: f._id.f, amountMinor: f.amountMinor, recordedMinor: f.recordedMinor, count: f.invoices.length, unknownCount: f.unknownCount, unknownMinor: f.unknownMinor }));
+    return { currency: _id || "AED", ...g, ...(lines.length ? { foreign: lines } : {}) };
+  });
   return { count: all, leftOut: all - byCurrency.reduce((n, g) => n + g.count, 0), byCurrency };
 }
 
@@ -1494,10 +1508,11 @@ export async function approveInvoice(
   const accountFor = new Map<string, Awaited<ReturnType<typeof resolvePaymentAccount>>>();
   for (const m of PAYMENT_METHODS) accountFor.set(m, await resolvePaymentAccount(orgId, m, undefined, defaults));
   const before = ((doc.payments as unknown[]) ?? []).length;
-  // Paid in full at the close, all of it in rupees: rupees carry no VAT, so the invoice carries none (2026-11-13).
-  if (closePaidInRupees(doc)) stripVatForRupees(doc);
-  // Part paid at the close (or paid in full partly in rupees), with VAT on payments received: a pro-forma, each
-  // payment its own tax invoice.
+  // Paid in full at the close, all of it in another currency: only payments in the invoice's own currency carry
+  // VAT, so the invoice carries none (2026-11-13).
+  if (closePaidInOtherCurrency(doc)) stripVatForOtherCurrency(doc);
+  // Part paid at the close (or paid in full partly in another currency), with VAT on payments received: a pro-forma,
+  // each payment its own tax invoice.
   else if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
   // In the same save: an approval and the payments it records stand or fall together.
   const recorded = recordDeclaredPayments(doc, accountFor);
@@ -1596,9 +1611,9 @@ function recordDeclaredPayments(
       chargesMinor: 0,
       proofUrl: p.receipt?.url ?? "",
       proofKey: p.receipt?.key ?? "",
-      // What the client handed over, kept on the payment itself (2026-11-13) — and rupees carry no VAT.
+      // What the client handed over, kept on the payment itself (2026-11-13) — and another currency carries no VAT.
       ...(p.original?.currency ? { original: { currency: p.original.currency, amountMinor: p.original.amountMinor, rate: p.original.rate } } : {}),
-      ...(isRupeePayment(p, currency) ? { vatFree: true } : {}),
+      ...(isVatFreePayment(p, currency) ? { vatFree: true } : {}),
     };
     // Its method's bank account — the rupees the client handed over land in a rupee account as they were.
     stampAccount(payment, accountFor.get(p.method) ?? null, currency, p.original);
@@ -2092,7 +2107,7 @@ export async function updatePayment(
   // Its method changed to or from INR Transfer: whether it carries VAT follows. Otherwise it stays as it was
   // recorded — an older rupee payment is corrected by scripts/inr-payments-no-vat.ts, not by an edit.
   if (p.method !== input.method) {
-    p.vatFree = isRupeePayment({ method: input.method, original: p.original as { currency?: string } | undefined }, doc.currency) ? true : undefined;
+    p.vatFree = isVatFreePayment({ method: input.method, original: p.original as { currency?: string } | undefined }, doc.currency) ? true : undefined;
   }
   p.method = input.method;
   p.amountMinor = input.amountMinor;
@@ -2333,9 +2348,9 @@ export async function recordPayment(
     proofUrl,
     proofKey,
     ...(from?.externalRef ? { externalRef: from.externalRef } : {}),
-    // Typed in another currency where it was taken (rupees in CS Portal): kept as it was paid. Rupees carry no VAT.
+    // Typed in another currency where it was taken (rupees in CS Portal): kept as it was paid — and it carries no VAT.
     ...(from?.original?.currency ? { original: from.original } : {}),
-    ...(isRupeePayment({ method: input.method, original: from?.original }, doc.currency) ? { vatFree: true } : {}),
+    ...(isVatFreePayment({ method: input.method, original: from?.original }, doc.currency) ? { vatFree: true } : {}),
     ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
     ...(input.statementDate ? { statementDate: new Date(`${input.statementDate}T00:00:00.000Z`) } : {}),
   };

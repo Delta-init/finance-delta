@@ -269,7 +269,8 @@ export default function TaxInvoicesPage() {
         ? <Link href={`/invoices/${d.invoiceId}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{d.invoiceNumber}</Link>
         : <span className="text-foreground-muted">—</span>,
     },
-    { key: "net", header: "Net", align: "right", cell: (d) => <MoneyDisplay minor={d.netMinor} currency={d.currency} /> },
+    // No Net column here (2026-11-13): on a payment in another currency it showed the converted amount beside
+    // the amount paid. The Net card and the export still carry it.
     {
       // Only the invoice's own currency carries VAT: said so, rather than a nought, on a document paid in another.
       key: "tax", header: "VAT", align: "right",

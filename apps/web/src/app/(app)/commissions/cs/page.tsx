@@ -2,7 +2,7 @@
 
 import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, Search, Split, Upload, Users, Wallet, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, FileText, Headset, Loader2, PauseCircle, PlayCircle, PlusCircle, Search, Split, Upload, Users, Wallet, X } from "lucide-react";
 import { EXPENSE_DEFAULTS, type CsCommissionKind, type CsCommissionPerson, type CsCommissionPool, type CsCommissionPoolShare, type CsCommissionStage, type UploadedExpenseFile } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ import { CategoryPicker, useCategoryChoice } from "@/features/expense-categories
 import { useAllDepartments } from "@/features/departments/api";
 import { PAYOUT_METHOD_LABELS, PayoutFields, emptyPayout, payoutValid, type Payout } from "@/features/hrms-payouts/payout-fields";
 import { useFileDrop } from "@/components/ui/file-drop";
-import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, useCsCommissionInvoice, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission, useSplitCsCommissionPool } from "@/features/cs-commission/api";
+import { uploadCsCommissionReceipt, useApproveCsCommission, useCsCommission, useCsCommissionInvoice, usePayCsCommission, useRecordCsCommissionPayment, useRevokeCsCommission, useSplitCsCommissionPool, useAddCsCommissionAdjustment, useRemoveCsCommissionAdjustment, useResumeCsCommission, useStopCsCommission } from "@/features/cs-commission/api";
 import { InvoiceDetail } from "@/features/invoices/InvoiceDetail";
 import { useOrganization } from "@/features/organization/api";
 
@@ -50,6 +50,12 @@ type Pick = { person: CsCommissionPerson };
 /** What someone is owed for the period: their own credits, and their share of the pools not split yet (2026-11-07). */
 const dueMinor = (p: CsCommissionPerson) => p.amountMinor + (p.poolMinor ?? 0);
 const dueUsd = (p: CsCommissionPerson) => p.totalUsd + (p.poolUsd ?? 0);
+/**
+ * What approving it would pay (the user, 2026-11-13: "addition/deduction can also be updated here"): what they are
+ * owed plus the period's additions, less its deductions — never below nothing.
+ */
+const payMinor = (p: CsCommissionPerson) => Math.max(0, dueMinor(p) + (p.adjustmentMinor ?? 0));
+const stoppedOn = (at: string) => new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Dubai" });
 
 export default function CsCommissionPage() {
   const [kind, setKind] = useState<CsCommissionKind>("bonus");
@@ -59,6 +65,9 @@ export default function CsCommissionPage() {
   const { data, isLoading, error } = useCsCommission(kind, period);
   const [approving, setApproving] = useState<Pick | null>(null);
   const [paying, setPaying] = useState<Pick | null>(null);
+  // Stop counting a CS's commission, and a period's additions and deductions (2026-11-13).
+  const [stopping, setStopping] = useState<Pick | null>(null);
+  const [adjusting, setAdjusting] = useState<Pick | null>(null);
   // Approve and pay in one step (2026-11-06) — before the CS Portal's approvals too, with a reason.
   const [recording, setRecording] = useState<Pick | null>(null);
   // A Senior/Junior pool to split (2026-11-07).
@@ -114,7 +123,7 @@ export default function CsCommissionPage() {
         <>
           {!data.ended && (
             <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-foreground-muted">
-              {periodName(kind, period)} is still running — its commission can be approved once it ends.
+              {periodName(kind, period)} is still running — its commission can be approved once it ends, or now for a CS whose counting is stopped.
             </p>
           )}
           <div className="grid gap-4 sm:grid-cols-3">
@@ -132,7 +141,8 @@ export default function CsCommissionPage() {
             <PoolsCard pools={data.pools} kind={kind} period={period} ended={data.ended} canSplit={data.canApprove && data.canPay} onSplit={setSplitting} />
           )}
           <CsTable people={data.people} kind={kind} period={period} ended={data.ended} canApprove={data.canApprove} canPay={data.canPay}
-            onApprove={(person) => setApproving({ person })} onPay={(person) => setPaying({ person })} onRecord={(person) => setRecording({ person })} />
+            onApprove={(person) => setApproving({ person })} onPay={(person) => setPaying({ person })} onRecord={(person) => setRecording({ person })}
+            onStop={(person) => setStopping({ person })} onAdjust={(person) => setAdjusting({ person })} />
         </>
       )}
 
@@ -140,6 +150,10 @@ export default function CsCommissionPage() {
       <PayDialog pick={paying} kind={kind} period={period} onClose={() => setPaying(null)} />
       <PayDialog pick={recording} kind={kind} period={period} onClose={() => setRecording(null)} mode="record" />
       <SplitPoolDialog pool={splitting} kind={kind} period={period} onClose={() => setSplitting(null)} />
+      <StopDialog pick={stopping} onClose={() => setStopping(null)} />
+      {/* The person as the page has them now, so the list in the dialog follows each addition and removal. */}
+      <AdjustDialog pick={adjusting ? { person: data?.people.find((x) => x.recipientId === adjusting.person.recipientId) ?? adjusting.person } : null}
+        kind={kind} period={period} onClose={() => setAdjusting(null)} />
     </div>
   );
 }
@@ -228,9 +242,10 @@ function SplitPoolDialog({ pool, kind, period, onClose }: { pool: CsCommissionPo
 
 const tick = (s: CsCommissionStage) => (s.status === "approved" ? "✓" : s.status === "rejected" ? "✗" : "…");
 
-function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, onPay, onRecord }: {
+function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, onPay, onRecord, onStop, onAdjust }: {
   people: CsCommissionPerson[]; kind: CsCommissionKind; period: string; ended: boolean; canApprove: boolean; canPay: boolean;
   onApprove: (p: CsCommissionPerson) => void; onPay: (p: CsCommissionPerson) => void; onRecord: (p: CsCommissionPerson) => void;
+  onStop: (p: CsCommissionPerson) => void; onAdjust: (p: CsCommissionPerson) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   // A credit's course invoice, in a pop-up (2026-11-07).
@@ -242,6 +257,15 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
       toast.success(`${p.name}'s approval taken back — it is with finance again in the CS Portal`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not take it back");
+    }
+  };
+  const resume = useResumeCsCommission();
+  const countAgain = async (p: CsCommissionPerson) => {
+    try {
+      await resume.mutateAsync({ recipientId: p.recipientId });
+      toast.success(`${p.name}'s commission is counted again from now`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not resume it");
     }
   };
 
@@ -275,6 +299,13 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                           <span className="font-medium">{p.name || "—"}</span>
                           {!!p.pool?.length && <Badge tone="primary" className="ml-2 align-middle">Sen/Jun pool</Badge>}
                           <span className="block text-xs text-foreground-muted">{p.location === "bangalore" ? "Bangalore" : "Dubai"}{p.email ? ` · ${p.email}` : ""}</span>
+                          {/* Counting stopped (2026-11-13): the CS Portal credits them nothing more until it is resumed. */}
+                          {p.stopped && (
+                            <span className="mt-1 block">
+                              <Badge tone="warning">Counting stopped {stoppedOn(p.stopped.at)}</Badge>
+                              <span className="block text-xs text-foreground-muted">{p.stopped.reason}{p.stopped.by ? ` — ${p.stopped.by}` : ""}</span>
+                            </span>
+                          )}
                         </span>
                       </button>
                     </td>
@@ -283,8 +314,19 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                       {!!p.pool?.length && <span className="block text-xs text-foreground-muted">+ pool</span>}
                     </td>
                     <td className="px-4 py-2.5 text-right font-numeric font-semibold">
-                      {money(p.payout ? p.payout.amountMinor : dueMinor(p), p.currency)}
+                      {money(p.payout ? p.payout.amountMinor : payMinor(p), p.currency)}
                       <span className="block text-xs font-normal text-foreground-muted">{usd(p.payout ? p.payout.amountUsd : dueUsd(p))}</span>
+                      {/* Additions and deductions (2026-11-13): the commission, each of them, and above what is paid. */}
+                      {((p.payout ? p.payout.adjustments : p.adjustments) ?? []).length > 0 && (
+                        <span className="mt-1 block border-t border-border/60 pt-1 text-xs font-normal">
+                          <span className="block text-foreground-muted">commission {money(p.payout ? p.payout.baseMinor ?? p.payout.amountMinor : dueMinor(p), p.currency)}</span>
+                          {((p.payout ? p.payout.adjustments : p.adjustments) ?? []).map((a) => (
+                            <span key={a.id} className={a.type === "deduction" ? "block text-danger" : "block text-success"} title={`${a.reason}${a.by ? ` — ${a.by}` : ""}`}>
+                              {a.type === "deduction" ? "− " : "+ "}{money(a.amountMinor, a.currency)} {a.type}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                       {!p.payout && (p.poolMinor ?? 0) > 0 && (
                         <span className="block text-xs font-normal text-warning" title="Their share of their Chief's Senior/Junior pool — split when the period has ended">
                           incl. {money(p.poolMinor ?? 0, p.currency)} pool share, not split yet
@@ -306,7 +348,8 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                     </td>
                     <td className="px-4 py-2.5"><StatusCell p={p} /></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                      {(p.state === "waiting" || p.state === "ready") && ended && dueMinor(p) > 0 && canApprove && (
+                      {/* Once the period has ended — or sooner for someone whose counting is stopped: nothing more is added to theirs (2026-11-13). */}
+                      {(p.state === "waiting" || p.state === "ready") && (ended || !!p.stopped) && payMinor(p) > 0 && canApprove && (
                         <div className="flex justify-end gap-2">
                           {p.state === "ready" && (
                             <Button size="sm" variant={canPay ? "outline" : undefined} onClick={() => onApprove(p)}><Check className="h-3.5 w-3.5" /> Approve</Button>
@@ -316,6 +359,17 @@ function CsTable({ people, kind, period, ended, canApprove, canPay, onApprove, o
                         </div>
                       )}
                       {p.state === "ready" && !canApprove && <span className="text-xs text-foreground-muted">Waiting for a manager</span>}
+                      {/* A manager's own: stop or resume their counting; add to or deduct from a period not approved yet. */}
+                      {canApprove && (
+                        <div className="mt-1 flex justify-end gap-2">
+                          {(p.state === "waiting" || p.state === "ready") && (
+                            <Button size="sm" variant="ghost" onClick={() => onAdjust(p)}><PlusCircle className="h-3.5 w-3.5" /> Add or deduct</Button>
+                          )}
+                          {p.stopped
+                            ? <Button size="sm" variant="ghost" loading={resume.isPending} onClick={() => void countAgain(p)}><PlayCircle className="h-3.5 w-3.5" /> Resume counting</Button>
+                            : <Button size="sm" variant="ghost" onClick={() => onStop(p)}><PauseCircle className="h-3.5 w-3.5" /> Stop counting</Button>}
+                        </div>
+                      )}
                       {p.state === "approved" && p.payout?.payrollRunNumber && (
                         <span className="text-xs text-foreground-muted">In payroll {p.payout.payrollRunNumber} — paid with it</span>
                       )}
@@ -533,6 +587,135 @@ function StatusCell({ p }: { p: CsCommissionPerson }) {
   );
 }
 
+/**
+ * Stop counting (the user, 2026-11-13): from now the CS Portal credits them nothing more — nobody gets it instead —
+ * until somebody resumes it. Their running period can then be approved and paid; this does not pay it by itself.
+ */
+function StopDialog({ pick, onClose }: { pick: Pick | null; onClose: () => void }) {
+  const stop = useStopCsCommission();
+  const [reason, setReason] = useState("");
+  const close = () => { setReason(""); onClose(); };
+  const submit = async () => {
+    if (!pick) return;
+    try {
+      await stop.mutateAsync({ recipientId: pick.person.recipientId, reason: reason.trim() });
+      toast.success(`${pick.person.name}'s commission is no longer counted — approve and pay what is there when ready`);
+      close();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not stop it");
+    }
+  };
+  return (
+    <Dialog open={!!pick} onOpenChange={(o) => { if (!o) close(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Stop counting commission</DialogTitle>
+          <DialogDescription>
+            {pick ? `From now the CS Portal credits ${pick.person.name} no more commission — bonus or deposit, theirs or through their team — and nobody gets it instead, until you resume it. What is counted so far stays, and can be approved and paid at once. This does not pay anything by itself.` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="cs-stop-reason">Reason *</Label>
+          <Input id="cs-stop-reason" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="Last working day, for example" />
+          <p className="text-xs text-foreground-muted">Shown to them in the CS Portal.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={close}>Cancel</Button>
+          <Button loading={stop.isPending} disabled={reason.trim().length < 3} onClick={() => void submit()}><PauseCircle className="h-4 w-4" /> Stop counting</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Additions and deductions on a CS's period (the user, 2026-11-13), before it is approved: an amount in their own
+ * currency with its reason. A deduction never takes it below nothing. Kept in the CS Portal, where they see them.
+ */
+function AdjustDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: CsCommissionKind; period: string; onClose: () => void }) {
+  const add = useAddCsCommissionAdjustment();
+  const remove = useRemoveCsCommissionAdjustment();
+  const [type, setType] = useState<"addition" | "deduction">("addition");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const p = pick?.person;
+  const amountMinor = Math.round(Number(amount) * 100);
+  const valid = Number.isFinite(amountMinor) && amountMinor > 0 && reason.trim().length >= 3;
+  const close = () => { setType("addition"); setAmount(""); setReason(""); onClose(); };
+  const submit = async () => {
+    if (!p || !valid) return;
+    try {
+      await add.mutateAsync({ kind, period, recipientId: p.recipientId, type, amountMinor, reason: reason.trim() });
+      toast.success(`${type === "deduction" ? "Deduction" : "Addition"} of ${money(amountMinor, p.currency)} put on ${p.name}'s ${periodName(kind, period)}`);
+      setAmount("");
+      setReason("");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not save it");
+    }
+  };
+  const takeOff = async (id: string) => {
+    if (!p) return;
+    try {
+      await remove.mutateAsync({ kind, period, recipientId: p.recipientId, id });
+      toast.success("Taken off");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not take it off");
+    }
+  };
+  return (
+    <Dialog open={!!pick} onOpenChange={(o) => { if (!o) close(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add or deduct</DialogTitle>
+          <DialogDescription>
+            {p ? `${p.name} · ${kind === "bonus" ? "Bonus" : "Deposit"} · ${periodName(kind, period)} — commission ${money(dueMinor(p), p.currency)}, to pay ${money(payMinor(p), p.currency)}. Approved and paid with the commission; they see each one, with its reason, in the CS Portal.` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {!!p?.adjustments?.length && (
+          <ul className="divide-y divide-border rounded-md border border-border text-sm">
+            {p.adjustments.map((a) => (
+              <li key={a.id} className="flex items-center gap-3 px-3 py-2">
+                <span className={a.type === "deduction" ? "w-28 shrink-0 font-numeric text-danger" : "w-28 shrink-0 font-numeric text-success"}>
+                  {a.type === "deduction" ? "− " : "+ "}{money(a.amountMinor, a.currency)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{a.reason}</span>
+                  <span className="block text-xs text-foreground-muted">{a.type === "deduction" ? "Deduction" : "Addition"}{a.by ? ` · ${a.by}` : ""}</span>
+                </span>
+                <Button size="sm" variant="ghost" loading={remove.isPending} onClick={() => void takeOff(a.id)} aria-label="Take off"><X className="h-4 w-4" /></Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="cs-adjust-type">Type</Label>
+            <Select value={type} onValueChange={(v) => setType(v as "addition" | "deduction")}>
+              <SelectTrigger id="cs-adjust-type"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="addition">Addition</SelectItem>
+                <SelectItem value="deduction">Deduction</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cs-adjust-amount">Amount ({p?.currency ?? "AED"})</Label>
+            <Input id="cs-adjust-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-3">
+            <Label htmlFor="cs-adjust-reason">Reason *</Label>
+            <Input id="cs-adjust-reason" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="What it is for" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={close}>Done</Button>
+          <Button loading={add.isPending} disabled={!valid} onClick={() => void submit()}><PlusCircle className="h-4 w-4" /> {type === "deduction" ? "Deduct" : "Add"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ApproveDialog({ pick, kind, period, onClose }: { pick: Pick | null; kind: CsCommissionKind; period: string; onClose: () => void }) {
   const approve = useApproveCsCommission();
   const [note, setNote] = useState("");
@@ -554,7 +737,7 @@ function ApproveDialog({ pick, kind, period, onClose }: { pick: Pick | null; kin
         <DialogHeader>
           <DialogTitle>Approve CS commission</DialogTitle>
           <DialogDescription>
-            {p ? `${p.name} · ${kind === "bonus" ? "Bonus" : "Deposit"} · ${periodName(kind, period)} — ${money(dueMinor(p), p.currency)} (${usd(dueUsd(p))}, ${p.credits.length} credit${p.credits.length === 1 ? "" : "s"}${(p.poolMinor ?? 0) > 0 ? ` and ${money(p.poolMinor ?? 0, p.currency)} from their pool, which is split first` : ""}). This is the CS Portal's Finance step: their credits are released there, and the amount is frozen here for accounts to pay.` : ""}
+            {p ? `${p.name} · ${kind === "bonus" ? "Bonus" : "Deposit"} · ${periodName(kind, period)} — ${money(payMinor(p), p.currency)}${(p.adjustments ?? []).length ? ` after ${(p.adjustments ?? []).length} addition${(p.adjustments ?? []).length === 1 ? "" : "s"} or deduction${(p.adjustments ?? []).length === 1 ? "" : "s"}` : ""} (${usd(dueUsd(p))}, ${p.credits.length} credit${p.credits.length === 1 ? "" : "s"}${(p.poolMinor ?? 0) > 0 ? ` and ${money(p.poolMinor ?? 0, p.currency)} from their pool, which is split first` : ""}). This is the CS Portal's Finance step: their credits are released there, and the amount is frozen here for accounts to pay.` : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -633,7 +816,7 @@ function PayDialog({ pick, kind, period, onClose, mode = "pay" }: { pick: Pick |
           <DialogTitle>{mode === "record" ? "Record CS commission payment" : "Mark CS commission paid"}</DialogTitle>
           <DialogDescription>
             {mode === "record" && pick
-              ? `${pick.person.name} · ${periodName(kind, period)} — ${money(dueMinor(pick.person), pick.person.currency)}${(pick.person.poolMinor ?? 0) > 0 ? `, of which ${money(pick.person.poolMinor ?? 0, pick.person.currency)} is their pool share (the pool is split first, for every member)` : ""}. Approved and paid in one step: a paid expense with the receipt, and their credits released in the CS Portal so it can't be paid twice${pick.person.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.`
+              ? `${pick.person.name} · ${periodName(kind, period)} — ${money(payMinor(pick.person), pick.person.currency)}${(pick.person.poolMinor ?? 0) > 0 ? `, of which ${money(pick.person.poolMinor ?? 0, pick.person.currency)} is their pool share (the pool is split first, for every member)` : ""}. Approved and paid in one step: a paid expense with the receipt, and their credits released in the CS Portal so it can't be paid twice${pick.person.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.`
               : pick && o ? `${pick.person.name} · ${periodName(kind, period)} — ${money(o.amountMinor, o.currency)}, as approved by ${o.approvedByName}. Recorded as a paid expense with the receipt${o.currency === "INR" ? " — pay it from the Bangalore organization (INR)" : ""}.` : ""}
           </DialogDescription>
         </DialogHeader>

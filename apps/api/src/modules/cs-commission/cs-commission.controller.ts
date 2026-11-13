@@ -42,6 +42,22 @@ export const splitPool = asyncHandler(async (req, res) => {
   ok(res, await svc.splitCsCommissionPool(org(req), uid(req), sa(req), req.body));
 });
 
+/** Stop counting a CS's commission from now, or count it again (2026-11-13). */
+export const stop = asyncHandler(async (req, res) => {
+  ok(res, await svc.stopCsCommission(org(req), uid(req), sa(req), req.body));
+});
+export const resume = asyncHandler(async (req, res) => {
+  ok(res, await svc.resumeCsCommission(org(req), uid(req), sa(req), req.body));
+});
+
+/** An addition or a deduction on a CS's period, and taking one off — before it is approved (2026-11-13). */
+export const addAdjustment = asyncHandler(async (req, res) => {
+  ok(res, await svc.addCsCommissionAdjustment(org(req), uid(req), sa(req), req.body));
+});
+export const removeAdjustment = asyncHandler(async (req, res) => {
+  ok(res, await svc.removeCsCommissionAdjustment(org(req), uid(req), sa(req), req.body));
+});
+
 /** A credit's course invoice, read-only, for the pop-up (2026-11-07). */
 export const invoice = asyncHandler(async (req, res) => {
   ok(res, await svc.csCommissionInvoice(String(req.params.id ?? "")));

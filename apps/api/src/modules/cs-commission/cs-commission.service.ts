@@ -1,13 +1,15 @@
 import { Types } from "mongoose";
 import {
-  CS_AED_PER_USD, CS_INR_PER_USD, EXPENSE_DEFAULTS, computeExpenseTax, hasPermission, resolveCategoryName,
+  CS_AED_PER_USD, CS_INR_PER_USD, EXPENSE_DEFAULTS, computeExpenseTax, csAdjustmentNetMinor, hasPermission, resolveCategoryName,
+  type AddCsCommissionAdjustmentInput, type CsCommissionAdjustment, type RemoveCsCommissionAdjustmentInput, type ResumeCsCommissionInput, type StopCsCommissionInput,
   type ApproveCsCommissionInput, type CsCommissionKind, type CsCommissionPayoutView, type CsCommissionPerson, type CsCommissionPeriod,
   type CsCommissionState, type PayCsCommissionInput, type RecordCsCommissionPaymentInput, type RevokeCsCommissionInput,
   type CsCommissionPool, type CsCommissionPoolShare, type SplitCsCommissionPoolInput,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import {
-  CsCommissionRefusedError, approvePortalCsCommission, portalCsCommission, splitPortalCsPool, unapprovePortalCsCommission, type PortalCsCommissionPerson,
+  CsCommissionRefusedError, addPortalCsAdjustment, approvePortalCsCommission, portalCsCommission, removePortalCsAdjustment, resumePortalCsCommission,
+  splitPortalCsPool, stopPortalCsCommission, unapprovePortalCsCommission, type PortalCsAdjustment, type PortalCsCommissionPerson,
 } from "../../lib/commission-client";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
@@ -60,6 +62,11 @@ async function fromPortal<T>(ask: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The CS Portal's additions and deductions, as finance's own (2026-11-13). */
+const adjustmentsOf = (list: PortalCsAdjustment[] | undefined): CsCommissionAdjustment[] =>
+  (list ?? []).map((a) => ({ id: a.id, type: a.type === "deduction" ? "deduction" : "addition", amountMinor: Number(a.amount_minor) || 0, currency: String(a.currency || ""), reason: a.reason ?? "", by: a.by ?? "", at: a.at ?? "" }));
+const moneyOf = (minor: number, currency: string) => `${currency} ${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const stateOf = (p: PortalCsCommissionPerson, payout: any): CsCommissionState => {
   if (payout) return payout.state;
   const s = p.approval.overall_status;
@@ -88,6 +95,7 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
       state: p.state, amountMinor: p.amountMinor, currency: p.currency ?? "AED", amountUsd: p.amountUsd ?? 0,
       approvedByName: p.approvedByName ?? "", approvedAt: new Date(p.approvedAt).toISOString(), approvalNote: p.approvalNote ?? "",
       ...(p.beforePortal ? { beforePortal: true } : {}),
+      ...(Array.isArray(p.adjustments) && p.adjustments.length ? { baseMinor: p.baseMinor ?? p.amountMinor, adjustments: p.adjustments } : {}),
       ...(p.state === "paid" ? {
         paidByName: p.paidByName ?? "", paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : "", paymentMethod: p.paymentMethod ?? "",
         reference: p.reference ?? "",
@@ -149,7 +157,11 @@ export async function csCommissionPeriod(orgId: string, userId: string, permissi
         invoice: invoiceOf({ fundingId: c.funding_id ?? "", student: c.student, baseUsd: c.base_usd }),
       })),
     }));
+    // Additions and deductions (2026-11-13), in their own currency: what approving the period now would pay.
+    const adjustments = adjustmentsOf(p.adjustments);
+    const adjustmentMinor = csAdjustmentNetMinor(adjustments, currency);
     return {
+      stopped: p.stopped ?? null, adjustments, adjustmentMinor, payableMinor: Math.max(0, minorOf(p.total_usd, currency) + adjustmentMinor),
       recipientId: p.recipient_id, name: p.name, email: p.email, location: p.location, currency, totalUsd: p.total_usd,
       amountMinor: minorOf(p.total_usd, currency),
       // Converted with their own credits as one sum, so the two together never come out a fils off the whole.
@@ -216,13 +228,25 @@ export async function approveCsCommission(orgId: string, userId: string, isSuper
   if (await CsCommissionPayout.exists({ key })) throw new AppError("CONFLICT", "It is already approved here");
   const by = await userName(userId);
   const done = await fromPortal(() => approvePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance", early));
-  if (!(done.total_usd > 0)) throw new AppError("CONFLICT", `Nothing is payable to ${done.name || "them"} for ${periodLabel(input.kind, input.period)}.`);
   const currency = currencyOf(done.location);
+  // What is frozen and paid (2026-11-13): the commission plus the period's additions, less its deductions — as the
+  // CS Portal has them at this release.
+  const adjustments = adjustmentsOf(done.adjustments).filter((a) => a.currency.toUpperCase() === currency);
+  const baseMinor = minorOf(done.total_usd, currency);
+  const amountMinor = baseMinor + csAdjustmentNetMinor(adjustments, currency);
+  if (!(amountMinor > 0)) {
+    // Released there a moment ago, and nothing to pay here: put it back, so it is not left released and unpaid.
+    if (!done.already) await unapprovePortalCsCommission(input.kind, input.period, input.recipientId, by || "Finance").catch(() => undefined);
+    throw new AppError("CONFLICT", adjustments.length && baseMinor > 0
+      ? `Nothing is payable to ${done.name || "them"} for ${periodLabel(input.kind, input.period)}: the deductions come to the whole commission or more.`
+      : `Nothing is payable to ${done.name || "them"} for ${periodLabel(input.kind, input.period)}.`);
+  }
   try {
     await CsCommissionPayout.create({
       key, organizationId: new Types.ObjectId(orgId), kind: input.kind, period: input.period, lastMonth: lastMonthOf(input.kind, input.period),
       recipientId: input.recipientId, personName: done.name, email: done.email, location: done.location, currency,
-      amountMinor: minorOf(done.total_usd, currency), amountUsd: done.total_usd, creditIds: done.credit_ids, state: "approved",
+      amountMinor, amountUsd: done.total_usd, creditIds: done.credit_ids, state: "approved",
+      ...(adjustments.length ? { baseMinor, adjustments } : {}),
       approvedById: new Types.ObjectId(userId), approvedByName: by, approvedAt: new Date(), approvalNote: input.note ?? "",
       beforePortal: done.finance_override === true,
     });
@@ -281,6 +305,68 @@ export async function revokeCsCommission(orgId: string, userId: string, isSuperA
   const r = await CsCommissionPayout.deleteOne({ key, state: "approved", payrollRunId: null });
   if (!r.deletedCount) throw new AppError("CONFLICT", "It is not waiting to be paid — paid already, or not approved");
   return { revoked: true };
+}
+
+/* ── Stop counting, and additions and deductions (the user, 2026-11-13) — see cs-commission.schema.ts ────────────── */
+
+const mustBeManager = async (orgId: string, userId: string, isSuperAdmin: boolean, what: string) => {
+  if (!isSuperAdmin && !(await isManager(orgId, userId))) throw new AppError("FORBIDDEN", `Only somebody tagged Manager ${what}`);
+};
+
+/** A CS's commission stops being counted from now: the CS Portal credits them nothing more until it is resumed. */
+export async function stopCsCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: StopCsCommissionInput) {
+  await mustBeManager(orgId, userId, isSuperAdmin, "stops a CS's commission");
+  const done = await fromPortal(async () => stopPortalCsCommission(input.recipientId, (await userName(userId)) || "Finance", input.reason));
+  return { stopped: done.stopped, already: done.already === true };
+}
+
+/** …and counted again from now. What was not credited in between stays uncredited. */
+export async function resumeCsCommission(orgId: string, userId: string, isSuperAdmin: boolean, input: ResumeCsCommissionInput) {
+  await mustBeManager(orgId, userId, isSuperAdmin, "resumes a CS's commission");
+  return fromPortal(async () => resumePortalCsCommission(input.recipientId, (await userName(userId)) || "Finance"));
+}
+
+/**
+ * An addition or a deduction on a CS's period, in their own currency — only before the period is approved here, and a
+ * deduction never past what there is: the commission and its additions, less the deductions already on it.
+ */
+export async function addCsCommissionAdjustment(orgId: string, userId: string, isSuperAdmin: boolean, input: AddCsCommissionAdjustmentInput) {
+  await mustBeManager(orgId, userId, isSuperAdmin, "adds to or deducts from a commission");
+  const key = keyOf(input.kind, input.period, input.recipientId);
+  if (await CsCommissionPayout.exists({ key })) throw new AppError("CONFLICT", "It is approved already — take the approval back first");
+  const portal = await fromPortal(() => portalCsCommission(input.kind, input.period));
+  const person = portal.people.find((p) => p.recipient_id === input.recipientId);
+  if (!person) throw new AppError("NOT_FOUND", `They have no commission for ${periodLabel(input.kind, input.period)}`);
+  const currency = currencyOf(person.location);
+  if (input.type === "deduction") {
+    const left = minorOf(person.total_usd, currency) + csAdjustmentNetMinor(adjustmentsOf(person.adjustments), currency);
+    if (input.amountMinor > left) {
+      throw new AppError("VALIDATION_ERROR", `A deduction can't be more than what there is to pay — ${moneyOf(Math.max(0, left), currency)} for ${periodLabel(input.kind, input.period)}.`);
+    }
+  }
+  const done = await fromPortal(async () => addPortalCsAdjustment({
+    kind: input.kind, period: input.period, recipientId: input.recipientId, type: input.type, amountMinor: input.amountMinor, currency,
+    reason: input.reason, by: (await userName(userId)) || "Finance",
+  }));
+  return { adjustment: adjustmentsOf([done.adjustment])[0] };
+}
+
+/** One taken off again — before the period is approved; never one that would leave the deductions past what there is. */
+export async function removeCsCommissionAdjustment(orgId: string, userId: string, isSuperAdmin: boolean, input: RemoveCsCommissionAdjustmentInput) {
+  await mustBeManager(orgId, userId, isSuperAdmin, "adds to or deducts from a commission");
+  const key = keyOf(input.kind, input.period, input.recipientId);
+  if (await CsCommissionPayout.exists({ key })) throw new AppError("CONFLICT", "It is approved already — take the approval back first");
+  const portal = await fromPortal(() => portalCsCommission(input.kind, input.period));
+  const person = portal.people.find((p) => p.recipient_id === input.recipientId);
+  const mine = adjustmentsOf(person?.adjustments);
+  const target = mine.find((a) => a.id === input.id);
+  if (!person || !target) throw new AppError("NOT_FOUND", "That addition or deduction is not on this period");
+  const currency = currencyOf(person.location);
+  if (target.type === "addition") {
+    const left = minorOf(person.total_usd, currency) + csAdjustmentNetMinor(mine.filter((a) => a.id !== input.id), currency);
+    if (left < 0) throw new AppError("VALIDATION_ERROR", "Take the deductions off first — without this addition they would come to more than the commission.");
+  }
+  return fromPortal(async () => removePortalCsAdjustment(input.id, (await userName(userId)) || "Finance"));
 }
 
 /**
@@ -373,6 +459,12 @@ export async function payCsCommission(orgId: string, userId: string, input: PayC
       attachments: [{ ...receipt, uploadedAt: new Date() }],
       notes: [
         `CS Portal commission, ${label}: ${claimed.personName}, ${claimed.creditIds.length} credit${claimed.creditIds.length === 1 ? "" : "s"} — USD ${claimed.amountUsd.toFixed(2)} at the CS Portal's rate.`,
+        // Additions and deductions approved with it (2026-11-13): the commission, each of them, and what is paid.
+        ...((claimed.adjustments ?? []).length ? [
+          `Commission ${moneyOf(claimed.baseMinor ?? claimed.amountMinor, claimed.currency || "AED")}.`,
+          ...(claimed.adjustments ?? []).map((a: any) => `${a.type === "deduction" ? "Deduction" : "Addition"} ${moneyOf(a.amountMinor ?? 0, a.currency || claimed.currency || "AED")} — ${a.reason} (${a.by}).`),
+          `Paid ${moneyOf(claimed.amountMinor, claimed.currency || "AED")}.`,
+        ] : []),
         `Approved by ${claimed.approvedByName}${claimed.approvalNote ? ` — ${claimed.approvalNote}` : ""}.`,
       ].join("\n"),
     });

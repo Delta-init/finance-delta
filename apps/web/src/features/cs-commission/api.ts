@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, Invoice, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, SplitCsCommissionPoolInput, UploadedExpenseFile } from "@delta/shared";
+import type { AddCsCommissionAdjustmentInput, CsCommissionAdjustment, RemoveCsCommissionAdjustmentInput, ResumeCsCommissionInput, StopCsCommissionInput, ApproveCsCommissionInput, CsCommissionKind, CsCommissionPeriod, Invoice, PayCsCommissionInput, RecordCsCommissionPaymentInput, RevokeCsCommissionInput, SplitCsCommissionPoolInput, UploadedExpenseFile } from "@delta/shared";
 import { CS_COMMISSION_PERIOD } from "@delta/shared";
 import { api } from "@/lib/api";
 
@@ -85,5 +85,42 @@ export function useCsCommissionInvoice(id: string | null) {
     queryFn: () => api.get<{ invoice: Invoice; orgId: string; orgName: string }>(`cs-commission/invoices/${id}`),
     enabled: !!id,
     retry: false,
+  });
+}
+
+/* Stop counting a CS's commission, and a period's additions and deductions (2026-11-13). */
+export function useStopCsCommission() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: StopCsCommissionInput) => api.post<{ stopped: { at: string; by: string; reason: string }; already: boolean }>("cs-commission/stop", input),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
+  });
+}
+
+export function useResumeCsCommission() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: ResumeCsCommissionInput) => api.post<{ resumed: boolean }>("cs-commission/resume", input),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
+  });
+}
+
+export function useAddCsCommissionAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: AddCsCommissionAdjustmentInput) => api.post<{ adjustment: CsCommissionAdjustment }>("cs-commission/adjustments", input),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
+  });
+}
+
+export function useRemoveCsCommissionAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { skipToast: true },
+    mutationFn: (input: RemoveCsCommissionAdjustmentInput) => api.post<{ removed: boolean }>("cs-commission/adjustments/remove", input),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: KEY }); },
   });
 }

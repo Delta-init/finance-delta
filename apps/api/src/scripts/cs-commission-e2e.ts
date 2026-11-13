@@ -12,7 +12,7 @@
  */
 import http from "node:http";
 import mongoose from "mongoose";
-import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema } from "@delta/shared";
+import { addCsCommissionAdjustmentSchema, approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, stopCsCommissionSchema } from "@delta/shared";
 
 const uri = process.env.MONGODB_URI ?? "";
 if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri)) {
@@ -45,6 +45,9 @@ const stage = (status = "pending") => ({ status, by: "", at: null });
 const credit = (id: string, usd: number) => ({ id, date: "2026-09-05T10:00:00.000Z", student: "Student", method: "bonus_with", level: 1, position: "Junior", percentage: 10, base_usd: usd * 10, amount_usd: usd, status: "accrued", txn_id: `TX-${id}`, initiator: "Someone", funding_id: `F-${id}` });
 const portal = {
   mode: "ok" as "ok" | "old" | "down",
+  /** Whether the period asked for has ended; a running one is approved only for somebody whose counting is stopped (2026-11-13). */
+  ended: true,
+  nextAdjustment: 1,
   /** The Senior/Junior pools not split yet (2026-11-07). */
   pools: [] as any[],
   asked: [] as Array<{ path: string; signed: boolean; body: any }>,
@@ -73,7 +76,34 @@ const server = http.createServer((req, res) => {
     if (!signed) return send(401, { success: false, error: { code: "UNAUTHORISED", message: "Bad secret" } });
     const who = portal.people.find((p) => p.recipient_id === body.recipient_id);
     const refuse = (code: string, message: string) => send(409, { success: false, error: { code, message } });
-    if (url.pathname.endsWith("/cs-commission")) return send(200, { success: true, data: { kind: body.kind, period: body.period, ended: true, people: portal.people, pools: portal.pools } });
+    if (url.pathname.endsWith("/cs-commission")) return send(200, { success: true, data: { kind: body.kind, period: body.period, ended: portal.ended, people: portal.people, pools: portal.pools } });
+    // Stop counting, and additions and deductions (2026-11-13), as the CS Portal keeps them.
+    if (url.pathname.endsWith("/stop")) {
+      if (!who) return send(404, { success: false, error: { code: "NOT_FOUND", message: "No such person." } });
+      if (String(body.reason ?? "").trim().length < 3) return send(400, { success: false, error: { code: "VALIDATION_ERROR", message: "Say why their commission stops." } });
+      if (who.stopped) return send(200, { success: true, data: { stopped: who.stopped, already: true } });
+      who.stopped = { at: "2026-09-20T08:00:00.000Z", by: body.by, reason: body.reason };
+      return send(200, { success: true, data: { stopped: who.stopped } });
+    }
+    if (url.pathname.endsWith("/resume")) {
+      const was = !!who?.stopped;
+      if (who) who.stopped = null;
+      return send(200, { success: true, data: { resumed: was } });
+    }
+    if (url.pathname.endsWith("/adjustments/add")) {
+      if (!who) return send(404, { success: false, error: { code: "NOT_FOUND", message: "No such person." } });
+      if (who.approval.overall_status === "released") return refuse("LOCKED", "Approved already — take the approval back first.");
+      const a = { id: `adj-${portal.nextAdjustment++}`, type: body.type, amount_minor: body.amount_minor, currency: body.currency, reason: body.reason, by: body.by, at: "2026-09-21T08:00:00.000Z" };
+      who.adjustments = [...(who.adjustments ?? []), a];
+      return send(200, { success: true, data: { adjustment: a } });
+    }
+    if (url.pathname.endsWith("/adjustments/remove")) {
+      const owner = portal.people.find((p) => (p.adjustments ?? []).some((a: any) => a.id === body.id));
+      if (!owner) return send(404, { success: false, error: { code: "NOT_FOUND", message: "No such addition or deduction." } });
+      if (owner.approval.overall_status === "released") return refuse("LOCKED", "Approved already — take the approval back first.");
+      owner.adjustments = owner.adjustments.filter((a: any) => a.id !== body.id);
+      return send(200, { success: true, data: { removed: true } });
+    }
     if (url.pathname.endsWith("/split-pool")) {
       const g = portal.pools.find((x) => x.group_id === body.pool_group_id);
       if (!g) return send(200, { success: true, data: { split: [] } });
@@ -82,8 +112,10 @@ const server = http.createServer((req, res) => {
         shares: g.members.map((m: any) => ({ id: m.id, name: m.name, share_usd: m.share_usd })) }] } });
     }
     if (!who) return refuse("NOTHING_TO_APPROVE", "No commission for this person in the period.");
-    const answer = (already: boolean, override = false) => send(200, { success: true, data: { already, total_usd: who.total_usd, credit_ids: who.credits.map((c: any) => c.id), name: who.name, email: who.email, location: who.location, finance_override: override } });
+    const answer = (already: boolean, override = false) => send(200, { success: true, data: { already, total_usd: who.total_usd, credit_ids: who.credits.map((c: any) => c.id), name: who.name, email: who.email, location: who.location, finance_override: override,
+      adjustments: who.adjustments ?? [], stopped: who.stopped ?? null } });
     if (url.pathname.endsWith("/approve")) {
+      if (!portal.ended && !who.stopped) return refuse("PERIOD_OPEN", "This period is still running — stop counting their commission first.");
       if (who.approval.overall_status === "released") return answer(true, !!who.approval.finance_override);
       if (who.approval.overall_status !== "pending_finance_approval") {
         // Before the broker admin and academic head (2026-11-06): with force and a reason only, as the CS Portal does.
@@ -279,6 +311,64 @@ check("split by a manager: the CS Portal asked, signed, for that pool, as her; e
   && done.split[0]!.shares.map((x) => `${x.name}:${x.shareUsd}`).join() === "Senior Sam:5,Mentor Kiran:10"
   && asked.path.endsWith("/split-pool") && asked.signed && asked.body.pool_group_id === CHIEF && asked.body.method === "bonus_with" && asked.body.by === "Mona Manager" && asked.body.period === P, j({ done, asked }));
 check("…again: nothing left, said so", /CONFLICT.*Nothing in that pool/.test(await refusal(split(MONA))));
+
+step("6. Stop counting, then approve and pay a running period; additions and deductions (2026-11-13)");
+const TARA = "65a000000000000000000009";
+portal.people.push({ recipient_id: TARA, name: "Mentor Tara", email: "mentor.tara@e2e-cs.test", location: "dubai", total_usd: 100, credits: [credit("c9", 100)],
+  approval: { overall_status: "pending_broker_approval", broker: stage(), academic: stage(), finance: stage(), released_at: null, released_by: "", by_finance: false } });
+portal.ended = false;
+v = await period();
+check("a running period: Tara counted, nothing stopped, AED 367.00 to pay", !v.ended && row(v, TARA).stopped === null && row(v, TARA).payableMinor === 36700 && (row(v, TARA).adjustments ?? []).length === 0, j(row(v, TARA)));
+check("…it can't be approved or paid while it runs", /still running/.test(await refusal(record(MONA, TARA, { reason: "Leaving" }))) && !(await CsCommissionPayout.exists({ recipientId: TARA })));
+check("stopping is a manager's", /tagged Manager/.test(await refusal(svc.stopCsCommission(ORG, ASHA, false, { recipientId: TARA, reason: "Last working day" }))));
+check("…and needs its reason", !stopCsCommissionSchema.safeParse({ recipientId: TARA, reason: "x" }).success);
+const stopped = await svc.stopCsCommission(ORG, MONA, false, stopCsCommissionSchema.parse({ recipientId: TARA, reason: "Last working day" }));
+v = await period();
+check("stopped: the CS Portal told who and why, the page says so", !stopped.already && row(v, TARA).stopped?.reason === "Last working day" && row(v, TARA).stopped?.by === "Mona Manager"
+  && portal.asked.some((a) => a.path.endsWith("/stop") && a.body?.recipient_id === TARA && a.body?.by === "Mona Manager" && a.body?.reason === "Last working day"), j(row(v, TARA).stopped));
+check("…again: already stopped, nothing new", (await svc.stopCsCommission(ORG, MONA, false, { recipientId: TARA, reason: "Again, later" })).already === true);
+
+const adjust = (by: string, type: "addition" | "deduction", amountMinor: number, reason: string, who = TARA) =>
+  svc.addCsCommissionAdjustment(ORG, by, false, addCsCommissionAdjustmentSchema.parse({ kind: "bonus", period: P, recipientId: who, type, amountMinor, reason }));
+const takeOff = (by: string, id: string, who = TARA) => svc.removeCsCommissionAdjustment(ORG, by, false, { kind: "bonus", period: P, recipientId: who, id });
+check("adding or deducting is a manager's", /tagged Manager/.test(await refusal(adjust(ASHA, "addition", 20000, "Target bonus"))));
+const plus = await adjust(MONA, "addition", 20000, "Target bonus");
+const minus = await adjust(MONA, "deduction", 15000, "Laptop not returned");
+v = await period();
+check("an addition of 200 and a deduction of 150, in her own currency: AED 417.00 to pay of 367.00 commission",
+  plus.adjustment?.currency === "AED" && row(v, TARA).adjustments?.length === 2 && row(v, TARA).adjustmentMinor === 5000 && row(v, TARA).payableMinor === 41700 && row(v, TARA).amountMinor === 36700, j(row(v, TARA)));
+check("a deduction past what there is: refused, saying how much there is", /can't be more than what there is to pay — AED 417\.00/.test(await refusal(adjust(MONA, "deduction", 50000, "Too much"))));
+const big = await adjust(MONA, "deduction", 30000, "Advance taken");
+check("taking the addition off would leave the deductions past the commission: refused", /Take the deductions off first/.test(await refusal(takeOff(MONA, plus.adjustment!.id))));
+await takeOff(MONA, big.adjustment!.id);
+v = await period();
+check("a deduction taken off again: back to AED 417.00", row(v, TARA).adjustments?.length === 2 && row(v, TARA).payableMinor === 41700 && /NOT_FOUND/.test(await refusal(takeOff(MONA, "adj-nope"))), j(row(v, TARA).adjustments));
+
+const early = await record(MONA, TARA, { reason: "Last working day" });
+const earlyExp = await Expense.findById(early.expense.id).lean<any>();
+const taraPayout = await CsCommissionPayout.findOne({ recipientId: TARA }).lean<any>();
+check("stopped, so approved and paid though the period runs: AED 417.00 — the commission, the addition, less the deduction",
+  early.approved && earlyExp?.totalMinor === 41700 && taraPayout?.amountMinor === 41700 && taraPayout.baseMinor === 36700 && taraPayout.adjustments?.length === 2 && taraPayout.state === "paid", j(taraPayout));
+check("…the expense says each of them", /Commission AED 367\.00\./.test(earlyExp.notes) && /Addition AED 200\.00 — Target bonus \(Mona Manager\)/.test(earlyExp.notes)
+  && /Deduction AED 150\.00 — Laptop not returned/.test(earlyExp.notes) && /Paid AED 417\.00\./.test(earlyExp.notes), earlyExp?.notes);
+v = await period();
+check("…the page: paid 417.00, its commission 367.00 and both lines kept", row(v, TARA).state === "paid" && row(v, TARA).payout?.amountMinor === 41700 && row(v, TARA).payout?.baseMinor === 36700
+  && row(v, TARA).payout?.adjustments?.length === 2, j(row(v, TARA).payout));
+check("…once approved, nothing more is added or taken off", /approved already/.test(await refusal(adjust(MONA, "addition", 100, "Late"))) && /approved already/.test(await refusal(takeOff(MONA, minus.adjustment!.id))));
+check("an untouched payout keeps its shape: no base, no lines", !(await CsCommissionPayout.findOne({ recipientId: KIRAN }).lean<any>())?.adjustments && row(v, KIRAN).payout?.adjustments === undefined);
+const resumed = await svc.resumeCsCommission(ORG, MONA, false, { recipientId: TARA });
+v = await period();
+check("counted again: the CS Portal told, the page clear", resumed.resumed === true && row(v, TARA).stopped === null && portal.asked.some((a) => a.path.endsWith("/resume") && a.body?.recipient_id === TARA));
+// Deductions that take everything: nothing to approve, and the CS Portal's release put back.
+const ZERO = "65a00000000000000000000a";
+portal.people.push({ recipient_id: ZERO, name: "Mentor Zara", email: "mentor.zara@e2e-cs.test", location: "bangalore", total_usd: 10, credits: [credit("c10", 10)],
+  approval: { overall_status: "pending_finance_approval", broker: stage("approved"), academic: stage("approved"), finance: stage(), released_at: null, released_by: "", by_finance: false } });
+portal.ended = true;
+const rupeeCut = await adjust(MONA, "deduction", 100000, "Advance repaid", ZERO);
+check("a Bangalore CS's deduction is in rupees — INR 1,000 of her INR 1,000", rupeeCut.adjustment?.currency === "INR" && row(await period(), ZERO).payableMinor === 0);
+check("…nothing left to pay: not approved, and not left released in the CS Portal", /deductions come to the whole commission/.test(await refusal(approve(MONA, ZERO)))
+  && !(await CsCommissionPayout.exists({ recipientId: ZERO })) && portal.people.find((p) => p.recipient_id === ZERO).approval.overall_status === "pending_finance_approval");
+portal.people = portal.people.filter((p) => p.recipient_id !== ZERO);
 
 step("5. The CS Portal down, or not yet updated");
 portal.mode = "down";

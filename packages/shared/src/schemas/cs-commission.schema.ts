@@ -89,6 +89,54 @@ export const splitCsCommissionPoolSchema = z.object({
 }).superRefine(periodFits);
 export type SplitCsCommissionPoolInput = z.infer<typeof splitCsCommissionPoolSchema>;
 
+/*
+ * Stop counting, and additions and deductions (the user, 2026-11-13: "add stop count commission, with approve and
+ * record payment; addition/deduction can also be updated here").
+ *
+ * Stop counting: a manager stops one CS's commission from now, with a reason — the CS Portal credits them nothing more
+ * (and gives it to nobody else) until it is resumed. A stopped CS's period can be approved and paid while it is still
+ * running: nothing more will be added to it.
+ *
+ * An addition or a deduction is an amount in the CS's own currency with its reason, put on one of their periods
+ * before it is approved; what is approved and paid is the commission plus the additions less the deductions, never
+ * below nothing. They are kept in the CS Portal, where the CS sees them, and frozen on the payout at approval.
+ */
+export const stopCsCommissionSchema = z.object({
+  recipientId: z.string().trim().min(1).max(64),
+  reason: z.string().trim().min(3, "Say why their commission stops").max(300),
+});
+export type StopCsCommissionInput = z.infer<typeof stopCsCommissionSchema>;
+export const resumeCsCommissionSchema = z.object({ recipientId: z.string().trim().min(1).max(64) });
+export type ResumeCsCommissionInput = z.infer<typeof resumeCsCommissionSchema>;
+
+export const CS_ADJUSTMENT_TYPES = ["addition", "deduction"] as const;
+export type CsAdjustmentType = (typeof CS_ADJUSTMENT_TYPES)[number];
+export const addCsCommissionAdjustmentSchema = z.object({
+  ...who,
+  type: z.enum(CS_ADJUSTMENT_TYPES),
+  /** In the CS's own currency, minor units. */
+  amountMinor: z.number().int().min(1, "Enter an amount").max(100_000_000),
+  reason: z.string().trim().min(3, "Say what it is for").max(300),
+}).superRefine(periodFits);
+export type AddCsCommissionAdjustmentInput = z.infer<typeof addCsCommissionAdjustmentSchema>;
+export const removeCsCommissionAdjustmentSchema = z.object({ ...who, id: z.string().trim().min(1).max(64) }).superRefine(periodFits);
+export type RemoveCsCommissionAdjustmentInput = z.infer<typeof removeCsCommissionAdjustmentSchema>;
+
+export interface CsCommissionAdjustment {
+  id: string;
+  type: CsAdjustmentType;
+  amountMinor: number;
+  currency: string;
+  reason: string;
+  by: string;
+  at: string;
+}
+/** Additions less deductions, in minor units — only those in `currency` (they are entered in the CS's own). */
+export function csAdjustmentNetMinor(list: Array<Pick<CsCommissionAdjustment, "type" | "amountMinor" | "currency">> | null | undefined, currency: string): number {
+  return (list ?? []).filter((a) => String(a.currency || "").toUpperCase() === String(currency || "").toUpperCase())
+    .reduce((t, a) => t + (a.type === "deduction" ? -1 : 1) * (Number(a.amountMinor) || 0), 0);
+}
+
 export type CsCommissionState = "waiting" | "ready" | "approved" | "paid" | "rejected";
 
 /** One accrual in a Senior/Junior pool: a bonus or deposit's Junior or Senior share, paid into the Chief's pool. */
@@ -190,6 +238,9 @@ export interface CsCommissionPayoutView {
   orgId: string;
   orgName: string;
   payrollRunNumber: string;
+  /** The commission itself, before the additions and deductions frozen with it (2026-11-13); `amountMinor` is the net paid. */
+  baseMinor?: number;
+  adjustments?: CsCommissionAdjustment[];
 }
 
 export interface CsCommissionPerson {
@@ -221,6 +272,12 @@ export interface CsCommissionPerson {
   };
   state: CsCommissionState;
   payout: CsCommissionPayoutView | null;
+  /** Counting stopped for them (2026-11-13): since when, by whom, why — null while they are counted. */
+  stopped?: { at: string; by: string; reason: string } | null;
+  /** The period's additions and deductions, their net, and what approving it now would pay: amountMinor + the net. */
+  adjustments?: CsCommissionAdjustment[];
+  adjustmentMinor?: number;
+  payableMinor?: number;
 }
 
 export interface CsCommissionPeriod {

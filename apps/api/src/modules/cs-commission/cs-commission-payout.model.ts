@@ -25,6 +25,15 @@ const payoutSchema = new Schema(
     /** What the manager approved, in `currency` — the CS Portal's USD at its fixed rate then, frozen. */
     amountMinor: { type: Number, required: true, min: 0 },
     amountUsd: { type: Number, required: true, min: 0 },
+    /**
+     * Additions and deductions (2026-11-13): `baseMinor` the commission itself, `adjustments` those frozen with the
+     * approval — `amountMinor` is then the commission plus the additions less the deductions, what is paid.
+     */
+    baseMinor: { type: Number, min: 0 },
+    adjustments: {
+      type: [new Schema({ id: String, type: { type: String, enum: ["addition", "deduction"] }, amountMinor: Number, currency: String, reason: String, by: String, at: String }, { _id: false })],
+      default: undefined,
+    },
     creditIds: { type: [String], default: [] },
     state: { type: String, enum: ["approved", "paid"], required: true },
     approvedById: { type: Schema.Types.ObjectId, ref: "User", required: true },

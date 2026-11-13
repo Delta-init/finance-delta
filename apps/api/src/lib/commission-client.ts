@@ -423,7 +423,12 @@ export interface PortalCsCommissionPerson {
     finance_override?: boolean;
     override_reason?: string;
   };
+  /** Counting stopped for them, and the period's additions and deductions (2026-11-13) — from a CS Portal that knows. */
+  stopped?: { at: string; by: string; reason: string } | null;
+  adjustments?: PortalCsAdjustment[];
 }
+/** An addition or a deduction on a CS's period, as the CS Portal keeps it (2026-11-13): minor units of `currency`. */
+export interface PortalCsAdjustment { id: string; type: "addition" | "deduction"; amount_minor: number; currency: string; reason: string; by: string; at: string }
 /** A Senior/Junior pool of the period not split yet, and someone's share of it (CS Portal 2026-11-07). */
 export interface PortalCsPoolShare {
   group_id: string; group_name: string; method: string; total_usd: number; share_usd: number;
@@ -439,6 +444,9 @@ export interface PortalCsCommissionApproval {
   already: boolean; total_usd: number; credit_ids: string[]; name: string; email: string; location: "dubai" | "bangalore";
   /** Released before the CS Portal's broker admin and academic head (2026-11-06). */
   finance_override?: boolean;
+  /** The period's additions and deductions at the release, and whether their counting is stopped (2026-11-13). */
+  adjustments?: PortalCsAdjustment[];
+  stopped?: { at: string; by: string; reason: string } | null;
 }
 
 /** The CS Portal refused (409 and the like) — `code` says why: NOT_READY, REJECTED, PERIOD_OPEN, NOT_FINANCES, … */
@@ -487,6 +495,18 @@ export const splitPortalCsPool = (kind: string, period: string, poolGroupId: str
 /** Finance's step taken back — only one finance released. */
 export const unapprovePortalCsCommission = (kind: string, period: string, recipientId: string, by: string) =>
   askPortalCsCommission<{ undone: boolean }>("/unapprove", { kind, period, recipient_id: recipientId, by });
+
+/* Stop counting a CS's commission, and a period's additions and deductions (2026-11-13) — kept in the CS Portal. */
+export const stopPortalCsCommission = (recipientId: string, by: string, reason: string) =>
+  askPortalCsCommission<{ stopped: { at: string; by: string; reason: string }; already?: boolean }>("/stop", { recipient_id: recipientId, by, reason });
+export const resumePortalCsCommission = (recipientId: string, by: string) =>
+  askPortalCsCommission<{ resumed: boolean }>("/resume", { recipient_id: recipientId, by });
+export const addPortalCsAdjustment = (a: { kind: string; period: string; recipientId: string; type: string; amountMinor: number; currency: string; reason: string; by: string }) =>
+  askPortalCsCommission<{ adjustment: PortalCsAdjustment }>("/adjustments/add", {
+    kind: a.kind, period: a.period, recipient_id: a.recipientId, type: a.type, amount_minor: a.amountMinor, currency: a.currency, reason: a.reason, by: a.by,
+  });
+export const removePortalCsAdjustment = (id: string, by: string) =>
+  askPortalCsCommission<{ removed: boolean }>("/adjustments/remove", { id, by });
 
 /** Said once at boot, so a silent link is visible without digging. */
 export function logCommissionConfig(): void {

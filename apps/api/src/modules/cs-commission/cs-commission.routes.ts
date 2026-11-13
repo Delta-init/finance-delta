@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, revokeCsCommissionSchema, splitCsCommissionPoolSchema } from "@delta/shared";
+import {
+  addCsCommissionAdjustmentSchema, approveCsCommissionSchema, payCsCommissionSchema, recordCsCommissionPaymentSchema, removeCsCommissionAdjustmentSchema,
+  resumeCsCommissionSchema, revokeCsCommissionSchema, splitCsCommissionPoolSchema, stopCsCommissionSchema,
+} from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -22,5 +25,10 @@ router.post("/pay", requirePermission("commission:write"), validateBody(payCsCom
 router.post("/record-payment", requirePermission("commission:write"), validateBody(recordCsCommissionPaymentSchema), c.recordPayment);
 // A Senior/Junior pool split (2026-11-07): a manager with commission:write — it pays every member a share there.
 router.post("/split-pool", requirePermission("commission:write"), validateBody(splitCsCommissionPoolSchema), c.splitPool);
+// Stop counting a CS's commission, and a period's additions and deductions (2026-11-13): a manager, as approving is.
+router.post("/stop", requirePermission("commission:read"), validateBody(stopCsCommissionSchema), c.stop);
+router.post("/resume", requirePermission("commission:read"), validateBody(resumeCsCommissionSchema), c.resume);
+router.post("/adjustments", requirePermission("commission:read"), validateBody(addCsCommissionAdjustmentSchema), c.addAdjustment);
+router.post("/adjustments/remove", requirePermission("commission:read"), validateBody(removeCsCommissionAdjustmentSchema), c.removeAdjustment);
 
 export default router;

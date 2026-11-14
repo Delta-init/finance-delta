@@ -47,6 +47,13 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
   if (!approval || approval.state === "not_required") return null;
 
   const canDecide = !readOnly && can("invoice:write");
+  // "Tabby AED 1,125.00 + Tamara AED 562.50 + Tamara AED 562.50 = AED 2,250.00" — oldest first; one paid in another
+  // currency says what was handed over. Empty until a payment is on the invoice.
+  const paid = [...(invoice.payments ?? [])].sort((a, b) => a.paidOn.localeCompare(b.paidOn));
+  const paidSoFar = paid.length
+    ? `${paid.map((p) => `${paymentMethodLabel(p.method)} ${formatMoney(p.amountMinor, invoice.currency)}${p.original ? ` (${formatMoney(p.original.amountMinor, p.original.currency)})` : ""}`).join(" + ")}${
+        paid.length > 1 ? ` = ${formatMoney(invoice.amountPaidMinor, invoice.currency)}` : ""}`
+    : "";
   const pending = approval.state === "pending";
   const returned = approval.state === "returned";
   const approved = approval.state === "approved";
@@ -111,9 +118,14 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
               }`}
             />
           ) : null}
-          {/* The fee less what was collected, as the counsellor was shown it.
-              Only where the CRM sent it; View details works it out otherwise. */}
-          {e.declaredBalanceMinor !== undefined ? (
+          {/* Every payment now on the invoice, how and how much, and the total (the user, 2026-11-14: only the close's
+              "AED 1,125 · Tabby" showed, not the two Tamara payments recorded after it). */}
+          {paidSoFar ? <Detail label="Paid" value={paidSoFar} /> : null}
+          {/* The balance as it stands once payments are on the invoice; before that, the fee less what was collected,
+              as the counsellor was shown it (only where the CRM sent it; View details works it out otherwise). */}
+          {invoice.payments?.length ? (
+            <Detail label="Balance" value={formatMoney(invoice.balanceMinor, invoice.currency)} />
+          ) : e.declaredBalanceMinor !== undefined ? (
             <Detail label="Balance" value={formatMoney(e.declaredBalanceMinor, invoice.currency)} />
           ) : null}
           {/* Information, not money: never on the invoice, never in the balance. */}

@@ -16,17 +16,17 @@ export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
 
 /**
  * A payment service provider's account (the user, 2026-11-06): Tabby, Tamara, Billexpro, Easebuzz, a card acquirer.
- * Clients' payments land in it whole; the provider pays them on to a bank account later, less its fee — a settlement
- * (psp-settlement). What it charges — a percentage, a fixed amount a payment, VAT on the fee — is what each payment
- * is expected to cost; what actually arrived decides the fee booked.
+ * Clients' payments land in it whole; the provider pays them on to a bank account later, less its charges — a
+ * settlement (psp-settlement).
+ *
+ * No rate is kept for what it charges (the user, 2026-11-14: "each settlement has its own charges… remove that from
+ * the settings"): there used to be a percentage and a fixed amount a payment here, used only to guess. Each settlement
+ * now says its own charges — what was settled less what arrived. Only the VAT rate on those charges stays: it is a
+ * tax rate, the same every time, and splits the charges booked into net and VAT.
  */
 export const pspSettingsSchema = z.object({
   provider: z.string().trim().max(60).default(""),
-  /** Of each payment, e.g. 5.5. */
-  feePct: z.number().min(0).max(100).default(0),
-  /** A payment, in the account's currency. */
-  fixedFeeMinor: z.number().int().min(0).default(0),
-  /** On the fee, e.g. 5. */
+  /** On the charges, e.g. 5. */
   feeVatPct: z.number().min(0).max(100).default(0),
   /** The bank account it pays out to. */
   settlementAccountId: z.string().min(1, "Choose the account it settles into"),
@@ -37,11 +37,11 @@ export const pspSettingsSchema = z.object({
 });
 export type PspSettings = z.infer<typeof pspSettingsSchema>;
 
-/** What one payment is expected to cost: the percentage and the fixed fee, and VAT on both. */
-export function expectedPspFeeMinor(amountMinor: number, s: Pick<PspSettings, "feePct" | "fixedFeeMinor" | "feeVatPct">): number {
-  if (!(amountMinor > 0)) return 0;
-  const fee = (amountMinor * (s.feePct ?? 0)) / 100 + (s.fixedFeeMinor ?? 0);
-  return Math.min(amountMinor, Math.round(fee * (1 + (s.feeVatPct ?? 0) / 100)));
+/** The VAT inside a settlement's charges, at the account's rate — the charges are what the provider kept, VAT included. */
+export function pspChargesVatMinor(chargesMinor: number, feeVatPct: number | null | undefined): number {
+  const pct = Number(feeVatPct) || 0;
+  if (!(chargesMinor > 0) || !(pct > 0)) return 0;
+  return chargesMinor - Math.round(chargesMinor / (1 + pct / 100));
 }
 
 export const createBankAccountSchema = z.object({
@@ -99,6 +99,12 @@ export const createPspSettlementSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date is required"),
   /** What arrived in the bank account. */
   receivedMinor: z.number().int().positive("What arrived must be more than 0"),
+  /**
+   * This settlement's own charges, as they were typed (2026-11-14) — what was settled less what arrived. Sent so the
+   * two can be checked against each other: a settlement whose payments changed under the screen is refused, never
+   * booked with charges nobody typed.
+   */
+  feeMinor: z.number().int().min(0, "The charges can't be less than 0").optional(),
   reference: z.string().max(100).optional().default(""),
   notes: z.string().max(1000).optional().default(""),
 });
@@ -113,7 +119,6 @@ export interface PspUnsettledLine {
   amountMinor: number;
   /** The invoice it is a payment on, where it is one. */
   invoice: { id: string; number: string } | null;
-  expectedFeeMinor: number;
   /** When the provider should have paid it out. */
   expectedOn: string;
   late: boolean;
@@ -131,8 +136,8 @@ export interface PspSettlementDTO {
   lineCount: number;
   grossMinor: number;
   receivedMinor: number;
+  /** This settlement's own charges: what was settled less what arrived. */
   feeMinor: number;
-  expectedFeeMinor: number;
   expense: { id: string; number: string } | null;
   reference: string;
   notes: string;
@@ -143,7 +148,6 @@ export interface PspSettlementDTO {
 export interface PspSummary {
   unsettledMinor: number;
   unsettledCount: number;
-  expectedFeeMinor: number;
   lateCount: number;
   lateMinor: number;
 }

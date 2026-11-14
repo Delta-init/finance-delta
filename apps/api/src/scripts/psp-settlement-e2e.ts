@@ -6,9 +6,13 @@
  *   - a PSP account's settings: it settles into another open account of its currency, never a PSP; an existing
  *     account switched to PSP counts what came before its start day as settled already;
  *   - a payment into a PSP account lands whole — no charges line of its own, even with charges typed;
- *   - what waits to be settled, each with its expected fee (percentage + fixed, VAT on it) and expected day;
- *   - a settlement: the bank gets what arrived, the PSP account gives up all it settled (the transfer and the fee),
- *     the fee is an expense in Bank Fees & Charges › Payment Gateway Fees with its VAT split out, the payments marked;
+ *   - what waits to be settled, each with its expected day — and no guessed fee: the account keeps no rate (the user,
+ *     2026-11-14: "each settlement has its own charges… remove that from the settings"); one set up with a rate
+ *     before still works, and nothing reads the rate it holds;
+ *   - a settlement: the bank gets what arrived, the PSP account gives up all it settled (the transfer and the charges),
+ *     its own charges are an expense in Bank Fees & Charges › Payment Gateway Fees with their VAT split out, the
+ *     payments marked; another settlement of the same account has other charges, or none;
+ *   - charges typed that are not what was settled less what arrived: refused;
  *   - refused: more arriving than was settled, a payment settled twice, changing a settled payment, deleting the fee
  *     expense or the transfer on their own;
  *   - deleting the settlement puts everything back as it was; not once its transfer is reconciled.
@@ -54,13 +58,19 @@ const acct = (o: Record<string, unknown>) => banking.createBankAccount(org, {
 } as never);
 const adcb = await acct({ accountName: "ADCB", openingBalanceMinor: 1_000_000 });
 const inr = await acct({ accountName: "Federal INR", currency: "INR" });
-const settings = { provider: "Tabby", feePct: 5.5, fixedFeeMinor: 100, feeVatPct: 5, settlementAccountId: adcb.id, settlementDays: 7 };
+const settings = { provider: "Tabby", feeVatPct: 5, settlementAccountId: adcb.id, settlementDays: 7 };
 const balance = async (id: string) => (await BankAccount.findById(id).lean<any>())!.currentBalanceMinor;
 
 step("1. A PSP account's settings");
 check("settling into an account of another currency: refused", /in INR/.test(await errOf(() => acct({ accountName: "Bad", accountType: "psp", psp: { ...settings, settlementAccountId: inr.id } }))));
 const tabby = await acct({ accountName: "Tabby", accountType: "psp", psp: { ...settings, startDate: "2026-11-01" } });
-check("made: its settings kept, the bank named", tabby.accountType === "psp" && tabby.psp?.feePct === 5.5 && tabby.psp?.settlementAccountName === "ADCB" && tabby.psp?.startDate === "2026-11-01", j(tabby.psp));
+check("made: its settings kept, the bank named — and no rate for its charges among them", tabby.accountType === "psp" && tabby.psp?.feeVatPct === 5 && tabby.psp?.settlementAccountName === "ADCB" && tabby.psp?.startDate === "2026-11-01"
+  && !("feePct" in (tabby.psp ?? {})) && !("fixedFeeMinor" in (tabby.psp ?? {})), j(tabby.psp));
+// A rate sent by a screen from before (the settings used to take one) is simply not kept.
+const withRate = await acct({ accountName: "Old screen", accountType: "psp", psp: { ...settings, feePct: 5.5, fixedFeeMinor: 100 } });
+const storedRate = await BankAccount.collection.findOne({ _id: new Types.ObjectId(withRate.id) });
+check("a rate sent by an older screen is not kept", !("feePct" in (withRate.psp ?? {})) && storedRate?.psp?.feePct === undefined && storedRate?.psp?.fixedFeeMinor === undefined, j(storedRate?.psp));
+await BankAccount.collection.deleteOne({ _id: new Types.ObjectId(withRate.id) });
 check("settling into another PSP: refused", /not another PSP/.test(await errOf(() => acct({ accountName: "Bad2", accountType: "psp", psp: { ...settings, settlementAccountId: tabby.id } }))));
 // An existing account, with money already in it, switched to PSP: what came before its start is settled already.
 const tamara = await acct({ accountName: "Tamara" });
@@ -68,6 +78,11 @@ await banking.addTransaction(org, tamara.id, { date: "2026-10-20", description: 
 const switched = await banking.updateBankAccount(org, tamara.id, { accountType: "psp", psp: { ...settings, provider: "Tamara", startDate: "2026-11-01" } } as never);
 check("an existing account switched to PSP", switched.accountType === "psp" && switched.psp?.provider === "Tamara");
 check("…its money from before the start day is not waiting to be settled", (await psp.unsettledLines(org, tamara.id)).length === 0);
+// An account set up while the settings still took a rate holds one in the database: it reads as any other, without it.
+await BankAccount.collection.updateOne({ _id: new Types.ObjectId(tamara.id) }, { $set: { "psp.feePct": 5.5, "psp.fixedFeeMinor": 100 } });
+const old = await banking.getBankAccount(org, tamara.id);
+check("an account that held a rate from before: read without it, still a PSP with its VAT rate", old.accountType === "psp" && old.psp?.feeVatPct === 5 && !("feePct" in (old.psp ?? {}))
+  && (await psp.pspSummary(org, tamara.id)).unsettledCount === 0, j(old.psp));
 
 step("2. Payments land whole");
 const inv = { _id: new Types.ObjectId() };
@@ -88,22 +103,23 @@ check("Tabby holds 3,300, ADCB 10,000", before.tabby === 330_000 && before.adcb 
 
 step("3. Waiting to be settled");
 let waiting = await psp.unsettledLines(org, tabby.id);
-const fee2000 = Math.round((200_000 * 0.055 + 100) * 1.05);
-check("three, oldest first, each with its expected fee and day", waiting.length === 3 && waiting[0]!.amountMinor === 200_000 && waiting[0]!.expectedFeeMinor === fee2000
+check("three, oldest first, each with its expected day — and no guessed fee", waiting.length === 3 && waiting[0]!.amountMinor === 200_000 && !("expectedFeeMinor" in waiting[0]!)
   && waiting[0]!.expectedOn === "2026-11-09" && waiting[0]!.invoice?.number === "IN-00001" && waiting[2]!.invoice === null, j(waiting));
 const sum = await psp.pspSummary(org, tabby.id);
-check("the summary: 3,300 in 3, the fees expected", sum.unsettledMinor === 330_000 && sum.unsettledCount === 3 && sum.expectedFeeMinor === waiting.reduce((a, l) => a + l.expectedFeeMinor, 0), j(sum));
+check("the summary: 3,300 in 3, no fee guessed", sum.unsettledMinor === 330_000 && sum.unsettledCount === 3 && !("expectedFeeMinor" in sum), j(sum));
 const every = await psp.allPspSummaries(org);
 const mine = every.find((a) => a.accountId === tabby.id);
-check("the dashboard's list: both PSP accounts and no bank, the one holding most first, same figures as its own summary", every.length === 2 && every[0] === mine && !!mine && mine.unsettledMinor === sum.unsettledMinor && mine.expectedFeeMinor === sum.expectedFeeMinor && mine.settlementAccountName === "ADCB" && !!mine.oldestDate && every[1]!.unsettledCount === 0 && every[1]!.oldestDate === null, j(every));
+check("the dashboard's list: both PSP accounts and no bank, the one holding most first, same figures as its own summary", every.length === 2 && every[0] === mine && !!mine && mine.unsettledMinor === sum.unsettledMinor && !("expectedFeeMinor" in mine) && mine.settlementAccountName === "ADCB" && !!mine.oldestDate && every[1]!.unsettledCount === 0 && every[1]!.oldestDate === null, j(every));
 const upTo = await psp.unsettledLines(org, tabby.id, { to: "2026-11-02" });
 check("…up to a day: only those", upTo.length === 1);
 
 step("4. A settlement");
 const pick = waiting.slice(0, 2).map((l) => l.id);
 check("more arriving than was settled: refused", /More arrived/.test(await errOf(() => psp.createSettlement(org, tabby.id, { lineIds: pick, date: "2026-11-10", receivedMinor: 300_001, reference: "", notes: "" }, USER))));
-const s = await psp.createSettlement(org, tabby.id, { lineIds: pick, date: "2026-11-10", receivedMinor: 282_000, reference: "UTR-9", notes: "" }, USER);
-check("PS-00001: 3,000 settled, 2,820 arrived, fee 180", s.number === "PS-00001" && s.grossMinor === 300_000 && s.receivedMinor === 282_000 && s.feeMinor === 18_000 && s.lineCount === 2 && s.bankAccountName === "ADCB", j(s));
+check("charges typed that aren't what was settled less what arrived: refused, nothing booked", /charges typed/.test(await errOf(() => psp.createSettlement(org, tabby.id, { lineIds: pick, date: "2026-11-10", receivedMinor: 282_000, feeMinor: 17_000, reference: "", notes: "" }, USER)))
+  && (await psp.listSettlements(org, tabby.id)).length === 0 && (await balance(tabby.id)) === before.tabby && (await psp.unsettledLines(org, tabby.id)).length === 3);
+const s = await psp.createSettlement(org, tabby.id, { lineIds: pick, date: "2026-11-10", receivedMinor: 282_000, feeMinor: 18_000, reference: "UTR-9", notes: "" }, USER);
+check("PS-00001: 3,000 settled, 2,820 arrived, its own charges 180", s.number === "PS-00001" && s.grossMinor === 300_000 && s.receivedMinor === 282_000 && s.feeMinor === 18_000 && s.lineCount === 2 && s.bankAccountName === "ADCB", j(s));
 check("ADCB +2,820; Tabby −3,000 (the 2,820 out, the 180 fee) — 300 left", (await balance(adcb.id)) === 1_282_000 && (await balance(tabby.id)) === 30_000, j({ adcb: await balance(adcb.id), tabby: await balance(tabby.id) }));
 const fee = await Expense.findById(s.expense!.id).lean<any>();
 check("the fee an expense: Bank Fees & Charges › Payment Gateway Fees, 180 with its 5% VAT split out, paid from Tabby, approved",
@@ -111,7 +127,10 @@ check("the fee an expense: Bank Fees & Charges › Payment Gateway Fees, 180 wit
   && String(fee.bankAccountId) === tabby.id && fee.status === "approved" && fee.source?.kind === "psp_settlement" && !!fee.bankTransactionId, j(fee));
 waiting = await psp.unsettledLines(org, tabby.id);
 check("only the counter money still waits", waiting.length === 1 && waiting[0]!.amountMinor === 30_000);
-check("listed with its expected fee", (await psp.listSettlements(org, tabby.id))[0]?.expectedFeeMinor === fee2000 + Math.round((100_000 * 0.055 + 100) * 1.05));
+const listed = (await psp.listSettlements(org, tabby.id))[0];
+check("listed with its own charges — no expected fee beside them", listed?.feeMinor === 18_000 && !!listed && !("expectedFeeMinor" in listed));
+const { pspChargesVatMinor } = await import("@delta/shared");
+check("the VAT inside charges: 180 at 5% holds 8.57; none in no charges, none at no rate", pspChargesVatMinor(18_000, 5) === 857 && pspChargesVatMinor(0, 5) === 0 && pspChargesVatMinor(1_000, 0) === 0 && fee.taxMinor === 857);
 
 step("5. Refused while settled");
 check("settling a payment twice", /not Tabby's money waiting/.test(await errOf(() => psp.createSettlement(org, tabby.id, { lineIds: [pick[0]!], date: "2026-11-11", receivedMinor: 1_000, reference: "", notes: "" }, USER))));
@@ -130,6 +149,19 @@ check("all back: the balances, the payments waiting, the fee and transfer gone",
   && (await BankTransaction.countDocuments({ "settlement.id": new Types.ObjectId(s.id) })) === 0 && (await psp.listSettlements(org, tabby.id)).length === 0);
 const again = await psp.createSettlement(org, tabby.id, { lineIds: pick, date: "2026-11-10", receivedMinor: 300_000, reference: "", notes: "" }, USER);
 check("settled again with no fee: PS-00002, no expense", again.number === "PS-00002" && again.feeMinor === 0 && again.expense === null && (await balance(tabby.id)) === 30_000, j(again));
+
+step("7. Each settlement has its own charges");
+// The same account, another settlement, other charges: nothing carried over from the one before, nothing from a rate.
+const counter = (await psp.unsettledLines(org, tabby.id)).map((l) => l.id);
+const third = await psp.createSettlement(org, tabby.id, { lineIds: counter, date: "2026-11-12", receivedMinor: 28_766, feeMinor: 1_234, reference: "UTR-12", notes: "" }, USER);
+const thirdFee = await Expense.findById(third.expense!.id).lean<any>();
+check("PS-00003: 300 settled, charges 12.34 as typed — where PS-00002 had none", third.number === "PS-00003" && third.grossMinor === 30_000 && third.feeMinor === 1_234 && third.receivedMinor === 28_766
+  && thirdFee?.totalMinor === 1_234 && thirdFee.taxMinor === 1_234 - Math.round(1_234 / 1.05) && (await balance(tabby.id)) === 0, j(third));
+check("the three settlements, each with what it was charged", (await psp.listSettlements(org, tabby.id)).map((x) => `${x.number}:${x.feeMinor}`).sort().join() === "PS-00002:0,PS-00003:1234", j(await psp.listSettlements(org, tabby.id)));
+// An older screen sends no charges, only what arrived: taken as before — the charges are the rest.
+await psp.deleteSettlement(org, tabby.id, third.id);
+const olderScreen = await psp.createSettlement(org, tabby.id, { lineIds: counter, date: "2026-11-12", receivedMinor: 29_000, reference: "", notes: "" }, USER);
+check("what arrived alone (an older screen): the charges are the rest", olderScreen.feeMinor === 1_000 && olderScreen.receivedMinor === 29_000, j(olderScreen));
 
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

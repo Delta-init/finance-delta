@@ -28,10 +28,11 @@ export function PspUnsettledCard() {
   if (isError || (!isLoading && !data?.length)) return null;
 
   // Totals per currency — a dirham PSP and a rupee PSP don't add up.
-  const totals = new Map<string, { unsettled: number; fee: number; late: number; count: number }>();
+  // No "fee ≈" any more (2026-11-14): a provider's charges are no longer a fixed rate — each settlement says its own.
+  const totals = new Map<string, { unsettled: number; late: number; count: number }>();
   for (const a of data ?? []) {
-    const t = totals.get(a.currency) ?? { unsettled: 0, fee: 0, late: 0, count: 0 };
-    t.unsettled += a.unsettledMinor; t.fee += a.expectedFeeMinor; t.late += a.lateMinor; t.count += a.unsettledCount;
+    const t = totals.get(a.currency) ?? { unsettled: 0, late: 0, count: 0 };
+    t.unsettled += a.unsettledMinor; t.late += a.lateMinor; t.count += a.unsettledCount;
     totals.set(a.currency, t);
   }
 
@@ -48,7 +49,7 @@ export function PspUnsettledCard() {
               <div key={cur}>
                 <div className="text-lg font-semibold tabular-nums">{formatMoney(t.unsettled, cur)}</div>
                 <div className="text-xs text-foreground-muted">
-                  {t.count} payment{t.count === 1 ? "" : "s"} · fee ≈ {formatMoney(t.fee, cur)}
+                  {t.count} payment{t.count === 1 ? "" : "s"} · before charges
                   {t.late > 0 && <span className="text-danger"> · {formatMoney(t.late, cur)} late</span>}
                 </div>
               </div>
@@ -77,7 +78,7 @@ export function PspUnsettledCard() {
                   <div className="text-right">
                     <div className="font-semibold tabular-nums">{formatMoney(a.unsettledMinor, a.currency)}</div>
                     <div className="text-xs text-foreground-muted">
-                      {a.unsettledCount} payment{a.unsettledCount === 1 ? "" : "s"} · fee ≈ {formatMoney(a.expectedFeeMinor, a.currency)}
+                      {a.unsettledCount} payment{a.unsettledCount === 1 ? "" : "s"}
                     </div>
                   </div>
                 )}

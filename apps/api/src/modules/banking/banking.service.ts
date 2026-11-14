@@ -67,7 +67,7 @@ function accountToDTO(doc: BankAccountDoc): BankAccountDTO {
 function pspDTO(p: Record<string, unknown> | null | undefined): BankAccountDTO["psp"] {
   if (!p?.settlementAccountId) return null;
   return {
-    provider: String(p.provider ?? ""), feePct: Number(p.feePct ?? 0), fixedFeeMinor: Number(p.fixedFeeMinor ?? 0),
+    provider: String(p.provider ?? ""),
     feeVatPct: Number(p.feeVatPct ?? 0), settlementAccountId: String(p.settlementAccountId),
     settlementAccountName: String(p.settlementAccountName ?? ""), settlementDays: Number(p.settlementDays ?? 0),
     startDate: dateOnly(p.startDate as Date),
@@ -84,7 +84,7 @@ async function pspToStore(
   input: CreateBankAccountInput["psp"], had: { startDate?: Date } | null | undefined,
 ): Promise<Record<string, unknown> | null> {
   if (type !== "psp") return null;
-  if (!input) throw new AppError("VALIDATION_ERROR", "A PSP account needs its settings — what it charges and where it settles");
+  if (!input) throw new AppError("VALIDATION_ERROR", "A PSP account needs its settings — where it settles");
   if (!Types.ObjectId.isValid(input.settlementAccountId) || input.settlementAccountId === selfId) {
     throw new AppError("VALIDATION_ERROR", "Choose another account for it to settle into");
   }
@@ -95,7 +95,7 @@ async function pspToStore(
   if (to.accountType === "psp") throw new AppError("VALIDATION_ERROR", "A PSP settles into a bank account, not another PSP");
   if (to.currency !== currency) throw new AppError("VALIDATION_ERROR", `${to.accountName} is in ${to.currency}, this account in ${currency} — it settles into an account in ${currency}`);
   return {
-    provider: input.provider ?? "", feePct: input.feePct ?? 0, fixedFeeMinor: input.fixedFeeMinor ?? 0, feeVatPct: input.feeVatPct ?? 0,
+    provider: input.provider ?? "", feeVatPct: input.feeVatPct ?? 0,
     settlementAccountId: new Types.ObjectId(input.settlementAccountId), settlementAccountName: to.accountName,
     settlementDays: input.settlementDays ?? 7,
     startDate: input.startDate ? new Date(input.startDate) : had?.startDate ?? new Date(new Date().toISOString().slice(0, 10)),

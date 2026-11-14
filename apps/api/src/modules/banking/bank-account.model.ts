@@ -30,8 +30,8 @@ const bankAccountSchema = new Schema(
       type: new Schema(
         {
           provider: { type: String, default: "" },
-          feePct: { type: Number, default: 0 },
-          fixedFeeMinor: { type: Number, default: 0 },
+          // No fee rate here since 2026-11-14 — each settlement says its own charges. An account set up before
+          // may still hold feePct / fixedFeeMinor in the database; nothing reads them.
           feeVatPct: { type: Number, default: 0 },
           settlementAccountId: { type: Types.ObjectId, required: true },
           settlementAccountName: { type: String, default: "" },

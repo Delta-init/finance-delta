@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import {
-  EXPENSE_DEFAULTS, expectedPspFeeMinor,
+  EXPENSE_DEFAULTS, pspChargesVatMinor,
   type CreatePspSettlementInput, type PspAccountSummary, type PspSettlementDTO, type PspSummary, type PspUnsettledLine,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
@@ -15,18 +15,19 @@ import { PspSettlement, type PspSettlementDoc } from "./psp-settlement.model";
  * on, a settlement records it:
  *   - the money-in lines it covers, marked settled (they no longer change but with the settlement);
  *   - a transfer of what arrived, from the PSP account to the bank it settles into;
- *   - the fee — what was settled less what arrived — as an expense, Bank Fees & Charges › Payment Gateway Fees, paid
- *     from the PSP account (VAT split out at the account's rate), so it reaches the P&L.
- * The PSP account ends with nothing left of those payments. The account's fee settings only say what each payment is
- * expected to cost; what arrived decides the fee booked. Deleting a settlement undoes all of it — not once a bank
- * statement was reconciled against its transfer or fee.
+ *   - its charges — what was settled less what arrived — as an expense, Bank Fees & Charges › Payment Gateway Fees,
+ *     paid from the PSP account (VAT split out at the account's rate), so it reaches the P&L.
+ * The PSP account ends with nothing left of those payments. Each settlement has its own charges (the user,
+ * 2026-11-14): no rate is kept on the account any more, nothing is guessed ahead, and what is booked is only what
+ * that settlement says. Deleting a settlement undoes all of it — not once a bank statement was reconciled against its
+ * transfer or charges.
  */
 
 const oid = (v: unknown) => new Types.ObjectId(String(v));
 const day = (d: unknown) => new Date(d as Date).toISOString().slice(0, 10);
 const DAY_MS = 86_400_000;
 
-type Psp = { provider: string; feePct: number; fixedFeeMinor: number; feeVatPct: number; settlementAccountId: Types.ObjectId; settlementDays: number; startDate: Date };
+type Psp = { provider: string; feeVatPct: number; settlementAccountId: Types.ObjectId; settlementDays: number; startDate: Date };
 type PspAccount = { _id: Types.ObjectId; accountName: string; currency: string; isActive?: boolean; accountType: string; psp: Psp | null };
 
 async function pspAccount(orgId: string, id: string): Promise<PspAccount & { psp: Psp }> {
@@ -52,7 +53,6 @@ function lineOf(tx: any, psp: Psp, now: number): PspUnsettledLine {
   return {
     id: String(tx._id), date: day(tx.date), description: tx.description ?? "", reference: tx.reference ?? "",
     amountMinor: tx.amountMinor, invoice: inv ? { id: String(inv.referenceId), number: String(inv.referenceNumber) } : null,
-    expectedFeeMinor: expectedPspFeeMinor(tx.amountMinor, psp),
     expectedOn: day(expected),
     // Late once the day it was due has gone by (Dubai's day, as the rest of finance counts days).
     late: expected.getTime() + DAY_MS <= now + 4 * 3_600_000,
@@ -69,14 +69,13 @@ export async function unsettledLines(orgId: string, accountId: string, opts: { t
   return lines.map((tx) => lineOf(tx, acc.psp, now));
 }
 
-/** What a PSP account holds unsettled, what it should cost, and how much of it is late. */
+/** What a PSP account holds unsettled, and how much of it is late. */
 export async function pspSummary(orgId: string, accountId: string): Promise<PspSummary> {
   const lines = await unsettledLines(orgId, accountId);
   const late = lines.filter((l) => l.late);
   return {
     unsettledMinor: lines.reduce((a, l) => a + l.amountMinor, 0),
     unsettledCount: lines.length,
-    expectedFeeMinor: lines.reduce((a, l) => a + l.expectedFeeMinor, 0),
     lateCount: late.length,
     lateMinor: late.reduce((a, l) => a + l.amountMinor, 0),
   };
@@ -98,7 +97,6 @@ export async function allPspSummaries(orgId: string): Promise<PspAccountSummary[
         accountId: String(a._id), accountName: a.accountName, provider: a.psp?.provider ?? "", currency: a.currency,
         settlementAccountName: a.psp?.settlementAccountName ?? "",
         unsettledMinor: lines.reduce((s, l) => s + l.amountMinor, 0), unsettledCount: lines.length,
-        expectedFeeMinor: lines.reduce((s, l) => s + l.expectedFeeMinor, 0),
         lateCount: late.length, lateMinor: late.reduce((s, l) => s + l.amountMinor, 0),
         oldestDate: lines[0]?.date ?? null,
       });
@@ -111,7 +109,7 @@ function toDTO(d: PspSettlementDoc): PspSettlementDTO {
   return {
     id: String(d._id), number: d.number, date: day(d.date), pspAccountId: String(d.pspAccountId), pspAccountName: d.pspAccountName,
     bankAccountId: String(d.bankAccountId), bankAccountName: d.bankAccountName, currency: d.currency, lineCount: (d.lineIds ?? []).length,
-    grossMinor: d.grossMinor, receivedMinor: d.receivedMinor, feeMinor: d.feeMinor, expectedFeeMinor: d.expectedFeeMinor ?? 0,
+    grossMinor: d.grossMinor, receivedMinor: d.receivedMinor, feeMinor: d.feeMinor,
     expense: d.expenseId ? { id: String(d.expenseId), number: d.expenseNumber ?? "" } : null,
     reference: d.reference ?? "", notes: d.notes ?? "", createdByName: d.createdByName ?? "",
     createdAt: new Date(d.createdAt).toISOString(),
@@ -124,8 +122,9 @@ export async function listSettlements(orgId: string, accountId: string): Promise
 }
 
 /**
- * The provider paid these payments on: the transfer of what arrived, the fee as an expense, the lines marked settled.
- * Refused for a line that is not this account's unsettled money in, or an amount more than what is settled.
+ * The provider paid these payments on: the transfer of what arrived, this settlement's own charges as an expense, the
+ * lines marked settled. Refused for a line that is not this account's unsettled money in, an amount more than what is
+ * settled, or charges typed that are not what was settled less what arrived.
  */
 export async function createSettlement(
   orgId: string, accountId: string, input: CreatePspSettlementInput, actor: { userId: string; name: string },
@@ -144,7 +143,10 @@ export async function createSettlement(
   const gross = lines.reduce((a, l) => a + l.amountMinor, 0);
   if (input.receivedMinor > gross) throw new AppError("VALIDATION_ERROR", `More arrived than the payments picked come to — pick the rest of what was settled`);
   const fee = gross - input.receivedMinor;
-  const expectedFee = lines.reduce((a, l) => a + expectedPspFeeMinor(l.amountMinor, acc.psp), 0);
+  // The charges as they were typed must be what is about to be booked — else the screen was looking at other payments.
+  if (input.feeMinor !== undefined && input.feeMinor !== fee) {
+    throw new AppError("CONFLICT", "The charges typed don't come to what was settled less what arrived — refresh and record it again");
+  }
 
   const { nextNumber } = await import("../sequence/sequence.service");
   const number = await nextNumber(orgId, "psp_settlement", "PS-");
@@ -180,7 +182,7 @@ export async function createSettlement(
   const doc = await PspSettlement.create({
     _id: id, organizationId: oid(orgId), number, date: new Date(input.date), pspAccountId: acc._id, pspAccountName: acc.accountName,
     bankAccountId: bank._id, bankAccountName: bank.accountName, currency: acc.currency, lineIds: lines.map((l) => l._id),
-    grossMinor: gross, receivedMinor: input.receivedMinor, feeMinor: fee, expectedFeeMinor: expectedFee,
+    grossMinor: gross, receivedMinor: input.receivedMinor, feeMinor: fee,
     transferId, expenseId: expense?.id ?? null, expenseNumber: expense?.number ?? "", reference: input.reference ?? "",
     notes: input.notes ?? "", createdById: Types.ObjectId.isValid(actor.userId) ? oid(actor.userId) : null, createdByName: actor.name,
   });
@@ -199,7 +201,7 @@ async function feeExpense(
   const { placeExpenseInBank } = await import("../expense/expense.service");
   const cat = await resolveExpenseCategory(orgId, EXPENSE_DEFAULTS.pspFee.category, EXPENSE_DEFAULTS.pspFee.subcategory);
   const vatPct = acc.psp.feeVatPct ?? 0;
-  const net = vatPct > 0 ? Math.round(s.fee / (1 + vatPct / 100)) : s.fee;
+  const net = s.fee - pspChargesVatMinor(s.fee, vatPct);
   const expenseNumber = await nextNumber(orgId, "expense", "EXP-");
   const paidOn = new Date(s.date);
   const doc = (await Expense.create({

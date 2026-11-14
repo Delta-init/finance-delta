@@ -19,7 +19,8 @@ const pspSettlementSchema = new Schema(
     grossMinor: { type: Number, required: true },
     receivedMinor: { type: Number, required: true },
     feeMinor: { type: Number, required: true },
-    /** What the account's settings said the fee would be. */
+    /** What the account's fixed rate guessed the fee would be — on settlements from before 2026-11-14, when the rate
+     *  was taken off the settings. Not written or shown any more. */
     expectedFeeMinor: { type: Number, default: 0 },
     transferId: { type: Schema.Types.ObjectId, default: null },
     expenseId: { type: Schema.Types.ObjectId, default: null },

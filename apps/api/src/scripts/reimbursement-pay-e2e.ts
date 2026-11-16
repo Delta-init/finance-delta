@@ -10,7 +10,10 @@
  *     notes — then HRMS is sent the expense number, date, method, amount and who paid;
  *   - HRMS not answering: the expense stays, the claim shows it, paying again resends — no second expense;
  *   - refusing: needs a reason; refused while an expense exists, or once voided paying is refused;
- *   - the record, Approvals (summary and list), an HRMS without the step (404: "needs updating"; counted as 0).
+ *   - the record, Approvals (summary and list), an HRMS without the step (404: "needs updating"; counted as 0);
+ *   - another amount than claimed (2026-11-16): less — the expense and HRMS get it; more — refused without a note;
+ *     an HRMS from before (no requestedAmount) — refused before any expense, paying as claimed still works; HRMS
+ *     answering with another figure is not taken as told.
  *
  * Run through scripts/reimbursement-pay-e2e.sh (throwaway mongod, no .env anywhere).
  */
@@ -49,7 +52,7 @@ const H2 = new Types.ObjectId().toString();  // a second linked one, in rupees
 const HDEPT = new Types.ObjectId().toString();
 const queue = new Map<string, Map<string, any>>([[H, new Map()], [H2, new Map()]]);
 const decided: any[] = [];
-const stand = { down: false, old: false, sent: [] as Array<{ id: string; path: string; body: any }> };
+const stand = { down: false, old: false, noAmounts: false, liar: false, sent: [] as Array<{ id: string; path: string; body: any }> };
 const claim = (org: string, id: string, x: Record<string, unknown> = {}) => {
   queue.get(org)!.set(id, {
     _id: id, title: `Claim ${id}`, category: "travel", amount: 85, currency: org === H2 ? "INR" : "AED", expenseDate: "2026-11-12", month: "2026-11",
@@ -57,7 +60,7 @@ const claim = (org: string, id: string, x: Record<string, unknown> = {}) => {
     employee: { _id: `e-${id}`, name: "Sami Staff", employeeCode: "EMP-014", designation: "Agent", department: { _id: HDEPT, name: "Sales" } },
     user: { name: "Sami Staff", email: "staff@e2e.test" }, hrReviewedBy: { name: "Hana HR" }, hrReviewedAt: "2026-11-15T09:00:00.000Z", hrNote: "",
     createdAt: "2026-11-12T08:00:00.000Z", rejectedBy: null, financeRef: "", paidOn: null, paymentMethod: "", financeNote: "", financeReviewedBy: "",
-    financeReviewedAt: null, ...x,
+    financeReviewedAt: null, requestedAmount: null, ...x,
   });
 };
 const server = http.createServer((req, res) => {
@@ -71,7 +74,8 @@ const server = http.createServer((req, res) => {
     const q = queue.get(org);
     if (req.method === "GET" && url.pathname === "/api/v1/integrations/reimbursements/requests") {
       const status = url.searchParams.get("status");
-      if (!status) return send(200, { success: true, data: [...(q?.values() ?? [])] });
+      // An HRMS from before 2026-11-16 never says requestedAmount.
+      if (!status) return send(200, { success: true, data: [...(q?.values() ?? [])].map((r) => (stand.noAmounts ? (({ requestedAmount: _, ...rest }) => rest)(r) : r)) });
       const mine = decided.filter((d) => d.org === org).map((d) => d.row);
       return send(200, { success: true, data: status === "all" ? mine : mine.filter((r) => r.status === status) });
     }
@@ -83,8 +87,11 @@ const server = http.createServer((req, res) => {
       const row = q?.get(m[1]!);
       if (!row) return send(404, { success: false, message: "Claim not found" });
       q!.delete(m[1]!);
+      const paidAt = body.amount != null ? Number(body.amount) : row.amount;
+      if (m[2] === "approve" && stand.noAmounts && paidAt !== row.amount) return send(409, { success: false, message: "This claim is for another amount" });
+      const changed = m[2] === "approve" && !stand.liar && paidAt !== row.amount ? { amount: paidAt, requestedAmount: row.amount } : {};
       const done = m[2] === "approve"
-        ? { ...row, status: "paid", financeRef: body.reference, paidOn: body.paidOn, paymentMethod: body.method, financeNote: body.note ?? "", financeReviewedBy: body.by ?? "", financeReviewedAt: new Date().toISOString() }
+        ? { ...row, ...changed, status: "paid", financeRef: body.reference, paidOn: body.paidOn, paymentMethod: body.method, financeNote: body.note ?? "", financeReviewedBy: body.by ?? "", financeReviewedAt: new Date().toISOString() }
         : { ...row, status: "rejected", rejectedBy: "finance", financeNote: body.note, financeReviewedBy: body.by ?? "", financeReviewedAt: new Date().toISOString() };
       decided.unshift({ org, row: done });
       return send(200, { success: true, data: done });
@@ -211,7 +218,37 @@ const noRight = await approvals.approvalSummary({ ...auth, permissions: ["invoic
 check("not counted for somebody without expense:approve", !noRight.groups.some((g) => g.type === "reimbursement"));
 
 /* ── 7 ── */
-step("7. An HRMS without the step");
+step("7. Another amount than claimed");
+claim(H, "less", { title: "Hotel for the expo", amount: 400 });
+const less = await pay(H, "less", { amountMinor: 30_000 });
+let le = (await expensesOf(H, "less"))[0];
+check("paid less: the expense is 300", less.expense.totalMinor === 30_000 && le?.totalMinor === 30_000, j(le?.totalMinor));
+check("…its notes say 300 paid of 400 claimed", /Paid AED 300\.00 of AED 400\.00 claimed — changed by finance/.test(le?.notes ?? ""), le?.notes);
+check("…HRMS was sent 300, and is told", sentFor("less")[0]?.body.amount === 300 && !!le?.source?.deliveredAt, j(sentFor("less")));
+check("…the record shows 300 of 400 claimed", (await svc.listHistory(ORG, "paid")).some((r) => r._id === "less" && r.amount === 300 && r.requestedAmount === 400));
+claim(H, "more", { title: "Parking at the venue", amount: 30 });
+check("paid more with no note: refused", /needs a note saying why/.test(await refusal(pay(H, "more", { amountMinor: 3_500 }))));
+check("…nothing recorded, HRMS not told", (await expensesOf(H, "more")).length === 0 && sentFor("more").length === 0);
+await pay(H, "more", { amountMinor: 3_500, note: "The ticket was 35" });
+check("with a note: expense 35, HRMS sent 35 and the note", (await expensesOf(H, "more"))[0]?.totalMinor === 3_500 && sentFor("more")[0]?.body.amount === 35 && sentFor("more")[0]?.body.note === "The ticket was 35", j(sentFor("more")));
+claim(H, "same", { title: "Typed the same", amount: 50 });
+await pay(H, "same", { amountMinor: 5_000 });
+check("the amount claimed typed in: paid as claimed", (await expensesOf(H, "same"))[0]?.totalMinor === 5_000 && !/changed by finance/.test((await expensesOf(H, "same"))[0]?.notes ?? ""));
+stand.noAmounts = true;
+claim(H, "old", { title: "Before the update", amount: 80 });
+check("an HRMS from before: a changed amount is refused, saying HRMS needs updating", /UNAVAILABLE HRMS needs updating/.test(await refusal(pay(H, "old", { amountMinor: 6_000 }))));
+check("…no expense, HRMS not told", (await expensesOf(H, "old")).length === 0 && sentFor("old").length === 0);
+await pay(H, "old");
+check("…paying as claimed still works", (await expensesOf(H, "old"))[0]?.totalMinor === 8_000 && sentFor("old").length === 1);
+stand.noAmounts = false;
+stand.liar = true;
+claim(H, "liar", { title: "Answered with another figure", amount: 90 });
+const lied = await refusal(pay(H, "liar", { amountMinor: 7_000 }));
+check("HRMS answering with another figure: not taken as told", /HRMS recorded AED 90\.00/.test(lied) && !(await expensesOf(H, "liar"))[0]?.source?.deliveredAt, lied);
+stand.liar = false;
+
+/* ── 8 ── */
+step("8. An HRMS without the step");
 stand.old = true;
 approvals.forgetReimbursements(H); approvals.forgetReimbursements(H2);
 check("the page says HRMS needs updating", /UNAVAILABLE HRMS needs updating/.test(await refusal(svc.listWaiting(ORG))));

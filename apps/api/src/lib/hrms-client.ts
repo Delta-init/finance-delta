@@ -426,8 +426,13 @@ export interface HrmsReimbursement {
   title: string;
   /** HRMS's category: travel, food, accommodation, medical, communication, fuel, supplies, other. */
   category: string;
-  /** Major units, as claimed — paid at exactly this. */
+  /** Major units: as claimed — or, once finance paid a different amount, what was paid. */
   amount: number;
+  /**
+   * What was claimed, when finance paid a different amount (2026-11-16); null when paid as claimed. Absent from an
+   * HRMS from before then, which can't take a changed amount.
+   */
+  requestedAmount?: number | null;
   /** The employee's pay currency. */
   currency: string;
   /** YYYY-MM-DD, when it was spent. */
@@ -715,7 +720,8 @@ export const hrmsClient = {
     return (await request<HrmsReimbursement[]>("GET", "/reimbursements/requests", { query: { organizationId, status } })).data;
   },
 
-  /** Paid: HRMS marks the claim Paid with the expense number and tells the employee. `amount` is checked against the claim. */
+  /** Paid: HRMS marks the claim Paid with the expense number and tells the employee. `amount`: what was paid — HRMS keeps
+   *  the claimed one when it differs (an HRMS from before 2026-11-16 refuses a different one). */
   async payReimbursement(organizationId: string, id: string, opts: { reference: string; paidOn: string; method: string; amount: number; note?: string; by?: string }) {
     return (
       await request<HrmsReimbursement>("POST", `/reimbursements/requests/${id}/approve`, {

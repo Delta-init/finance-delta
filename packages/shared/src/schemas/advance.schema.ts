@@ -55,10 +55,11 @@ export type RejectOneTimePaymentBody = RejectAdvanceBody;
 
 /**
  * An employee's reimbursement claim HR approved in HRMS, paid by finance directly (the user, 2026-11-16: "employee
- * request => HR approval => finance approval (paid status)"). Approving pays it: a paid expense, the amount claimed —
- * not changed here — and HRMS shows the claim Paid. Refusing needs a reason; the employee sees it.
+ * request => HR approval => finance approval (paid status)"). Approving pays it: a paid expense, and HRMS shows the
+ * claim Paid. `amountMinor`: what was paid when it isn't what was claimed ("finance can edit the amount… it will show
+ * in HRMS also") — more than claimed needs a note. Refusing needs a reason; the employee sees it.
  */
-export const payReimbursementSchema = approveAdvanceSchema.omit({ amountMinor: true });
+export const payReimbursementSchema = approveAdvanceSchema;
 export type PayReimbursementInput = z.infer<typeof payReimbursementSchema>;
 export type PayReimbursementBody = z.input<typeof payReimbursementSchema>;
 export const rejectReimbursementSchema = z.object({

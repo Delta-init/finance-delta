@@ -13,8 +13,10 @@ export interface ReimbursementClaim {
   title: string;
   /** HRMS's category: travel, food, accommodation, medical, communication, fuel, supplies, other. */
   category: string;
-  /** Major units, as claimed — paid at exactly this. */
+  /** Major units: as claimed — or, once finance paid a different amount, what was paid. */
   amount: number;
+  /** What was claimed, when finance paid a different amount; null when as claimed. Absent from an older HRMS. */
+  requestedAmount?: number | null;
   currency: string;
   expenseDate: string | null;
   month: string;

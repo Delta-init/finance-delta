@@ -18,7 +18,8 @@ import { forgetReimbursements } from "../approvals/approvals.service";
  * approval => finance approval (paid status)").
  *
  * The same shape as salary advances and one-time payments: read live from HRMS, nothing mirrored. "Approve and pay"
- * records a paid expense — the amount claimed, on the date and by the method finance gives — then tells HRMS, which
+ * records a paid expense — the amount claimed unless finance changes it (2026-11-16; more needs a note), on the date and
+ * by the method finance gives — then tells HRMS, which keeps the claimed amount beside the paid one and
  * shows the claim Paid with the expense number and tells the employee. If HRMS can't be told, approving again only
  * resends: no second expense. Such a claim never goes into a payslip. Refusing needs a reason the employee sees.
  */
@@ -128,9 +129,12 @@ async function requireRow(orgId: string, hrmsOrgId: string, id: string): Promise
   return row;
 }
 
-function notesFor(row: HrmsReimbursement, note: string): string {
+function notesFor(row: HrmsReimbursement, note: string, paidMinor: number): string {
+  const claimedMinor = Math.round(row.amount * 100);
+  const cur = (row.currency || "AED").toUpperCase();
   return [
     "Reimbursement claim approved in HRMS, paid by finance (not on the payslip).",
+    paidMinor !== claimedMinor ? `Paid ${cur} ${(paidMinor / 100).toFixed(2)} of ${cur} ${row.amount.toFixed(2)} claimed — changed by finance.` : "",
     row.employee?.name ? `Employee: ${row.employee.name}${row.employee.employeeCode ? ` (${row.employee.employeeCode})` : ""}` : "",
     `Claim: ${row.title} · ${row.category}${row.expenseDate ? ` · spent ${row.expenseDate}` : ""}`,
     row.description ? `Details: ${row.description}` : "",
@@ -150,8 +154,8 @@ async function makeExpense(orgId: string, userId: string, userName: string, hrms
   }
   const currency = (row.currency || "AED").toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new AppError("VALIDATION_ERROR", `The employee's currency "${row.currency}" is not a currency code.`);
-  // The amount claimed — not changed here (the user's choice, 2026-11-16).
-  const amountMinor = Math.round(row.amount * 100);
+  // What finance paid — the amount claimed unless changed (2026-11-16); checked in pay().
+  const amountMinor = input.amountMinor ?? Math.round(row.amount * 100);
   if (!(amountMinor > 0)) throw new AppError("VALIDATION_ERROR", "This claim has no amount.");
 
   const { netMinor, taxMinor, totalMinor } = computeExpenseTax(amountMinor, 0, false);
@@ -185,7 +189,7 @@ async function makeExpense(orgId: string, userId: string, userName: string, hrms
       paymentMethod: input.paymentMethod,
       reference: input.reference || "",
       departmentId: input.departmentId ? new Types.ObjectId(input.departmentId) : undefined,
-      notes: notesFor(row, input.note),
+      notes: notesFor(row, input.note, amountMinor),
       source: { kind: "hrms_reimbursement", key, hrmsOrgId, requestId: row._id, round: 0 },
     });
   } catch (err) {
@@ -209,20 +213,38 @@ export async function pay(orgId: string, userId: string, id: string, input: PayR
   if (expense?.status === "voided") {
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this claim and then voided. Refuse the claim instead.`);
   }
+  // A different amount than was claimed (2026-11-16): more needs a note, and HRMS must be one that keeps the claimed
+  // one — an older one refuses it — so nothing is recorded until it is.
+  const claimedMinor = Math.round(row.amount * 100);
+  const cur = (row.currency || "AED").toUpperCase();
+  if (!expense && input.amountMinor != null && input.amountMinor !== claimedMinor) {
+    if (input.amountMinor > claimedMinor && !input.note.trim()) {
+      throw new AppError("VALIDATION_ERROR", `Paying more than the ${cur} ${row.amount.toFixed(2)} claimed needs a note saying why.`);
+    }
+    if (!("requestedAmount" in row)) {
+      throw new AppError("UNAVAILABLE", "HRMS needs updating before a claim can be paid at a different amount. Pay the amount claimed, or wait for the update.");
+    }
+  }
   expense ??= await makeExpense(orgId, userId, user.name, input.hrmsOrgId, row, input);
+  // What the expense says was paid is what HRMS records — the same on a resend.
+  const paidMinor = expense.totalMinor;
   await placeExpenseInBank(orgId, expense._id);
 
   if (!expense.source?.deliveredAt) {
     try {
-      await hrmsClient.payReimbursement(input.hrmsOrgId, id, {
+      const answer = await hrmsClient.payReimbursement(input.hrmsOrgId, id, {
         reference: expense.expenseNumber,
         // What the expense says, so the two systems agree even on a resend.
         paidOn: expense.paidOn ? new Date(expense.paidOn).toISOString().slice(0, 10) : input.paidOn,
         method: expense.paymentMethod ?? input.paymentMethod,
-        amount: expense.totalMinor / 100,
+        amount: paidMinor / 100,
         note: input.note || undefined,
         by: user.name,
       });
+      const took = Math.round(Number(answer?.amount) * 100);
+      if (answer && Number.isFinite(took) && took !== paidMinor) {
+        throw new Error(`HRMS recorded ${cur} ${(took / 100).toFixed(2)}, not the ${(paidMinor / 100).toFixed(2)} paid — fix it in HRMS`);
+      }
     } catch (err) {
       const now = await Expense.findById(expense._id).select("source").lean();
       if (!now?.source?.deliveredAt) {

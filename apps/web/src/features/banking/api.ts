@@ -6,6 +6,7 @@ import type {
   UpdateBankAccountInput,
   BankAccount,
   BankTransaction,
+  BankTransactionSummary,
   ReconciliationSession,
   ReconciliationOpening,
   CreateBankTransactionInput,
@@ -103,6 +104,21 @@ export function useBankTransactions(accountId: string, params: QueryParams = {})
     queryFn: () => api.getList<BankTransaction>(`bank-accounts/${accountId}/transactions`, params),
     placeholderData: (prev) => prev,
     enabled: !!accountId,
+  });
+}
+
+/**
+ * The period's totals for the table's filters (2026-11-16): money in, out, net, and the account's balance at each end.
+ * Kept under the account's transactions, so anything that refreshes the list refreshes these. An API from before
+ * answers 404: the cards just don't show.
+ */
+export function useBankTransactionSummary(accountId: string, params: QueryParams, enabled: boolean) {
+  return useQuery({
+    queryKey: [...txKey(accountId), "summary", params],
+    queryFn: () => api.get<BankTransactionSummary>(`bank-accounts/${accountId}/transactions/summary${qs(params)}`),
+    placeholderData: (prev) => prev,
+    enabled: !!accountId && enabled,
+    retry: false,
   });
 }
 

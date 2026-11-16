@@ -406,6 +406,29 @@ export const bankTransactionSchema = z.object({
 });
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 
+/**
+ * An account's lines over a period (the user, 2026-11-16: "when we select a date range, that range's sum also shows
+ * in the stats"): money in and out among the lines the table's filters keep, and the account's own balance at the
+ * start and end of the period — whatever the other filters — worked out as the Balance column is.
+ */
+export interface BankTransactionSummary {
+  currency: string;
+  dateFrom: string | null;
+  dateTo: string | null;
+  count: number;
+  inMinor: number;
+  inCount: number;
+  /** Positive: what went out. */
+  outMinor: number;
+  outCount: number;
+  /** In − out. */
+  netMinor: number;
+  /** The balance before the period's first day — the opening balance when nothing came before. */
+  startBalanceMinor: number;
+  /** The balance after the period's last day (today's balance when there is no end). */
+  endBalanceMinor: number;
+}
+
 // ── Reconciliation ────────────────────────────────────────────────────────────
 
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A date is YYYY-MM-DD");

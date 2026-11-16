@@ -5,6 +5,7 @@ import type {
   UpdateBankAccountInput,
   BankAccount as BankAccountDTO,
   BankTransaction as BankTransactionDTO,
+  BankTransactionSummary,
   ReconciliationSession as ReconciliationSessionDTO,
   ReconciliationOpening,
   BankAccountQuery,
@@ -1044,12 +1045,9 @@ const TX_SORT: Record<string, string> = {
   createdAt: "createdAt",
 };
 
-export async function listTransactions(
-  orgId: string,
-  accountId: string,
-  query: BankTransactionQuery,
-): Promise<Paginated<BankTransactionDTO>> {
-  const { page, pageSize, sort, dir, q, status, dateFrom, dateTo, isReconciled, source, category, subcategory } = query;
+/** The lines the transactions table shows for these filters — its list, its export and its period totals. */
+async function transactionFilter(orgId: string, accountId: string, query: BankTransactionQuery): Promise<Record<string, unknown>> {
+  const { q, status, dateFrom, dateTo, isReconciled, source, category, subcategory } = query;
   const filter: Record<string, unknown> = {
     organizationId: new Types.ObjectId(orgId),
     accountId: new Types.ObjectId(accountId),
@@ -1078,6 +1076,16 @@ export async function listTransactions(
     and.push({ $or: [own, { _id: { $in: lines } }] });
   }
   if (and.length) filter.$and = and;
+  return filter;
+}
+
+export async function listTransactions(
+  orgId: string,
+  accountId: string,
+  query: BankTransactionQuery,
+): Promise<Paginated<BankTransactionDTO>> {
+  const { page, pageSize, sort, dir } = query;
+  const filter = await transactionFilter(orgId, accountId, query);
 
   const [docs, total] = await Promise.all([
     BankTransaction.find(filter)
@@ -1100,6 +1108,59 @@ export async function listTransactions(
   return {
     data: await withExpenseCategories(orgId, (docs as unknown as BankTransactionDoc[]).map(txToDTO)),
     meta: pageMeta(total, page, pageSize),
+  };
+}
+
+/**
+ * The period's totals (the user, 2026-11-16): money in and out among the lines these filters keep, and the account's
+ * balance before the first day and after the last — the running balance of the last line by then, in the Balance
+ * column's order (date, then insertion), or the opening balance when there is none. With no other filter, start + net
+ * is the end.
+ */
+export async function transactionSummary(orgId: string, accountId: string, query: BankTransactionQuery): Promise<BankTransactionSummary> {
+  if (!Types.ObjectId.isValid(accountId)) throw new AppError("NOT_FOUND", "Bank account not found");
+  const org = new Types.ObjectId(orgId), acc = new Types.ObjectId(accountId);
+  const account = await BankAccount.findOne({ _id: acc, organizationId: org }).select("openingBalanceMinor currency").lean<{ openingBalanceMinor?: number; currency?: string }>();
+  if (!account) throw new AppError("NOT_FOUND", "Bank account not found");
+  const filter = await transactionFilter(orgId, accountId, query);
+  const day = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+  const from = day(query.dateFrom), to = day(query.dateTo);
+
+  const balanceBy = async (date: Record<string, Date> | null) => {
+    const last = await BankTransaction.findOne({ organizationId: org, accountId: acc, ...(date ? { date } : {}) })
+      .sort({ date: -1, createdAt: -1, _id: -1 }).select("runningBalanceMinor").lean<{ runningBalanceMinor?: number }>();
+    return last?.runningBalanceMinor ?? account.openingBalanceMinor ?? 0;
+  };
+  const [sums, startBalanceMinor, endBalanceMinor] = await Promise.all([
+    BankTransaction.aggregate<{ count: number; inMinor: number; inCount: number; outMinor: number; outCount: number }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          inMinor: { $sum: { $cond: [{ $gt: ["$amountMinor", 0] }, "$amountMinor", 0] } },
+          inCount: { $sum: { $cond: [{ $gt: ["$amountMinor", 0] }, 1, 0] } },
+          outMinor: { $sum: { $cond: [{ $lt: ["$amountMinor", 0] }, { $multiply: ["$amountMinor", -1] }, 0] } },
+          outCount: { $sum: { $cond: [{ $lt: ["$amountMinor", 0] }, 1, 0] } },
+        },
+      },
+    ]),
+    from ? balanceBy({ $lt: new Date(`${from}T00:00:00.000Z`) }) : Promise.resolve(account.openingBalanceMinor ?? 0),
+    balanceBy(to ? { $lte: new Date(`${to}T23:59:59.999Z`) } : null),
+  ]);
+  const s = sums[0] ?? { count: 0, inMinor: 0, inCount: 0, outMinor: 0, outCount: 0 };
+  return {
+    currency: String(account.currency ?? "AED"),
+    dateFrom: from,
+    dateTo: to,
+    count: s.count,
+    inMinor: s.inMinor,
+    inCount: s.inCount,
+    outMinor: s.outMinor,
+    outCount: s.outCount,
+    netMinor: s.inMinor - s.outMinor,
+    startBalanceMinor,
+    endBalanceMinor,
   };
 }
 

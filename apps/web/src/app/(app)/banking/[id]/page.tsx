@@ -48,6 +48,7 @@ import { ApiError } from "@/lib/api";
 import {
   useBankAccount,
   useBankTransactions,
+  useBankTransactionSummary,
   useReconciliations,
   useExcludeTransaction,
   useMarkDuplicate,
@@ -71,6 +72,8 @@ import { useCan } from "@/lib/use-can";
 import { DateField } from "@/components/ui/date-field";
 import { MatchExpenseDialog } from "@/features/banking/MatchExpenseDialog";
 import { toDmy } from "@/lib/dates";
+import { ExportButton } from "@/components/ui/export-button";
+import { fetchAllRows, type ExportColumn } from "@/lib/export";
 
 const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>> = {
   unmatched: "warning",
@@ -78,6 +81,25 @@ const STATUS_TONE: Record<BankTransactionStatus, NonNullable<BadgeProps["tone"]>
   excluded: "neutral",
   duplicate: "danger",
 };
+
+/** One exported line — a transaction, or the Total under them (2026-11-16). */
+type ExportRow = { tx: BankTransaction; total?: never } | { tx?: never; total: { count: number; inMinor: number; outMinor: number } };
+
+const EXPORT_COLUMNS = (currency: string): ExportColumn<ExportRow>[] => [
+  { header: "Date", value: (r) => (r.tx ? toDmy(r.tx.date) : "") },
+  { header: "Description", value: (r) => (r.tx ? r.tx.description : `Total — ${r.total.count} line${r.total.count === 1 ? "" : "s"}`) },
+  { header: "Reference", value: (r) => r.tx?.reference ?? "" },
+  { header: "Status", value: (r) => (r.tx ? STATUS_LABELS[r.tx.status] : "") },
+  { header: "Source", value: (r) => (r.tx ? (r.tx.source === "import" ? "Imported" : "Manual") : "") },
+  { header: `In (${currency})`, value: (r) => (r.tx ? (r.tx.amountMinor > 0 ? r.tx.amountMinor / 100 : "") : r.total.inMinor / 100) },
+  { header: `Out (${currency})`, value: (r) => (r.tx ? (r.tx.amountMinor < 0 ? -r.tx.amountMinor / 100 : "") : r.total.outMinor / 100) },
+  { header: `Balance (${currency})`, value: (r) => (r.tx ? r.tx.runningBalanceMinor / 100 : "") },
+  { header: "Category", value: (r) => r.tx?.category?.name ?? "" },
+  { header: "Subcategory", value: (r) => r.tx?.category?.subcategoryName ?? "" },
+  { header: "Linked to", value: (r) => (r.tx ? r.tx.matches.map((m) => m.referenceNumber).filter(Boolean).join(" ") : "") },
+  { header: "Reconciled", value: (r) => (r.tx?.isReconciled ? "yes" : "") },
+  { header: "Notes", value: (r) => r.tx?.notes ?? "" },
+];
 
 const STATUS_LABELS: Record<BankTransactionStatus, string> = {
   unmatched: "Unmatched",
@@ -130,6 +152,19 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
   });
 
   const hasFilters = status !== "all" || !!dateFrom || !!dateTo || source !== "all" || !!t.q;
+
+  // The table's filters without its paging — what Export and the period's totals read (2026-11-16).
+  const filterParams = {
+    q: t.baseParams.q,
+    status: status === "all" ? undefined : status,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+    source: source === "all" ? undefined : source,
+  };
+  const hasRange = !!dateFrom || !!dateTo;
+  const { data: period, isError: periodMissing } = useBankTransactionSummary(id, filterParams, hasRange);
+  const narrowed = status !== "all" || source !== "all" || !!t.q;
+  const rangeLabel = dateFrom && dateTo ? `${toDmy(dateFrom)} – ${toDmy(dateTo)}` : dateFrom ? `From ${toDmy(dateFrom)}` : `Up to ${toDmy(dateTo)}`;
 
   async function handleTxAction(
     action: () => Promise<unknown>,
@@ -337,6 +372,45 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
+      {/* The picked dates' totals (the user, 2026-11-16: "when we select a date range, that range's sum also shows in
+          the stats"). In, out and net follow every filter; the balances are the account's own at each end. */}
+      {hasRange && !periodMissing && (account.accountType === "petty_cash" || tab !== "reconciliations") && (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-foreground">
+            {rangeLabel}
+            <span className="ml-2 font-normal text-foreground-muted">
+              · {period ? `${period.count} transaction${period.count === 1 ? "" : "s"}` : "…"}{narrowed ? " matching your filters" : ""}
+            </span>
+          </p>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Money in</p>
+              <MoneyDisplay minor={period?.inMinor ?? 0} currency={account.currency} className="mt-1 text-xl font-semibold text-success" />
+              <p className="text-xs text-foreground-subtle mt-1">{period ? `${period.inCount} line${period.inCount === 1 ? "" : "s"}` : "…"}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Money out</p>
+              <MoneyDisplay minor={period?.outMinor ?? 0} currency={account.currency} className="mt-1 text-xl font-semibold text-danger" />
+              <p className="text-xs text-foreground-subtle mt-1">{period ? `${period.outCount} line${period.outCount === 1 ? "" : "s"}` : "…"}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Net</p>
+              <MoneyDisplay minor={period?.netMinor ?? 0} currency={account.currency}
+                className={`mt-1 text-xl font-semibold ${(period?.netMinor ?? 0) < 0 ? "text-danger" : "text-foreground"}`} />
+              <p className="text-xs text-foreground-subtle mt-1">In − out</p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Balance</p>
+              <MoneyDisplay minor={period?.endBalanceMinor ?? 0} currency={account.currency}
+                className={`mt-1 text-xl font-semibold ${(period?.endBalanceMinor ?? 0) < 0 ? "text-danger" : "text-foreground"}`} />
+              <p className="text-xs text-foreground-subtle mt-1">
+                {period ? <>from <MoneyDisplay minor={period.startBalanceMinor} currency={account.currency} /> at the start</> : "…"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* A tin is kept as a cash book, not read as a bank statement: oldest
           first, money in and out in their own columns, balance carried down.
           The generic list stays below it for searching and reconciling. */}
@@ -432,6 +506,25 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
         <Button variant="outline" size="sm" onClick={() => openTransfer(null)}>
           <ArrowLeftRight className="h-4 w-4" /> Transfer
         </Button>
+        {/* Every line the filters keep, not just this page, with a Total line under them (2026-11-16). */}
+        <ExportButton<ExportRow>
+          resource={`bank-accounts/${id}/transactions`}
+          formats={["excel", "pdf", "csv"]}
+          columns={EXPORT_COLUMNS(account.currency)}
+          filename={`bank-${account.accountName.replace(/[^a-zA-Z0-9._-]/g, "-")}${dateFrom ? `-${dateFrom}` : ""}${dateTo ? `-to-${dateTo}` : ""}`}
+          title={`${account.accountName} — ${hasRange ? rangeLabel : "all transactions"}`}
+          disabled={(txData?.meta.total ?? 0) === 0}
+          fetchRows={async () => {
+            const lines = await fetchAllRows<BankTransaction>(`bank-accounts/${id}/transactions`, { ...filterParams, sort: t.baseParams.sort, dir: t.baseParams.dir });
+            if (!lines.length) return [];
+            const total = {
+              count: lines.length,
+              inMinor: lines.reduce((n, l) => n + (l.amountMinor > 0 ? l.amountMinor : 0), 0),
+              outMinor: lines.reduce((n, l) => n + (l.amountMinor < 0 ? -l.amountMinor : 0), 0),
+            };
+            return [...lines.map((tx): ExportRow => ({ tx })), { total }];
+          }}
+        />
 
         {hasFilters && (
           <Button

@@ -43,6 +43,12 @@ export const listTransactions = asyncHandler(async (req, res) => {
   ok(res, result.data, result.meta);
 });
 
+/** The period's totals for the table's filters (2026-11-16): money in, out, net, and the balance at each end. */
+export const transactionSummary = asyncHandler(async (req, res) => {
+  const query = parseQuery(bankTransactionQuerySchema, req.query);
+  ok(res, await svc.transactionSummary(org(req), req.params.id!, query));
+});
+
 export const createTransaction = asyncHandler(async (req, res) => {
   created(res, await svc.addTransaction(org(req), req.params.id!, req.body, "manual", undefined, { userId: req.auth!.userId, reason: req.body?.lateReason }));
 });

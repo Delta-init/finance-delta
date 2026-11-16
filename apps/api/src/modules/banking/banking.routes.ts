@@ -52,6 +52,8 @@ router.post("/:id/deactivate", requirePermission("banking:write"), c.deactivateA
 
 // Transactions
 router.get("/:id/transactions", requirePermission("banking:read"), c.listTransactions);
+// The period's totals (2026-11-16) — before /:txId, which would take "summary" for an id.
+router.get("/:id/transactions/summary", requirePermission("banking:read"), c.transactionSummary);
 router.post("/:id/transactions", requirePermission("banking:write"), validateBody(createBankTransactionSchema), c.createTransaction);
 router.post("/:id/transactions/bulk", requirePermission("banking:write"), validateBody(bulkImportTransactionsSchema), c.bulkImport);
 // Reads only — it reports which lines are already on the account and writes

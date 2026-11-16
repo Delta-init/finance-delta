@@ -9,7 +9,7 @@ import {
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
 import { logger } from "../../lib/logger";
-import { hrmsClient, type HrmsProcurementRequest, type HrmsSalaryAdvance } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsProcurementRequest, type HrmsReimbursement, type HrmsSalaryAdvance } from "../../lib/hrms-client";
 import { HiringDecision } from "../hiring/hiring-decision.model";
 import { hiringRequestsOf } from "../hiring/hiring.service";
 import { Invoice } from "../invoice/invoice.model";
@@ -306,6 +306,27 @@ const KINDS: Kind[] = [
     },
   },
   {
+    // Employees' reimbursement claims HR approved, waiting on finance to pay (2026-11-16).
+    type: "reimbursement",
+    label: "Reimbursements",
+    href: "/reimbursements",
+    allowed: (can) => can("expense:approve"),
+    read: async (org) => {
+      const rows = await liveFromHrms(org, reimbursementsOf);
+      rows.sort((a, b) => String(b.r.hrReviewedAt ?? b.r.createdAt).localeCompare(String(a.r.hrReviewedAt ?? a.r.createdAt)));
+      return {
+        count: rows.length,
+        items: rows.slice(0, LATEST).map(({ r, from }) => ({
+          id: r._id,
+          title: `${r.title} — ${r.employee?.name ?? "employee"}`,
+          subtitle: [r.employee?.department?.name ?? from, r.category].filter(Boolean).join(" · "),
+          amountMinor: Math.round((r.amount || 0) * 100), currency: r.currency || "AED",
+          at: iso(r.hrReviewedAt ?? r.createdAt), href: "/reimbursements",
+        })),
+      };
+    },
+  },
+  {
     // Hiring requests HR approved whose cost is not budgeted (2026-10-15).
     type: "hiring",
     label: "Hiring requests",
@@ -360,6 +381,24 @@ function salaryAdvancesOf(hrmsOrgId: string): Promise<HrmsSalaryAdvance[]> {
 /** An advance was just decided: the next count asks HRMS again. */
 export function forgetSalaryAdvances(hrmsOrgId: string): void {
   advanceCache.delete(hrmsOrgId);
+}
+
+/* Reimbursement claims (2026-11-16), kept two minutes the same way. An HRMS without the finance step answers 404:
+   nothing waits there, rather than a kind that "could not be read" on every sidebar. */
+const reimbursementCache = new Map<string, { at: number; value: Promise<HrmsReimbursement[]> }>();
+function reimbursementsOf(hrmsOrgId: string): Promise<HrmsReimbursement[]> {
+  const hit = reimbursementCache.get(hrmsOrgId);
+  if (hit && Date.now() - hit.at < PROCUREMENT_TTL_MS) return hit.value;
+  const value = hrmsClient.reimbursements(hrmsOrgId).catch((err: Error) => {
+    if (/\(404\)/.test(err.message ?? "")) return [] as HrmsReimbursement[];
+    throw err;
+  });
+  reimbursementCache.set(hrmsOrgId, { at: Date.now(), value });
+  return value;
+}
+/** A claim was just decided: the next count asks HRMS again. */
+export function forgetReimbursements(hrmsOrgId: string): void {
+  reimbursementCache.delete(hrmsOrgId);
 }
 
 /*
@@ -468,6 +507,7 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
   procurement: { text: ["description", "expenseNumber"], raiser: [] },
   salary_advance: { text: ["description", "expenseNumber"], raiser: [] },
+  reimbursement: { text: ["description", "expenseNumber"], raiser: [] },
   hiring: { text: ["request.title", "request.department", "request.raisedBy", "decidedByName"], raiser: ["request.raisedBy"] },
 };
 
@@ -995,6 +1035,69 @@ const LIST_KINDS: ListKind[] = [
         rows.push(...docs.map((r): ApprovalRow => ({
           id: String(r._id),
           type: "salary_advance",
+          title: r.description,
+          subtitle: [r.expenseNumber, "HRMS"].filter(Boolean).join(" · "),
+          amountMinor: r.totalMinor ?? 0,
+          currency: r.currency ?? "AED",
+          status: "approved",
+          at: iso(r.__at),
+          decidedAt: iso(r.approvedAt),
+          decidedBy: r.approvedByName || undefined,
+          href: `/expenses/${r._id}`,
+        })));
+      }
+      return unreadable ? Object.assign({ total, rows }, { unreadable }) : { total, rows };
+    },
+  },
+  {
+    // Reimbursement claims (2026-11-16): waiting read live from HRMS; paid is the expense it made. A refused one is
+    // kept only in HRMS (the Reimbursements page's Refused tab).
+    type: "reimbursement",
+    label: "Reimbursements",
+    allowed: (can) => can("expense:approve"),
+    list: async (ctx) => {
+      const rows: ApprovalRow[] = [];
+      let total = 0;
+      let unreadable = "";
+      if (ctx.status === "pending" || ctx.status === "all") {
+        try {
+          const waiting = (await liveFromHrms(ctx.org, reimbursementsOf))
+            .map(({ r, from }): ApprovalRow => {
+              const at = iso(r.hrReviewedAt ?? r.createdAt);
+              return {
+                id: r._id,
+                type: "reimbursement",
+                title: `${r.title} — ${r.employee?.name ?? "employee"}`,
+                subtitle: [r.employee?.department?.name ?? from, r.category, r.expenseDate ? `spent ${r.expenseDate}` : ""].filter(Boolean).join(" · "),
+                amountMinor: Math.round((r.amount || 0) * 100),
+                currency: r.currency || "AED",
+                raisedBy: r.user?.name || r.employee?.name || undefined,
+                status: "pending",
+                at,
+                submittedAt: at,
+                href: "/reimbursements",
+              };
+            })
+            .filter((row) => inRange(row.at, ctx.range) && rowMatches(row, ctx))
+            .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+          total += waiting.length;
+          rows.push(...waiting.slice(0, ctx.limit));
+        } catch {
+          unreadable = "the ones waiting in HRMS could not be read";
+        }
+      }
+      if (ctx.status === "approved" || ctx.status === "all") {
+        const { docs, total: approved } = await newest(
+          Expense,
+          narrowed({ organizationId: ctx.org, "source.kind": "hrms_reimbursement", status: { $in: ["approved", "paid"] } }, ctx, "reimbursement"),
+          firstOf("$approvedAt", "$createdAt"),
+          "expenseNumber description totalMinor currency approvedByName approvedAt createdAt",
+          ctx,
+        );
+        total += approved;
+        rows.push(...docs.map((r): ApprovalRow => ({
+          id: String(r._id),
+          type: "reimbursement",
           title: r.description,
           subtitle: [r.expenseNumber, "HRMS"].filter(Boolean).join(" · "),
           amountMinor: r.totalMinor ?? 0,

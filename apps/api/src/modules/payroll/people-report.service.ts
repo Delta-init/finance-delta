@@ -607,9 +607,9 @@ export async function personLedger(orgId: string, employeeId: string, query: Led
     const expenses = cap(await Expense.find({
       organizationId: org, status: { $in: ["approved", "submitted"] },
       $or: [{ salespersonId: uid }, { salespersonId: null, submittedById: uid }],
-      // An advance or one-time payment is paid to its employee, below — not the accountant who approved it (its
-      // submitter), whose own claim it would otherwise read as; a payroll payment's expense is the payroll rows'.
-      "source.kind": { $nin: ["import", "bill", "hrms_advance", "hrms_one_time", "payroll"] },
+      // An advance, one-time payment or reimbursement is paid to its employee, below — not the accountant who approved
+      // it (its submitter), whose own claim it would otherwise read as; a payroll payment's expense is the payroll rows'.
+      "source.kind": { $nin: ["import", "bill", "hrms_advance", "hrms_one_time", "hrms_reimbursement", "payroll"] },
       ...pnl,
       ...(range ? { expenseDate: range } : {}),
     })
@@ -637,11 +637,11 @@ export async function personLedger(orgId: string, employeeId: string, query: Led
     }
   }
 
-  // Salary advances and one-time payments HRMS sent finance for them: their employee code is in the notes.
+  // Salary advances, one-time payments and reimbursements HRMS sent finance for them: their employee code is in the notes.
   const code = employee?.employeeCode ? String(employee.employeeCode) : "";
   if (code) {
     const paidOut = cap(await Expense.find({
-      organizationId: org, "source.kind": { $in: ["hrms_advance", "hrms_one_time"] }, status: { $nin: ["rejected", "voided", "draft"] },
+      organizationId: org, "source.kind": { $in: ["hrms_advance", "hrms_one_time", "hrms_reimbursement"] }, status: { $nin: ["rejected", "voided", "draft"] },
       notes: new RegExp(`\\(${escapeRegExp(code)}\\)`), ...(range ? { expenseDate: range } : {}),
     })
       .select("expenseNumber description expenseDate totalMinor status currency paidOn paymentMethod reference notes source.kind")
@@ -650,9 +650,11 @@ export async function personLedger(orgId: string, employeeId: string, query: Led
       if (listed.has(String(e._id))) continue;
       const cur = String(e.currency ?? "AED");
       const advance = e.source?.kind === "hrms_advance";
+      // A claim finance paid them back (2026-11-16): an expense of theirs.
+      const claim = e.source?.kind === "hrms_reimbursement";
       rows.push({
-        id: `${advance ? "advance" : "one_time"}:${e._id}`, kind: advance ? "advance" : "one_time", date: new Date(e.expenseDate).toISOString(),
-        reference: String(e.expenseNumber || ""), title: advance ? "Salary advance" : "One-time payment",
+        id: `${advance ? "advance" : claim ? "reimbursement" : "one_time"}:${e._id}`, kind: advance ? "advance" : claim ? "expense" : "one_time", date: new Date(e.expenseDate).toISOString(),
+        reference: String(e.expenseNumber || ""), title: advance ? "Salary advance" : claim ? "Reimbursement" : "One-time payment",
         subtitle: advance ? "Recovered from their pay" : String(e.description ?? ""),
         currency: cur, inMinor: 0, outMinor: e.totalMinor ?? 0, counted: true, status: String(e.status ?? ""), href: `/expenses/${e._id}`,
         facts: [

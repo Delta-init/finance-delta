@@ -282,7 +282,7 @@ async function expenseListFilter(orgId: string, query: ExpenseQuery, scope: Scop
   // Where it came from (2026-10-23).
   if (query.source === "bill") and.push({ "source.kind": "bill" });
   else if (query.source === "import") and.push({ "source.kind": "import" });
-  else if (query.source === "hrms") and.push({ "source.kind": { $in: ["hrms_procurement", "hrms_advance", "hrms_one_time"] } });
+  else if (query.source === "hrms") and.push({ "source.kind": { $in: ["hrms_procurement", "hrms_advance", "hrms_one_time", "hrms_reimbursement"] } });
   else if (query.source === "typed") and.push({ "source.kind": { $exists: false } });
   // Its bank statement date: entered at reconciliation, or still waiting for one (2026-10-23).
   if (query.statement === "entered") and.push({ statementDate: { $ne: null } });

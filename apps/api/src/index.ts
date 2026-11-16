@@ -31,6 +31,7 @@ import procurementRoutes from "./modules/procurement/procurement.routes";
 import advanceRoutes from "./modules/advances/advances.routes";
 import hiringRoutes from "./modules/hiring/hiring.routes";
 import oneTimePaymentRoutes from "./modules/one-time-payments/one-time-payments.routes";
+import reimbursementRoutes from "./modules/reimbursements/reimbursements.routes";
 import billRoutes from "./modules/bill/bill.routes";
 import vendorCreditRoutes from "./modules/vendor-credit/vendor-credit.routes";
 import expenseRoutes from "./modules/expense/expense.routes";
@@ -126,6 +127,7 @@ async function bootstrap() {
   api.use("/advances", advanceRoutes);
   api.use("/hiring", hiringRoutes);
   api.use("/one-time-payments", oneTimePaymentRoutes);
+  api.use("/reimbursements", reimbursementRoutes);
   api.use("/bills", billRoutes);
   api.use("/vendor-credits", vendorCreditRoutes);
   api.use("/expenses", expenseRoutes);

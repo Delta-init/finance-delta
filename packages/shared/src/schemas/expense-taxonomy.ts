@@ -65,6 +65,8 @@ export const EXPENSE_DEFAULTS = {
   payroll: { category: "payroll_benefits", subcategory: "basic_salary" },
   salaryAdvance: { category: "employee_advances", subcategory: "salary_advances" },
   oneTimePayment: { category: "payroll_benefits", subcategory: "bonuses" },
+  /** An employee's reimbursement claim HR approved in HRMS (2026-11-16); food and phone claims pick their own subcategory. */
+  reimbursement: { category: "employee_reimbursements", subcategory: "other_staff_claims" },
   crmCommission: { category: "sales_commission", subcategory: "sales_commission" },
   crmCommissionTeamLeader: { category: "sales_commission", subcategory: "team_leader_commission" },
   // The CS Portal's commission (2026-11-03): a CS — a mentor, as the taxonomy has them.

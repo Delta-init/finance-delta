@@ -55,6 +55,7 @@ const KIND_LABEL: Record<ApprovalType, string> = {
   procurement: "Purchase requests",
   salary_advance: "Salary advances",
   hiring: "Hiring requests",
+  reimbursement: "Reimbursements",
 };
 
 export type BackdatedKind = "payment" | "bill_payment" | "expense" | "bill" | "invoice" | "bank_line";

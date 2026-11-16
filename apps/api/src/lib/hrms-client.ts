@@ -417,6 +417,44 @@ export interface HrmsOneTimePaymentRecord extends HrmsOneTimePayment {
   updatedAt?: string;
 }
 
+/**
+ * An employee's reimbursement claim HR approved, waiting on finance to pay it (2026-11-16, REIMBURSEMENT_FINANCE_STEP
+ * in HRMS) — or, in finance's record, one it paid or refused.
+ */
+export interface HrmsReimbursement {
+  _id: string;
+  title: string;
+  /** HRMS's category: travel, food, accommodation, medical, communication, fuel, supplies, other. */
+  category: string;
+  /** Major units, as claimed — paid at exactly this. */
+  amount: number;
+  /** The employee's pay currency. */
+  currency: string;
+  /** YYYY-MM-DD, when it was spent. */
+  expenseDate: string | null;
+  month: string;
+  description: string;
+  receiptUrl: string;
+  status: "hr_approved" | "paid" | "rejected";
+  employee: { _id: string; name: string; employeeCode: string; designation: string; department: { _id: string; name: string } | null } | null;
+  user: { name: string; email: string } | null;
+  hrReviewedBy: { name: string } | null;
+  hrReviewedAt: string | null;
+  hrNote: string;
+  createdAt: string;
+  rejectedBy: "hr" | "finance" | null;
+  /** Finance's expense number, once paid. */
+  financeRef: string;
+  paidOn: string | null;
+  paymentMethod: string;
+  financeNote: string;
+  financeReviewedBy: string;
+  financeReviewedAt: string | null;
+}
+
+/** Finance's record of claims: paid by it, refused by it, or all that reached it. */
+export type HrmsReimbursementHistoryStatus = "paid" | "rejected" | "all";
+
 export const hrmsClient = {
   isConfigured(): boolean {
     return Boolean(env.HRMS_API_URL && env.HRMS_CLIENT_ID && env.HRMS_INTEGRATION_SECRET);
@@ -663,6 +701,37 @@ export const hrmsClient = {
 
   async rejectHiring(organizationId: string, id: string, opts: { note: string; by?: string }) {
     return (await request<unknown>("POST", `/hiring/requisitions/${id}/reject`, { query: { organizationId }, body: { organizationId, ...opts } })).data;
+  },
+
+  // ── Reimbursement claims finance pays directly (2026-11-16) ────────────────
+
+  /** Claims HR approved, waiting on finance — oldest HR approval first. An HRMS without the step answers 404. */
+  async reimbursements(organizationId: string): Promise<HrmsReimbursement[]> {
+    return (await request<HrmsReimbursement[]>("GET", "/reimbursements/requests", { query: { organizationId } })).data;
+  },
+
+  /** Finance's record: paid, refused, or all that reached finance — newest first. */
+  async reimbursementHistory(organizationId: string, status: HrmsReimbursementHistoryStatus): Promise<HrmsReimbursement[]> {
+    return (await request<HrmsReimbursement[]>("GET", "/reimbursements/requests", { query: { organizationId, status } })).data;
+  },
+
+  /** Paid: HRMS marks the claim Paid with the expense number and tells the employee. `amount` is checked against the claim. */
+  async payReimbursement(organizationId: string, id: string, opts: { reference: string; paidOn: string; method: string; amount: number; note?: string; by?: string }) {
+    return (
+      await request<HrmsReimbursement>("POST", `/reimbursements/requests/${id}/approve`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
+  },
+
+  async rejectReimbursement(organizationId: string, id: string, opts: { note: string; by?: string }) {
+    return (
+      await request<HrmsReimbursement>("POST", `/reimbursements/requests/${id}/reject`, {
+        query: { organizationId },
+        body: { organizationId, ...opts },
+      })
+    ).data;
   },
 
   // ── One-time payments finance pays directly ────────────────────────────────

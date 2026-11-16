@@ -131,7 +131,7 @@ export async function financeReportForPortal(q: { org?: string; from?: string; t
       raised_by: d.raisedBy, submitted_at: d.submittedAt ?? "", minutes: Number.isFinite(mins) ? mins : null, amount: d.amount ?? null, href: d.href });
   };
   const KIND: Record<string, string> = { invoice: "Enrolment invoices", fund_request: "Fund requests", tetra_deposit: "CS Portal deposits", balance_payment: "Balance payments",
-    expense: "Expense claims", bill: "Bills", payroll: "Payroll runs", procurement: "Purchase requests", salary_advance: "Salary advances", hiring: "Hiring requests" };
+    expense: "Expense claims", bill: "Bills", payroll: "Payroll runs", procurement: "Purchase requests", salary_advance: "Salary advances", hiring: "Hiring requests", reimbursement: "Reimbursements" };
   for (const r of decided) {
     addDecision({ id: r.id, kind: KIND[r.type] ?? r.type, title: [r.title, r.subtitle].filter(Boolean).join(" · "), by: r.decidedBy ?? "", raisedBy: r.raisedBy ?? "",
       outcome: r.status === "approved" ? "approved" : r.status === "returned" ? "sent back" : "rejected", submittedAt: r.submittedAt, decidedAt: r.decidedAt ?? r.at,

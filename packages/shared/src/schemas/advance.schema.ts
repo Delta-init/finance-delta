@@ -52,3 +52,18 @@ export type MarkOneTimePaidBody = ApproveAdvanceBody;
 export const rejectOneTimePaymentSchema = rejectAdvanceSchema;
 export type RejectOneTimePaymentInput = RejectAdvanceInput;
 export type RejectOneTimePaymentBody = RejectAdvanceBody;
+
+/**
+ * An employee's reimbursement claim HR approved in HRMS, paid by finance directly (the user, 2026-11-16: "employee
+ * request => HR approval => finance approval (paid status)"). Approving pays it: a paid expense, the amount claimed —
+ * not changed here — and HRMS shows the claim Paid. Refusing needs a reason; the employee sees it.
+ */
+export const payReimbursementSchema = approveAdvanceSchema.omit({ amountMinor: true });
+export type PayReimbursementInput = z.infer<typeof payReimbursementSchema>;
+export type PayReimbursementBody = z.input<typeof payReimbursementSchema>;
+export const rejectReimbursementSchema = z.object({
+  hrmsOrgId: z.string().trim().min(1, "hrmsOrgId is required"),
+  note: z.string().trim().min(3, "Say why it is refused — the employee sees it").max(500),
+});
+export type RejectReimbursementInput = z.infer<typeof rejectReimbursementSchema>;
+export type RejectReimbursementBody = z.input<typeof rejectReimbursementSchema>;

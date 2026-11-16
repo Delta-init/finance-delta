@@ -174,7 +174,7 @@ async function bankNames(orgId: string): Promise<Map<string, string>> {
 }
 
 const EXPENSE_SOURCE: Record<string, string> = {
-  bill: "Supplier bill", hrms_procurement: "HRMS purchase", hrms_advance: "HRMS salary advance", hrms_one_time: "HRMS one-time payment", import: "Old books (imported)",
+  bill: "Supplier bill", hrms_procurement: "HRMS purchase", hrms_advance: "HRMS salary advance", hrms_one_time: "HRMS one-time payment", hrms_reimbursement: "HRMS reimbursement", import: "Old books (imported)",
 };
 
 export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promise<AnalysisReport> {

@@ -1818,7 +1818,7 @@ export async function resendInvoice(
 /** Record what became of an attempt, so the invoice stops claiming it was sent. */
 async function _recordDelivery(
   invoiceId: unknown,
-  state: "sent" | "failed" | "no_address" | "not_configured",
+  state: "sent" | "failed" | "no_address" | "not_configured" | "opted_out",
   extra: { messageId?: string; error?: string } = {},
 ): Promise<void> {
   await Invoice.findByIdAndUpdate(invoiceId, {
@@ -1982,7 +1982,7 @@ async function _dispatchInvoiceEmail(orgId: string, doc: InvoiceDoc, message?: s
     });
 
     if (error) {
-      await _recordDelivery(doc._id, error === "not_configured" ? "not_configured" : "failed", { error });
+      await _recordDelivery(doc._id, error === "not_configured" ? "not_configured" : error === "opted_out" ? "opted_out" : "failed", { error });
       // No reminders behind a message that never arrived: chasing payment for
       // an invoice the customer has not seen is worse than not chasing.
       return;

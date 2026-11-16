@@ -10,7 +10,7 @@ export interface EmailLogRow {
   kind: string;
   to: string[];
   subject: string;
-  state: "sent" | "failed" | "no_address" | "not_configured";
+  state: "sent" | "failed" | "no_address" | "not_configured" | "opted_out";
   error?: string;
   ref: { type: string; id: string; label: string } | null;
   actorName: string;
@@ -44,6 +44,7 @@ export const EMAIL_STATE_LABEL: Record<EmailLogRow["state"], string> = {
   failed: "Failed",
   no_address: "No email address",
   not_configured: "Email not set up",
+  opted_out: "Not sent — emails off",
 };
 
 /** The organization's email log — admins and accountants. */

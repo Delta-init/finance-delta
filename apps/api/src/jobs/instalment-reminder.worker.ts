@@ -147,6 +147,11 @@ async function sendOne(invoiceId: Types.ObjectId, dueOn: string, daysBefore: num
       footerText: org?.branding?.footerText || undefined,
       log,
     });
+    if (error === "opted_out") {
+      // The client has emails turned off (2026-11-16): not a failure, and not tried again.
+      await settle("skipped", { to, reason: "Emails turned off for this client", balanceMinor: balance, currency });
+      return "skipped";
+    }
     if (error) {
       await settle("failed", { to, reason: error, balanceMinor: balance, currency });
       return "failed";

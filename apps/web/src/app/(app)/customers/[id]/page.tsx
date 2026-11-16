@@ -24,6 +24,7 @@ import { TagPicker } from "@/features/tags/TagPicker";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useCustomer, useCustomerStatement, useUpdateCustomer } from "@/features/customers/api";
+import { ClientEmailsSwitch, ReceivesEmailsField } from "@/features/customers/ClientEmails";
 import { useCurrency } from "@/lib/currency-context";
 
 const CURRENCIES = ["AED", "USD", "EUR", "GBP", "INR", "SAR", "QAR", "KWD", "BHD", "OMR"];
@@ -99,6 +100,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       billingAddress: c.billingAddress ?? {},
       shippingAddress: c.shippingAddress ?? {},
       tagIds: c.tags.map((t) => t.id),
+      receivesEmails: c.receivesEmails !== false,
     });
     setEditOpen(true);
   }
@@ -183,6 +185,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 <Mail className="h-4 w-4 shrink-0 text-foreground-muted" />
                 <a href={`mailto:${customer.email}`} className="text-primary hover:underline truncate">{customer.email}</a>
               </div>
+              {/* Whether finance emails this client — on unless turned off (2026-11-16) */}
+              <ClientEmailsSwitch customer={customer} />
               <div className="flex items-center gap-2 text-sm">
                 <Phone className="h-4 w-4 shrink-0 text-foreground-muted" />
                 <span>{customer.phone}</span>
@@ -306,6 +310,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 <Label>Email *</Label>
                 <Input type="email" {...register("email")} />
                 {errors.email && <p className="text-xs text-danger">{errors.email.message}</p>}
+                <ReceivesEmailsField value={watch("receivesEmails")} onChange={(v) => setValue("receivesEmails", v, { shouldDirty: true })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Phone *</Label>

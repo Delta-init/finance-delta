@@ -23,6 +23,13 @@ export const createCustomerSchema = z.object({
   billingAddress: addressSchema.optional().default({}),
   shippingAddress: addressSchema.optional().default({}),
   tagIds: z.array(z.string()).optional().default([]),
+  /**
+   * Whether finance emails this client — invoices, tax invoices, receipts, reminders (the user, 2026-11-16). On unless
+   * somebody turns it off; staff emails about the client are not affected.
+   */
+  receivesEmails: z.boolean().optional(),
+  /** Why emails were turned off, when they are — kept with who and when. */
+  emailsOffReason: z.string().max(300).optional(),
 });
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 
@@ -46,6 +53,9 @@ export const customerSchema = z.object({
   shippingAddress: addressSchema,
   status: z.enum(["active", "archived"]),
   tags: z.array(tagRefSchema).default([]),
+  /** Finance emails this client (2026-11-16). Off: none of its emails reach them — see emailsOff for who and why. */
+  receivesEmails: z.boolean().default(true),
+  emailsOff: z.object({ at: z.string(), byName: z.string(), reason: z.string() }).nullable().optional(),
   createdAt: z.string(),
 });
 export type Customer = z.infer<typeof customerSchema>;

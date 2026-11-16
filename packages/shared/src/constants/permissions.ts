@@ -23,6 +23,8 @@ export const PERMISSIONS = [
   "customer:create",
   "customer:update",
   "customer:delete",
+  /** Turning a client's emails off or on (2026-11-16) — Manager, Accountant, Administrator; not salespeople. */
+  "customer:emails",
 
   // Quotations
   "quotation:read",

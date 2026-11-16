@@ -6,6 +6,7 @@ const TONE: Record<EmailLogRow["state"], "success" | "danger" | "warning"> = {
   failed: "danger",
   no_address: "warning",
   not_configured: "warning",
+  opted_out: "warning",
 };
 
 /** Sent / Failed / No email address / Email not set up. */

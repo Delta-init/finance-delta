@@ -15,7 +15,8 @@ const emailLogSchema = new Schema(
     kind: { type: String, required: true },
     to: { type: [String], default: [] },
     subject: { type: String, default: "" },
-    state: { type: String, enum: ["sent", "failed", "no_address", "not_configured"], required: true },
+    /** opted_out: a client with emails turned off (2026-11-16) — not sent, on purpose. */
+    state: { type: String, enum: ["sent", "failed", "no_address", "not_configured", "opted_out"], required: true },
     messageId: { type: String, default: "" },
     error: { type: String, default: "" },
     /** What it was about, where that is a record here. */

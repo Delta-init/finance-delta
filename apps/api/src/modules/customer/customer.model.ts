@@ -32,6 +32,21 @@ const customerSchema = new Schema(
     status: { type: String, enum: ["active", "archived"], default: "active" },
     departmentId: { type: Schema.Types.ObjectId, ref: "Department" },
     tagIds: [{ type: Schema.Types.ObjectId, ref: "Tag" }],
+    /**
+     * Whether finance emails this client (the user, 2026-11-16) — on unless turned off. Off, lib/email.ts sends none of
+     * the client's emails (invoices, tax invoices, receipts, reminders) and logs each as opted_out.
+     */
+    receivesEmails: { type: Boolean, default: true },
+    /** Who turned emails off, when and why — kept while they are off. */
+    emailsOff: {
+      type: new Schema({
+        at: { type: Date, required: true },
+        byId: { type: Schema.Types.ObjectId, ref: "User" },
+        byName: { type: String, default: "" },
+        reason: { type: String, default: "" },
+      }, { _id: false }),
+      default: undefined,
+    },
   },
   { timestamps: true },
 );

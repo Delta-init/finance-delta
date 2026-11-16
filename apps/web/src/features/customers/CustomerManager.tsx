@@ -45,6 +45,7 @@ import { FilterToggle } from "@/components/ui/filter-toggle";
 import { TagList } from "@/features/tags/TagBadge";
 import { TagPicker } from "@/features/tags/TagPicker";
 import { useCreateCustomer, useCustomers, useDeleteCustomer, useUpdateCustomer } from "./api";
+import { NoEmailsTag, ReceivesEmailsField } from "./ClientEmails";
 import { useAllDepartments } from "@/features/departments/api";
 import { useCurrency } from "@/lib/currency-context";
 
@@ -59,6 +60,7 @@ const CUSTOMER_EXPORT_COLUMNS: ExportColumn<Customer>[] = [
   { header: "Department", value: (c) => c.department?.name ?? "" },
   { header: "Tags", value: (c) => c.tags.map((t) => t.name).join(", ") },
   { header: "Status", value: (c) => c.status },
+  { header: "Emails", value: (c) => (c.receivesEmails === false ? "Off" : "On") },
   { header: "Currency", value: (c) => c.currency },
 ];
 
@@ -79,6 +81,7 @@ function toFormValues(c: Customer): CreateCustomerInput {
     billingAddress: c.billingAddress ?? emptyAddress(),
     shippingAddress: c.shippingAddress ?? emptyAddress(),
     tagIds: c.tags.map((t) => t.id),
+    receivesEmails: c.receivesEmails !== false,
   };
 }
 
@@ -94,6 +97,7 @@ function defaultValues(currency: string): CreateCustomerInput {
     billingAddress: emptyAddress(),
     shippingAddress: emptyAddress(),
     tagIds: [],
+    receivesEmails: true,
   };
 }
 
@@ -124,12 +128,15 @@ export function CustomerManager() {
   // In the address bar (2026-10-22), folded away until Filters is pressed.
   const [status, setStatus] = useUrlParam("status", "all");
   const [tagIds, setTagIds] = useUrlListParam("tags");
+  // Whether finance emails them (2026-11-16): all, on, off.
+  const [emails, setEmails] = useUrlParam("emails", "all");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data, isLoading, isPlaceholderData } = useCustomers({
     ...t.baseParams,
     status: status === "all" ? undefined : status,
     tagIds: tagIds.length ? tagIds : undefined,
+    emails: emails === "all" ? undefined : emails,
   });
 
   const { data: departments } = useAllDepartments();
@@ -199,7 +206,7 @@ export function CustomerManager() {
       sortable: true,
       cell: (c) => (
         <div>
-          <p className="font-medium">{c.name}</p>
+          <p className="flex items-center gap-1.5 font-medium">{c.name} <NoEmailsTag customer={c} /></p>
           {c.companyName && <p className="text-xs text-foreground-muted">{c.companyName}</p>}
         </div>
       ),
@@ -259,13 +266,14 @@ export function CustomerManager() {
         description="People and companies you bill and send quotations to."
         action={
           <div className="flex items-center gap-2">
-            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status, tagIds)} />
+            <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen((o) => !o)} count={countFilters(status, tagIds, emails)} />
             <ExportButton
               resource="customers"
               params={{
                 ...t.baseParams,
                 status: status === "all" ? undefined : status,
                 tagIds: tagIds.length ? tagIds : undefined,
+                emails: emails === "all" ? undefined : emails,
               }}
               columns={CUSTOMER_EXPORT_COLUMNS}
               filename="customers"
@@ -298,6 +306,16 @@ export function CustomerManager() {
         <div className="w-[220px]">
           <TagPicker value={tagIds} onChange={setTagIds} placeholder="Filter by tags…" />
         </div>
+        <Select value={emails} onValueChange={setEmails}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Emails" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Emails: all</SelectItem>
+            <SelectItem value="on">Emails on</SelectItem>
+            <SelectItem value="off">Emails off</SelectItem>
+          </SelectContent>
+        </Select>
         </>)}
       </div>
 
@@ -322,6 +340,7 @@ export function CustomerManager() {
                 <Label htmlFor="email">Email *</Label>
                 <Input id="email" type="email" {...register("email")} />
                 {errors.email && <p className="text-xs text-danger">{errors.email.message}</p>}
+                <ReceivesEmailsField value={watch("receivesEmails")} onChange={(v) => setValue("receivesEmails", v, { shouldDirty: true })} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="phone">Phone *</Label>

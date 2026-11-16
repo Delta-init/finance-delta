@@ -15,7 +15,7 @@ export const get = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  created(res, await customerService.createCustomer(req.auth!.organizationId, req.body));
+  created(res, await customerService.createCustomer(req.auth!.organizationId, req.body, req.auth!));
 });
 
 /**
@@ -36,6 +36,7 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
       req.auth!.organizationId,
       req.params.id!,
       req.body,
+      req.auth!,
     ),
   );
 });

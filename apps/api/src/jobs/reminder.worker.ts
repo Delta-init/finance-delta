@@ -85,6 +85,11 @@ export async function startReminderWorker(): Promise<void> {
       });
       // Said plainly either way: a reminder that did not go is the kind of
       // thing that is only noticed when somebody asks why nobody was chased.
+      if (error === "opted_out") {
+        // The client has emails turned off (2026-11-16): logged as such, not retried.
+        logger.info({ invoiceId: job.data.invoiceId, interval: job.data.intervalDays }, "Reminder not sent — emails turned off for this client");
+        return;
+      }
       if (error) {
         logger.warn({ invoiceId: job.data.invoiceId, interval: job.data.intervalDays, error }, "Reminder not sent");
         throw new Error(error);

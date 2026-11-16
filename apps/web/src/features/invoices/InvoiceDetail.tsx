@@ -353,6 +353,13 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Resend Invoice</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-2">
+            {/* Emails off for this client (2026-11-16): nothing would go — said here rather than after. */}
+            {customer?.receivesEmails === false && (
+              <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
+                Emails are turned off for {customer.name}, so this will not be sent. Turn them on on the{" "}
+                <Link href={`/customers/${customer.id}`} className="text-primary hover:underline">client&apos;s page</Link> first.
+              </p>
+            )}
             <div>
               <label className="mb-1 block text-xs font-medium text-foreground-muted">
                 Custom message <span className="text-foreground-subtle">(optional)</span>
@@ -372,6 +379,7 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
               <Button
                 size="sm"
                 loading={resend.isPending}
+                disabled={customer?.receivesEmails === false}
                 onClick={() => resend.mutate({ id, message: resendMsg || undefined }, {
                   onSuccess: () => { toast.success("Invoice resent"); setResendOpen(false); setResendMsg(""); },
                   onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed to resend"),
@@ -1105,14 +1113,18 @@ function UndeliveredNotice({
   if (!d || d.state === "sent") return null;
 
   const reason =
-    d.state === "no_address"
+    d.state === "opted_out"
+      ? `Emails are turned off for ${invoice.customerName}, so nothing was sent to them.`
+      : d.state === "no_address"
       ? `${invoice.customerName} has no email address on file, so there was nowhere to send it.`
       : d.state === "not_configured"
         ? "No mail transport is configured on the server, so nothing could be sent."
         : d.error || "The mail provider refused the message.";
 
   const remedy =
-    d.state === "no_address"
+    d.state === "opted_out"
+      ? "Turn emails on on the customer's page, then resend — if they should get it."
+      : d.state === "no_address"
       ? "Add an address to the customer, then resend."
       : d.state === "not_configured"
         ? "Ask whoever administers the server to set RESEND_API_KEY, or the SMTP settings."

@@ -15,7 +15,7 @@ const query = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   search: z.string().max(200).optional(),
   kind: z.string().max(40).optional(),
-  state: z.enum(["sent", "failed", "no_address", "not_configured"]).optional(),
+  state: z.enum(["sent", "failed", "no_address", "not_configured", "opted_out"]).optional(),
   from: DAY.optional(),
   to: DAY.optional(),
 });

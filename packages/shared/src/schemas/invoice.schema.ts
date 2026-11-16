@@ -609,7 +609,8 @@ export const invoiceAttachmentSchema = z.object({
 export type InvoiceAttachment = z.infer<typeof invoiceAttachmentSchema>;
 
 export const invoiceEmailDeliverySchema = z.object({
-  state: z.enum(["sent", "failed", "no_address", "not_configured"]),
+  /** opted_out: the client has emails turned off (2026-11-16) — nothing was sent, on purpose. */
+  state: z.enum(["sent", "failed", "no_address", "not_configured", "opted_out"]),
   at: z.string(),
   messageId: z.string().default(""),
   error: z.string().default(""),

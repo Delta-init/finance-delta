@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { hasPermission } from "@delta/shared";
 import type {
   CreateCustomerInput,
   Customer as CustomerDTO,
@@ -12,6 +13,7 @@ import { buildSort, pageMeta, searchOr, skipFor } from "../../lib/paginate";
 import { resolveTagIds, toTagRefs } from "../../lib/tags";
 import { Customer, type CustomerDoc } from "./customer.model";
 import { Organization } from "../organization/organization.model";
+import { User } from "../user/user.model";
 import { Invoice } from "../invoice/invoice.model";
 import { Department } from "../department/department.model";
 import { nextNumber } from "../sequence/sequence.service";
@@ -41,6 +43,30 @@ function toAddress(raw: unknown): CustomerAddress {
   };
 }
 
+/** Who turned the client's emails off, when and why — null while they are on. */
+function offOf(doc: CustomerDoc): CustomerDTO["emailsOff"] {
+  const d = doc as unknown as { receivesEmails?: boolean; emailsOff?: { at?: Date; byName?: string; reason?: string } };
+  if (d.receivesEmails !== false) return null;
+  return { at: d.emailsOff?.at ? new Date(d.emailsOff.at).toISOString() : "", byName: d.emailsOff?.byName ?? "", reason: d.emailsOff?.reason ?? "" };
+}
+
+/** Who may turn a client's emails off or on (2026-11-16): a Manager, an Accountant, an Administrator, a Super Admin. */
+export interface CustomerActor { userId?: string; permissions?: string[]; isSuperAdmin?: boolean }
+function mayChangeEmails(actor: CustomerActor | undefined): boolean {
+  return !!actor && (actor.isSuperAdmin === true || hasPermission(actor.permissions ?? [], "customer:emails"));
+}
+const EMAILS_REFUSED = "Only a Manager, an Accountant or an Administrator turns a client's emails off or on";
+
+/** Turning emails on or off: off keeps who, when and why; on clears it. */
+async function emailsSetting(receives: boolean, actor: { userId?: string } | undefined, reason?: string): Promise<Record<string, unknown>> {
+  if (receives) return { receivesEmails: true, emailsOff: undefined };
+  const me = actor?.userId ? await User.findById(actor.userId).select("name").lean<{ name?: string } | null>() : null;
+  return {
+    receivesEmails: false,
+    emailsOff: { at: new Date(), ...(actor?.userId ? { byId: new Types.ObjectId(actor.userId) } : {}), byName: String(me?.name ?? ""), reason: String(reason ?? "").trim().slice(0, 300) },
+  };
+}
+
 function toDTO(doc: CustomerDoc): CustomerDTO {
   return {
     id: doc._id.toString(),
@@ -57,6 +83,8 @@ function toDTO(doc: CustomerDoc): CustomerDTO {
     status: (doc.status as "active" | "archived") ?? "active",
     department: toDepartmentRef((doc as unknown as { departmentId?: unknown }).departmentId),
     tags: toTagRefs(doc.tagIds),
+    receivesEmails: (doc as unknown as { receivesEmails?: boolean }).receivesEmails !== false,
+    emailsOff: offOf(doc),
     createdAt: doc.createdAt.toISOString(),
   };
 }
@@ -79,6 +107,8 @@ export async function listCustomers(
   if (or) filter.$or = or;
   if (query.status) filter.status = query.status;
   if (query.tagIds?.length) filter.tagIds = { $in: query.tagIds };
+  if (query.emails === "off") filter.receivesEmails = false;
+  if (query.emails === "on") filter.receivesEmails = { $ne: false };
 
   const sort = buildSort(SORT, query.sort, query.dir);
   const [rows, total] = await Promise.all([
@@ -133,7 +163,9 @@ export async function findOrCreateCustomer(
 export async function createCustomer(
   orgId: string,
   input: CreateCustomerInput,
+  actor?: CustomerActor,
 ): Promise<CustomerDTO> {
+  if (input.receivesEmails === false && !mayChangeEmails(actor)) throw new AppError("FORBIDDEN", EMAILS_REFUSED);
   const exists = await Customer.exists({ organizationId: orgId, email: input.email });
   if (exists) throw new AppError("CONFLICT", "A customer with this email already exists");
 
@@ -159,6 +191,7 @@ export async function createCustomer(
     billingAddress: input.billingAddress ?? {},
     shippingAddress: input.shippingAddress ?? {},
     tagIds,
+    ...(input.receivesEmails === false ? await emailsSetting(false, actor, input.emailsOffReason) : {}),
   });
   await doc.populate("tagIds", "name color");
   await doc.populate("departmentId", "name");
@@ -169,6 +202,7 @@ export async function updateCustomer(
   orgId: string,
   id: string,
   input: UpdateCustomerInput,
+  actor?: CustomerActor,
 ): Promise<CustomerDTO> {
   const doc = await Customer.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Customer not found");
@@ -193,6 +227,11 @@ export async function updateCustomer(
   if (input.discountPct !== undefined) d.discountPct = input.discountPct;
   if (input.billingAddress !== undefined) d.billingAddress = input.billingAddress;
   if (input.shippingAddress !== undefined) d.shippingAddress = input.shippingAddress;
+  // Emails on or off (2026-11-16) — only when it changes, so who turned them off stays as it was on any other edit.
+  if (input.receivesEmails !== undefined && input.receivesEmails !== (d.receivesEmails !== false)) {
+    if (!mayChangeEmails(actor)) throw new AppError("FORBIDDEN", EMAILS_REFUSED);
+    doc.set(await emailsSetting(input.receivesEmails, actor, input.emailsOffReason));
+  }
 
   await doc.save();
   await doc.populate("tagIds", "name color");

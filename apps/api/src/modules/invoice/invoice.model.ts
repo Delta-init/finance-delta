@@ -386,7 +386,7 @@ const invoiceSchema = new Schema(
     emailDelivery: {
       state: {
         type: String,
-        enum: ["sent", "failed", "no_address", "not_configured"],
+        enum: ["sent", "failed", "no_address", "not_configured", "opted_out"],
       },
       at: Date,
       /** The transport's own id, where it gave one. */

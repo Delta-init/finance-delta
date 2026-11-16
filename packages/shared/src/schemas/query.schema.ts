@@ -39,6 +39,8 @@ export interface Paginated<T> {
 // ── Per-resource query schemas ──
 export const customerQuerySchema = listQuerySchema.extend({
   status: z.enum(["active", "archived"]).optional(),
+  /** "on" / "off": whether finance emails them (2026-11-16). */
+  emails: z.enum(["on", "off"]).optional(),
 });
 export type CustomerQuery = z.infer<typeof customerQuerySchema>;
 

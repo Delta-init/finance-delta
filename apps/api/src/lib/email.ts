@@ -84,7 +84,7 @@ export async function logEmail(log: MailLog | undefined, entry: { to: string[]; 
   try {
     const { EmailLog } = await import("../modules/email-log/email-log.model");
     const err = entry.result.error;
-    const state = !err ? "sent" : err === "no_recipients" ? "no_address" : err === "not_configured" ? "not_configured" : "failed";
+    const state = !err ? "sent" : err === "no_recipients" ? "no_address" : err === "not_configured" ? "not_configured" : err === "opted_out" ? "opted_out" : "failed";
     await EmailLog.create({
       organizationId: log?.organizationId || undefined,
       kind: log?.kind ?? "other",
@@ -111,9 +111,45 @@ async function deliver(opts: {
   /** Where this message goes in the email log. */
   log?: MailLog;
 }): Promise<SendResult> {
+  // A client with emails turned off gets none of the client's emails (2026-11-16): those addresses are dropped here,
+  // where every message passes, and logged as not sent on purpose. Staff messages are never held back by it.
+  const off = await optedOut(opts.to, opts.log);
+  if (off.length) {
+    await logEmail(opts.log, { to: off, subject: opts.subject, result: { error: "opted_out" } });
+    const rest = opts.to.filter((t) => t && t.trim() && !off.includes(t.trim().toLowerCase()));
+    if (!rest.length) return { error: "opted_out" };
+    opts = { ...opts, to: rest };
+  }
   const result = await deliverOnce(opts);
   await logEmail(opts.log, { to: opts.to.filter((t) => t && t.trim()), subject: opts.subject, result });
   return result;
+}
+
+/**
+ * The emails that reach clients (2026-11-16) — the ones a client's "Receives emails" switch stops: their invoice
+ * (issued, approved at a close, sent again), each payment's tax invoice, a course payment's receipt, and the overdue
+ * and instalment reminders. Anything else (notices to staff, the salesperson's copy) goes regardless.
+ */
+export const CLIENT_EMAIL_KINDS = new Set([
+  "invoice", "invoice_approved", "invoice_resend", "payment_tax_invoice", "course_payment_receipt", "reminder", "instalment_reminder",
+]);
+
+/** Of these addresses, the ones belonging to a client of the organization with emails turned off. Never throws. */
+async function optedOut(to: string[], log: MailLog | undefined): Promise<string[]> {
+  if (!log || !CLIENT_EMAIL_KINDS.has(log.kind)) return [];
+  const addresses = [...new Set(to.map((t) => String(t ?? "").trim().toLowerCase()).filter(Boolean))];
+  if (!addresses.length) return [];
+  try {
+    const { Customer } = await import("../modules/customer/customer.model");
+    const rows = await Customer.find({
+      email: { $in: addresses }, receivesEmails: false, ...(log.organizationId ? { organizationId: log.organizationId } : {}),
+    }).select("email").lean<{ email: string }[]>();
+    return [...new Set(rows.map((r) => String(r.email).toLowerCase()))];
+  } catch (err) {
+    // Unknown is not "off": a lookup that failed must not stop a client's invoice.
+    logger.warn({ err }, "Could not check whether a client has emails turned off");
+    return [];
+  }
 }
 
 async function deliverOnce(opts: {

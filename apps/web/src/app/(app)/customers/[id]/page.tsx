@@ -129,7 +129,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   return (
     <div className="space-y-6 p-6 max-w-5xl">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-foreground-muted">
+      {/* The trail back — the top bar's Back on a phone (2026-11-17). */}
+      <div className="hidden items-center gap-2 text-sm text-foreground-muted md:flex">
         <Link href="/customers" className="flex items-center gap-1 hover:text-foreground">
           <ArrowLeft className="h-4 w-4" /> Customers
         </Link>
@@ -138,8 +139,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       </div>
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
+      {/* On a phone the badge and Edit wrap under the name rather than squeezing it (2026-11-17). */}
+      <div className="flex flex-wrap items-start justify-between gap-3 md:flex-nowrap md:gap-4">
+        <div className="flex min-w-0 flex-1 basis-56 items-center gap-3">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-lg font-semibold text-primary">
             {customer.name.slice(0, 2).toUpperCase()}
           </div>

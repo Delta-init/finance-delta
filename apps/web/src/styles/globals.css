@@ -167,8 +167,31 @@ html[data-embed] [data-app-inset] { margin: 0 !important; height: 100vh !importa
 /* A phone (2026-11-17): pages keep a 1rem gutter rather than 1.5–2rem. (The shared table component shows cards there;
    a table a page built by hand still scrolls sideways as before.) */
 @media (max-width: 767px) {
-  main > .p-6, main > .p-8, main > .px-6 { padding-left: 1rem; padding-right: 1rem; }
-  main > .p-6, main > .p-8 { padding-top: 1rem; padding-bottom: 1rem; }
-  /* A page's own icon-only ← link beside its title: the top bar's Back does that on a phone. */
-  main a:has(> svg.lucide-arrow-left:only-child) { display: none; }
+  /* (main > the page's enter animation, app/(app)/template.tsx > the page) */
+  main > div > .p-6, main > div > .p-8, main > div > .px-6 { padding-left: 1rem; padding-right: 1rem; }
+  main > div > .p-6, main > div > .p-8 { padding-top: 1rem; padding-bottom: 1rem; }
+  /* A page's own icon-only ← (a link, or a button going back) beside its title: the top bar's Back does that on a
+     phone. */
+  main a:has(> svg.lucide-arrow-left:only-child),
+  main button:has(> svg.lucide-arrow-left:only-child) { display: none; }
+
+  /* A record page's top row (2026-11-17: "fix this page also, the [id] pages") — most build it the same way: the
+     back link, a title block (flex-1) with its badges, and a group of buttons. On a phone the buttons wrap under the
+     title rather than squeezing it to a few letters or running off the edge, and the badges wrap under the name. */
+  main > div > div > div.flex:first-child:not(.flex-col) { flex-wrap: wrap; row-gap: 0.75rem; }
+  main > div > div > div.flex:first-child > .flex-1 { min-width: 0; flex-basis: 12rem; }
+  main > div > div > div.flex:first-child > div.flex:not(.flex-1),
+  main > div > div > div.flex:first-child .flex-1 > div.flex,
+  main > div > div > div.flex:first-child > div:not(.flex-1) > div.flex { flex-wrap: wrap; }
+
+  /* A grid follows the screen: a wide table in one of its cards no longer makes every card wider than the phone
+     (the grid's track grew to the table's width); the table scrolls in its card instead. */
+  main .grid > * { min-width: 0; }
+  main .overflow-hidden:has(> table) { overflow-x: auto; }
+
+  /* Text boxes at 16px (2026-11-17: "when a text input is tapped it zooms"): an iPhone zooms into any field with
+     smaller text when it's tapped. Pinch zoom stays — only the jump on tapping a field goes. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+  select,
+  textarea { font-size: 16px !important; }
 }

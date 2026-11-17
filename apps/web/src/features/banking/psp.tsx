@@ -6,7 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   formatMoney, pspChargesVatMinor,
   type BankAccount, type CreatePspSettlementInput, type PspSettings, type PspSettlementDTO, type PspSummary, type PspUnsettledLine,
+  type PspUnsettledSearch,
 } from "@delta/shared";
+import { useDebounced } from "@/hooks/use-debounced";
 import { AlertTriangle, Landmark, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -39,6 +41,19 @@ export function usePspSummary(id: string, enabled = true) {
 }
 export function usePspUnsettled(id: string, enabled = true) {
   return useQuery({ queryKey: [...pspKey(id), "unsettled"], queryFn: () => api.get<PspUnsettledLine[]>(`bank-accounts/${id}/psp/unsettled`), enabled });
+}
+/** The settlement window's search, done by the server (2026-11-17): words or an amount, From / up to, before the start date. */
+export function usePspUnsettledSearch(id: string, p: { q: string; from: string; to: string; before: boolean }) {
+  const params = new URLSearchParams();
+  if (p.q) params.set("q", p.q);
+  if (p.from) params.set("from", p.from);
+  if (p.to) params.set("to", p.to);
+  if (p.before) params.set("before", "1");
+  return useQuery({
+    queryKey: [...pspKey(id), "unsettled", "search", p],
+    queryFn: () => api.get<PspUnsettledSearch>(`bank-accounts/${id}/psp/unsettled/search?${params.toString()}`),
+    placeholderData: (prev) => prev,
+  });
 }
 export function usePspSettlements(id: string, enabled = true) {
   return useQuery({ queryKey: [...pspKey(id), "settlements"], queryFn: () => api.get<PspSettlementDTO[]>(`bank-accounts/${id}/psp/settlements`), enabled });
@@ -289,21 +304,27 @@ export function PspPanel({ account, canWrite }: { account: BankAccount; canWrite
 function SettlementDialog({ account, onClose }: { account: BankAccount; onClose: () => void }) {
   const cur = account.currency;
   const p = account.psp!;
-  const { data: lines, isLoading } = usePspUnsettled(account.id);
   const create = useCreatePspSettlement(account.id);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // What is picked, kept with its line: a search that no longer shows it does not unpick it, nor lose its amount.
+  const [picked, setPicked] = useState<Map<string, PspUnsettledLine>>(new Map());
   const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
   const [upTo, setUpTo] = useState("");
+  const [before, setBefore] = useState(false);
+  const [limit, setLimit] = useState(100);
+  // Searched by the server (2026-11-17): every match, counted and summed — not only what one load brought.
+  const needle = useDebounced(q.trim(), 300);
+  const { data: found, isLoading, isFetching } = usePspUnsettledSearch(account.id, { q: needle, from, to: upTo, before });
   const [date, setDate] = useState(todayDubai());
   // This settlement's own charges (2026-11-14): typed, or what arrived is and the charges are the rest. Whichever box
   // was typed in last is the one kept; the other follows it, also when other payments are picked. Nothing is guessed.
   const [typed, setTyped] = useState<{ box: "charges" | "received"; text: string } | null>(null);
   const [reference, setReference] = useState("");
 
-  const all = lines ?? [];
-  const needle = q.trim().toLowerCase();
-  const shown = all.filter((l) => (!needle || [l.description, l.reference, l.invoice?.number ?? ""].some((x) => x.toLowerCase().includes(needle))) && (!upTo || l.date <= upTo));
-  const chosen = useMemo(() => all.filter((l) => picked.has(l.id)), [all, picked]);
+  const matches = found?.rows ?? [];
+  const shown = matches.slice(0, limit);
+  const filtering = !!(needle || from || upTo || before);
+  const chosen = useMemo(() => [...picked.values()], [picked]);
   const gross = chosen.reduce((a, l) => a + l.amountMinor, 0);
   const typedMinor = typed && typed.text.trim() !== "" && Number.isFinite(Number(typed.text)) && Number(typed.text) >= 0 ? Math.round(Number(typed.text) * 100) : null;
   const fee = typedMinor === null ? null : typed!.box === "charges" ? typedMinor : gross - typedMinor;
@@ -313,7 +334,8 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
     : fee < 0 ? "More arrived than the payments picked come to. Pick the rest of what was settled."
     : receivedMinor <= 0 ? "The charges can't take all of what was settled." : "";
   const vatInFee = fee !== null && fee > 0 ? pspChargesVatMinor(fee, p.feeVatPct) : 0;
-  const allShown = shown.length > 0 && shown.every((l) => picked.has(l.id));
+  const allMatching = matches.length > 0 && matches.every((l) => picked.has(l.id));
+  const toggle = (l: PspUnsettledLine) => setPicked((prev) => { const n = new Map(prev); if (n.has(l.id)) n.delete(l.id); else n.set(l.id, l); return n; });
   const ready = chosen.length > 0 && fee !== null && receivedMinor !== null && fee >= 0 && receivedMinor > 0 && !!date;
 
   async function save() {
@@ -345,35 +367,57 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search invoice, client, reference…" className="pl-8" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Paid up to</Label>
-              <DateField value={upTo} onChange={setUpTo} className="w-[10rem]" aria-label="Up to" />
+              <Label className="text-xs">From</Label>
+              <DateField value={from} onChange={(v) => { setFrom(v); setLimit(100); }} className="w-[10rem]" aria-label="From" />
             </div>
-            <Button
-              type="button" variant="ghost" size="sm" disabled={shown.length === 0}
-              onClick={() => setPicked((prev) => { const n = new Set(prev); shown.forEach((l) => (allShown ? n.delete(l.id) : n.add(l.id))); return n; })}
-            >
-              {allShown ? "Clear" : "Select all"}{needle || upTo ? " shown" : ""}
-            </Button>
+            <div className="space-y-1">
+              <Label className="text-xs">Paid up to</Label>
+              <DateField value={upTo} onChange={(v) => { setUpTo(v); setLimit(100); }} className="w-[10rem]" aria-label="Up to" />
+            </div>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            {/* Payments dated before the provider's start date count as settled — shown only when asked (2026-11-17). */}
+            <label className="flex cursor-pointer items-center gap-2">
+              <Checkbox checked={before} onChange={() => { setBefore((b) => !b); setLimit(100); }} aria-label="Include payments before the start date" />
+              <span>Include payments before the start date{found?.startDate ? ` (from ${found.startDate})` : p.startDate ? ` (from ${p.startDate})` : ""}</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-foreground-muted">
+                {found ? <>{found.total} payment{found.total === 1 ? "" : "s"}{filtering ? " match" : " waiting"} · <MoneyDisplay minor={found.totalMinor} currency={cur} /></> : ""}
+                {isFetching && found ? " · updating…" : ""}
+              </span>
+              <Button
+                type="button" variant="ghost" size="sm" disabled={matches.length === 0}
+                onClick={() => setPicked((prev) => { const n = new Map(prev); matches.forEach((l) => (allMatching ? n.delete(l.id) : n.set(l.id, l))); return n; })}
+              >
+                {allMatching ? "Clear" : `Select all ${matches.length}${filtering ? " matching" : ""}`}
+              </Button>
+            </div>
+          </div>
+          {found?.capped && <p className="text-xs text-warning">Only the first {matches.length} of {found.total} are listed — narrow the dates or the search to see the rest.</p>}
 
           <div className="max-h-72 overflow-y-auto rounded-lg border border-border">
             {isLoading ? (
               <p className="p-4 text-center text-sm text-foreground-muted">Loading…</p>
             ) : shown.length === 0 ? (
-              <p className="p-4 text-center text-sm text-foreground-muted">Nothing waiting{needle || upTo ? " that matches" : ""}.</p>
+              <p className="p-4 text-center text-sm text-foreground-muted">
+                Nothing waiting{filtering ? " that matches" : ""}.
+                {!before && found?.startDate ? ` Payments before ${found.startDate} are counted as settled — tick "Include payments before the start date" to see them.` : ""}
+              </p>
             ) : (
               <table className="w-full text-sm">
                 <tbody>
                   {shown.map((l) => (
                     <tr key={l.id} className="border-b border-border last:border-0">
                       <td className="w-8 px-3 py-2">
-                        <Checkbox checked={picked.has(l.id)} onChange={() => setPicked((prev) => { const n = new Set(prev); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return n; })} />
+                        <Checkbox checked={picked.has(l.id)} onChange={() => toggle(l)} />
                       </td>
                       <td className="px-2 py-2">
                         <p className="truncate">{l.description}</p>
                         <p className="text-xs text-foreground-muted">
                           {l.date}{l.invoice ? ` · ${l.invoice.number}` : ""} · expected {l.expectedOn}
                           {l.late && <Badge tone="danger" className="ml-1.5">late</Badge>}
+                          {l.beforeStart && <Badge tone="warning" className="ml-1.5" title="Dated before the start date — check it did not already reach the bank another way">Before start date</Badge>}
                         </p>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
@@ -383,6 +427,13 @@ function SettlementDialog({ account, onClose }: { account: BankAccount; onClose:
                   ))}
                 </tbody>
               </table>
+            )}
+            {matches.length > shown.length && (
+              <div className="border-t border-border p-2 text-center">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setLimit((n) => n + 100)}>
+                  Show more ({matches.length - shown.length} more)
+                </Button>
+              </div>
             )}
           </div>
 

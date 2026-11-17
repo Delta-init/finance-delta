@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import {
-  EXPENSE_DEFAULTS, pspChargesVatMinor,
-  type CreatePspSettlementInput, type PspAccountSummary, type PspSettlementDTO, type PspSummary, type PspUnsettledLine,
+  EXPENSE_DEFAULTS, PSP_SEARCH_LIMIT, pspChargesVatMinor,
+  type CreatePspSettlementInput, type PspAccountSummary, type PspSettlementDTO, type PspSummary, type PspUnsettledLine, type PspUnsettledSearch,
 } from "@delta/shared";
 import { AppError } from "../../lib/http";
 import { BankAccount } from "../banking/bank-account.model";
@@ -47,6 +47,14 @@ function unsettledFilter(orgId: string, acc: PspAccount & { psp: Psp }) {
   };
 }
 
+/**
+ * Any line of the PSP account's money not settled yet, whatever its date — what a settlement may take: one before the
+ * start date only when it is picked on purpose (the dialog's "include before the start date", 2026-11-17).
+ */
+function pickableFilter(orgId: string, acc: PspAccount & { psp: Psp }) {
+  return { organizationId: oid(orgId), accountId: acc._id, type: "credit", amountMinor: { $gt: 0 }, transfer: null, settlement: null };
+}
+
 function lineOf(tx: any, psp: Psp, now: number): PspUnsettledLine {
   const inv = (tx.matches ?? []).find((m: any) => m.type === "invoice");
   const expected = new Date(new Date(tx.date).getTime() + (psp.settlementDays ?? 0) * DAY_MS);
@@ -56,6 +64,60 @@ function lineOf(tx: any, psp: Psp, now: number): PspUnsettledLine {
     expectedOn: day(expected),
     // Late once the day it was due has gone by (Dubai's day, as the rest of finance counts days).
     late: expected.getTime() + DAY_MS <= now + 4 * 3_600_000,
+    ...(new Date(tx.date).getTime() < new Date(psp.startDate).getTime() ? { beforeStart: true } : {}),
+  };
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The settlement window's search, on the server (the user, 2026-11-17: "the filter is not server side, and the whole
+ * transaction is not showing"): words match the description, reference, invoice number and the invoice's client; a
+ * number matches the amount too. From / up to are days. `includeBeforeStart` adds the money dated before the PSP's
+ * start date — counted as settled otherwise — each line tagged. Every match is counted and summed; the first
+ * PSP_SEARCH_LIMIT are sent, oldest first.
+ */
+export async function searchUnsettled(
+  orgId: string,
+  accountId: string,
+  opts: { q?: string; from?: string; to?: string; includeBeforeStart?: boolean } = {},
+): Promise<PspUnsettledSearch> {
+  const acc = await pspAccount(orgId, accountId);
+  const filter: Record<string, any> = opts.includeBeforeStart ? pickableFilter(orgId, acc) : unsettledFilter(orgId, acc);
+  const date: Record<string, Date> = opts.includeBeforeStart ? {} : { $gte: acc.psp.startDate };
+  if (opts.from && DAY_RE.test(opts.from)) {
+    const from = new Date(`${opts.from}T00:00:00.000Z`);
+    if (!date.$gte || from > date.$gte) date.$gte = from;
+  }
+  if (opts.to && DAY_RE.test(opts.to)) date.$lte = new Date(`${opts.to}T23:59:59.999Z`);
+  if (Object.keys(date).length) filter.date = date; else delete filter.date;
+
+  const q = String(opts.q ?? "").trim().slice(0, 100);
+  if (q) {
+    const re = new RegExp(escapeRe(q), "i");
+    const or: Record<string, unknown>[] = [{ description: re }, { reference: re }, { "matches.referenceNumber": re }];
+    // The invoice's client, by name.
+    const { Invoice } = await import("../invoice/invoice.model");
+    const invoices = await Invoice.find({ organizationId: oid(orgId), customerName: re }).select("_id").limit(2000).lean<Array<{ _id: Types.ObjectId }>>();
+    if (invoices.length) or.push({ "matches.referenceId": { $in: invoices.map((i) => String(i._id)) } });
+    // A number: the amount, as typed (1125, 1,125, 1125.50).
+    const n = Number(q.replace(/,/g, ""));
+    if (/^[\d,]+(\.\d{1,2})?$/.test(q) && Number.isFinite(n) && n > 0) or.push({ amountMinor: Math.round(n * 100) });
+    filter.$or = or;
+  }
+
+  const [rows, agg] = await Promise.all([
+    BankTransaction.find(filter).sort({ date: 1, createdAt: 1 }).limit(PSP_SEARCH_LIMIT).lean<any[]>(),
+    BankTransaction.aggregate<{ n: number; minor: number }>([{ $match: filter }, { $group: { _id: null, n: { $sum: 1 }, minor: { $sum: "$amountMinor" } } }]),
+  ]);
+  const now = Date.now();
+  return {
+    rows: rows.map((tx) => lineOf(tx, acc.psp, now)),
+    total: agg[0]?.n ?? 0,
+    totalMinor: agg[0]?.minor ?? 0,
+    capped: (agg[0]?.n ?? 0) > rows.length,
+    startDate: day(acc.psp.startDate),
   };
 }
 
@@ -136,7 +198,8 @@ export async function createSettlement(
   if (bank.currency !== acc.currency) throw new AppError("CONFLICT", `${bank.accountName} is in ${bank.currency}, ${acc.accountName} in ${acc.currency}`);
 
   const ids = [...new Set(input.lineIds)].filter((x) => Types.ObjectId.isValid(x)).map(oid);
-  const lines = await BankTransaction.find({ ...unsettledFilter(orgId, acc), _id: { $in: ids } }).lean<any[]>();
+  // Any of the account's money not settled yet — one before the start date too, picked on purpose (2026-11-17).
+  const lines = await BankTransaction.find({ ...pickableFilter(orgId, acc), _id: { $in: ids } }).lean<any[]>();
   if (lines.length !== input.lineIds.length) {
     throw new AppError("CONFLICT", `${input.lineIds.length - lines.length} of the payments picked are not ${acc.accountName}'s money waiting to be settled — refresh and pick again`);
   }

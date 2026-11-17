@@ -163,6 +163,37 @@ await psp.deleteSettlement(org, tabby.id, third.id);
 const olderScreen = await psp.createSettlement(org, tabby.id, { lineIds: counter, date: "2026-11-12", receivedMinor: 29_000, reference: "", notes: "" }, USER);
 check("what arrived alone (an older screen): the charges are the rest", olderScreen.feeMinor === 1_000 && olderScreen.receivedMinor === 29_000, j(olderScreen));
 
+step("6. The settlement window's search, on the server (2026-11-17)");
+const tabby2 = await acct({ accountName: "Tabby 2", accountType: "psp", psp: { ...settings, startDate: "2026-11-10" } });
+const inv2 = { _id: new Types.ObjectId() };
+await mongoose.connection.db!.collection("invoices").insertOne({ _id: inv2._id, organizationId: ORG, invoiceNumber: "IN-00009", customerId: new Types.ObjectId(), customerName: "Mohammed Razy",
+  salespersonId: new Types.ObjectId(), salespersonName: "Rep", issueDate: new Date("2026-11-02"), dueDate: new Date("2026-11-02"), currency: "AED", status: "sent",
+  lineItems: [{ description: "Course", quantity: 1, unitPriceMinor: 500_000, discountPct: 0, taxes: [], lineSubtotalMinor: 500_000, discountMinor: 0, taxableMinor: 500_000, taxTotalMinor: 0, lineTotalMinor: 500_000 }],
+  subtotalMinor: 500_000, discountTotalMinor: 0, taxBreakdown: [], taxTotalMinor: 0, totalMinor: 500_000, amountPaidMinor: 0, balanceMinor: 500_000,
+  approval: { state: "not_required" }, payments: [], createdAt: new Date("2026-11-02"), updatedAt: new Date("2026-11-02") });
+const pay2 = (amountMinor: number, paidOn: string) => recordPayment(org, String(inv2._id), { method: "tabby", amountMinor, paidOn, reference: "", notes: "", accountName: "", chargesMinor: 0, bankAccountId: tabby2.id } as never);
+await pay2(112_500, "2026-11-02");   // before the start date
+await pay2(56_250, "2026-11-12");
+await banking.addTransaction(org, tabby2.id, { date: "2026-11-14", description: "Paid at the counter", reference: "UTR-77", amountMinor: 20_000, notes: "" } as never);
+let found = await psp.searchUnsettled(org, tabby2.id, {});
+check("no search: the money from the start date, counted and summed", found.total === 2 && found.totalMinor === 76_250 && found.rows.length === 2 && found.startDate === "2026-11-10" && !found.capped, j(found));
+found = await psp.searchUnsettled(org, tabby2.id, { includeBeforeStart: true });
+const old2 = found.rows.find((l) => l.date === "2026-11-02");
+check("before the start date included when asked: three, the old one tagged", found.total === 3 && found.totalMinor === 188_750 && old2?.beforeStart === true && found.rows.filter((l) => l.beforeStart).length === 1, j(found));
+check("the client's name finds its payments", (await psp.searchUnsettled(org, tabby2.id, { q: "razy", includeBeforeStart: true })).total === 2);
+check("the invoice number too", (await psp.searchUnsettled(org, tabby2.id, { q: "IN-00009" })).total === 1);
+check("an amount as typed (1,125)", (await psp.searchUnsettled(org, tabby2.id, { q: "1,125", includeBeforeStart: true })).rows.map((l) => l.amountMinor).join() === "112500");
+check("…and 562.50", (await psp.searchUnsettled(org, tabby2.id, { q: "562.50" })).rows.map((l) => l.amountMinor).join() === "56250");
+check("a reference", (await psp.searchUnsettled(org, tabby2.id, { q: "utr-77" })).total === 1);
+check("from / up to a day", (await psp.searchUnsettled(org, tabby2.id, { from: "2026-11-13", to: "2026-11-14" })).rows.map((l) => l.date).join() === "2026-11-14"
+  && (await psp.searchUnsettled(org, tabby2.id, { to: "2026-11-05", includeBeforeStart: true })).rows.map((l) => l.date).join() === "2026-11-02");
+check("a from before the start date does not bring the older money in by itself", (await psp.searchUnsettled(org, tabby2.id, { from: "2026-11-01" })).total === 2);
+check("odd characters searched as they are", (await psp.searchUnsettled(org, tabby2.id, { q: "(razy[" })).total === 0);
+check("the account's own figures still leave the older money out", (await psp.pspSummary(org, tabby2.id)).unsettledCount === 2);
+const settledOld = await psp.createSettlement(org, tabby2.id, { lineIds: [old2!.id], date: "2026-11-15", receivedMinor: 110_000, feeMinor: 2_500, reference: "", notes: "" }, USER);
+check("one before the start date, picked on purpose, is settled", settledOld.grossMinor === 112_500 && settledOld.feeMinor === 2_500, j(settledOld));
+check("…and leaves the search", (await psp.searchUnsettled(org, tabby2.id, { includeBeforeStart: true })).total === 2);
+
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);
 process.exit(failures ? 1 : 0);

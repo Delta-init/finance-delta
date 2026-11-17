@@ -42,6 +42,8 @@ router.get("/psp/summary", requirePermission("banking:read"), psp.allSummaries);
 router.get("/:id", requirePermission("banking:read"), c.getAccount);
 // A PSP account's settlements (2026-11-06): what waits to be settled, and each settlement — the transfer and fee it made.
 router.get("/:id/psp/unsettled", requirePermission("banking:read"), psp.unsettled);
+// The settlement window's search, done here (2026-11-17).
+router.get("/:id/psp/unsettled/search", requirePermission("banking:read"), psp.searchUnsettled);
 router.get("/:id/psp/summary", requirePermission("banking:read"), psp.summary);
 router.get("/:id/psp/settlements", requirePermission("banking:read"), psp.list);
 router.post("/:id/psp/settlements", requirePermission("banking:write"), validateBody(createPspSettlementSchema), psp.create);

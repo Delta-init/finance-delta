@@ -122,7 +122,20 @@ export interface PspUnsettledLine {
   /** When the provider should have paid it out. */
   expectedOn: string;
   late: boolean;
+  /** Dated before the PSP's start date — counted as settled unless picked on purpose (2026-11-17). */
+  beforeStart?: boolean;
 }
+
+/** The settlement window's search, done by the server (2026-11-17): every match, how many, and what they come to. */
+export interface PspUnsettledSearch {
+  rows: PspUnsettledLine[];
+  total: number;
+  totalMinor: number;
+  /** More matched than were sent (`rows` holds the first PSP_SEARCH_LIMIT). */
+  capped: boolean;
+  startDate: string;
+}
+export const PSP_SEARCH_LIMIT = 5000;
 
 export interface PspSettlementDTO {
   id: string;

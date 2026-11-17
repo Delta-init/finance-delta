@@ -15,6 +15,17 @@ export const unsettled = asyncHandler(async (req, res) => {
   ok(res, await svc.unsettledLines(org(req), req.params.id!, { to: typeof req.query.to === "string" ? req.query.to : undefined }));
 });
 
+/**
+ * The settlement window's search (2026-11-17): ?q= (words or an amount), ?from= / ?to= (days), ?before=1 (include the
+ * money dated before the PSP's start date) — every match counted and summed, the first 5,000 sent.
+ */
+export const searchUnsettled = asyncHandler(async (req, res) => {
+  const s = (v: unknown) => (typeof v === "string" ? v : undefined);
+  ok(res, await svc.searchUnsettled(org(req), req.params.id!, {
+    q: s(req.query.q), from: s(req.query.from), to: s(req.query.to), includeBeforeStart: req.query.before === "1" || req.query.before === "true",
+  }));
+});
+
 /** Every PSP account's unsettled money — the dashboard's card. */
 export const allSummaries = asyncHandler(async (req, res) => {
   ok(res, await svc.allPspSummaries(org(req)));

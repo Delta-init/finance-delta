@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, ChevronRight, ChevronDown, RefreshCw, Columns2 } from "lucide-react";
+import { Search, Bell, ChevronRight, ChevronDown, RefreshCw, Columns2, X } from "lucide-react";
 import { useSplit } from "@/components/split-view/side-page";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { CURRENCIES, useCurrency, type CurrencyCode } from "@/lib/currency-context";
 import { cn } from "@/lib/utils";
+import { BackButton } from "@/components/dashboard/back-button";
 
 interface SearchResult {
   invoices: { id: string; label: string; sub: string; href: string }[];
@@ -26,7 +27,8 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced;
 }
 
-function GlobalSearch() {
+/** The search box — in the bar from sm up; on a phone (`phone`) a full-width row under the bar, opened by its icon. */
+function GlobalSearch({ phone = false, onDone }: { phone?: boolean; onDone?: () => void } = {}) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -54,8 +56,9 @@ function GlobalSearch() {
   const navigate = useCallback((href: string) => {
     setOpen(false);
     setQ("");
+    onDone?.();
     router.push(href);
-  }, [router]);
+  }, [router, onDone]);
 
   const allResults = data ? [
     ...data.invoices.map((r) => ({ ...r, type: "Invoice" })),
@@ -63,17 +66,21 @@ function GlobalSearch() {
   ] : [];
 
   return (
-    <div ref={wrapRef} className="relative hidden sm:block">
+    <div ref={wrapRef} className={phone ? "relative w-full" : "relative hidden sm:block"}>
       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-subtle" />
       <input
         value={q}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => q.length >= 2 && setOpen(true)}
-        placeholder="Search…"
-        className="h-9 w-56 rounded-md border border-border bg-surface pl-8 pr-3 text-sm placeholder:text-foreground-subtle focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        placeholder="Search invoices, clients…"
+        autoFocus={phone}
+        className={cn(
+          "h-9 rounded-md border border-border bg-surface pl-8 pr-3 text-sm placeholder:text-foreground-subtle focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+          phone ? "w-full text-base" : "w-56",
+        )}
       />
       {open && q.length >= 2 && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-background shadow-lg">
+        <div className={cn("absolute top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-background shadow-lg", phone ? "inset-x-0" : "right-0 w-80")}>
           {!hasResults ? (
             <p className="px-4 py-3 text-sm text-foreground-muted">No results for "{q}"</p>
           ) : (
@@ -270,14 +277,26 @@ function SplitButton() {
 
 export function SiteHeader() {
   const crumbs = useBreadcrumbs();
+  // Where Back goes when there is no finance page behind this one: up a level (2026-11-17).
+  const parentHref = crumbs.length >= 2 ? crumbs[crumbs.length - 2]!.href : null;
+  // A phone's title: the page's name — for a record ("Detail", "New", "Edit") with its section, "Banking › Detail".
+  const last = crumbs[crumbs.length - 1]?.label ?? "";
+  const title = ["Detail", "New", "Edit"].includes(last) && crumbs.length >= 2 ? `${crumbs[crumbs.length - 2]!.label} › ${last}` : last;
+  const [searching, setSearching] = useState(false);
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background px-4 backdrop-blur-md">
-      <SidebarTrigger />
+    <header className="sticky top-0 z-30 border-b border-border bg-background backdrop-blur-md">
+    <div className="flex h-14 items-center gap-2 px-3 md:gap-3 md:px-4">
+      {/* On a phone the menu is the dock's More (2026-11-17); tablets and up keep this. */}
+      <SidebarTrigger className="hidden md:inline-flex" />
+      <BackButton parentHref={parentHref} />
+
+      {/* A phone: the page's name only. */}
+      {title && <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground md:hidden">{title}</span>}
 
       {/* Breadcrumbs */}
       {crumbs.length > 0 && (
-        <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm">
+        <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1 text-sm md:flex">
           {crumbs.map((crumb, i) => {
             const isLast = i === crumbs.length - 1;
             return (
@@ -299,10 +318,18 @@ export function SiteHeader() {
         </nav>
       )}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
         <SplitButton />
         <GlobalSearch />
-        <CurrencyPicker />
+        <button
+          type="button"
+          onClick={() => setSearching((v) => !v)}
+          aria-label={searching ? "Close search" : "Search"}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-surface-muted hover:text-foreground sm:hidden"
+        >
+          {searching ? <X className="h-[18px] w-[18px]" /> : <Search className="h-[18px] w-[18px]" />}
+        </button>
+        <div className="hidden sm:block"><CurrencyPicker /></div>
         <button
           aria-label="Notifications"
           className="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-surface-muted hover:text-foreground"
@@ -311,6 +338,13 @@ export function SiteHeader() {
           <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
         </button>
       </div>
+    </div>
+    {/* A phone's search, full width under the bar. */}
+    {searching && (
+      <div className="border-t border-border px-3 py-2 sm:hidden">
+        <GlobalSearch phone onDone={() => setSearching(false)} />
+      </div>
+    )}
     </header>
   );
 }

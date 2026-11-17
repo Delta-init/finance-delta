@@ -283,15 +283,15 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="space-y-4 p-6">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+      {/* Header — on a phone the buttons wrap under the name (2026-11-17). */}
+      <div className="flex flex-wrap items-start gap-3 md:flex-nowrap md:gap-4">
         <Link
           href="/banking"
           className="mt-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted hover:bg-surface-muted hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
         </Link>
-        <div className="flex-1">
+        <div className="min-w-0 flex-1 basis-48">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold">{account.accountName}</h1>
             <Badge tone={account.isActive ? "success" : "neutral"}>
@@ -305,7 +305,7 @@ export default function BankAccountPage({ params }: { params: Promise<{ id: stri
             <p className="text-sm text-foreground-muted mt-0.5">{account.bankName}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={() => router.push(`/banking/${id}/import`)}>
             <Upload className="h-4 w-4" /> Import
           </Button>

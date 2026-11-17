@@ -163,3 +163,12 @@
    margins. <html data-embed> is set before the first paint by app/layout.tsx. */
 html[data-embed] [data-app-chrome] { display: none !important; }
 html[data-embed] [data-app-inset] { margin: 0 !important; height: 100vh !important; border-radius: 0 !important; border: 0 !important; box-shadow: none !important; }
+
+/* A phone (2026-11-17): pages keep a 1rem gutter rather than 1.5–2rem. (The shared table component shows cards there;
+   a table a page built by hand still scrolls sideways as before.) */
+@media (max-width: 767px) {
+  main > .p-6, main > .p-8, main > .px-6 { padding-left: 1rem; padding-right: 1rem; }
+  main > .p-6, main > .p-8 { padding-top: 1rem; padding-bottom: 1rem; }
+  /* A page's own icon-only ← link beside its title: the top bar's Back does that on a phone. */
+  main a:has(> svg.lucide-arrow-left:only-child) { display: none; }
+}

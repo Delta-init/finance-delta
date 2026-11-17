@@ -10,8 +10,11 @@ import {
   ChevronRight,
   Eye,
   Loader2,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useIsPhone } from "@/hooks/use-is-phone";
 import { OpenBesideButton, useSplit } from "@/components/split-view/side-page";
 import { Checkbox } from "./checkbox";
 import { Tooltip } from "./tooltip";
@@ -122,6 +125,7 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const { embedded, openBeside } = useSplit();
   const reduce = useReducedMotion();
+  const isPhone = useIsPhone();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -161,6 +165,23 @@ export function DataTable<T>({
   // Fetching again with rows already showing; the first load keeps its own "Loading…" row.
   const refreshing = isFetching && !isLoading;
 
+  /*
+   * A phone (2026-11-17: "mobile view… the tables a better UI"): each row a card instead of a table scrolled sideways.
+   * Its title is the first column; the first right-aligned one (the money) sits beside it; a "status" column under
+   * it; then up to four more as label and value — the eye shows every field. A row's controls (hideInDetail, or no
+   * header) go along its foot. Sorting is a menu, as there are no headers to click.
+   */
+  const isControl = (c: Column<T>) => Boolean(c.hideInDetail) || c.header === "" || c.header == null || c.key === "actions";
+  const infoColumns = columns.filter((c) => !isControl(c));
+  const titleCol = infoColumns[0];
+  const moneyCol = infoColumns.find((c) => c !== titleCol && c.align === "right");
+  const statusCol = infoColumns.find((c) => c !== titleCol && c !== moneyCol && c.key === "status");
+  const restCols = infoColumns.filter((c) => c !== titleCol && c !== moneyCol && c !== statusCol);
+  const cardCols = restCols.slice(0, 4);
+  const controlCols = columns.filter(isControl);
+  const sortableCols = columns.filter((c) => c.sortable);
+  const headerText = (c: Column<T>) => (typeof c.header === "string" ? c.header : c.key.replace(/([a-z])([A-Z])/g, "$1 $2"));
+
   return (
     <div className="relative overflow-hidden rounded-xl border border-border bg-surface shadow-sm" aria-busy={isLoading || isFetching}>
       {refreshing && (
@@ -168,6 +189,98 @@ export function DataTable<T>({
           <div className="h-full w-1/3 animate-[datatable-progress_1.1s_ease-in-out_infinite] rounded-full bg-primary" />
         </div>
       )}
+      {isPhone ? (
+        <div className={cn("transition-opacity duration-150", refreshing && "pointer-events-none opacity-50")}>
+          {(selectable || (onSortChange && sortableCols.length > 0)) && (
+            <div className="flex items-center gap-2 border-b border-border bg-surface-muted/60 px-3 py-2 text-sm">
+              {selectable && (
+                <label className="flex items-center gap-2 text-foreground-muted">
+                  <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} aria-label="Select all rows" />
+                  All
+                </label>
+              )}
+              {onSortChange && sortableCols.length > 0 && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <Select value={sort?.key ?? ""} onValueChange={(k) => onSortChange(k)}>
+                    <SelectTrigger className="h-8 w-[150px]" aria-label="Sort by">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sortableCols.map((c) => (
+                        <SelectItem key={c.key} value={c.key}>{headerText(c)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {sort && (
+                    <button
+                      type="button"
+                      onClick={() => onSortChange(sort.key)}
+                      aria-label={sort.dir === "asc" ? "Ascending — tap for descending" : "Descending — tap for ascending"}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-foreground-muted"
+                    >
+                      {sort.dir === "asc" ? <ArrowUpNarrowWide className="h-4 w-4" /> : <ArrowDownWideNarrow className="h-4 w-4" />}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {isLoading ? (
+            <p className="px-4 py-12 text-center text-sm text-foreground-muted">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="px-4 py-12 text-center text-sm text-foreground-subtle">{emptyMessage}</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {rows.map((row) => {
+                const id = getRowId(row);
+                const isSel = selected.has(id);
+                const hasFoot = selectable || viewable || controlCols.length > 0;
+                return (
+                  <li
+                    key={id}
+                    className={cn("px-3.5 py-3 text-sm", isSel && "bg-primary-50", onRowClick && "cursor-pointer active:bg-surface-muted")}
+                    onClick={() => onRowClick?.(row)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 break-words font-medium text-foreground">{titleCol ? titleCol.cell(row) : null}</div>
+                      {moneyCol && <div className="shrink-0 text-right font-semibold tabular-nums text-foreground">{moneyCol.cell(row)}</div>}
+                    </div>
+                    {statusCol && <div className="mt-1.5">{statusCol.cell(row)}</div>}
+                    {cardCols.length > 0 && (
+                      <dl className="mt-2 space-y-1">
+                        {cardCols.map((c) => (
+                          <div key={c.key} className="flex items-start justify-between gap-3 text-xs">
+                            <dt className="shrink-0 text-foreground-muted">{c.header}</dt>
+                            <dd className="min-w-0 break-words text-right text-foreground">{c.cell(row)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                    {hasFoot && (
+                      <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        {selectable && <Checkbox checked={isSel} onChange={() => toggleRow(id)} aria-label="Select row" />}
+                        <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+                          {controlCols.map((c) => <div key={c.key}>{c.cell(row)}</div>)}
+                          {viewable && (
+                            <button
+                              type="button"
+                              onClick={() => setViewing(row)}
+                              aria-label="View full entry"
+                              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+                            >
+                              <Eye className="h-4 w-4" />{restCols.length > cardCols.length ? " All fields" : ""}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : (
       <div className={cn("overflow-x-auto transition-opacity duration-150", refreshing && "pointer-events-none opacity-50")}>
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -309,9 +422,11 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+      )}
 
       <div className="flex flex-col items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm sm:flex-row">
-        <div className="flex items-center gap-2 text-foreground-muted">
+        {/* Rows per page, and the page numbers, are for wider screens; a phone pages with ‹ and ›. */}
+        <div className="hidden items-center gap-2 text-foreground-muted sm:flex">
           <span>Rows per page</span>
           <Select value={String(pageSize)} onValueChange={(v) => onPageSizeChange(Number(v))}>
             <SelectTrigger className="h-8 w-[72px]">
@@ -346,7 +461,7 @@ export function DataTable<T>({
               <ChevronLeft className="h-4 w-4" />
             </button>
             {pageButtons(page, pageCount).map((p, i) =>
-              p === "…" ? (
+              isPhone ? null : p === "…" ? (
                 <span key={`e${i}`} className="px-1.5 text-foreground-subtle">
                   …
                 </span>

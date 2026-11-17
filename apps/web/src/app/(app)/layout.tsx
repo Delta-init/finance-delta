@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { SiteHeader } from "@/components/dashboard/site-header";
+import { MobileDock } from "@/components/dashboard/mobile-dock";
 import { OrgPickerModal } from "@/components/org-picker/OrgPickerModal";
 import { RootPortalHistoryBridge } from "@/components/root-portal-history-bridge";
 import { SplitShell } from "@/components/split-view/split-view";
@@ -39,9 +40,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       </div>
       <SidebarInset data-app-inset>
         <div data-app-chrome className="contents"><SiteHeader /></div>
-        {/* The page, and a record opened beside it (the split pane, 2026-11-07). */}
-        <SplitShell>{children}</SplitShell>
+        {/* The page, and a record opened beside it (the split pane, 2026-11-07). On a phone, room at its foot for the
+            dock (2026-11-17), so the last row isn't under it. */}
+        <SplitShell>
+          {children}
+          <div data-app-chrome aria-hidden className="h-[calc(4.5rem+env(safe-area-inset-bottom))] md:hidden" />
+        </SplitShell>
       </SidebarInset>
+      <div data-app-chrome className="contents"><MobileDock /></div>
     </SidebarProvider>
     </SplitProvider>
   );

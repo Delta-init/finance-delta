@@ -59,7 +59,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       value={{ collapsed: collapsed && !isMobile, settled, isMobile, openMobile, setOpenMobile, toggle }}
     >
       {/* inset variant: primary canvas; content floats as a card on top */}
-      <div  className="flex min-h-screen w-full bg-primary  ">
+      <div  className="flex min-h-screen w-full bg-surface md:bg-primary">
         {children}
       </div>
     </SidebarContext.Provider>
@@ -444,8 +444,9 @@ export function SidebarInset({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-lg",
-        "m-2 h-[calc(100vh-1rem)] lg:ml-0",
+        "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-surface",
+        // A phone: the page fills the screen, no card around it (2026-11-17); tablets and up float it as before.
+        "m-0 h-[100dvh] md:m-2 md:h-[calc(100vh-1rem)] md:rounded-xl md:border md:border-border md:shadow-lg lg:ml-0",
         className,
       )}
       {...props}

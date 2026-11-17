@@ -21,6 +21,9 @@ export const PAYMENT_METHODS = [
   // and the enrolment is settled — so they belong in the same list rather than
   // being typed as "other" and losing which one it was.
   "tamara",
+  // Tamara's Saudi account (the user, 2026-11-17: "a new payment method in all CRMs and finance — Tamara KSA") — its own
+  // method beside Tamara so it lands in its own account; an AED payment like Tamara.
+  "tamara_ksa",
   "billexpro",
   // A rupee account an AED business also collects into. Its own method rather
   // than a note on a bank transfer, because "which account did it land in" is
@@ -65,6 +68,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   easebuzz_emi: "Easebuzz EMI",
   tabby: "Tabby",
   tamara: "Tamara",
+  tamara_ksa: "Tamara KSA",
   billexpro: "Smart Invoice / BillExPro",
   inr_bank_account: "INR Bank Account",
   razorpay: "Razorpay",

@@ -28,7 +28,7 @@ import { useDecideTetraDeposit } from "./api";
 const PAYMENT_METHODS = [
   "AED TRANSFER", "UPI", "CARD PAYMENT", "USDT", "INR TRANSFER", "Cash deposit", "Pay by link",
   // POS and Razorpay added, Other no longer offered (the user, 2026-11-13) — a deposit sent as "Other" keeps it below.
-  "Cash", "Bank Transfer", "Cheque", "Card", "POS", "Easebuzz EMI", "Tabby", "Tamara", "BillExPro", "Razorpay",
+  "Cash", "Bank Transfer", "Cheque", "Card", "POS", "Easebuzz EMI", "Tabby", "Tamara", "Tamara KSA", "BillExPro", "Razorpay",
 ];
 
 const levelLabel = (level: string) => (level === "LEVEL_1" ? "Level 1" : level === "LEVEL_2" ? "Level 2" : level);
@@ -70,6 +70,8 @@ function financeMethodFor(raw: string): string {
   const slug = v.replace(/[\s/-]+/g, "_");
   if ((FINANCE_METHODS as readonly string[]).includes(slug) && slug !== "easebuzz_emi") return slug;
   if (/tabby/.test(v)) return "tabby";
+  // "Tamara KSA" — the Saudi account (2026-11-17) — before plain Tamara, however it is spelt.
+  if (/tamara/.test(v) && /\bksa\b|saudi/.test(v)) return "tamara_ksa";
   if (/tamara/.test(v)) return "tamara";
   if (/billex|smart invoice/.test(v)) return "billexpro";
   if (/cheque|check/.test(v)) return "cheque";

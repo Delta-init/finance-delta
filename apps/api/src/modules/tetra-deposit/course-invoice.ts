@@ -134,6 +134,8 @@ function methodFor(raw: unknown): PaymentMethod {
   const exact = v.replace(/[\s/-]+/g, "_");
   if ((PAYMENT_METHODS as readonly string[]).includes(exact) && exact !== "easebuzz_emi") return exact as PaymentMethod;
   if (/tabby/.test(v)) return "tabby";
+  // "Tamara KSA" — the Saudi account (2026-11-17) — before plain Tamara, however it is spelt.
+  if (/tamara/.test(v) && /\bksa\b|saudi/.test(v)) return "tamara_ksa";
   if (/tamara/.test(v)) return "tamara";
   if (/link|billex|smart invoice/.test(v)) return "billexpro";
   // Rupees — "INR TRANSFER", UPI — land in the INR account, not as a bank transfer (2026-10-16).

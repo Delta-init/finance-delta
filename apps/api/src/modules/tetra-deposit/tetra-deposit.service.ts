@@ -323,6 +323,8 @@ export function financeMethodFor(raw: string | undefined | null): PaymentMethod 
   const slug = v.replace(/[\s/-]+/g, "_");
   if ((PAYMENT_METHODS as readonly string[]).includes(slug) && slug !== "easebuzz_emi") return slug as PaymentMethod;
   if (/tabby/.test(v)) return "tabby";
+  // "Tamara KSA" — the Saudi account (2026-11-17) — before plain Tamara, however it is spelt.
+  if (/tamara/.test(v) && /\bksa\b|saudi/.test(v)) return "tamara_ksa";
   if (/tamara/.test(v)) return "tamara";
   if (/billex|smart invoice/.test(v)) return "billexpro";
   if (/cheque|check/.test(v)) return "cheque";

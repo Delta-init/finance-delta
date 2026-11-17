@@ -37,7 +37,8 @@ function rootOrigin(): string | null {
 
 export function RootPortalHistoryBridge() {
   useEffect(() => {
-    if (window.parent === window) return;
+    // Not inside finance's own side page (2026-11-17): its parent is finance, not the Root portal.
+    if (window.parent === window || window.name === "finance-pane") return;
     const targetOrigin = rootOrigin();
     if (!targetOrigin) return;
 

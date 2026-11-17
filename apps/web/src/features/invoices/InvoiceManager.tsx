@@ -520,6 +520,7 @@ export function InvoiceManager() {
         columns={columns}
         data={data?.data}
         getRowId={(inv) => inv.id}
+        rowHref={(inv) => `/invoices/${inv.id}`}
         total={data?.meta.total ?? 0}
         page={t.page}
         pageSize={t.pageSize}

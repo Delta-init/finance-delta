@@ -241,7 +241,7 @@ export default function BillsPage() {
         </div>
       )}
 
-      <DataTable columns={columns} data={data?.data} getRowId={(b) => b.id} total={data?.meta.total ?? 0}
+      <DataTable columns={columns} data={data?.data} getRowId={(b) => b.id} rowHref={(b) => `/bills/${b.id}`} total={data?.meta.total ?? 0}
         selectable={canDelete}
         onSelectionChange={setSelectedIds}
         selectionResetKey={selectionResetKey}

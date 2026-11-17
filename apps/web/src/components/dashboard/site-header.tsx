@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, ChevronRight, ChevronDown, RefreshCw } from "lucide-react";
+import { Search, Bell, ChevronRight, ChevronDown, RefreshCw, Columns2 } from "lucide-react";
+import { useSplit } from "@/components/split-view/side-page";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -248,6 +249,25 @@ function CurrencyPicker() {
   );
 }
 
+/** The split screen (2026-11-17): open a page beside this one — or close the one beside. Cmd/Ctrl + \\ does the same. */
+function SplitButton() {
+  const { side, closeSide, setPickerOpen } = useSplit();
+  return (
+    <button
+      type="button"
+      onClick={() => (side ? closeSide() : setPickerOpen(true))}
+      title={side ? "Close the page beside (Cmd/Ctrl + \\)" : "Open a page beside this one (Cmd/Ctrl + \\)"}
+      aria-pressed={!!side}
+      className={cn(
+        "hidden h-9 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors md:inline-flex",
+        side ? "border-primary/40 bg-primary-50 text-primary" : "border-border text-foreground-muted hover:bg-surface-muted hover:text-foreground",
+      )}
+    >
+      <Columns2 className="h-4 w-4" /> {side ? "Close split" : "Split"}
+    </button>
+  );
+}
+
 export function SiteHeader() {
   const crumbs = useBreadcrumbs();
 
@@ -280,6 +300,7 @@ export function SiteHeader() {
       )}
 
       <div className="ml-auto flex items-center gap-2">
+        <SplitButton />
         <GlobalSearch />
         <CurrencyPicker />
         <button

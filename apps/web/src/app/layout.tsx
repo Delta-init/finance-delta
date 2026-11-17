@@ -12,7 +12,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // data-embed: this is the side page's frame (components/split-view/side-page.tsx) — set before the first paint, so
+    // the menu and top bar never flash in it (globals.css hides them).
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: "try{if(window.name==='finance-pane')document.documentElement.setAttribute('data-embed','')}catch(e){}" }} />
+      </head>
       <body>
         <NextTopLoader
           color="white"

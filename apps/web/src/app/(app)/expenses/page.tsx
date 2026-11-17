@@ -545,6 +545,7 @@ export default function ExpensesPage() {
         columns={columns}
         data={data?.data}
         getRowId={(e) => e.id}
+        rowHref={(e) => `/expenses/${e.id}`}
         total={data?.meta.total ?? 0}
         page={t.page}
         pageSize={t.pageSize}

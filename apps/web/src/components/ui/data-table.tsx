@@ -12,6 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { OpenBesideButton, useSplit } from "@/components/split-view/side-page";
 import { Checkbox } from "./checkbox";
 import { Tooltip } from "./tooltip";
 import {
@@ -65,6 +66,11 @@ interface DataTableProps<T> {
    */
   selectionResetKey?: string | number;
   onRowClick?: (row: T) => void;
+  /**
+   * The row's own page (2026-11-17): Shift-click opens it beside this one, and the row shows an "Open beside" icon —
+   * the split screen (components/split-view/side-page.tsx). Nothing changes for a plain click.
+   */
+  rowHref?: (row: T) => string | null;
   isLoading?: boolean;
   /**
    * The rows on screen are the last filter's / page's while the new ones load — a filter, the page, the rows per
@@ -106,6 +112,7 @@ export function DataTable<T>({
   onSelectionChange,
   selectionResetKey,
   onRowClick,
+  rowHref,
   isLoading = false,
   isFetching = false,
   emptyMessage = "No records found.",
@@ -113,6 +120,7 @@ export function DataTable<T>({
   viewable = true,
   detailTitle,
 }: DataTableProps<T>) {
+  const { embedded, openBeside } = useSplit();
   const reduce = useReducedMotion();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -145,7 +153,7 @@ export function DataTable<T>({
     commit(next);
   };
 
-  const colCount = columns.length + (selectable ? 1 : 0) + (viewable ? 1 : 0);
+  const colCount = columns.length + (selectable ? 1 : 0) + (viewable ? 1 : 0) + (rowHref && !embedded ? 1 : 0);
   // Controls are not information; a row's buttons read as an empty field once
   // they are lifted out of the table.
   const detailColumns = columns.filter((c) => !c.hideInDetail && c.header !== "" && c.header != null);
@@ -208,6 +216,7 @@ export function DataTable<T>({
                   </th>
                 );
               })}
+              {rowHref && !embedded && <th className="w-10 bg-primary px-1 py-3.5" aria-label="Open beside" />}
               {viewable && (
                 // Pinned, so it stays reachable on a table wide enough to
                 // scroll — which is exactly when the eye is most needed.
@@ -244,11 +253,16 @@ export function DataTable<T>({
                       exit={reduce ? undefined : { opacity: 0 }}
                       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1], delay: reduce ? 0 : i * 0.015 }}
                       className={cn(
-                        "border-t border-border transition-colors duration-150",
+                        "group/row border-t border-border transition-colors duration-150",
                         isSel ? "bg-primary-50" : "hover:bg-surface-muted",
                         onRowClick && "cursor-pointer",
                       )}
-                      onClick={() => onRowClick?.(row)}
+                      onClick={(e) => {
+                        // Shift-click: the row's page beside this one (the split screen).
+                        const to = e.shiftKey && rowHref && !embedded ? rowHref(row) : null;
+                        if (to) { e.preventDefault(); openBeside(to); return; }
+                        onRowClick?.(row);
+                      }}
                     >
                       {selectable && (
                         <td className="px-4 py-3.5">
@@ -260,6 +274,11 @@ export function DataTable<T>({
                           {c.cell(row)}
                         </td>
                       ))}
+                      {rowHref && !embedded && (
+                        <td className="w-10 px-1 py-3.5" onClick={(e) => e.stopPropagation()}>
+                          {(() => { const to = rowHref(row); return to ? <OpenBesideButton href={to} className="opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100" /> : null; })()}
+                        </td>
+                      )}
                       {viewable && (
                         <td
                           className={cn(

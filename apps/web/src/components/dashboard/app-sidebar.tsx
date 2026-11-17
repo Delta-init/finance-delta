@@ -44,6 +44,7 @@ import { hasPermission, type ApprovalType, type Permission } from "@delta/shared
 import { useApprovalSummary } from "@/features/approvals/api";
 import { useLateEntriesMe } from "@/features/late-entries/api";
 import { useUiStore } from "@/store/ui";
+import { OpenBesideButton, useMenuPages } from "@/components/split-view/side-page";
 import {
   Sidebar,
   SidebarContent,
@@ -312,8 +313,16 @@ export function AppSidebar({
   }, [activeGroup, setNavGroup]);
   const isOpen = (key: string) => navGroups[key] ?? key === activeGroup;
 
+  // The pages this person may open, for the split screen's picker and its titles (2026-11-17).
+  const setMenuPages = useMenuPages((s) => s.set);
+  const menuKey = groups.map((g) => g.items.filter((i) => i.enabled).map((i) => i.href).join(",")).join("|");
+  useEffect(() => {
+    setMenuPages(groups.flatMap((g) => g.items.filter((i) => i.enabled).map((i) => ({ href: i.href, label: i.label }))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuKey, setMenuPages]);
+
   const button = (item: NavItem) => (
-    <SidebarMenuItem key={item.href}>
+    <SidebarMenuItem key={item.href} className="group/nav relative">
       <SidebarMenuButton
         href={item.href}
         label={item.label}
@@ -323,6 +332,14 @@ export function AppSidebar({
         onNavigate={closeOnMobile}
         badge={badgeFor(item)}
       />
+      {/* Open this page beside the one you are on (2026-11-17) — on hover, with the menu open. */}
+      {!collapsed && !isMobile && item.enabled && (
+        <OpenBesideButton
+          href={item.href}
+          label={`Open ${item.label} beside`}
+          className="absolute right-1 top-1/2 z-20 -translate-y-1/2 bg-primary text-primary-foreground/80 opacity-0 hover:bg-white/15 hover:text-primary-foreground focus-visible:opacity-100 group-hover/nav:opacity-100"
+        />
+      )}
     </SidebarMenuItem>
   );
 

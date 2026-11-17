@@ -158,3 +158,8 @@
   opacity: 0;
 }
 
+
+/* The side page's frame (components/split-view/side-page.tsx, 2026-11-17): the page only — no menu, no top bar, no card
+   margins. <html data-embed> is set before the first paint by app/layout.tsx. */
+html[data-embed] [data-app-chrome] { display: none !important; }
+html[data-embed] [data-app-inset] { margin: 0 !important; height: 100vh !important; border-radius: 0 !important; border: 0 !important; box-shadow: none !important; }

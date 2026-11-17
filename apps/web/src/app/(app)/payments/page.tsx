@@ -211,6 +211,7 @@ export default function PaymentsPage() {
         columns={columns}
         data={data?.data}
         getRowId={(p) => p.id}
+        rowHref={(p) => (p.invoiceId ? `/invoices/${p.invoiceId}` : null)}
         total={data?.meta.total ?? 0}
         page={t.page}
         pageSize={t.pageSize}

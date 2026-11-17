@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ExternalLink, X } from "lucide-react";
 import { NO_SUBCATEGORY } from "@delta/shared";
 import { cn } from "@/lib/utils";
+import { SidePage, onShiftClickOpenBeside, useSplit } from "./side-page";
 
 /*
  * A split screen (the user, 2026-11-07: "click on it and the page opens there — split screen"): a record opens in a
@@ -114,13 +115,30 @@ export function paneClick(kind: PaneKind, id: string) {
 const WIDTH_KEY = "finance.pane.width";
 const MIN = 380;
 
-/** The page and, beside it when one is open, the pane. Replaces the layout's <main>. */
+/**
+ * The page and, beside it when one is open, a record pane (?pane=) or any page (?side=, components/split-view/
+ * side-page.tsx, 2026-11-17). Replaces the layout's <main>. Inside the side page's own frame, only the page.
+ */
 export function SplitShell({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<main className="min-w-0 flex-1 overflow-y-auto bg-background">{children}</main>}>
+      <Shell>{children}</Shell>
+    </Suspense>
+  );
+}
+
+function Shell({ children }: { children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
+  const { embedded, side, openBeside } = useSplit();
+  const search = useSearchParams();
+  const recordPane = search.get(PANE_KEY);
   return (
     <div ref={box} className="flex min-h-0 flex-1">
-      <main className="min-w-0 flex-1 overflow-y-auto bg-background">{children}</main>
-      <Suspense fallback={null}><Pane box={box} /></Suspense>
+      {/* Shift-click on a link opens it beside (2026-11-17). */}
+      <main className="min-w-0 flex-1 overflow-y-auto bg-background" onClickCapture={embedded ? undefined : (e) => onShiftClickOpenBeside(e, openBeside)}>
+        {children}
+      </main>
+      {!embedded && (recordPane ? <Pane box={box} /> : side ? <SidePage box={box} /> : null)}
     </div>
   );
 }

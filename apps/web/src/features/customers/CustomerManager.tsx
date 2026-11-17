@@ -480,6 +480,7 @@ export function CustomerManager() {
         columns={columns}
         data={data?.data}
         getRowId={(c) => c.id}
+        rowHref={(c) => `/customers/${c.id}`}
         total={data?.meta.total ?? 0}
         page={t.page}
         pageSize={t.pageSize}

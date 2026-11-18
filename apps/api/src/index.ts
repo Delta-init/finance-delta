@@ -64,6 +64,7 @@ import { startProcurementWaitingWorker } from "./jobs/procurement-waiting.worker
 import { startTetraDepositWorker } from "./jobs/tetra-deposit.worker";
 import { startCommissionFeeUpdateWorker } from "./jobs/commission-fee-update.worker";
 import { startInstalmentReminderWorker } from "./jobs/instalment-reminder.worker";
+import { startMailRetryWorker } from "./jobs/mail-retry.worker";
 
 async function bootstrap() {
   // Before anything else: a mail misconfiguration that only shows up per-email,
@@ -179,6 +180,8 @@ async function bootstrap() {
     // the client's instalment reminders at 10:00 UAE.
     startCommissionFeeUpdateWorker();
     startInstalmentReminderWorker();
+    // Emails the mail server refused for now ("try again later"), sent again (2026-11-18).
+    startMailRetryWorker();
   } else {
     logger.warn("RUN_SCHEDULERS=false — the timed jobs are not running in this process");
   }

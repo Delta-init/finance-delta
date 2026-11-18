@@ -68,6 +68,8 @@ export default function EmailLogPage() {
         <div>
           <EmailStateBadge row={r} />
           {r.error && r.state !== "sent" && <p className="mt-0.5 max-w-60 text-xs text-foreground-muted">{r.error}</p>}
+          {/* Sent at a later try (2026-11-18), after the mail server said "try again later". */}
+          {r.state === "sent" && (r.retries ?? 0) > 0 && <p className="mt-0.5 text-xs text-foreground-muted">at try {(r.retries ?? 0) + 1}</p>}
         </div>
       ),
     },

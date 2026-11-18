@@ -54,12 +54,34 @@ function getSmtp(): Transporter | null {
       // to find out, so the port decides unless told otherwise.
       secure: env.SMTP_SECURE ? env.SMTP_SECURE === "true" : Number(env.SMTP_PORT) === 465,
       auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+      // One connection kept open and used for message after message (2026-11-18): signing in again for every email
+      // is what made Gmail refuse — "454 4.7.0 Too many login attempts" — after a burst of reminders and receipts.
+      pool: true,
+      maxConnections: 2,
+      maxMessages: 100,
+      connectionTimeout: 20_000,
+      greetingTimeout: 20_000,
+      socketTimeout: 60_000,
     });
   }
   return smtpTransport;
 }
 
-interface SendResult { id?: string; error?: string }
+interface SendResult { id?: string; error?: string; /** Refused for now, and waiting to be sent again (2026-11-18). */ retrying?: boolean }
+
+/**
+ * A refusal that passes (2026-11-18): the server's "try again later" (an SMTP 4xx — Gmail's "454 4.7.0 Too many login
+ * attempts", a full mailbox's 452) or the connection failing; not a 5xx, which saying it again will not change.
+ */
+export function isTemporaryMailError(message: string | undefined): boolean {
+  const m = String(message ?? "");
+  if (!m || /^(no_recipients|not_configured|opted_out|all_recipients_rejected)$/.test(m)) return false;
+  if (/\b5\d\d[ -]|\b5\.\d\.\d+\b/.test(m)) return false;
+  return /\b4\d\d[ -]|\b4\.\d\.\d+\b|too many login attempts|try again later|temporar|ECONNECTION|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ESOCKET|EDNS|greeting never received|connection closed|timed? ?out/i.test(m);
+}
+
+/** Tried again 15, 30 and 45 minutes on: Gmail's lock lifts within the hour. */
+const RETRY_AFTER_MIN = [15, 30, 45];
 
 /**
  * One message, out through whichever transport is configured.
@@ -80,12 +102,13 @@ export interface MailAttachment {
  * Writes the email log entry for one attempt. Never throws and never holds the
  * send up: a log that cannot be written must not cost anybody their email.
  */
-export async function logEmail(log: MailLog | undefined, entry: { to: string[]; subject: string; result: SendResult }): Promise<void> {
+export async function logEmail(log: MailLog | undefined, entry: { to: string[]; subject: string; result: SendResult }): Promise<string | null> {
   try {
     const { EmailLog } = await import("../modules/email-log/email-log.model");
     const err = entry.result.error;
-    const state = !err ? "sent" : err === "no_recipients" ? "no_address" : err === "not_configured" ? "not_configured" : err === "opted_out" ? "opted_out" : "failed";
-    await EmailLog.create({
+    const state = !err ? "sent" : err === "no_recipients" ? "no_address" : err === "not_configured" ? "not_configured" : err === "opted_out" ? "opted_out"
+      : entry.result.retrying ? "retrying" : "failed";
+    const row = await EmailLog.create({
       organizationId: log?.organizationId || undefined,
       kind: log?.kind ?? "other",
       to: entry.to,
@@ -97,8 +120,10 @@ export async function logEmail(log: MailLog | undefined, entry: { to: string[]; 
       ...(log?.actorId ? { actorId: log.actorId } : {}),
       actorName: log?.actorName ?? "Automatic",
     });
+    return String(row._id);
   } catch (e) {
     logger.warn({ e }, "Could not write the email log");
+    return null;
   }
 }
 
@@ -121,8 +146,88 @@ async function deliver(opts: {
     opts = { ...opts, to: rest };
   }
   const result = await deliverOnce(opts);
-  await logEmail(opts.log, { to: opts.to.filter((t) => t && t.trim()), subject: opts.subject, result });
+  const to = opts.to.filter((t) => t && t.trim());
+  // Refused for now (2026-11-18): logged as "Trying again" and kept, to go again in a quarter of an hour.
+  if (result.error && isTemporaryMailError(result.error)) result.retrying = true;
+  const logId = await logEmail(opts.log, { to, subject: opts.subject, result });
+  if (result.retrying) {
+    try {
+      const { MailOutbox } = await import("../modules/email-log/mail-outbox.model");
+      if (!logId) throw new Error("no email log entry");
+      await MailOutbox.create({
+        logId, to, subject: opts.subject, html: opts.html,
+        attachments: (opts.attachments ?? []).map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
+        attempts: 1, nextAt: new Date(Date.now() + RETRY_AFTER_MIN[0]! * 60_000), lastError: result.error ?? "",
+      });
+    } catch (err) {
+      result.retrying = false;
+      logger.error({ err, to }, "Could not keep the email to try again");
+      if (logId) await markLog(logId, { state: "failed" });
+    }
+  }
   return result;
+}
+
+async function markLog(logId: unknown, set: Record<string, unknown>): Promise<void> {
+  try {
+    const { EmailLog } = await import("../modules/email-log/email-log.model");
+    await EmailLog.updateOne({ _id: logId }, { $set: set });
+  } catch (e) {
+    logger.warn({ e }, "Could not update the email log");
+  }
+}
+
+/**
+ * The emails waiting to go again (2026-11-18): each due one sent once more; sent, its log entry says so (and an
+ * invoice's "emailed" with it); refused again for a passing reason, it waits for the next try (15, 30, 45 minutes);
+ * otherwise, or after the last try, it is logged as failed. Claimed before it is sent, so two passes never send one
+ * twice. Returns what happened, for the worker's log and the checks.
+ */
+export async function retryQueuedEmails(now = new Date()): Promise<{ sent: number; waiting: number; failed: number }> {
+  const { MailOutbox } = await import("../modules/email-log/mail-outbox.model");
+  const out = { sent: 0, waiting: 0, failed: 0 };
+  const due = await MailOutbox.find({ nextAt: { $lte: now } }).sort({ nextAt: 1 }).limit(50).select("_id").lean();
+  for (const { _id } of due) {
+    // A lease: another pass that finds it meanwhile leaves it alone.
+    const row = await MailOutbox.findOneAndUpdate({ _id, nextAt: { $lte: now } }, { $set: { nextAt: new Date(now.getTime() + 10 * 60_000) } }, { new: true }).lean<any>();
+    if (!row) continue;
+    const result = await deliverOnce({
+      to: row.to, subject: row.subject, html: row.html,
+      attachments: (row.attachments ?? []).map((a: any) => ({ filename: a.filename, content: Buffer.from(a.content?.buffer ?? a.content), contentType: a.contentType })),
+    });
+    const tries = Number(row.attempts) || 1;
+    if (!result.error) {
+      await markLog(row.logId, { state: "sent", messageId: result.id ?? "", error: "", retries: tries });
+      await noteInvoiceEmailed(row.logId, result.id ?? "");
+      await MailOutbox.deleteOne({ _id: row._id });
+      out.sent++;
+    } else if (isTemporaryMailError(result.error) && tries < RETRY_AFTER_MIN.length) {
+      // The first send and three more tries: this was try `tries`; the next waits RETRY_AFTER_MIN[tries].
+      const after = RETRY_AFTER_MIN[tries]!;
+      await MailOutbox.updateOne({ _id: row._id }, { $set: { attempts: tries + 1, nextAt: new Date(now.getTime() + after * 60_000), lastError: result.error } });
+      await markLog(row.logId, { error: result.error, retries: tries });
+      out.waiting++;
+    } else {
+      await markLog(row.logId, { state: "failed", error: result.error, retries: tries });
+      await MailOutbox.deleteOne({ _id: row._id });
+      out.failed++;
+    }
+  }
+  if (due.length) logger.info({ ...out, due: due.length }, "Emails tried again");
+  return out;
+}
+
+/** An invoice's own email record follows a message that went at the second try. */
+async function noteInvoiceEmailed(logId: unknown, messageId: string): Promise<void> {
+  try {
+    const { EmailLog } = await import("../modules/email-log/email-log.model");
+    const log = await EmailLog.findById(logId).select("kind ref").lean<any>();
+    if (log?.ref?.type !== "invoice" || !["invoice", "invoice_resend", "invoice_approved"].includes(log.kind)) return;
+    const { Invoice } = await import("../modules/invoice/invoice.model");
+    await Invoice.updateOne({ _id: log.ref.id }, { $set: { emailDelivery: { state: "sent", at: new Date(), messageId, error: "" }, ...(messageId ? { lastEmailId: messageId } : {}) } });
+  } catch (e) {
+    logger.warn({ e }, "Could not note the invoice as emailed");
+  }
 }
 
 /**

@@ -19,6 +19,7 @@ const row = (d: Record<string, unknown> & { _id: unknown }) => ({
   subject: (d.subject as string) ?? "",
   state: d.state as string,
   error: (d.error as string) || undefined,
+  retries: Number(d.retries) || 0,
   ref: d.ref && (d.ref as { id?: unknown }).id
     ? { type: (d.ref as { type: string }).type, id: String((d.ref as { id: unknown }).id), label: (d.ref as { label?: string }).label ?? "" }
     : null,

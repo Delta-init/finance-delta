@@ -388,6 +388,28 @@ check("written: USD 1,000.00 on the payment, marked, TI-09101 kept with no VAT",
 check("…and nothing is left to change anywhere", (await correctRupeePayments({ write: false })).rows.every((r) => r.outcome === "left as it is"));
 rmSync(UNDO3, { force: true });
 
+step("14. Tabby DGO: dirhams with no VAT (2026-11-18)");
+const T1 = inv({ enrolment: close(dirhams("tabby_dgo", 2_000_000)) });
+const T2 = inv({ enrolment: close(dirhams("tabby_dgo", 800_000)) });
+await invoices.insertMany([T1, T2] as any[]);
+const t1 = await approveInvoice(String(ON), String(T1._id), actor);
+check("paid in full by Tabby DGO at the close: no VAT on the invoice, the total as it was, not a pro-forma",
+  !t1.proforma && t1.taxTotalMinor === 0 && t1.totalMinor === 2_000_000 && t1.payments[0]?.vatFree === true && t1.status === "paid" && !t1.payments[0]?.taxInvoice, show({ p: t1.proforma, tax: t1.taxTotalMinor, pay: t1.payments[0] }));
+check("…and it is dirhams — not shown as paid in another currency", methodsNow.paidCurrency(t1.payments[0], "AED") === null && !t1.payments[0]?.original);
+let t2 = await approveInvoice(String(ON), String(T2._id), actor);
+check("part paid by Tabby DGO: a pro-forma, its tax invoice with VAT 0", Boolean(t2.proforma?.at) && t2.payments[0]?.vatFree === true && t2.payments[0]?.taxInvoice?.taxMinor === 0 && t2.payments[0]?.taxInvoice?.netMinor === 800_000, show(t2.payments[0]));
+t2 = await recordPayment(String(ON), String(T2._id), pay("card", 1_200_000, "2026-11-20"));
+check("the card payment that clears it carries the VAT of its own 12,000 — 571.43", !t2.payments[1]?.vatFree && t2.payments[1]?.taxInvoice?.taxMinor === 57_143, show(t2.payments[1]?.taxInvoice));
+t2 = await updatePayment(String(ON), String(T2._id), t2.payments[1]!.id, pay("tabby_dgo", 1_200_000, "2026-11-20"));
+check("…its method changed to Tabby DGO: no VAT, its number kept", t2.payments[1]?.vatFree === true && t2.payments[1]?.taxInvoice?.taxMinor === 0, show(t2.payments[1]?.taxInvoice));
+check("the rule: Tabby DGO on a dirham invoice carries none, on a rupee invoice it is taxed as that invoice always is; plain Tabby carries VAT",
+  isVatFreePayment({ method: "tabby_dgo" }, "AED") && !isVatFreePayment({ method: "tabby_dgo" }, "INR") && !isVatFreePayment({ method: "tabby" }, "AED")
+  && methodsNow.isVatFreeMethod("tabby_dgo") && !methodsNow.isVatFreeMethod("inr_bank_account") && methodsNow.isDgoPayment("tabby_dgo") && !methodsNow.isDgoPayment("tabby"));
+const rd = await request({ student: student("S9"), amountMinor: 326_975, amountOriginal: 12_000, amountCurrency: "AED", coursePayment: course("full", 12_000, 0), decision: { paymentMethod: "tabby_dgo" } });
+await recordCoursePayment(rd, { email: false });
+const id9 = await invoices.findOne({ "payments.externalRef": `tetra:${rd.externalId}` }) as any;
+check("a CS Portal course paid in full by Tabby DGO: its invoice made without VAT, the payment marked", id9 && id9.taxTotalMinor === 0 && id9.totalMinor === 1_200_000 && id9.payments[0].method === "tabby_dgo" && id9.payments[0].vatFree === true && !id9.payments[0].original, show({ tax: id9?.taxTotalMinor, pay: id9?.payments?.[0] }));
+
 await settle();
 await mongoose.disconnect();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

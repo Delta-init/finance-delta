@@ -13,7 +13,7 @@ import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, paymentMethodChoices, emiDetailInputSchema,
   type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, paidAmountMinor, paidCurrency, paidInOtherCurrencies, paidRateText,
-  referenceNeeded, referenceProblem,
+  referenceNeeded, referenceProblem, isVatFreeMethod,
 } from "@delta/shared";
 
 const NO_ACCOUNT = "__none__";
@@ -580,7 +580,7 @@ export function InvoiceDetail({ id, preloaded }: { id: string; preloaded?: { inv
                         {paidCurrency(p, invoice.currency) && <span className="mt-0.5 block text-xs text-foreground-muted">paid in {paidCurrency(p, invoice.currency)} — the amount was not recorded</span>}
                       </>
                     )}
-                    {p.vatFree && <span className="mt-0.5 block text-xs text-foreground-muted">no VAT — not paid in {invoice.currency}</span>}
+                    {p.vatFree && <span className="mt-0.5 block text-xs text-foreground-muted">no VAT — {isVatFreeMethod(p.method) ? paymentMethodLabel(p.method) : `not paid in ${invoice.currency}`}</span>}
                     {p.chargesMinor > 0 && (
                       <span className="mt-0.5 block text-xs text-foreground-muted">
                         charges {formatMoney(p.chargesMinor, invoice.currency)}

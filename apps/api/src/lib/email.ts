@@ -480,9 +480,9 @@ ${brandHeader({ orgName: opts.orgName, logoUrl: opts.logoUrl })}
  * voice, so it gets its own shell rather than being squeezed into a template
  * that opens with "Dear customer".
  */
-function noticeHtml(opts: { title: string; lines: string[]; actionLabel?: string; actionUrl?: string }): string {
+function noticeHtml(opts: { title: string; lines: string[]; actionLabel?: string; actionUrl?: string; logoUrl?: string; logoName?: string }): string {
   return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:600px;margin:40px auto;padding:0 24px">
-${brandHeader({})}
+${brandHeader({ logoUrl: opts.logoUrl, orgName: opts.logoName })}
 <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px">
   <h2 style="margin:0 0 16px;font-size:18px">${opts.title}</h2>
   ${opts.lines.map((l) => `<p style="margin:0 0 12px;color:#334155">${l}</p>`).join("")}
@@ -508,6 +508,9 @@ export async function sendNotice(opts: {
   log?: MailLog;
   /** A document to go with it — a payment's tax invoice. */
   attachments?: MailAttachment[];
+  /** Another logo at its head than Delta's, and the name for it (2026-11-18: DGO Academy on a Tabby DGO receipt). */
+  logoUrl?: string;
+  logoName?: string;
 }): Promise<{ sent: number; skipped?: string }> {
   const recipients = [...new Set(opts.to.filter(Boolean))];
   if (!recipients.length) return { sent: 0, skipped: "no_recipients" };

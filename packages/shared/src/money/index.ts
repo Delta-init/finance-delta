@@ -457,12 +457,21 @@ export function paidAmountMinor(p: PaidAsk | null | undefined, invoiceCurrency: 
 }
 
 /**
+ * Methods whose payments carry no VAT though they are in the invoice's own currency (the user, 2026-11-18: "DGO Tabby
+ * doesn't have VAT for their invoices — VAT will be 0"): Tabby's DGO account.
+ */
+export const VAT_FREE_METHODS: readonly string[] = ["tabby_dgo"];
+
+/** Whether a payment's method itself carries no VAT (VAT_FREE_METHODS) — "no VAT — Tabby DGO", not "not paid in AED". */
+export const isVatFreeMethod = (method: unknown): boolean => VAT_FREE_METHODS.includes(String(method ?? ""));
+
+/**
  * No VAT in this payment (the user, 2026-11-13: "only AED payments carry VAT"): it was made in a currency other than
- * the invoice's. Not on an invoice that is itself in rupees — a Bangalore invoice is taxed as it always was, whatever
- * its payments were made in.
+ * the invoice's — or by a method that carries none (VAT_FREE_METHODS, 2026-11-18). Not on an invoice that is itself in
+ * rupees — a Bangalore invoice is taxed as it always was, whatever its payments were made in.
  */
 export function isVatFreePayment(p: PaidAsk | null | undefined, invoiceCurrency: unknown): boolean {
-  return upperOf(invoiceCurrency) !== "INR" && paidCurrency(p, invoiceCurrency) !== null;
+  return upperOf(invoiceCurrency) !== "INR" && (paidCurrency(p, invoiceCurrency) !== null || isVatFreeMethod(p?.method));
 }
 
 /** How one currency's rate against the invoice's is said, the way it is spoken: "1 AED = 25.59 INR", "1 USD = 3.6725 AED". */

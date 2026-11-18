@@ -20,7 +20,7 @@ if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri)) {
 }
 
 /* ── The stand-in SMTP server ── */
-const stub = { logins: 0, messages: 0, lockout: false, refuse: new Set<string>(), sockets: new Set<any>() };
+const stub = { logins: 0, messages: 0, lockout: false, refuse: new Set<string>(), sockets: new Set<any>(), last: "" };
 const server = Bun.listen<{ buf: string; data: boolean; to: string[] }>({
   hostname: "127.0.0.1", port: 0,
   socket: {
@@ -34,6 +34,7 @@ const server = Bun.listen<{ buf: string; data: boolean; to: string[] }>({
         s.data.buf = s.data.buf.slice(i + 2);
         if (s.data.data) {
           if (line === ".") { s.data.data = false; stub.messages++; s.write(`250 2.0.0 OK id-${stub.messages}\r\n`); }
+          else if (stub.last.length < 200_000) stub.last += `${line}\n`;
           continue;
         }
         const cmd = line.slice(0, 4).toUpperCase();
@@ -41,7 +42,7 @@ const server = Bun.listen<{ buf: string; data: boolean; to: string[] }>({
         else if (cmd === "AUTH") {
           stub.logins++;
           s.write(stub.lockout ? "454-4.7.0 Too many login attempts, please try again later. For more information,\r\n454 4.7.0 go to https://support.google.com/a/answer/6140680#tempauth - gsmtp\r\n" : "235 2.7.0 Accepted\r\n");
-        } else if (cmd === "MAIL") { s.data.to = []; s.write("250 2.1.0 OK\r\n"); }
+        } else if (cmd === "MAIL") { s.data.to = []; stub.last = ""; s.write("250 2.1.0 OK\r\n"); }
         else if (cmd === "RCPT") {
           const addr = (line.match(/<([^>]+)>/)?.[1] ?? "").toLowerCase();
           if (stub.refuse.has(addr)) s.write("550 5.1.1 The email account that you tried to reach does not exist\r\n");
@@ -61,6 +62,7 @@ const mail = await import("../lib/email");
 const { EmailLog } = await import("../modules/email-log/email-log.model");
 const { MailOutbox } = await import("../modules/email-log/mail-outbox.model");
 const { Invoice } = await import("../modules/invoice/invoice.model");
+const shared = await import("@delta/shared");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -143,6 +145,14 @@ check("Gmail's 454 4.7.0, a 421, a timeout, a dropped connection: try again",
   t("Invalid login: 454-4.7.0 Too many login attempts, please try again later.") && t("421 4.7.0 Try again later, closing connection.") && t("Connection timeout") && t("ETIMEDOUT") && t("Connection closed unexpectedly"));
 check("a wrong password (535 5.7.8), a 550, no address, emails off: not", !t("Invalid login: 535-5.7.8 Username and Password not accepted.") && !t("550 5.1.1 does not exist")
   && !t("no_recipients") && !t("opted_out") && !t("not_configured") && !t(""));
+
+step("7. The logo at its head");
+// Quoted-printable splits long lines with "=" at their ends, and writes "=" as "=3D": joined and decoded for the search.
+const body = () => stub.last.replace(/=\n/g, "").replace(/=3D/g, "=");
+await notice("client4@e2e.local", "A receipt from DGO", { kind: "course_payment_receipt" });
+check("a notice carries Delta's logo", body().includes(shared.DELTA_LOGO_EMAIL) && !body().includes(shared.DGO_LOGO_PATH));
+await mail.sendNotice({ to: ["client5@e2e.local"], subject: "DGO receipt", title: "Thank you", lines: ["Paid"], logoUrl: `https://finance.e2e.local${shared.DGO_LOGO_PATH}`, logoName: shared.DGO_NAME, log: { kind: "course_payment_receipt" } as never });
+check("a receipt for a payment into DGO's account carries DGO Academy's, named so", body().includes(`https://finance.e2e.local${shared.DGO_LOGO_PATH}`) && body().includes(`alt="${shared.DGO_NAME}"`) && !body().includes(shared.DELTA_LOGO_EMAIL), body().slice(0, 300));
 
 await mongoose.disconnect();
 server.stop(true);

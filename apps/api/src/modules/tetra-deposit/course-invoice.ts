@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
-import { formatMoney, PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
+import { DGO_LOGO_PATH, DGO_NAME, formatMoney, isDgoPayment, PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
 import { AppError } from "../../lib/http";
+import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
 import { sendNotice } from "../../lib/email";
 import { TetraDepositModel } from "./tetra-deposit.model";
@@ -197,7 +198,7 @@ async function makeInvoice(orgId: Types.ObjectId, customerId: string, salesperso
   const externalId = before ? `${key}#${before + 1}` : key;
   const day = dayOf(cp.paidOn || row.requestedAt);
   const total = coursePriceAedMinor(row, amountMinor);
-  // Paid in full now, in rupees: rupees carry no VAT, so the invoice is made without any (2026-11-13).
+  // Paid in full now, in rupees (or by Tabby DGO, 2026-11-18): those carry no VAT, so the invoice is made without any (2026-11-13).
   const noVat = rupees && amountMinor >= total && taxes.length > 0;
   const created = await createInvoice(String(orgId), {
     customerId,
@@ -302,7 +303,10 @@ async function emailReceipt(row: Row, invoice: any, payment: { receiptNumber: st
     const org = await Organization.findById(invoice.organizationId).select("name").lean<any>();
     const cur = invoice.currency ?? "AED";
     const course = String(row.coursePayment?.product || invoice.enrolment?.course || "your course");
+    // Paid into DGO's account (Tabby DGO, 2026-11-18): DGO Academy's logo heads the receipt.
+    const dgo = isDgoPayment(payment.method);
     await sendNotice({
+      ...(dgo ? { logoUrl: `${env.WEB_ORIGIN.replace(/\/+$/, "")}${DGO_LOGO_PATH}`, logoName: DGO_NAME } : {}),
       log: { organizationId: String(invoice.organizationId), kind: "course_payment_receipt", ref: { type: "invoice", id: String(invoice._id), label: String(invoice.invoiceNumber ?? "") } },
       to: [to],
       subject: `Payment receipt ${payment.receiptNumber} — ${formatMoney(payment.amountMinor, cur)}`,
@@ -346,7 +350,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
   // Typed in rupees in CS Portal: what the client handed over, kept on the payment (2026-11-13).
   const original = rupeesTyped(row, amountMinor);
   // Rupees are the only other currency a request states (its dollars are CS Portal's own unit, not what the client
-  // handed over — 2026-11-13: left as they are).
+  // handed over — 2026-11-13: left as they are). No VAT on them, nor on Tabby DGO (2026-11-18).
   const { isVatFreePayment } = await import("../invoice/payment-tax-invoice");
   const rupees = isVatFreePayment({ method, original }, courseCurrencyOf(row));
   const email = String(row.student?.email ?? "").trim().toLowerCase();

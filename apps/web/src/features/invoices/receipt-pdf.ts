@@ -1,6 +1,8 @@
 import { jsPDF } from "jspdf";
 import {
+  DGO_LOGO_PATH,
   drawPdfLogo,
+  isDgoPayment,
   formatMoney,
   formatOrgAddress,
   taxNumberLabel,
@@ -25,6 +27,23 @@ import { loadInvoiceLogo } from "./invoice-pdf";
  * issued it, and text is how a drawn page says it.
  */
 
+/** An image the website serves, as a data URL for the PDF; null when it will not load. */
+async function loadPublicImage(path: string): Promise<string | null> {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** "bank transfer" -> "Bank Transfer". */
 function titleCase(v: string): string {
   return v.replace(/\b\w/g, (c) => c.toUpperCase());
@@ -40,10 +59,10 @@ export async function downloadReceiptPdf(opts: {
   org?: OrganizationSettings | null;
 }): Promise<boolean> {
   const { invoice, paymentId, org } = opts;
-  // The same logo as the invoice it is a receipt for.
-  const logo = await loadInvoiceLogo(invoice.id);
   const payment = invoice.payments.find((p) => p.id === paymentId);
   if (!payment) return false;
+  // The same logo as the invoice it is a receipt for — DGO Academy's for a payment into DGO's account (2026-11-18).
+  const logo = isDgoPayment(payment.method) ? await loadPublicImage(DGO_LOGO_PATH) : await loadInvoiceLogo(invoice.id);
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const money = (minor: number) => formatMoney(minor, invoice.currency);

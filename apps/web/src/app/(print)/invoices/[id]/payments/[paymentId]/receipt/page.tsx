@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect } from "react";
-import { formatMoney } from "@delta/shared";
+import { DGO_LOGO_PATH, DGO_NAME, formatMoney, isDgoPayment } from "@delta/shared";
 import { useInvoice } from "@/features/invoices/api";
 import { PrintBrandMark } from "@/components/print/brand-mark";
 import { PrintCloseButton } from "@/components/print/close-button";
@@ -56,7 +56,10 @@ export default function PaymentReceiptPage({
       <div style={{ maxWidth: 520, margin: "40px auto", padding: "40px 32px", border: "1px solid #e2e8f0", borderRadius: 12 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-          <PrintBrandMark branding={invoice.branding} fallbackBranding={org?.branding} footerText={invoice.branding?.footerText} />
+          {/* A payment into DGO's account carries DGO Academy's logo (2026-11-18). */}
+          {isDgoPayment(payment.method)
+            ? <PrintBrandMark branding={{ logoUrl: DGO_LOGO_PATH }} name={DGO_NAME} footerText={invoice.branding?.footerText} />
+            : <PrintBrandMark branding={invoice.branding} fallbackBranding={org?.branding} footerText={invoice.branding?.footerText} />}
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.5 }}>RECEIPT</div>
             {payment?.receiptNumber && <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 600 }}>{payment.receiptNumber}</div>}

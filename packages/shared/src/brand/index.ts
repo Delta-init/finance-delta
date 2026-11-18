@@ -23,6 +23,18 @@ export const DELTA_LOGO_WEB = "/delta-wordmark.webp";
 export const DELTA_LOGO_EMAIL =
   "https://pub-8f8e5004f2ce4792b759204766030a39.r2.dev/brand/delta-wordmark.png";
 
+/**
+ * DGO Academy's logo (2026-11-18: "their receipts change the logo"), navy for white paper — from
+ * "DGO LOGO_340_78CM blue.pdf". Served by the finance website at this path; an email asks for it at WEB_ORIGIN.
+ * It heads the receipt of a payment made through DGO's own account (DGO_METHODS) — nothing else.
+ */
+export const DGO_LOGO_PATH = "/brand/dgo-academy.png";
+export const DGO_NAME = "DGO Academy";
+
+/** Payment methods that are DGO's own account: their receipts carry DGO's logo (Tabby DGO, 2026-11-18). */
+export const DGO_METHODS: readonly string[] = ["tabby_dgo"];
+export const isDgoPayment = (method: unknown): boolean => DGO_METHODS.includes(String(method ?? ""));
+
 /** Navy, from the wordmark itself. The teal is the gradient in the `d`. */
 export const DELTA_NAVY = "#0a2c4e";
 export const DELTA_TEAL = "#2ed3c6";

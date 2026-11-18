@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { formatMoney, paidRateText, paymentMethodLabel, type Customer, type Invoice } from "@delta/shared";
+import { formatMoney, paidRateText, PAYMENT_METHODS, paymentMethodChoices, paymentMethodLabel, type Customer, type Invoice } from "@delta/shared";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { PageHeader } from "@/components/page-header";
@@ -90,6 +90,7 @@ const PROFORMA_EXPORT: ExportColumn<ProformaRow>[] = [
   { header: "Customer", value: (p) => p.customerName },
   { header: "Course", value: (p) => p.course },
   { header: "Salesperson", value: (p) => p.salespersonName },
+  { header: "Methods", value: (p) => (p.methods ?? []).map((m) => paymentMethodLabel(m)).join(" + ") },
   { header: "Total", value: (p) => p.totalMinor / 100 },
   { header: "Paid", value: (p) => p.amountPaidMinor / 100 },
   { header: "Paid %", value: (p) => paidPercent(p.amountPaidMinor, p.totalMinor) },
@@ -127,7 +128,11 @@ export default function TaxInvoicesPage() {
     return () => clearTimeout(t);
   }, [search, q, setQ]);
   const paid = useUrlDateRange({ fromKey: "from", toKey: "to" });
-  const params = { from: paid.from || undefined, to: paid.to || undefined, q: q || undefined };
+  // Paid by one method (2026-11-18: "filter by payment method in the pro-forma page also"), on every tab: a pro-forma
+  // with a payment by it, a TI by its own payment's, an invoice by any of its payments'.
+  const [methodParam, setMethod] = useUrlParam("method", "all");
+  const method = (PAYMENT_METHODS as readonly string[]).includes(methodParam) ? methodParam : "all";
+  const params = { from: paid.from || undefined, to: paid.to || undefined, q: q || undefined, method: method === "all" ? undefined : method };
   const { data, isLoading, isPlaceholderData } = useTaxInvoices(params);
   const { data: org } = useOrganization();
   const [page, setPage] = useState(1);
@@ -147,7 +152,7 @@ export default function TaxInvoicesPage() {
     paidIn: paidIn === "all" ? undefined : paidIn,
   };
   const docs = useTaxDocuments({ ...docParams, page: tab === "all" ? page : 1, pageSize });
-  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending, paidIn]);
+  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending, paidIn, method]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function pdf(t: Pick<TaxInvoiceRow, "number" | "invoiceId" | "paymentId" | "customerId">) {
@@ -245,6 +250,8 @@ export default function TaxInvoicesPage() {
     { key: "balance", header: "Balance", align: "right", cell: (p) => <MoneyDisplay minor={p.balanceMinor} currency={p.currency} className={p.balanceMinor > 0 ? "font-medium text-warning" : ""} /> },
     // How far the fee is paid (2026-11-12) — the same bar as on the Invoices list.
     { key: "progress", header: "Progress", cell: (p) => <PaidProgress paidMinor={p.amountPaidMinor} totalMinor={p.totalMinor} /> },
+    // How it has been paid (2026-11-18), each method once.
+    { key: "methods", header: "Methods", cell: (p) => <span className="text-xs text-foreground-muted">{(p.methods ?? []).map((m) => paymentMethodLabel(m)).join(" + ") || "—"}</span> },
     { key: "tis", header: "Tax invoices", cell: (p) => <span className="text-xs text-foreground-muted">{p.taxInvoices.join(", ") || "—"}</span> },
   ];
 
@@ -409,6 +416,17 @@ export default function TaxInvoicesPage() {
           </div>
         </Field>
         <Field label={tab === "all" ? "Date" : tab === "tis" ? "Paid" : "Issued or paid"}><DateRangeQuick value={paid} /></Field>
+        <Field label="Method">
+          <Select value={method} onValueChange={setMethod}>
+            <SelectTrigger className="w-[180px]" aria-label="Payment method">
+              <SelectValue placeholder="All" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All methods</SelectItem>
+              {paymentMethodChoices(method).map((m) => <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Field>
         {tab === "all" && (
           <>
             <Field label="Type">

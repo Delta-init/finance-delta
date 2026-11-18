@@ -312,6 +312,8 @@ export interface ProformaRow {
   status: string; taxInvoices: string[]; proformaAt: string;
   /** Of what is paid, what was paid in other currencies — a line each — and what all of that was recorded as (2026-11-13). */
   foreign: PaidInCurrency[]; foreignRecordedMinor: number;
+  /** How it has been paid — each method once, in the order first used (2026-11-18, the Method filter). */
+  methods: string[];
 }
 export interface TaxInvoiceRow {
   number: string; invoiceId: string; invoiceNumber: string; paymentId: string; customerId: string; customerName: string;
@@ -328,7 +330,8 @@ export interface TaxInvoiceRow {
  */
 export async function listProformasAndTaxInvoices(
   orgId: string,
-  opts: { from?: string; to?: string; q?: string } = {},
+  /** `method` (2026-11-18): only pro-formas with a payment by it, and only the tax invoices of payments by it. */
+  opts: { from?: string; to?: string; q?: string; method?: string } = {},
 ): Promise<{ proformas: ProformaRow[]; taxInvoices: TaxInvoiceRow[]; totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -341,10 +344,12 @@ export async function listProformasAndTaxInvoices(
   const q = (opts.q ?? "").trim();
   const like = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
 
+  const method = (opts.method ?? "").trim();
   const docs = await Invoice.find({
     organizationId: new Types.ObjectId(orgId),
     "proforma.at": { $exists: true },
     status: { $ne: "void" },
+    ...(method ? { "payments.method": method } : {}),
     ...(ranged ? { $or: [{ issueDate: range }, { "payments.paidOn": range }, { "cancelledTaxInvoices.paidOn": range }] } : {}),
   }).select("invoiceNumber customerId customerName salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma payments cancelledTaxInvoices")
     .sort({ issueDate: -1, invoiceNumber: -1 }).lean<any[]>();
@@ -372,16 +377,20 @@ export async function listProformasAndTaxInvoices(
       });
     }
     const course = String(d.enrolment?.course || d.lineItems?.[0]?.description || "");
-    if ((!ranged || inRange(d.issueDate) || tis.some((t) => inRange(t.paidOn))) && matches(course, ...tis.map((t) => t.number))) {
+    const methods = [...new Set(((d.payments ?? []) as { method?: string }[]).map((p) => String(p.method ?? "")).filter(Boolean))];
+    // By one method: its own tax invoices only (a cancelled one has no payment left to say how).
+    const byMethod = (t: TaxInvoiceRow) => !method || t.method === method;
+    if ((!ranged || inRange(d.issueDate) || tis.some((t) => byMethod(t) && inRange(t.paidOn))) && matches(course, ...tis.map((t) => t.number))) {
       proformas.push({
         id: base.invoiceId, invoiceNumber: base.invoiceNumber, customerId: base.customerId, customerName: base.customerName, course,
         salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
         totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
         status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
         foreign: paidInOtherCurrencies(d.payments, base.currency).lines, foreignRecordedMinor: paidInOtherCurrencies(d.payments, base.currency).recordedMinor,
+        methods,
       });
     }
-    for (const t of tis) if ((!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
+    for (const t of tis) if (byMethod(t) && (!ranged || inRange(t.paidOn)) && matches(t.number)) taxInvoices.push(t);
   }
   taxInvoices.sort((a, b) => (b.paidOn.localeCompare(a.paidOn)) || b.number.localeCompare(a.number));
 
@@ -442,7 +451,7 @@ export interface TaxDocumentTotals {
  */
 export async function listTaxDocuments(
   orgId: string,
-  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: string; page?: number; pageSize?: number } = {},
+  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: string; method?: string; page?: number; pageSize?: number } = {},
 ): Promise<{ rows: TaxDocumentRow[]; total: number; page: number; pageSize: number; totals: Record<string, TaxDocumentTotals> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -464,6 +473,9 @@ export async function listTaxDocuments(
     : paidIn === "own" || paidIn === "aed" ? { "doc.foreignRecordedMinor": { $lte: 0 } }
       : paidIn === "other" ? { "doc.foreignRecordedMinor": { $gt: 0 } }
         : { "doc.parts.cur": paidIn.toUpperCase() };
+  // By one method (2026-11-18): a TI by its own payment's, an invoice by any of its payments'.
+  const method = (opts.method ?? "").trim();
+  const methodMatch = method ? { $or: [{ "doc.kind": "ti", "doc.method": method }, { "doc.kind": "invoice", payMethods: method }] } : null;
 
   // An aggregation is not cast by the schema: ids and dates go in as what they are.
   const invoices = { "proforma.at": { $exists: false }, ...(ranged ? { issueDate: range } : {}) };
@@ -480,6 +492,7 @@ export async function listTaxDocuments(
         status: { $nin: ["draft", "void"] },
         ...(opts.type === "invoice" ? invoices : opts.type === "ti" ? proformas : { $or: [invoices, proformas] }),
         ...(opts.pending ? { balanceMinor: { $gt: 0 } } : {}),
+        ...(method ? { "payments.method": method } : {}),
       },
     },
     // What was paid on the invoice in other currencies: each such payment, then a line per currency.
@@ -495,6 +508,7 @@ export async function listTaxDocuments(
       $project: {
         invoiceNumber: 1, customerId: 1, customerName: 1, currency: 1, totalMinor: 1, amountPaidMinor: 1, balanceMinor: 1,
         invForeign: 1, invForeignRecordedMinor: 1, invForeignKnownMinor: 1,
+        ...(method ? { payMethods: { $map: { input: { $ifNull: ["$payments", []] }, as: "p", in: "$$p.method" } } } : {}),
         doc: {
           $cond: [
             { $gt: ["$proforma.at", null] },
@@ -544,6 +558,7 @@ export async function listTaxDocuments(
     ...(ranged ? [{ $match: { "doc.date": range } }] : []),
     ...(like ? [{ $match: { $or: [{ "doc.number": like }, { invoiceNumber: like }, { customerName: like }] } }] : []),
     ...(paidInMatch ? [{ $match: paidInMatch }] : []),
+    ...(methodMatch ? [{ $match: methodMatch }] : []),
     {
       $facet: {
         rows: [{ $sort: { "doc.date": -1, "doc.number": -1, _id: -1 } }, { $skip: (page - 1) * pageSize }, { $limit: pageSize }],

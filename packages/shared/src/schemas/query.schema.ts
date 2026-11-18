@@ -131,6 +131,8 @@ export const taxDocumentQuerySchema = z.object({
    * (2026-11-13). "aed" and "inr" as the filter was first sent.
    */
   paidIn: z.string().trim().regex(/^(own|other|[A-Za-z]{3})$/).optional(),
+  /** Only those paid by one method (2026-11-18): a TI by its own payment's, an invoice by any of its payments'. */
+  method: z.string().trim().regex(/^[a-z_]{2,40}$/, "Invalid payment method").optional(),
 });
 export type TaxDocumentQuery = z.infer<typeof taxDocumentQuerySchema>;
 

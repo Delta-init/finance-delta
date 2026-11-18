@@ -198,6 +198,23 @@ const p1 = await listTaxDocuments(String(ON), { page: 1, pageSize: 3 }), p2 = aw
 check("a page at a time, the totals still the whole list's", order(p1) === "TI-00004,TI-00006,TI-00005" && order(p2) === `${OWING.invoiceNumber},TI-00003,TI-00001` && order(p3) === FULL.invoiceNumber
   && [p1, p2, p3].every((p) => p.total === 7 && p.totals.AED?.taxMinor === docsAll.totals.AED?.taxMinor), show([order(p1), order(p2), order(p3)]));
 check("search: a TI number", order(await listTaxDocuments(String(ON), { q: "ti-00005" })) === "TI-00005");
+// By payment method (2026-11-18): a TI by its own payment's, an invoice by any of its payments'.
+const byCard = await listTaxDocuments(String(ON), { method: "card" });
+check("Method card: the card TIs and the invoice paid by card — not the transfers or the cash one",
+  order(byCard) === `TI-00006,TI-00005,${OWING.invoiceNumber},TI-00001` && byCard.total === 4 && byCard.totals.AED?.count === 4, order(byCard));
+check("Method cash: the invoice paid in cash alone", order(await listTaxDocuments(String(ON), { method: "cash" })) === FULL.invoiceNumber);
+check("Method bank transfer: the transfer TIs", order(await listTaxDocuments(String(ON), { method: "bank_transfer" })) === "TI-00004,TI-00003");
+check("…with the other filters too: card, TIs only", order(await listTaxDocuments(String(ON), { method: "card", type: "ti" })) === "TI-00006,TI-00005,TI-00001");
+check("the filter as the page sends it: a method's slug, nothing else", taxDocumentQuerySchema.parse({ method: "tamara_ksa" }).method === "tamara_ksa" && !taxDocumentQuerySchema.safeParse({ method: "Card!" }).success);
+const pfTransfer = await listProformasAndTaxInvoices(String(ON), { method: "bank_transfer" });
+check("Pro-formas by bank transfer: the one paid partly by transfer, with only its transfer TIs",
+  pfTransfer.proformas.map((p) => p.invoiceNumber).join(",") === PART.invoiceNumber && pfTransfer.taxInvoices.map((t) => t.number).join(",") === "TI-00004,TI-00003"
+  && pfTransfer.totals.AED?.count === 2, show({ p: pfTransfer.proformas.map((p) => p.invoiceNumber), t: pfTransfer.taxInvoices.map((t) => t.number) }));
+const pfCard = await listProformasAndTaxInvoices(String(ON), { method: "card" });
+check("…by card: both pro-formas (each has a card payment)", pfCard.proformas.map((p) => p.invoiceNumber).sort().join(",") === [PART.invoiceNumber, PF2.invoiceNumber].sort().join(","), show(pfCard.proformas.map((p) => p.invoiceNumber)));
+check("…each pro-forma says how it was paid, each method once", pfCard.proformas.find((p) => p.invoiceNumber === PART.invoiceNumber)?.methods.sort().join(",") === "bank_transfer,card"
+  && pfCard.proformas.find((p) => p.invoiceNumber === PF2.invoiceNumber)?.methods.join(",") === "card", show(pfCard.proformas.map((p) => p.methods)));
+check("…by cash: none", (await listProformasAndTaxInvoices(String(ON), { method: "cash" })).proformas.length === 0);
 check("search: a pro-forma's number finds its tax invoices", order(await listTaxDocuments(String(ON), { q: PF2.invoiceNumber })) === "TI-00006,TI-00005");
 const docsOff = await listTaxDocuments(String(OFF));
 check("the other organization: its invoice whole, with what is owed on it — no TIs", order(docsOff) === ELSE.invoiceNumber && docsOff.totals.AED?.taxMinor === TAX && docsOff.totals.AED?.pendingMinor === 250_000, show(docsOff.totals));

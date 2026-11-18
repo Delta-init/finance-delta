@@ -11,6 +11,8 @@ export interface ProformaRow {
   status: string; taxInvoices: string[]; proformaAt: string;
   /** Of what is paid, what was paid in other currencies — a line each — and what all of that was recorded as (2026-11-13). */
   foreign?: PaidInCurrency[]; foreignRecordedMinor?: number;
+  /** How it has been paid, each method once (2026-11-18) — absent from an API before it. */
+  methods?: string[];
 }
 
 /** One payment's tax invoice (TI-…) — or one cancelled, its payment since deleted. */
@@ -28,12 +30,12 @@ export interface TaxInvoicesAnswer {
   totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }>;
 }
 
-export function taxInvoicesPath(params: { from?: string; to?: string; q?: string }) {
+export function taxInvoicesPath(params: { from?: string; to?: string; q?: string; method?: string }) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v).map(([k, v]) => [k, String(v)])).toString();
   return `invoices/tax-invoices${qs ? `?${qs}` : ""}`;
 }
 
-export function useTaxInvoices(params: { from?: string; to?: string; q?: string }) {
+export function useTaxInvoices(params: { from?: string; to?: string; q?: string; method?: string }) {
   return useQuery({
     queryKey: ["invoices", "tax-invoices", params],
     queryFn: () => api.get<TaxInvoicesAnswer>(taxInvoicesPath(params)),
@@ -71,7 +73,7 @@ export interface TaxDocumentTotals {
   foreign: Array<{ currency: string; count: number; amountMinor: number; recordedMinor: number; taxMinor: number; unknownCount: number; unknownMinor: number }>;
 }
 // A type, not an interface: it goes to the API as query parameters, which want an index signature.
-export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes"; paidIn?: string };
+export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes"; paidIn?: string; method?: string };
 
 /** All tax documents (2026-11-12): invoices and payment tax invoices in one list, a page at a time from the server. */
 export function useTaxDocuments(params: TaxDocumentParams & { page: number; pageSize: number }) {

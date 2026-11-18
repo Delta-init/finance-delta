@@ -7,7 +7,8 @@
  *   1. recorded on --to as the invoice screen records one (its bank line, CS Portal's fee update), the same method,
  *      amount, day, rupees and rate, receipt and request — and the same receipt number;
  *   2. taken off --from (its bank line with it) and --from voided — refused when --from has any other payment;
- *   3. the CS Portal request says --to, and CS Portal is told (it keeps the invoice from a repeat of the decision);
+ *   3. the CS Portal request says --to, and CS Portal is told (it keeps the invoice from a repeat of the decision) —
+ *      so are the other requests already on --to, whose rows there still show what was left before (2026-11-18);
  *   4. --fix-ref RCT-…=<reference>: a payment's reference on --to corrected (the bank's transaction id) — refused when
  *      another payment in the organisation has it.
  *
@@ -97,6 +98,9 @@ export async function moveCoursePayment(opts: MoveOpts): Promise<{ lines: string
   const paidAfter = (to.amountPaidMinor ?? 0) + (recordedOnTo ? 0 : moving.amountMinor);
   say(`  after: ${opts.to} paid ${money(paidAfter)}, balance ${money((to.totalMinor ?? 0) - paidAfter)}  ·  ${opts.from} void`);
   say(`  CS Portal request: ${deposit ? `${deposit.type} ${deposit.externalId}, now on ${deposit.courseInvoice?.invoiceNumber ?? "—"} → ${opts.to}` : "not found here — CS Portal is not told"}`);
+  // The other requests on --to: CS Portal shows each with what was left when it was decided — told again, the new figure.
+  const alsoOnTo = (await TetraDepositModel.find({ "courseInvoice.invoiceId": to._id, status: "approved", ...(deposit ? { _id: { $ne: deposit._id } } : {}) }).select("_id externalId courseInvoice").lean<any[]>());
+  if (alsoOnTo.length) say(`  also told again: ${alsoOnTo.map((d) => `${d.externalId} (${d.courseInvoice?.receiptNumber ?? "—"})`).join(", ")}`);
   let fixTarget: any = null;
   if (opts.fixRef) {
     fixTarget = (to.payments ?? []).find((p: any) => p.receiptNumber === opts.fixRef!.receipt);
@@ -151,9 +155,11 @@ export async function moveCoursePayment(opts: MoveOpts): Promise<{ lines: string
       },
       $push: { events: { at: new Date(), kind: "moved", byName: "", text: `Payment ${opts.receipt} moved from ${opts.from} to ${opts.to}; ${opts.from} voided` } },
     });
-    const tell = opts.tell ?? (await import("../modules/tetra-deposit/tetra-deposit.service")).tellCommissionCourseInvoice;
-    try { say(await tell(String(deposit._id))); }
-    catch (e) { say(`CS Portal not told: ${(e as Error).message} — run this again to tell it`); }
+  }
+  const tell = opts.tell ?? (await import("../modules/tetra-deposit/tetra-deposit.service")).tellCommissionCourseInvoice;
+  for (const d of [...(deposit ? [deposit] : []), ...alsoOnTo]) {
+    try { say(await tell(String(d._id))); }
+    catch (e) { say(`CS Portal not told about ${d.externalId}: ${(e as Error).message} — run this again to tell it`); }
   }
 
   // 4. The reference.

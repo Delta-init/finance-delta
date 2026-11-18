@@ -74,6 +74,12 @@ await db.collection("tetradeposits").insertOne({
   courseInvoice: { invoiceId: B._id, invoiceNumber: B.invoiceNumber, paymentId: (await Invoice.findById(B._id).lean<any>()).payments[0]._id, receiptNumber: "RCT-00074", created: true, amountMinor: 656_087, currency: "AED" },
   decision: { approvedAmountMinor: 178_770, decidedByName: "super admin", decidedAt: new Date() },
 });
+// The first payment's request, already on the first invoice.
+await db.collection("tetradeposits").insertOne({
+  organizationId: org._id, externalId: "first", type: "BONUS", status: "approved", amountMinor: 349_591, currency: "USD", events: [],
+  courseInvoice: { invoiceId: A._id, invoiceNumber: A.invoiceNumber, paymentId: (await Invoice.findById(A._id).lean<any>()).payments[0]._id, receiptNumber: "RCT-00042", created: true, amountMinor: 1_283_000, currency: "AED" },
+  decision: { approvedAmountMinor: 349_591, decidedByName: "super admin", decidedAt: new Date() },
+});
 const told: string[] = [];
 const tell = async (id: string) => { told.push(id); return "CS Portal has it (stand-in)"; };
 const load = (x: { _id: Types.ObjectId }) => Invoice.findById(x._id).lean<any>();
@@ -118,7 +124,10 @@ check("Yaroon: the moved payment still in it, as it was (its note too) — no ba
 const dep = await TetraDepositModel.findOne({ externalId: "second" }).lean<any>();
 check("the CS Portal request points at the first invoice, its event says so, and CS Portal was told",
   dep?.courseInvoice?.invoiceNumber === A.invoiceNumber && String(dep?.courseInvoice?.paymentId) === String(moved?._id) && dep?.courseInvoice?.created === false
-  && dep?.events?.some((e: any) => e.kind === "moved") && told.length === 1 && told[0] === String(dep?._id), j(dep?.courseInvoice));
+  && dep?.events?.some((e: any) => e.kind === "moved") && told[0] === String(dep?._id), j(dep?.courseInvoice));
+const firstDep = await TetraDepositModel.findOne({ externalId: "first" }).lean<any>();
+check("…and the first payment's request, already on it, told again too (its row there showed AED 7,170 left)",
+  told.length === 2 && told[1] === String(firstDep?._id) && dry.lines.some((l) => /also told again: first \(RCT-00042\)/.test(l)), j({ told, lines: dry.lines }));
 check("the first payment's reference corrected", a.payments.find((p: any) => p.receiptNumber === "RCT-00042")?.reference === "262761388982");
 check("a backup of both invoices and the request, as they were", !!done.backupFile && JSON.parse(await Bun.file(done.backupFile!).text()).from.payments.length === 1);
 

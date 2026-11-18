@@ -396,7 +396,7 @@ async function main() {
       await drainLmsProvisions();
     };
     const pay = (invoiceId: string, amountMinor: number) =>
-      post(`/invoices/${invoiceId}/payments`, { method: "bank_transfer", amountMinor, paidOn: today }, token);
+      post(`/invoices/${invoiceId}/payments`, { method: "bank_transfer", amountMinor, paidOn: today, reference: `UTR-${invoiceId}` }, token);
     // Raw rows from the LMS database: typed loosely on purpose.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const enrolmentOf = async (email: string, courseId: unknown): Promise<any> => {
@@ -605,7 +605,7 @@ async function main() {
     check("drained again, nothing is sent twice", (await drainLmsExtraCourses()) === 0);
 
     // Paying the balance opens every course the sale bought, not only the first.
-    const paid = await post(`/invoices/${draw.invoiceId}/payments`, { method: "bank_transfer", amountMinor: 650_000, paidOn: today }, token);
+    const paid = await post(`/invoices/${draw.invoiceId}/payments`, { method: "bank_transfer", amountMinor: 650_000, paidOn: today, reference: "UTR-DRAW-1" }, token);
     check("accounts record the payment", paid.status === 200 || paid.status === 201, `${paid.status}`);
     await settle();
     await drainLmsAccessUpdates();

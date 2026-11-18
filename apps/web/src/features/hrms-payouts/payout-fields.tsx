@@ -1,6 +1,6 @@
 "use client";
 
-import type { ExpensePaymentMethod } from "@delta/shared";
+import { referenceNeeded, referenceProblem, type ExpensePaymentMethod } from "@delta/shared";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,7 +48,12 @@ export function PayoutFields({ value, onChange, idPrefix }: { value: Payout; onC
         </Select>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-ref`}>Reference (optional)</Label>
+        {/* Required unless paid in cash (2026-11-18). */}
+        <Label htmlFor={`${idPrefix}-ref`}>
+          Reference {referenceNeeded(value.paymentMethod)
+            ? <span className="text-danger">*</span>
+            : <span className="font-normal text-foreground-muted">(not needed for cash)</span>}
+        </Label>
         <Input id={`${idPrefix}-ref`} value={value.reference} maxLength={120} placeholder="Bank or cheque reference"
           onChange={(e) => onChange({ ...value, reference: e.target.value })} />
       </div>
@@ -56,5 +61,6 @@ export function PayoutFields({ value, onChange, idPrefix }: { value: Payout; onC
   );
 }
 
-/** A paid date that can be sent: set, and not after today. */
-export const payoutValid = (p: Payout) => /^\d{4}-\d{2}-\d{2}$/.test(p.paidOn) && p.paidOn <= todayIso();
+/** A payout that can be sent: its date set and not after today, and its reference unless paid in cash. */
+export const payoutValid = (p: Payout) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(p.paidOn) && p.paidOn <= todayIso() && !referenceProblem(p.paymentMethod, p.reference);

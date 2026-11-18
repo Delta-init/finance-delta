@@ -13,11 +13,12 @@ import { withAccountants } from "../../lib/approval-recipients";
 import {
   commissionConfigured, sendFundingDecisionToCommission, sendFundingDeletedToCommission, CommissionRefusedError, type CommissionFundingDecision,
 } from "../../lib/commission-client";
-import { PAYMENT_METHODS, type PaymentMethod } from "@delta/shared";
+import { PAYMENT_METHODS, referenceProblem, type PaymentMethod } from "@delta/shared";
 import { Role } from "../role/role.model";
 import { User } from "../user/user.model";
 import { TetraDepositModel } from "./tetra-deposit.model";
-import { courseInvoiceForDecision, isCoursePayment, recordCoursePayment } from "./course-invoice";
+import { courseInvoiceForDecision, coursePaymentMethod, isCoursePayment, recordCoursePayment } from "./course-invoice";
+import { assertReferenceFree } from "../invoice/payment-reference";
 
 /**
  * Deposit requests from CS Portal, decided here and sent back there.
@@ -335,6 +336,14 @@ export function financeMethodFor(raw: string | undefined | null): PaymentMethod 
   return "other";
 }
 
+/** The method a balance payment is recorded with: the approver's pick, else what CS Portal called it. */
+function balancePaymentMethod(ep: { method?: string } | null | undefined, decided: unknown): PaymentMethod {
+  const picked = String(decided ?? "");
+  return picked && (PAYMENT_METHODS as readonly string[]).includes(picked) && picked !== "easebuzz_emi"
+    ? (picked as PaymentMethod)
+    : financeMethodFor(picked || ep?.method);
+}
+
 /** The invoice a balance payment pays towards, as accounts read it on the request. */
 async function invoiceForBalancePayment(invoiceId: string) {
   const { Invoice } = await import("../invoice/invoice.model");
@@ -407,9 +416,7 @@ async function recordBalancePayment(row: any): Promise<{ ok: true } | { ok: fals
   try {
     const invoice = await invoiceForBalancePayment(String(ep.invoiceId));
     if (!invoice) return { ok: false, message: "The invoice it pays towards is not in finance (deleted?)" };
-    const method = d.paymentMethod && (PAYMENT_METHODS as readonly string[]).includes(d.paymentMethod) && d.paymentMethod !== "easebuzz_emi"
-      ? (d.paymentMethod as PaymentMethod)
-      : financeMethodFor(d.paymentMethod || ep.method);
+    const method = balancePaymentMethod(ep, d.paymentMethod);
     const { recordPayment } = await import("../invoice/invoice.service");
     await recordPayment(String(invoice.organizationId), String(ep.invoiceId), {
       method,
@@ -882,17 +889,34 @@ async function deliverDecision(row: any, putBackCorrectable: boolean): Promise<D
   }
 }
 
+/**
+ * A balance or course payment goes on an invoice, its transaction ID as that payment's reference (2026-11-18):
+ * required unless it was cash, and no other payment's — checked before anything changes.
+ */
+async function assertTransactionId(method: PaymentMethod, transactionId: string | undefined, invoiceOrgId: string): Promise<void> {
+  if (referenceProblem(method, transactionId)) {
+    throw new AppError("VALIDATION_ERROR", "Enter the transaction ID — the bank or gateway's code for this payment, which becomes its reference (not needed for cash)");
+  }
+  await assertReferenceFree(invoiceOrgId, transactionId);
+}
+
 export async function decideTetraDeposit(auth: AuthContext, id: string, input: DecideTetraDepositInput): Promise<TetraDepositDecisionResult> {
   if (!Types.ObjectId.isValid(id)) throw new AppError("NOT_FOUND", "Deposit request not found");
   const org = new Types.ObjectId(auth.organizationId);
   const me = await User.findById(auth.userId).select("name email").lean();
   const byName = String(me?.name ?? "An accountant");
   // Its own currency in the history: a course payment is in AED, a deposit in USD.
-  const current = await TetraDepositModel.findOne({ _id: id, organizationId: org }).select("currency type enrolmentPayment status").lean();
+  const current = await TetraDepositModel.findOne({ _id: id, organizationId: org })
+    .select("organizationId currency type enrolmentPayment status paymentMethod coursePayment courseInvoice").lean<any>();
   if (current?.type === "ENROLMENT_PAYMENT" && current.status === "pending" && input.decision === "approved" && !current.enrolmentPayment?.recorded?.paymentId) {
     // Checked before anything changes: refused, it stays pending in front of them to correct or reject.
-    const refusal = balancePaymentRefusal(await invoiceForBalancePayment(String(current.enrolmentPayment?.invoiceId)), input.amountMinor, current.currency ?? "");
+    const invoice = await invoiceForBalancePayment(String(current.enrolmentPayment?.invoiceId));
+    const refusal = balancePaymentRefusal(invoice, input.amountMinor, current.currency ?? "");
     if (refusal) throw new AppError("CONFLICT", `Not recorded: ${refusal}`);
+    await assertTransactionId(balancePaymentMethod(current.enrolmentPayment, input.paymentMethod), input.transactionId, String(invoice?.organizationId ?? auth.organizationId));
+  }
+  if (isCoursePayment(current) && current.status === "pending" && input.decision === "approved" && !current.courseInvoice?.paymentId) {
+    await assertTransactionId(coursePaymentMethod(current, input.paymentMethod), input.transactionId, String(current.organizationId ?? auth.organizationId));
   }
   const now = new Date();
   const decided = { decidedById: new Types.ObjectId(auth.userId), decidedByName: byName, decidedByEmail: String(me?.email ?? ""), decidedAt: now };

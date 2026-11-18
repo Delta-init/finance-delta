@@ -212,7 +212,11 @@ export const decideTetraDepositSchema = z.discriminatedUnion("decision", [
     decision: z.literal("approved"),
     /** What actually arrived — the accountant may correct the requested amount. */
     amountMinor: z.number().int().positive().max(9_000_000_000_000),
-    /** Optional (the user, 2026-10-25: "the transaction ID is not mandatory when finance approves"). */
+    /**
+     * Optional for a deposit or a bonus (the user, 2026-10-25: "the transaction ID is not mandatory when finance
+     * approves"). A balance or course payment goes on an invoice with it as the payment's reference (2026-11-18):
+     * there the API requires it unless cash, and refuses one already on another payment.
+     */
     transactionId: optionalText(100),
     paymentMethod: optionalText(60),
     mt5Login: optionalText(60),

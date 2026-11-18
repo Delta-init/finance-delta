@@ -198,10 +198,10 @@ async function main() {
   step("A payment over the balance");
   const due = await invoiceUnder(`${IMAGES}/org.png`, 120_000);
   await request("POST", `/invoices/${due}/send`, undefined, tAdmin);
-  const over = await request("POST", `/invoices/${due}/payments`, { method: "bank_transfer", amountMinor: 225_000, paidOn: today }, tAdmin);
+  const over = await request("POST", `/invoices/${due}/payments`, { method: "bank_transfer", amountMinor: 225_000, paidOn: today, reference: "UTR-BRAND-1" }, tAdmin);
   check("is turned down, in dirhams rather than fils",
     over.status === 409 && over.body?.error?.message === "AED 2,250.00 is more than the balance due of AED 1,200.00", show(over.body));
-  const exact = await request("POST", `/invoices/${due}/payments`, { method: "bank_transfer", amountMinor: 120_000, paidOn: today }, tAdmin);
+  const exact = await request("POST", `/invoices/${due}/payments`, { method: "bank_transfer", amountMinor: 120_000, paidOn: today, reference: "UTR-BRAND-2" }, tAdmin);
   check("the balance itself is taken", exact.status === 201 || exact.status === 200, show(exact.body));
 
   console.log(`\n${checks - failures}/${checks} checks passed`);

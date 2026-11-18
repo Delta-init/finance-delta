@@ -177,7 +177,7 @@ async function main() {
     await post(`/bills/${id}/approve`, undefined, token);
     await post(
       `/bills/${id}/payments`,
-      { method: "bank_transfer", amountMinor: 100_000, paidOn: today },
+      { method: "bank_transfer", amountMinor: 100_000, paidOn: today, reference: "UTR-BILL-1" },
       token,
     );
     const r = await del(`/bills/${id}`, token);

@@ -170,7 +170,8 @@ export function useApproveInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
     meta: { skipToast: true },
-    mutationFn: () => api.post<Invoice>(`invoices/${id}/approval/approve`, {}),
+    // Each payment collected at the close's reference, in the close's order (2026-11-18) — recorded with it.
+    mutationFn: (references: string[] = []) => api.post<Invoice>(`invoices/${id}/approval/approve`, { references }),
     onSuccess: (d) => {
       qc.setQueryData(["invoice", id], d);
       qc.invalidateQueries({ queryKey: KEY });

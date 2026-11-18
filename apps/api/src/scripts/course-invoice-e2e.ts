@@ -507,6 +507,31 @@ step("CS Portal usernames, and salespeople finance has no account for");
   check("…an undo file from the first runs (just the invoices) still works", r.invoices === 1 && r.removed === 0 && String((await Invoice.findById(iZ?._id).lean<any>())?.salespersonId) === String(zara._id), j(r));
 }
 
+/* ── The payment's reference (2026-11-18) ─────────────────────────────── */
+step("The transaction ID is the payment's reference: required unless cash, and its own");
+{
+  const decideWith = (id: string, transactionId: string, paymentMethod = "") =>
+    svc.decideTetraDeposit(auth as never, id, { decision: "approved", amountMinor: 10_000, transactionId, paymentMethod, mt5Login: "", note: "" } as never)
+      .then(() => "approved", (e: Error) => e.message);
+  const raise = (code: string, over: Record<string, unknown> = {}) => arrive({ type: "COURSE_UPGRADE", amountMinor: 10_000, currency: "AED", student: student(code), coursePayment: upgradeCp(new Types.ObjectId().toString(), 5_000, { paidTodayAed: 100 }), ...over });
+  const r1 = await raise("STU-REF1");
+  const none = await decideWith(r1.id, "");
+  check("a card payment with no transaction ID is refused", /Enter the transaction ID/.test(none), none);
+  check("…and stays pending, with no invoice made", (await row(r1.id))?.status === "pending" && !(await row(r1.id))?.courseInvoice?.invoiceId, j(await row(r1.id)));
+  const used = await decideWith(r1.id, "  tx-1 ");
+  check("one already on another payment (TX-1, typed \"  tx-1 \") is refused, saying where", new RegExp(`already on ${i1?.invoiceNumber} — a payment of AED 5,000.00 on 2026-10-10`).test(used), used);
+  check("…still pending", (await row(r1.id))?.status === "pending");
+  const fine = await decideWith(r1.id, "TX-REF-1");
+  const fineInvoice = await invoiceOf(r1.id);
+  check("its own reference: approved, and the payment carries it", fine === "approved" && fineInvoice?.payments?.some((p: any) => p.reference === "TX-REF-1"), fine);
+  const r2 = await raise("STU-REF2", { paymentMethod: "Cash" });
+  const cash = await decideWith(r2.id, "");
+  check("cash needs none", cash === "approved" && (await invoiceOf(r2.id))?.payments?.[0]?.method === "cash", cash);
+  const r3 = await raise("STU-REF3");
+  const pickedCash = await decideWith(r3.id, "", "cash");
+  check("…nor one the approver records as cash", pickedCash === "approved", pickedCash);
+}
+
 await mongoose.disconnect();
 await tc.close();
 console.log(`\n${failures ? "\x1b[31m" : "\x1b[32m"}${checks - failures}/${checks} checks passed\x1b[0m`);

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createBillSchema, updateBillSchema, recordBillPaymentSchema, updateBillNotesSchema, billImportSchema } from "@delta/shared";
+import { createBillSchema, updateBillSchema, recordBillPaymentSchema, updateBillNotesSchema, billImportSchema, withReference } from "@delta/shared";
 import { authenticate } from "../../middleware/auth";
 import { requirePermission } from "../../middleware/rbac";
 import { validateBody } from "../../middleware/validate";
@@ -19,8 +19,8 @@ router.post("/import", requirePermission("bill:create"), validateBody(billImport
 router.patch("/:id", requirePermission("bill:update"), validateBody(updateBillSchema), c.update);
 router.post("/:id/approve", requirePermission("bill:approve"), c.approve);
 router.post("/:id/reject", requirePermission("bill:approve"), c.reject);
-router.post("/:id/payments", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.recordPayment);
-router.patch("/:id/payments/:paymentId", requirePermission("bill:update"), validateBody(recordBillPaymentSchema), c.updatePayment);
+router.post("/:id/payments", requirePermission("bill:update"), validateBody(withReference(recordBillPaymentSchema, "method")), c.recordPayment);
+router.patch("/:id/payments/:paymentId", requirePermission("bill:update"), validateBody(withReference(recordBillPaymentSchema, "method")), c.updatePayment);
 // A payment recorded by mistake (2026-10-16): the bill's right to delete, as deleting the bill is.
 router.delete("/:id/payments/:paymentId", requirePermission("bill:delete"), c.deletePayment);
 router.patch("/:id/notes", requirePermission("bill:update"), validateBody(updateBillNotesSchema), c.updateNotes);

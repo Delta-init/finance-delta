@@ -11,6 +11,7 @@ import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { AppError } from "../../lib/http";
+import { requireReference } from "../invoice/payment-reference";
 import { forgetSalaryAdvances } from "../approvals/approvals.service";
 
 /**
@@ -211,6 +212,9 @@ export async function approve(orgId: string, userId: string, id: string, input: 
   if (expense?.status === "voided") {
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this advance and then voided. Reject the advance instead.`);
   }
+  // The money that goes has its bank or cheque reference (2026-11-18), unless paid in cash — asked when the expense is
+  // made, not when one already made is sent to HRMS again.
+  if (!expense) requireReference(input.paymentMethod, input.reference);
   // A different amount than was asked (2026-11-10): more needs a note, and HRMS must be one that recovers what was
   // paid — an older one would take back the asked amount, so nothing is recorded until it is.
   const askedMinor = Math.round(row.amount * 100);

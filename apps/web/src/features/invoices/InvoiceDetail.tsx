@@ -12,7 +12,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   formatMoney, PAYMENT_METHODS, paymentMethodChoices, emiDetailInputSchema,
-  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, paidAmountMinor, paidCurrency, paidInOtherCurrencies, paidRateText,} from "@delta/shared";
+  type Invoice, type RecordPaymentInput, type Payment, approvalBlocksSending, approvalBlocksEditing, paymentMethodLabel, paidAmountMinor, paidCurrency, paidInOtherCurrencies, paidRateText,
+  referenceNeeded, referenceProblem,
+} from "@delta/shared";
 
 const NO_ACCOUNT = "__none__";
 const paymentFormSchema = z.object({
@@ -30,7 +32,15 @@ const paymentFormSchema = z.object({
   emi: emiDetailInputSchema.optional(),
   /** The day the bank statement shows it (2026-11-07); "" for none. */
   statementDate: z.string().default(""),
+}).superRefine((v, ctx) => {
+  // Its reference (2026-11-18): required unless cash — an EMI's transaction id counts. The API also refuses one
+  // already on another payment.
+  const problem = referenceProblem(v.method, typedReference(v));
+  if (problem) ctx.addIssue({ code: "custom", path: ["reference"], message: problem });
 });
+/** The reference a payment is saved with: what was typed, else an EMI's transaction id. */
+const typedReference = (v: { method: string; reference?: string; emi?: { transactionId?: string } }) =>
+  (v.reference ?? "").trim() || (v.method === "easebuzz_emi" ? (v.emi?.transactionId ?? "").trim() : "");
 type PaymentFormValues = z.infer<typeof paymentFormSchema>;
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -803,7 +813,7 @@ export function PaymentDialog({
       method: data.method,
       amountMinor: Math.round(data.amount * 100),
       paidOn: data.paidOn,
-      reference: data.reference,
+      reference: typedReference(data),
       notes: data.notes,
       // A Banking account's name, or — none picked — whatever an older payment had typed.
       accountName: pickedAccount ? pickedAccount.accountName : (editing?.bankAccountId ? "" : data.accountName),
@@ -953,10 +963,15 @@ export function PaymentDialog({
               <Input type="number" step="0.01" min="0" placeholder="0.00" {...register("charges", { valueAsNumber: true })} />
             </div>
             <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-foreground-muted">
-                Reference <span className="text-foreground-subtle">(optional)</span>
+              <label htmlFor="payment-reference" className="mb-1 block text-xs font-medium text-foreground-muted">
+                Reference {referenceNeeded(method)
+                  ? <span className="text-danger">*</span>
+                  : <span className="text-foreground-subtle">(not needed for cash)</span>}
               </label>
-              <Input {...register("reference")} placeholder="Cheque #, txn ID…" />
+              <Input id="payment-reference" {...register("reference")} placeholder="UTR, card authorisation, Tabby / Tamara order ID…" />
+              {errors.reference
+                ? <p className="mt-1 text-xs text-danger">{errors.reference.message}</p>
+                : referenceNeeded(method) && <p className="mt-1 text-xs text-foreground-muted">The bank or gateway&rsquo;s code for this payment — each payment&rsquo;s is its own.</p>}
             </div>
             {offersStatementDate && (
               <div className="col-span-2">

@@ -49,6 +49,8 @@ if (!INBOUND_ID || !INBOUND_SECRET) {
 
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0;
 let checks = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -140,7 +142,7 @@ async function main() {
   const enrol = (over: Record<string, unknown>, sign = true) => { n++; return signedPost(orgId, "/api/v1/integrations/enrolments", body(n, over), sign); };
   const idOf = (r: Res) => String(r.body?.data?.invoiceId ?? r.body?.invoiceId);
   const invoiceOf = async (r: Res) => Invoice.findById(idOf(r)).lean() as Promise<any>;
-  const approve = async (r: Res, token = tApprover) => request("POST", `/invoices/${idOf(r)}/approval/approve`, undefined, token);
+  const approve = async (r: Res, token = tApprover) => request("POST", `/invoices/${idOf(r)}/approval/approve`, approveRefs(), token);
 
   step("Case 1 — AED 2,250: INR 50,000 by transfer (AED 2,200) + AED 50 cash");
   let r = await enrol({
@@ -261,7 +263,7 @@ async function main() {
     const rowB = (list.body?.data ?? []).find((x: any) => x.id === String(d?._id));
     check("on Approvals: shown as the Banglore CRM's, in INR", rowB?.crm === "banglore" && rowB?.currency === "INR" && rowB?.feeMinor === 15_000_000 && rowB?.amountMinor === 12_000_000, JSON.stringify(rowB ?? list.body).slice(0, 300));
     check("…and the Bangalore academy's", rowB?.academy === "bangalore", JSON.stringify(rowB?.academy));
-    const ok = await request("POST", `/invoices/${String(d?._id)}/approval/approve`, undefined, tBlr);
+    const ok = await request("POST", `/invoices/${String(d?._id)}/approval/approve`, approveRefs(), tBlr);
     check("approved", ok.status === 200, show(ok));
     d = await Invoice.findById(d?._id).lean() as any;
     check("…both payments recorded in INR, as sent; INR 30,000 still due",
@@ -296,7 +298,7 @@ async function main() {
     const list6 = await request("GET", "/approvals/list", undefined, tBlr);
     const row6 = (list6.body?.data ?? []).find((x: any) => x.id === String(s6?._id));
     check("…on Approvals: the Sales CRM's, the Bangalore academy's, in INR", row6?.crm === "delta" && row6?.academy === "bangalore" && row6?.currency === "INR", JSON.stringify(row6).slice(0, 300));
-    const ok6 = await request("POST", `/invoices/${String(s6?._id)}/approval/approve`, undefined, tBlr);
+    const ok6 = await request("POST", `/invoices/${String(s6?._id)}/approval/approve`, approveRefs(), tBlr);
     check("approved", ok6.status === 200, show(ok6));
     s6 = await Invoice.findById(s6?._id).lean() as any;
     check("…both payments recorded in INR; the cash one's note says AED 1,000 at 22.75",

@@ -6,7 +6,11 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, Building2, CheckCircle, XCircle, Ban, CreditCard, Paperclip, Upload, Download, Trash2, FileText, Save, Pencil } from "lucide-react";
-import { formatMoney, recordBillPaymentSchema, type RecordBillPaymentInput, type Bill } from "@delta/shared";
+import { formatMoney, recordBillPaymentSchema, referenceNeeded, referenceProblem, type RecordBillPaymentInput, type Bill } from "@delta/shared";
+
+/** The reference a bill payment is saved with: what was typed, else an EMI's transaction id. */
+const billPaymentReference = (v: { method: string; reference?: string; emi?: { transactionId?: string } }) =>
+  (v.reference ?? "").trim() || (v.method === "easebuzz_emi" ? (v.emi?.transactionId ?? "").trim() : "");
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,7 +98,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors, isSubmitting } } =
     useForm<RecordBillPaymentInput & { amountDisplay: string }>({
-      resolver: zodResolver(recordBillPaymentSchema.extend({ amountDisplay: recordBillPaymentSchema.shape.amountMinor.optional() })),
+      resolver: zodResolver(recordBillPaymentSchema.extend({ amountDisplay: recordBillPaymentSchema.shape.amountMinor.optional() }).superRefine((v, ctx) => {
+        // Its reference (2026-11-18): required unless paid in cash.
+        const problem = referenceProblem(v.method, billPaymentReference(v));
+        if (problem) ctx.addIssue({ code: "custom", path: ["reference"], message: problem });
+      })),
       defaultValues: { method: "bank_transfer", amountMinor: 0, paidOn: new Date().toISOString().slice(0, 10), reference: "", accountName: "", notes: "" },
     });
 
@@ -177,6 +185,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     payload.bankAccountId = picked ? picked.id : "";
     // Typed before there was a list: kept while no account is picked.
     payload.accountName = picked ? picked.accountName : (editingPayment?.bankAccountId ? "" : values.accountName ?? "");
+    payload.reference = billPaymentReference(values);
     if (payload.method !== "easebuzz_emi") delete (payload as { emi?: unknown }).emi;
     try {
       if (editingPayment) {
@@ -738,8 +747,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 ) : null}
               </div>
               <div className="space-y-1.5">
-                <Label>Reference</Label>
-                <Input {...register("reference")} placeholder="Ref / check #" />
+                <Label htmlFor="bill-payment-reference">
+                  Reference {referenceNeeded(method)
+                    ? <span className="text-danger">*</span>
+                    : <span className="font-normal text-foreground-muted">(not needed for cash)</span>}
+                </Label>
+                <Input id="bill-payment-reference" {...register("reference")} placeholder="Bank or cheque reference" />
+                {errors.reference && <p className="text-xs text-danger">{errors.reference.message}</p>}
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">

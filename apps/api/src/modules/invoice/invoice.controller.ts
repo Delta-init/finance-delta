@@ -88,14 +88,14 @@ export const voidInvoice = asyncHandler(async (req, res) => {
 
 export const recordPayment = asyncHandler(async (req, res) => {
   await assertAccountChosen(orgId(req), req.body?.bankAccountId);
-  const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body, req.file, undefined, { userId: req.auth!.userId, reason: req.body?.lateReason });
+  const payment = await invoiceService.recordPayment(orgId(req), req.params.id!, req.body, req.file, undefined, { userId: req.auth!.userId, reason: req.body?.lateReason }, { reference: true });
   void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
   created(res, payment);
 });
 
 export const updatePayment = asyncHandler(async (req, res) => {
   await assertAccountChosen(orgId(req), req.body?.bankAccountId);
-  const invoice = await invoiceService.updatePayment(orgId(req), req.params.id!, req.params.paymentId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }, req.file);
+  const invoice = await invoiceService.updatePayment(orgId(req), req.params.id!, req.params.paymentId!, req.body, { userId: req.auth!.userId, reason: req.body?.lateReason }, req.file, { reference: true });
   void autoCalculate(orgId(req), req.params.id!, "payment_received").catch(() => undefined);
   ok(res, invoice);
 });
@@ -143,7 +143,9 @@ export const summary = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const approveInvoice = asyncHandler(async (req: Request, res: Response) => {
-  ok(res, await invoiceService.approveInvoice(orgId(req), req.params.id!, await actorOf(req)));
+  // Each declared payment's reference (2026-11-18), in the close's order.
+  const references = Array.isArray(req.body?.references) ? (req.body.references as unknown[]).slice(0, 20).map((r) => (typeof r === "string" ? r : "")) : [];
+  ok(res, await invoiceService.approveInvoice(orgId(req), req.params.id!, await actorOf(req), { references }));
 });
 
 export const returnInvoice = asyncHandler(async (req: Request, res: Response) => {

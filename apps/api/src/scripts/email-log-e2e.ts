@@ -38,6 +38,8 @@ if (!INBOUND_ID || !INBOUND_SECRET) {
 
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0;
 let checks = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -164,7 +166,7 @@ async function main() {
   check("an enrolment arrives", e1.status === 200 || e1.status === 201, show(e1));
   const id1 = idOf(e1);
   check("nothing is emailed before it is approved", ((await emailsOf(id1)).body?.data ?? []).length === 0);
-  const ap = await request("POST", `/invoices/${id1}/approval/approve`, undefined, tAdmin);
+  const ap = await request("POST", `/invoices/${id1}/approval/approve`, approveRefs(), tAdmin);
   check("approved", ap.status === 200, show(ap));
   await settle();
   let list = (await emailsOf(id1)).body?.data ?? [];
@@ -182,14 +184,14 @@ async function main() {
   list = (await emailsOf(id1)).body?.data ?? [];
   check("Resend is logged, newest first, with who pressed it", list[0]?.kind === "invoice_resend" && list[0]?.actorName === "Approver" && list[0]?.state === "sent", JSON.stringify(list[0]));
   const e2 = await enrol({ customer: { name: "Bounce Client", email: "bounce@e2e-test.com", phone: "+971500009998" } });
-  await request("POST", `/invoices/${idOf(e2)}/approval/approve`, undefined, tAdmin);
+  await request("POST", `/invoices/${idOf(e2)}/approval/approve`, approveRefs(), tAdmin);
   await settle();
   const l2 = (await emailsOf(idOf(e2))).body?.data ?? [];
   check("a refused address is Failed, with the reason", l2.find((r: any) => r.kind === "invoice_approved")?.state === "failed" && !!l2.find((r: any) => r.kind === "invoice_approved")?.error, JSON.stringify(l2));
   check("…and the salesperson's copy still went", l2.find((r: any) => r.kind === "invoice_salesperson")?.state === "sent");
   const e3 = await enrol({ customer: { name: "No Mail Client", email: "", phone: "+971500009997" } });
   if (e3.status < 300) {
-    await request("POST", `/invoices/${idOf(e3)}/approval/approve`, undefined, tAdmin);
+    await request("POST", `/invoices/${idOf(e3)}/approval/approve`, approveRefs(), tAdmin);
     await settle();
     const l3 = (await emailsOf(idOf(e3))).body?.data ?? [];
     check("a client with no email: No email address, and the salesperson still gets the copy",
@@ -204,7 +206,7 @@ async function main() {
     invoiceNumber: "IN-DRAFT-1", status: "draft", amountPaidMinor: 0,
     approval: { state: "pending", submittedAt: new Date() },
   });
-  const apd = await request("POST", `/invoices/${d._id}/approval/approve`, undefined, tAdmin);
+  const apd = await request("POST", `/invoices/${d._id}/approval/approve`, approveRefs(), tAdmin);
   await settle();
   const dl = (await emailsOf(String(d._id))).body?.data ?? [];
   check("a draft typed here is not emailed to the client by its approval — it still waits for Send",

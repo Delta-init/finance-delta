@@ -40,6 +40,8 @@ const INBOUND_ID = process.env.INBOUND_CLIENT_ID ?? "";
 const INBOUND_SECRET = process.env.INBOUND_INTEGRATION_SECRET ?? "";
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
   checks++;
@@ -120,7 +122,7 @@ async function main() {
     const id = String(r.body?.data?.invoiceId ?? "");
     if (!id) throw new Error(`enrolment refused: ${show(r)}`);
     if (opts.approve !== false) {
-      const a = await request("POST", `/invoices/${id}/approval/approve`, undefined, token);
+      const a = await request("POST", `/invoices/${id}/approval/approve`, approveRefs(), token);
       if (a.status !== 200) throw new Error(`approval refused: ${show(a)}`);
     }
     return { id, externalId };

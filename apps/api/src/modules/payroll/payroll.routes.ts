@@ -6,6 +6,7 @@ import {
   addAdjustmentsSchema, holdLineSchema, importRunSchema, payRunSchema, returnRunSchema, reversePaymentSchema,
   createManualRunSchema, addManualLinesSchema, updateManualLineSchema,
 } from "./payroll.schemas";
+import { withReference } from "@delta/shared";
 import * as c from "./payroll.controller";
 
 const router = Router();
@@ -53,7 +54,7 @@ router.post("/runs/:id/unapprove", requirePermission("payroll:approve"), c.unapp
 router.post("/runs/:id/return", requirePermission("payroll:approve"), validateBody(returnRunSchema), c.returnRun);
 // Hold one person back from payment, or release them (somebody who has left; 2026-10-30).
 router.post("/runs/:id/lines/:lineId/hold", requirePermission("payroll:write"), validateBody(holdLineSchema), c.holdLine);
-router.post("/runs/:id/pay", requirePermission("payroll:pay"), validateBody(payRunSchema), c.payRun);
+router.post("/runs/:id/pay", requirePermission("payroll:pay"), validateBody(withReference(payRunSchema, "method")), c.payRun);
 // Retrying a lost acknowledgement moves no money, so it sits with write.
 router.post("/runs/:id/payments/:paymentId/retry-sync", requirePermission("payroll:write"), c.retrySync);
 // Reversing moves money back, so it sits with pay rather than write.

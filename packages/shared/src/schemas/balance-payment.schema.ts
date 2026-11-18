@@ -33,7 +33,10 @@ export type BalancePaymentStatus = z.infer<typeof balancePaymentStatusSchema>;
 export const decideBalancePaymentSchema = z.discriminatedUnion("decision", [
   z.object({
     decision: z.literal("approved"),
-    /** The bank's or gateway's reference, where there is one. */
+    /**
+     * The bank's or gateway's reference — required unless the payment was cash, and no other payment's (2026-11-18);
+     * the API checks it, knowing the method.
+     */
     reference: z.string().trim().max(100).optional(),
     note: z.string().trim().max(1000).optional(),
   }),

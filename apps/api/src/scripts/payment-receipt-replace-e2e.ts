@@ -91,7 +91,7 @@ const inv = (o: Record<string, any>): any => {
 };
 const closeFile = (name: string) => ({ name, url: `https://crm-files.e2e.test/enrolment-receipts/${name}`, key: `enrolment-receipts/${name}`, size: 10, mimeType: "image/jpeg" });
 const pay = (method: string, amountMinor: number, proof?: { url: string; key: string }) => ({
-  _id: new Types.ObjectId(), method, amountMinor, paidOn: new Date("2026-10-02"), reference: "", notes: proof?.key.startsWith("enrolment-receipts/") ? "Collected at the close — recorded on approval" : "",
+  _id: new Types.ObjectId(), method, amountMinor, paidOn: new Date("2026-10-02"), reference: method === "cash" ? "" : `SEED-${crypto.randomUUID().slice(0, 8)}`, notes: proof?.key.startsWith("enrolment-receipts/") ? "Collected at the close — recorded on approval" : "",
   accountName: "", chargesMinor: 0, proofUrl: proof?.url ?? "", proofKey: proof?.key ?? "",
 });
 

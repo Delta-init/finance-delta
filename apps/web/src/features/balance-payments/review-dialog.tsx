@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
-import { PAYMENT_METHOD_LABELS, type BalancePayment } from "@delta/shared";
+import { PAYMENT_METHOD_LABELS, referenceNeeded, type BalancePayment } from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,11 @@ export function BalancePaymentReviewDialog({ payment, onClose }: { payment: Bala
     if (!payment) return;
     if (decision === "rejected" && reason.trim().length < 5) {
       toast.error("Add a short reason before rejecting");
+      return;
+    }
+    // Its reference (2026-11-18): required unless cash; the API refuses one already on another payment.
+    if (decision === "approved" && referenceNeeded(payment.method) && !reference.trim()) {
+      toast.error("Enter the payment reference — the bank or gateway's code for this payment");
       return;
     }
     try {
@@ -110,8 +115,11 @@ export function BalancePaymentReviewDialog({ payment, onClose }: { payment: Bala
           {decision === "approved" ? (
             <>
               <div className="space-y-1.5">
-                <Label htmlFor="bp-ref">Reference (optional)</Label>
-                <Input id="bp-ref" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} placeholder="As on the statement" />
+                <Label htmlFor="bp-ref">{p && referenceNeeded(p.method) ? "Payment reference *" : "Reference (not needed for cash)"}</Label>
+                <Input id="bp-ref" value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} placeholder="UTR, card authorisation, order ID — as on the statement" />
+                {p && referenceNeeded(p.method) && (
+                  <p className="text-xs text-foreground-muted">The bank or gateway&rsquo;s code for this payment — each payment&rsquo;s is its own.</p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="bp-note">Note (optional)</Label>

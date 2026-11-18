@@ -11,6 +11,7 @@ import { withAccountants } from "../../lib/approval-recipients";
 import { Invoice } from "../invoice/invoice.model";
 import { Role } from "../role/role.model";
 import { User } from "../user/user.model";
+import { assertReferenceFree, requireReference } from "../invoice/payment-reference";
 import { BalancePaymentModel } from "./balance-payment.model";
 
 /*
@@ -194,6 +195,9 @@ export async function decideBalancePayment(auth: AuthContext, id: string, input:
   if (!already) {
     const refusal = refusalFor(invoice, row.amountMinor, await waitingOn(row.invoiceId, row._id));
     if (refusal) throw new AppError("CONFLICT", `Not recorded: ${refusal}`);
+    // The bank's or gateway's reference (2026-11-18): required unless cash, and no other payment's.
+    requireReference(row.method, input.reference);
+    await assertReferenceFree(auth.organizationId, input.reference);
     // Claimed before it is recorded, so two accountants never record it twice.
     const claim = await BalancePaymentModel.updateOne({ _id: row._id, status: "pending", "decision.decidedAt": { $exists: false } }, { $set: { decision: decided } });
     if (!claim.modifiedCount) throw new AppError("CONFLICT", "Somebody is deciding it just now");
@@ -207,7 +211,7 @@ export async function decideBalancePayment(auth: AuthContext, id: string, input:
         notes: [`Recorded in the sales CRM${row.recordedBy?.name ? ` by ${row.recordedBy.name}` : ""}`, `approved by ${decided.decidedByName}`, input.note].filter(Boolean).join(" · ").slice(0, 1000),
         accountName: "",
         chargesMinor: 0,
-      } as never, undefined, { externalRef, proofUrl: row.receipt?.url ?? "" });
+      } as never, undefined, { externalRef, proofUrl: row.receipt?.url ?? "" }, undefined, { reference: true });
     } catch (err) {
       await BalancePaymentModel.updateOne({ _id: row._id, status: "pending" }, { $unset: { decision: "" } });
       if (err instanceof AppError) throw new AppError("CONFLICT", `Not recorded: ${err.message}`);

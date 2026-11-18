@@ -45,6 +45,8 @@ if (!INBOUND_ID || !INBOUND_SECRET) {
 
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0;
 let checks = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -163,7 +165,7 @@ async function main() {
   check("…answering which invoice", r.body?.data?.invoiceNumber === before?.invoiceNumber && r.body?.data?.invoiceId === id1, show(r));
   check("…its time moves on", new Date(doc?.enrolment?.salesNoteUpdatedAt).getTime() > new Date(before?.enrolment?.salesNoteUpdatedAt).getTime());
   check("…and nothing else changed: still waiting, same total, same course", doc?.approval?.state === "pending" && doc?.totalMinor === before?.totalMinor && doc?.enrolment?.course === before?.enrolment?.course && !doc?.notes, `${doc?.approval?.state} ${doc?.totalMinor}`);
-  r = await request("POST", `/invoices/${id1}/approval/approve`, {}, tApprover);
+  r = await request("POST", `/invoices/${id1}/approval/approve`, approveRefs(), tApprover);
   check("approved", r.status === 200 && (await invoice(id1))?.approval?.state === "approved", show(r));
   r = await noteTo("stu-1001", "Approved — note edited afterwards.");
   doc = await invoice(id1);

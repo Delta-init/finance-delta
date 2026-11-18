@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye, AlertTriangle } from "lucide-react";
-import { bonusCurrency, formatMoney, formatOriginalPayment, paymentMethodLabel, type Invoice } from "@delta/shared";
+import { GraduationCap, ShieldCheck, CheckCircle2, Undo2, Send, Clock, Eye, AlertTriangle, Paperclip } from "lucide-react";
+import {
+  bonusCurrency, formatMoney, formatOriginalPayment, normalizeReference, paymentMethodLabel, referenceNeeded, type Invoice,
+} from "@delta/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AcademyTag, CrmTag } from "@/components/crm-tag";
@@ -43,6 +45,10 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
   const [returning, setReturning] = useState(false);
   const [viewing, setViewing] = useState(false);
   const [reason, setReason] = useState("");
+  // Approving records what was collected at the close (2026-11-18: "enter the payment reference when approving …
+  // mandatory"): each payment's reference, typed here first.
+  const [asking, setAsking] = useState(false);
+  const [refs, setRefs] = useState<string[]>([]);
 
   if (!approval || approval.state === "not_required") return null;
 
@@ -57,6 +63,22 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
   const pending = approval.state === "pending";
   const returned = approval.state === "returned";
   const approved = approval.state === "approved";
+
+  // The payments approving records, as the API decides it: the close's list (or its one total and method), only when
+  // nothing is on the invoice yet, they don't come to more than it, and none is an EMI.
+  const declared = e?.declaredPayments?.length
+    ? e.declaredPayments.map((p) => ({ method: p.method, amountMinor: p.amountMinor, receiptUrl: p.receipt?.url }))
+    : (e?.declaredPaidMinor ?? 0) > 0 && e?.declaredPaymentMethod
+      ? [{ method: e.declaredPaymentMethod, amountMinor: e.declaredPaidMinor!, receiptUrl: invoice.attachments?.[0]?.url }]
+      : [];
+  const records = declared.length > 0
+    && !(invoice.payments?.length)
+    && declared.reduce((s, p) => s + p.amountMinor, 0) <= invoice.totalMinor
+    && !declared.some((p) => p.method === "easebuzz_emi");
+  const needsRefs = records && declared.some((p) => referenceNeeded(p.method));
+  const typed = declared.map((_, i) => normalizeReference(refs[i]));
+  const refMissing = declared.some((p, i) => referenceNeeded(p.method) && !typed[i]);
+  const refTwice = typed.some((r, i) => r && typed.indexOf(r) !== i);
 
   const tone = approved ? "success" : returned ? "danger" : "warning";
   const label = approved ? "Approved" : returned ? "Sent back" : "Waiting for approval";
@@ -187,8 +209,11 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
         )}
         {canDecide && pending && (
           <>
-            <Button size="sm" loading={approve.isPending}
-              onClick={() => run("Invoice approved", () => approve.mutateAsync())}>
+            <Button size="sm" loading={approve.isPending && !asking}
+              onClick={() => {
+                if (needsRefs) { setRefs(declared.map(() => "")); setAsking(true); return; }
+                void run("Invoice approved", () => approve.mutateAsync(declared.map(() => "")));
+              }}>
               <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setReturning(true)}>
@@ -207,6 +232,65 @@ export function ApprovalPanel({ invoice, readOnly = false }: { invoice: Invoice;
       {e && (
         <EnrolmentDetailsDialog invoice={invoice} open={viewing} onClose={() => setViewing(false)} />
       )}
+
+      <Dialog open={asking} onOpenChange={(o) => { if (!approve.isPending) setAsking(o); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve and record the payments</DialogTitle>
+            <DialogDescription>
+              Approving records what {invoice.customerName} paid at the close. Enter each payment&apos;s reference from
+              the bank statement or the gateway — the transfer&apos;s UTR, the card slip&apos;s authorisation code, the
+              Tabby or Tamara order ID. Each must be its own; cash needs none.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {declared.map((p, i) => {
+              const need = referenceNeeded(p.method);
+              const twice = Boolean(typed[i]) && typed.indexOf(typed[i]!) !== i;
+              return (
+                <div key={i} className="space-y-1.5">
+                  <Label htmlFor={`approve-ref-${i}`} className="flex flex-wrap items-center gap-x-2">
+                    <span>{paymentMethodLabel(p.method)} {formatMoney(p.amountMinor, invoice.currency)}{need ? " *" : ""}</span>
+                    {p.receiptUrl ? (
+                      <a href={p.receiptUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-normal text-primary-700 hover:underline">
+                        <Paperclip className="h-3 w-3" />receipt
+                      </a>
+                    ) : null}
+                  </Label>
+                  <Input
+                    id={`approve-ref-${i}`}
+                    value={refs[i] ?? ""}
+                    maxLength={200}
+                    autoFocus={i === declared.findIndex((d) => referenceNeeded(d.method))}
+                    onChange={(ev) => setRefs((r) => { const next = [...r]; next[i] = ev.target.value; return next; })}
+                    placeholder={need ? "Payment reference" : "Cash — no reference needed"}
+                  />
+                  {twice && <p className="text-xs text-danger">The same as another payment&apos;s — each has its own.</p>}
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" disabled={approve.isPending} onClick={() => setAsking(false)}>Cancel</Button>
+            <Button
+              loading={approve.isPending}
+              disabled={refMissing || refTwice}
+              onClick={async () => {
+                try {
+                  await approve.mutateAsync(declared.map((_, i) => (refs[i] ?? "").trim()));
+                  toast.success("Invoice approved");
+                  setAsking(false);
+                } catch (err) {
+                  // Kept open: a reference already used, or one missing, is corrected here.
+                  toast.error(err instanceof ApiError ? err.message : "That didn't work");
+                }
+              }}
+            >
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={returning} onOpenChange={(o) => { if (!o) setReason(""); setReturning(o); }}>
         <DialogContent className="max-w-md">

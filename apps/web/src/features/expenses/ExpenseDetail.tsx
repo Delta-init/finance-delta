@@ -10,7 +10,7 @@ import {
   ArrowLeft, CheckCircle, XCircle, Ban, Send, RefreshCw, MapPin, User,
   Repeat, Pause, Play, CircleStop, Pencil, BadgeCheck, Undo2, Trash2, Filter,
 } from "lucide-react";
-import { formatMoney } from "@delta/shared";
+import { formatMoney, referenceNeeded } from "@delta/shared";
 import {
   EXPENSE_CATEGORY_LABELS,
   EXPENSE_PAYMENT_STATUS_LABELS,
@@ -117,8 +117,11 @@ export function ExpenseDetail({ id, embedded = false, onDeleted }: { id: string;
   const addReceipt = useAddExpenseAttachment(id);
   const [receipt, setReceipt] = useState<File | null>(null);
   const [paidAmount, setPaidAmount] = useState("");
+  // Its bank or cheque reference (2026-11-18): required unless it was paid in cash.
+  const [payRef, setPayRef] = useState("");
   function openPay() {
     setReceipt(null);
+    setPayRef(expense?.reference ?? "");
     setPaidAmount(expense ? (expense.totalMinor / 100).toFixed(2) : "");
     const id = expense?.bankAccountId || (expense?.paymentMethod ? org?.paymentAccounts?.[expense.paymentMethod] ?? "" : "");
     setPayAccount(accounts.some((a) => a.id === id) ? id : "__none__");
@@ -597,6 +600,14 @@ export function ExpenseDetail({ id, embedded = false, onDeleted }: { id: string;
             />
           </div>
           <div className="space-y-1.5">
+            <Label htmlFor="pay-reference">
+              Reference {referenceNeeded(expense.paymentMethod)
+                ? <span className="text-danger">*</span>
+                : <span className="font-normal text-foreground-muted">(not needed for cash)</span>}
+            </Label>
+            <Input id="pay-reference" value={payRef} maxLength={120} placeholder="Bank or cheque reference" onChange={(e) => setPayRef(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
             <Label>Paid from</Label>
             <Select value={payAccount} onValueChange={setPayAccount}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -614,13 +625,14 @@ export function ExpenseDetail({ id, embedded = false, onDeleted }: { id: string;
             {awaitingPayment ? (
               <Button
                 loading={recordPayment.isPending || addReceipt.isPending}
-                disabled={!paidOn || (!receipt && !expense.attachments.length) || !(Number(paidAmount) > 0)}
+                disabled={!paidOn || (!receipt && !expense.attachments.length) || !(Number(paidAmount) > 0) || (referenceNeeded(expense.paymentMethod) && !payRef.trim())}
                 onClick={async () => {
                   try {
                     if (receipt) await addReceipt.mutateAsync(receipt);
                     await recordPayment.mutateAsync({
                       paidOn,
                       bankAccountId: payAccount === "__none__" ? "" : payAccount,
+                      reference: payRef.trim(),
                       amountMinor: Math.round(Number(paidAmount) * 100),
                     });
                     toast.success(`${expense.expenseNumber} paid`);
@@ -635,9 +647,9 @@ export function ExpenseDetail({ id, embedded = false, onDeleted }: { id: string;
             ) : (
               <Button
                 loading={markPaid.isPending}
-                disabled={!paidOn}
+                disabled={!paidOn || (referenceNeeded(expense.paymentMethod) && !payRef.trim())}
                 onClick={async () => {
-                  await handleAction(() => markPaid.mutateAsync({ paidOn, bankAccountId: payAccount === "__none__" ? "" : payAccount }), "Marked as paid");
+                  await handleAction(() => markPaid.mutateAsync({ paidOn, bankAccountId: payAccount === "__none__" ? "" : payAccount, reference: payRef.trim() }), "Marked as paid");
                   setPayOpen(false);
                 }}
               >

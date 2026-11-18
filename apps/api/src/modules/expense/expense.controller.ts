@@ -93,7 +93,7 @@ export const voidExpense = asyncHandler(async (req, res) => {
 });
 
 export const markPaid = asyncHandler(async (req, res) => {
-  ok(res, await svc.markExpensePaid(org(req), req.params.id!, req.body));
+  ok(res, await svc.markExpensePaid(org(req), req.params.id!, req.body, { reference: true }));
 });
 
 export const markUnpaid = asyncHandler(async (req, res) => {
@@ -101,7 +101,7 @@ export const markUnpaid = asyncHandler(async (req, res) => {
 });
 
 export const recordPayment = asyncHandler(async (req, res) => {
-  ok(res, await svc.recordProcurementPayment(org(req), req.params.id!, req.body, req.auth!.userId));
+  ok(res, await svc.recordProcurementPayment(org(req), req.params.id!, req.body, req.auth!.userId, { reference: true }));
 });
 
 export const setStatementDate = asyncHandler(async (req, res) => {

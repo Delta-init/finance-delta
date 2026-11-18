@@ -169,7 +169,9 @@ async function main() {
     const e = await makeExpense(day(-5));
     check("it starts overdue", e.paymentStatus === "overdue", `got ${e.paymentStatus}`);
 
-    const paid = await post(`/expenses/${e.id}/mark-paid`, { paidOn: day(-1) }, token);
+    const noRef = await post(`/expenses/${e.id}/mark-paid`, { paidOn: day(-1) }, token);
+    check("marking it paid with no reference is refused (not cash)", noRef.status === 422 && /Enter the payment reference/.test(JSON.stringify(noRef.body)), `${noRef.status}`);
+    const paid = await post(`/expenses/${e.id}/mark-paid`, { paidOn: day(-1), reference: "TRF-SETTLE-1" }, token);
     check("marking it paid works", paid.status === 200, `${paid.status} ${JSON.stringify(paid.body).slice(0, 200)}`);
 
     const after = await read(e.id);

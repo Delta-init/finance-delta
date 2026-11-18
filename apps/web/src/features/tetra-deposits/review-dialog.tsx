@@ -258,6 +258,10 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
     [deposit?.paymentMethod, balancePayment],
   );
   const methodLabel = (m: string) => (balancePayment ? PAYMENT_METHOD_LABELS[m as keyof typeof PAYMENT_METHOD_LABELS] ?? m : m);
+  // Money that goes on an invoice — a balance payment, a course (upgrade) payment — takes its transaction ID as the
+  // payment's reference (2026-11-18): required unless cash; the API refuses one already on another payment.
+  const recordsMoney = balancePayment || isCourseUpgrade(deposit) || (isBonus(deposit) && Number(deposit?.coursePayment?.paidTodayAed) > 0);
+  const txnNeeded = recordsMoney && !/cash/i.test(paymentMethod);
   const amountMinor = Math.round(Number(amount) * 100);
   const amountValid = Number.isFinite(amountMinor) && amountMinor > 0;
   const corrected = !!deposit && amountValid && amountMinor !== deposit.amountMinor;
@@ -268,6 +272,7 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
     if (decision === "approved") {
       if (noEmail) { toast.error(`${deposit.student.name} has no email in CS Portal — send it back to add it`); return; }
       if (!amountValid) { toast.error("Enter the amount that arrived"); return; }
+      if (txnNeeded && !transactionId.trim()) { toast.error("Enter the transaction ID — it becomes the payment's reference"); return; }
     } else if (reason.trim().length < 5) {
       toast.error(decision === "sentBack" ? "Say what to correct before sending it back" : "Add a short reason before rejecting");
       return;
@@ -338,8 +343,14 @@ export function TetraDepositReviewDialog({ deposit, onClose, start = "approved" 
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="tetra-txn">{balancePayment ? "Transaction ID / reference" : "Transaction ID"} <span className="font-normal text-foreground-muted">(optional)</span></Label>
+                  <Label htmlFor="tetra-txn">
+                    {recordsMoney ? "Transaction ID / reference" : "Transaction ID"}{" "}
+                    {txnNeeded
+                      ? <span className="text-danger">*</span>
+                      : <span className="font-normal text-foreground-muted">{recordsMoney ? "(not needed for cash)" : "(optional)"}</span>}
+                  </Label>
                   <Input id="tetra-txn" value={transactionId} onChange={(e) => setTransactionId(e.target.value)} maxLength={100} placeholder="As on the statement" />
+                  {txnNeeded && <p className="text-xs text-foreground-muted">The payment&rsquo;s reference on the invoice — each payment&rsquo;s is its own.</p>}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Payment method</Label>

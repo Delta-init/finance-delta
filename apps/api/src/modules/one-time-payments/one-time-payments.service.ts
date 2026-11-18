@@ -11,6 +11,7 @@ import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { AppError } from "../../lib/http";
+import { requireReference } from "../invoice/payment-reference";
 
 /**
  * One-time payments from HRMS — a bonus or commission HR sent for finance to
@@ -186,6 +187,9 @@ export async function markPaid(orgId: string, userId: string, id: string, input:
   if (expense?.status === "voided") {
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this payment and then voided. Reject the payment instead.`);
   }
+  // The money that goes has its bank or cheque reference (2026-11-18), unless paid in cash — asked when the expense is
+  // made, not when one already made is sent to HRMS again.
+  if (!expense) requireReference(input.paymentMethod, input.reference);
   expense ??= await makeExpense(orgId, userId, input.hrmsOrgId, row, input);
   // In its method's bank account, as money out (2026-10-16).
   await placeExpenseInBank(orgId, expense._id);

@@ -44,6 +44,8 @@ if (!INBOUND_ID || !INBOUND_SECRET) {
 
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0;
 let checks = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -131,7 +133,7 @@ async function main() {
     });
   };
   const invoiceOf = async (r: Res) => Invoice.findById(String(r.body?.data?.invoiceId ?? r.body?.invoiceId)).lean() as Promise<any>;
-  const approve = async (r: Res, token = tApprover) => request("POST", `/invoices/${String(r.body?.data?.invoiceId ?? r.body?.invoiceId)}/approval/approve`, undefined, token);
+  const approve = async (r: Res, token = tApprover) => request("POST", `/invoices/${String(r.body?.data?.invoiceId ?? r.body?.invoiceId)}/approval/approve`, approveRefs(), token);
 
   step("Case 1 — 500 paid as 300 cash and 200 card, each with its receipt");
   const cashCard = [
@@ -194,7 +196,7 @@ async function main() {
   doc = await Invoice.findById(id5).lean() as any;
   check("…its payments replace the first ones", doc?.enrolment?.declaredPayments?.map((p: any) => p.method).join(",") === "cash,card,tabby" && doc?.approval?.state === "pending", JSON.stringify(doc?.enrolment?.declaredPayments));
   check("…and the new receipts join the one already attached", (doc?.attachments ?? []).map((a: any) => a.key).sort().join(",") === "receipts/card-e.jpg,receipts/cash-d.jpg,receipts/tabby-f.jpg", JSON.stringify((doc?.attachments ?? []).map((a: any) => a.key)));
-  await request("POST", `/invoices/${id5}/approval/approve`, undefined, tApprover);
+  await request("POST", `/invoices/${id5}/approval/approve`, approveRefs(), tApprover);
   doc = await Invoice.findById(id5).lean() as any;
   check("…approving records all three", doc?.payments?.length === 3 && doc?.status === "paid", `${doc?.payments?.length}/${doc?.status}`);
 

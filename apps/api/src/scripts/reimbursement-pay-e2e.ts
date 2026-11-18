@@ -121,7 +121,7 @@ const auth = { userId: String(USER), organizationId: ORG, role: "Admin", permiss
 
 const pay = (org: string, id: string, x: Record<string, unknown> = {}) => svc.pay(ORG, String(USER), id, payReimbursementSchema.parse({
   hrmsOrgId: org, category: "employee_reimbursements", subcategory: "staff_meals", departmentId: String(SALES), note: "",
-  paidOn: "2026-11-16", paymentMethod: "bank_transfer", reference: "", ...x,
+  paidOn: "2026-11-16", paymentMethod: "bank_transfer", reference: `TRF-${id}`, ...x,
 }));
 const expensesOf = (org: string, id: string) => Expense.find({ "source.key": `hrms-reimbursement:${org}:${id}` }).lean<any[]>();
 const sentFor = (id: string) => stand.sent.filter((s) => s.id === id);
@@ -143,6 +143,9 @@ check("no expense yet", waiting.every((r) => r.expense === null));
 
 /* ── 2 ── */
 step("2. Approve and pay");
+// Its bank reference (2026-11-18): required unless paid in cash — refused before anything is recorded.
+const noRef = await pay(H, "lunch", { reference: "" }).then(() => "", (e: Error) => e.message);
+check("paid by transfer with no reference: refused, nothing recorded", /Enter the payment reference/.test(noRef) && (await expensesOf(H, "lunch")).length === 0, noRef);
 const paid = await pay(H, "lunch", { note: "Paid with the week's claims", reference: "TRF-1" });
 let ex = await expensesOf(H, "lunch");
 const e = ex[0];

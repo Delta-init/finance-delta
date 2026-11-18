@@ -37,6 +37,7 @@ import { Customer } from "../customer/customer.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
 import { Invoice, type InvoiceDoc } from "./invoice.model";
+import { assertReferenceFree, repeatedReference, requireReference } from "./payment-reference";
 import { sendInvoiceEmail } from "../../lib/email";
 import { getExchangeRate } from "../../lib/exchange-rate";
 import { scheduleReminders, cancelReminders } from "../../jobs/reminder.worker";
@@ -55,7 +56,7 @@ function feeUpdate(invoice: Parameters<typeof import("../integrations/commission
     .then((m) => m.queueFeeUpdate(invoice, reason, opts))
     .catch(() => undefined);
 }
-import { bonusCurrency, formatMoney, formatOriginalPayment, PAYMENT_METHODS } from "@delta/shared";
+import { bonusCurrency, formatMoney, formatOriginalPayment, normalizeReference, PAYMENT_METHODS, referenceProblem } from "@delta/shared";
 import {
   assertLineMovable, paymentAccountsOf, removePaymentLine, resolvePaymentAccount, stampAccount, syncPaymentLine,
 } from "./payment-bank";
@@ -1487,11 +1488,30 @@ export async function approveInvoice(
   orgId: string,
   id: string,
   actor: { userId: string; name: string },
+  /**
+   * Each declared payment's reference, in the close's order (2026-11-18: "enter the payment reference when
+   * approving … mandatory"): required for every one approval records, unless it was cash; none already on another
+   * payment, none twice among them. The Approve button always sends the list; a script that sends none is not held.
+   */
+  opts: { references?: unknown[] } = {},
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   const a = approvalOf(doc);
   if (a.state === "not_required") throw new AppError("CONFLICT", "This invoice does not need approval");
   if (a.state === "approved") throw new AppError("CONFLICT", "This invoice is already approved");
+  const plan = declaredPlan(doc);
+  const references = plan.record ? plan.declared.map((_, i) => String(opts.references?.[i] ?? "").trim().slice(0, 200)) : [];
+  if (plan.record && Array.isArray(opts.references)) {
+    const currency = doc.currency ?? "AED";
+    plan.declared.forEach((p, i) => {
+      if (referenceProblem(p.method, references[i])) {
+        throw new AppError("VALIDATION_ERROR", `Enter the reference of payment ${i + 1} (${p.method.replace(/_/g, " ")} ${formatMoney(p.amountMinor, currency)}) — the bank or gateway's code; not needed for cash`);
+      }
+    });
+    const twice = repeatedReference(references);
+    if (twice) throw new AppError("VALIDATION_ERROR", `Reference ${twice} is typed for two payments — each payment's is its own`);
+    for (const r of references) await assertReferenceFree(orgId, r);
+  }
 
   doc.set("approval", {
     state: "approved",
@@ -1515,7 +1535,7 @@ export async function approveInvoice(
   // each payment its own tax invoice.
   else if (startsProforma(doc) && await vatOnPaymentsFor(orgId)) doc.set("proforma", { at: new Date() });
   // In the same save: an approval and the payments it records stand or fall together.
-  const recorded = recordDeclaredPayments(doc, accountFor);
+  const recorded = recordDeclaredPayments(doc, accountFor, references);
   const taxInvoices = await stampTaxInvoices(doc);
   // Part paid at the close: the next instalment is due 29 days after the money was paid.
   applyInstalmentDue(doc as never);
@@ -1567,14 +1587,16 @@ export async function approveInvoice(
  * invoice, or when one is an EMI, whose terms the close does not ask. The
  * approval never waits on this. Returns how many were recorded.
  */
-function recordDeclaredPayments(
-  doc: Awaited<ReturnType<typeof findDoc>>,
-  accountFor: Map<string, Parameters<typeof stampAccount>[1]> = new Map(),
-): number {
+/**
+ * What approving this invoice does with the payments declared at its close: `declared` (one built from a CRM's
+ * total, method and receipt where it sent no list), and whether they are recorded (`record`) or left for accounts
+ * (`skip`, why) — when anything is recorded already, when they come to more than the invoice, or when one is an EMI.
+ */
+function declaredPlan(doc: Awaited<ReturnType<typeof findDoc>>): { declared: StoredDeclaredPayment[]; record: boolean; skip?: string } {
   const e = (doc as unknown as {
     enrolment?: { declaredPayments?: StoredDeclaredPayment[] | null; declaredPaidMinor?: number; declaredPaymentMethod?: DeclaredPayment["method"] | null } | null;
   }).enrolment;
-  if (!e) return 0;
+  if (!e) return { declared: [], record: false };
   const external = Boolean((doc as unknown as { external?: { source?: string } }).external?.source);
   const firstAttachment = ((doc as unknown as { attachments?: { url?: string; key?: string }[] }).attachments ?? [])[0];
   const declared: StoredDeclaredPayment[] = e.declaredPayments?.length
@@ -1582,26 +1604,40 @@ function recordDeclaredPayments(
     : (e.declaredPaidMinor ?? 0) > 0 && e.declaredPaymentMethod
       ? [{ method: e.declaredPaymentMethod, amountMinor: e.declaredPaidMinor!, receipt: external ? firstAttachment : undefined }]
       : [];
-  if (!declared.length) return 0;
-
-  const skip = (reason: string) => {
-    doc.set("enrolment.declaredPaymentsOnApproval", { state: "skipped", reason, at: new Date() });
-    return 0;
-  };
+  if (!declared.length) return { declared, record: false };
   const currency = doc.currency ?? "AED";
   const total = doc.totalMinor ?? 0;
   const sum = declared.reduce((s, p) => s + p.amountMinor, 0);
-  if (((doc.payments as unknown[]) ?? []).length > 0) return skip("Payments were already recorded against the invoice");
-  if (sum > total) return skip(`The payments (${formatMoney(sum, currency)}) come to more than the invoice (${formatMoney(total, currency)})`);
-  if (declared.some((p) => p.method === "easebuzz_emi")) return skip("An EMI payment needs its terms — record the payments by hand");
+  if (((doc.payments as unknown[]) ?? []).length > 0) return { declared, record: false, skip: "Payments were already recorded against the invoice" };
+  if (sum > total) return { declared, record: false, skip: `The payments (${formatMoney(sum, currency)}) come to more than the invoice (${formatMoney(total, currency)})` };
+  if (declared.some((p) => p.method === "easebuzz_emi")) return { declared, record: false, skip: "An EMI payment needs its terms — record the payments by hand" };
+  return { declared, record: true };
+}
+
+function recordDeclaredPayments(
+  doc: Awaited<ReturnType<typeof findDoc>>,
+  accountFor: Map<string, Parameters<typeof stampAccount>[1]> = new Map(),
+  /** Each one's reference, as typed at approval (2026-11-18) — in the close's order. */
+  references: string[] = [],
+): number {
+  const plan = declaredPlan(doc);
+  const declared = plan.declared;
+  if (!declared.length) return 0;
+  if (!plan.record) {
+    doc.set("enrolment.declaredPaymentsOnApproval", { state: "skipped", reason: plan.skip ?? "", at: new Date() });
+    return 0;
+  }
+  const currency = doc.currency ?? "AED";
+  const total = doc.totalMinor ?? 0;
+  const sum = declared.reduce((s, p) => s + p.amountMinor, 0);
 
   const enrolledOn = doc.issueDate ? dateOnly(new Date(doc.issueDate as unknown as Date)) : dateOnly(new Date());
-  for (const p of declared) {
+  for (const [i, p] of declared.entries()) {
     const payment: Record<string, unknown> = {
       method: p.method,
       amountMinor: p.amountMinor,
       paidOn: new Date(p.paidOn || enrolledOn),
-      reference: "",
+      reference: references[i] ?? "",
       // A payment made in another currency is recorded in the invoice's, as the
       // CRM converted it; the note keeps what the client actually handed over.
       notes: `Collected at the close — recorded on approval${
@@ -2049,6 +2085,8 @@ export async function updatePayment(
   late?: LateActor,
   /** A new receipt for it, in place of the one it has (the user, 2026-11-04). */
   file?: ProofFile,
+  /** `reference`: hold it to the reference rule (2026-11-18, payment-reference.ts) — the invoice screen asks it. */
+  checks: { reference?: boolean } = {},
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if (effectiveStatus(doc) === "void") throw new AppError("CONFLICT", "Cannot edit a payment on a voided invoice");
@@ -2058,6 +2096,12 @@ export async function updatePayment(
   } & { amountMinor: number; _id: { toString(): string } }[];
   const pm = list.id(paymentId);
   if (!pm) throw new AppError("NOT_FOUND", "Payment not found");
+  // Its reference (2026-11-18): required unless cash; checked against the others only when it changes, so an old
+  // payment that shares one with another can still have its amount or date corrected.
+  if (checks.reference) {
+    requireReference(input.method, input.reference);
+    if (normalizeReference(input.reference) !== normalizeReference((pm as { reference?: string }).reference)) await assertReferenceFree(orgId, input.reference, paymentId);
+  }
 
   if (input.method === "easebuzz_emi" && (!input.emi || !input.emi.tenureMonths)) {
     throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
@@ -2293,6 +2337,12 @@ export async function recordPayment(
   from?: { externalRef: string; proofUrl?: string; original?: { currency: string; amountMinor: number; rate: number } },
   /** Who is typing it — only the invoice screen passes it: dated too far back, it waits for a manager. */
   late?: LateActor,
+  /**
+   * `reference`: required unless cash, and no other payment's (2026-11-18) — the invoice screen and the approvals
+   * that record money in (a CRM balance payment, a CS Portal course payment) ask it; scripts that move payments
+   * already recorded don't.
+   */
+  checks: { reference?: boolean } = {},
 ): Promise<InvoiceDTO> {
   const doc = await findDoc(orgId, id);
   if (from?.externalRef && ((doc.payments as unknown as { externalRef?: string }[]) ?? []).some((p) => p.externalRef === from.externalRef)) {
@@ -2303,6 +2353,11 @@ export async function recordPayment(
   const eff = effectiveStatus(doc);
   if (eff === "void") throw new AppError("CONFLICT", "Cannot record payment on a voided invoice");
   if (eff === "paid") throw new AppError("CONFLICT", "Invoice is already fully paid");
+  // Its reference (2026-11-18): required unless cash, and no other payment's.
+  if (checks.reference) {
+    requireReference(input.method, input.reference);
+    await assertReferenceFree(orgId, input.reference);
+  }
   // Money is not recorded against something nobody has checked.
   assertApproved(doc);
 

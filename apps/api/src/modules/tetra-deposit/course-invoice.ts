@@ -324,6 +324,14 @@ async function emailReceipt(row: Row, invoice: any, payment: { receiptNumber: st
  * its receipt, and remembers it on the request. Idempotent: a retry after
  * this got part-way records nothing twice. Answers why not, when it could not.
  */
+/** The method a course payment is recorded with: the approver's pick, else what CS Portal called it. */
+export function coursePaymentMethod(row: Row, decided: unknown): PaymentMethod {
+  const picked = String(decided ?? "");
+  return picked && (PAYMENT_METHODS as readonly string[]).includes(picked) && picked !== "easebuzz_emi"
+    ? (picked as PaymentMethod)
+    : methodFor(picked || row?.paymentMethod);
+}
+
 export async function recordCoursePayment(row: Row, opts: { email?: boolean } = {}): Promise<{ ok: true } | { ok: false; message: string }> {
   if (!isCoursePayment(row)) return { ok: true };
   if (row.courseInvoice?.paymentId && row.courseInvoice?.receiptNumber) return { ok: true };
@@ -332,9 +340,7 @@ export async function recordCoursePayment(row: Row, opts: { email?: boolean } = 
   const externalRef = `tetra:${row.externalId}`;
   const amountMinor = coursePaymentAedMinor(row);
   if (!(amountMinor > 0)) return { ok: false, message: "No amount to record" };
-  const method = d.paymentMethod && (PAYMENT_METHODS as readonly string[]).includes(d.paymentMethod) && d.paymentMethod !== "easebuzz_emi"
-    ? (d.paymentMethod as PaymentMethod)
-    : methodFor(d.paymentMethod || row.paymentMethod);
+  const method = coursePaymentMethod(row, d.paymentMethod);
   // Typed in rupees in CS Portal: what the client handed over, kept on the payment (2026-11-13).
   const original = rupeesTyped(row, amountMinor);
   // Rupees are the only other currency a request states (its dollars are CS Portal's own unit, not what the client

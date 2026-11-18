@@ -35,6 +35,7 @@ import { pnlExpenseFilter, resolveExpenseCategory } from "../expense-category/ex
 import { assertDebitMovable, debitAccount, syncDebitLine } from "../banking/money-out";
 import { BankTransaction } from "../banking/bank-transaction.model";
 import { paymentAccountsOf } from "../invoice/payment-bank";
+import { requireReference } from "../invoice/payment-reference";
 import { lateView, isLatePending } from "../late-entry/late-entry.model";
 import { lateEntryDaysOf, lateForDate, openLateEntry, withdrawLateFor, type LateActor } from "../late-entry/late-entry.service";
 
@@ -947,6 +948,8 @@ export async function markExpensePaid(
   orgId: string,
   id: string,
   input: MarkExpensePaidInput,
+  /** `reference`: required unless paid in cash (2026-11-18) — what the expense has, else what is typed now. The page asks it. */
+  checks: { reference?: boolean } = {},
 ): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
@@ -960,19 +963,21 @@ export async function markExpensePaid(
   }
   await refusePayrollExpense(orgId, doc, "marked paid");
   assertNotWaiting(doc, "marked paid");
-  await applyPayment(orgId, doc, input);
+  await applyPayment(orgId, doc, input, checks);
   await doc.save();
   return syncedDTO(orgId, doc._id);
 }
 
 /** How and when it was paid, onto the expense — Mark paid's and Record payment's one way of doing it. Not saved. */
-async function applyPayment(orgId: string, doc: { isModified(paths: string[]): boolean }, input: MarkExpensePaidInput): Promise<void> {
+async function applyPayment(orgId: string, doc: { isModified(paths: string[]): boolean }, input: MarkExpensePaidInput, checks: { reference?: boolean } = {}): Promise<void> {
   const d = doc as unknown as Record<string, unknown>;
   d.paidOn = new Date(input.paidOn);
   if (input.paymentMethod !== undefined) d.paymentMethod = input.paymentMethod;
   if (input.paymentAccount !== undefined) d.paymentAccount = input.paymentAccount;
   await applyExpenseAccount(orgId, d, input.bankAccountId);
   if (input.reference !== undefined) d.reference = input.reference;
+  // The money that went has its bank or cheque reference (2026-11-18) — not needed for cash.
+  if (checks.reference) requireReference(d.paymentMethod as string | undefined, d.reference);
   if (d.bankTransactionId && doc.isModified(["totalMinor", "paidOn", "bankAccountId", "currency"])) await assertDebitMovable(orgId, d.bankTransactionId);
 }
 
@@ -981,7 +986,11 @@ async function applyPayment(orgId: string, doc: { isModified(paths: string[]): b
  * the totals, payables, budgets and its bank account's cash book from now — at what it actually cost, when that is
  * given and differs from what was approved (noted on it).
  */
-export async function recordProcurementPayment(orgId: string, id: string, input: RecordProcurementPaymentInput, userId: string): Promise<ExpenseDTO> {
+export async function recordProcurementPayment(
+  orgId: string, id: string, input: RecordProcurementPaymentInput, userId: string,
+  /** `reference`: required unless paid in cash (2026-11-18). The page asks it. */
+  checks: { reference?: boolean } = {},
+): Promise<ExpenseDTO> {
   const doc = await Expense.findOne({ _id: id, organizationId: orgId }).populate("departmentId", "name");
   if (!doc) throw new AppError("NOT_FOUND", "Expense not found");
   if (!awaitingPayment(doc)) {
@@ -1001,7 +1010,7 @@ export async function recordProcurementPayment(orgId: string, id: string, input:
     d.notes = [String(d.notes ?? ""), `Paid ${cur} ${(totalMinor / 100).toFixed(2)} — approved ${cur} ${(approved / 100).toFixed(2)} (${by}).`].filter(Boolean).join("\n");
   }
   doc.status = "approved";
-  await applyPayment(orgId, doc, input);
+  await applyPayment(orgId, doc, input, checks);
   await doc.save();
   return syncedDTO(orgId, doc._id);
 }

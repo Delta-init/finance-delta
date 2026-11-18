@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useBankAccounts } from "@/features/banking/api";
+import { referenceNeeded } from "@delta/shared";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { PayPayload } from "./api";
@@ -224,7 +225,8 @@ export function PayDialog({
   const troubled = [...shares.values()].some((x) => x.over || x.wrong.size > 0);
   const partPaid = payable.filter((l) => (shares.get(l.id)?.leftMinor ?? 0) > 0);
   const ready = !busy && open_.length > 0 && !troubled
-    && open_.every((d) => d.bankAccountId && d.paidOn && peopleOf(d).length > 0);
+    // Each payment's reference too (2026-11-18), unless it was cash.
+    && open_.every((d) => d.bankAccountId && d.paidOn && peopleOf(d).length > 0 && (!referenceNeeded(d.method) || d.reference.trim()));
 
   const cur = drafts[active];
   const set = (i: number, patch: Partial<Draft>) =>
@@ -414,7 +416,11 @@ export function PayDialog({
                       <Input id={`paid-on-${cur.key}`} type="date" value={cur.paidOn} onChange={(e) => set(active, { paidOn: e.target.value })} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor={`pay-ref-${cur.key}`}>Reference (optional)</Label>
+                      <Label htmlFor={`pay-ref-${cur.key}`}>
+                        Reference {referenceNeeded(cur.method)
+                          ? <span className="text-danger">*</span>
+                          : <span className="font-normal text-foreground-muted">(not needed for cash)</span>}
+                      </Label>
                       <Input
                         id={`pay-ref-${cur.key}`}
                         value={cur.reference}

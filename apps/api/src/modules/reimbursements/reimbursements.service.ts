@@ -11,6 +11,7 @@ import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { AppError } from "../../lib/http";
+import { requireReference } from "../invoice/payment-reference";
 import { forgetReimbursements } from "../approvals/approvals.service";
 
 /**
@@ -213,6 +214,9 @@ export async function pay(orgId: string, userId: string, id: string, input: PayR
   if (expense?.status === "voided") {
     throw new AppError("CONFLICT", `${expense.expenseNumber} was made for this claim and then voided. Refuse the claim instead.`);
   }
+  // The money that goes has its bank or cheque reference (2026-11-18), unless paid in cash — asked when the expense is
+  // made, not when one already made is sent to HRMS again.
+  if (!expense) requireReference(input.paymentMethod, input.reference);
   // A different amount than was claimed (2026-11-16): more needs a note, and HRMS must be one that keeps the claimed
   // one — an older one refuses it — so nothing is recorded until it is.
   const claimedMinor = Math.round(row.amount * 100);

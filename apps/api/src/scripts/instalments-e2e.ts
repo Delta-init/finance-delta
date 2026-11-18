@@ -58,6 +58,8 @@ const INBOUND_ID = process.env.INBOUND_CLIENT_ID ?? "";
 const INBOUND_SECRET = process.env.INBOUND_INTEGRATION_SECRET ?? "";
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
   checks++;
@@ -228,7 +230,7 @@ async function main() {
     const id = String(r.body?.data?.invoiceId ?? "");
     if (!id) throw new Error(`enrolment refused: ${show(r)}`);
     if (opts.approve !== false && (opts.org ?? HQ) === HQ) {
-      const a = await request("POST", `/invoices/${id}/approval/approve`, undefined, token);
+      const a = await request("POST", `/invoices/${id}/approval/approve`, approveRefs(), token);
       if (a.status !== 200) throw new Error(`approval refused: ${show(a)}`);
     }
     return id;
@@ -261,14 +263,14 @@ async function main() {
 
   /* ── B ── */
   step("B. Every payment restarts the 29 days from the latest");
-  let r = await request("POST", `/invoices/${a1}/payments`, { method: "bank_transfer", amountMinor: 10_000, paidOn: dayOf(0) }, token);
+  let r = await request("POST", `/invoices/${a1}/payments`, { method: "bank_transfer", amountMinor: 10_000, paidOn: dayOf(0), reference: "UTR-INST-1" }, token);
   d = await inv(a1);
   check("a payment today: due today + 29", r.status < 300 && iso(d.dueDate) === dayOf(29), `${show(r)} ${iso(d.dueDate)}`);
   r = await request("POST", `/invoices/${a1}/payments`, { method: "cash", amountMinor: 5_000, paidOn: dayOf(-5) }, token);
   d = await inv(a1);
   check("one recorded late, paid earlier: still from the latest paidOn", iso(d.dueDate) === dayOf(29), iso(d.dueDate));
   const todays = (d.payments as any[]).find((p) => iso(p.paidOn) === dayOf(0));
-  r = await request("PATCH", `/invoices/${a1}/payments/${todays._id}`, { method: "bank_transfer", amountMinor: 10_000, paidOn: dayOf(-1) }, token);
+  r = await request("PATCH", `/invoices/${a1}/payments/${todays._id}`, { method: "bank_transfer", amountMinor: 10_000, paidOn: dayOf(-1), reference: "UTR-INST-1" }, token);
   d = await inv(a1);
   check("its date edited to yesterday: due yesterday + 29", r.status < 300 && iso(d.dueDate) === dayOf(28), `${show(r)} ${iso(d.dueDate)}`);
   r = await request("DELETE", `/invoices/${a1}/payments/${todays._id}`, undefined, token);
@@ -279,7 +281,7 @@ async function main() {
   /* ── C ── */
   step("C. Fee updates to Tetra Commission");
   await provision(a1);
-  r = await request("POST", `/invoices/${a1}/payments`, { method: "card", amountMinor: 5_000, paidOn: dayOf(0) }, token);
+  r = await request("POST", `/invoices/${a1}/payments`, { method: "card", amountMinor: 5_000, paidOn: dayOf(0), reference: "AUTH-INST-2" }, token);
   await settle();
   let row = await CommissionFeeUpdateModel.findOne({ invoiceId: a1 }).lean() as any;
   check("a payment on a student who went there: queued", row?.state === "pending" && row?.reason === "payment", JSON.stringify(row));
@@ -296,7 +298,7 @@ async function main() {
 
   feeMode.set(a1, "down");
   const lastPay = (await inv(a1)).payments.at(-1);
-  await request("PATCH", `/invoices/${a1}/payments/${lastPay._id}`, { method: "card", amountMinor: 6_000, paidOn: dayOf(0) }, token);
+  await request("PATCH", `/invoices/${a1}/payments/${lastPay._id}`, { method: "card", amountMinor: 6_000, paidOn: dayOf(0), reference: "AUTH-INST-2" }, token);
   const before = feeUpdates.length;
   await drain();
   row = await CommissionFeeUpdateModel.findOne({ invoiceId: a1 }).lean();

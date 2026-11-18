@@ -53,6 +53,8 @@ if (!INBOUND_ID || !INBOUND_SECRET) {
 
 const PASSWORD = "E2ePassword1!";
 
+/** Approving a close sends each collected payment's reference (2026-11-18): a fresh one for each, the extra ones unused. */
+const approveRefs = () => ({ references: Array.from({ length: 10 }, () => `REF-${crypto.randomUUID().slice(0, 13)}`) });
 let failures = 0;
 let checks = 0;
 function check(label: string, condition: boolean, detail = "") {
@@ -200,7 +202,7 @@ async function main() {
   c = await Customer.findById(waiting).lean() as any;
   doc = await invoice(id4);
   check("waiting for approval: a duplicate, nobody renamed", r.body?.data?.duplicate === true && c?.name === "Waiting Client" && doc?.customerName === "Waiting Client", `${r.body?.data?.duplicate} ${c?.name}`);
-  r = await request("POST", `/invoices/${id4}/approval/approve`, undefined, tApprover);
+  r = await request("POST", `/invoices/${id4}/approval/approve`, approveRefs(), tApprover);
   check("approved", r.status === 200, show(r));
   r = await send("stu-0090", { customer: { name: "Someone Else", email: "other@e2e-test.com", phone: "+971500000001" } });
   doc = await invoice(id4);

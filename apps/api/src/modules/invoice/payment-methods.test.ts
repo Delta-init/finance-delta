@@ -25,7 +25,7 @@ describe("payment methods", () => {
   });
 
   it("includes the ones a counsellor actually takes", () => {
-    for (const m of ["cash", "tabby", "tamara", "tamara_ksa", "billexpro", "easebuzz_emi"]) {
+    for (const m of ["cash", "tabby", "tabby_dgo", "tamara", "tamara_ksa", "billexpro", "easebuzz_emi"]) {
       expect(PAYMENT_METHODS).toContain(m as never);
     }
   });

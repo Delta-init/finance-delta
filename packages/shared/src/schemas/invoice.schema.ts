@@ -16,6 +16,9 @@ export const PAYMENT_METHODS = [
   "pos",
   "easebuzz_emi",
   "tabby",
+  // Tabby's DGO account (the user, 2026-11-18: "a new payment method in all CRMs — Tabby DGO") — its own method beside
+  // Tabby so it lands in its own account; an AED payment like Tabby.
+  "tabby_dgo",
   // Buy-now-pay-later and the instalment portal, beside Tabby: from the
   // counsellor's side these are the same act — the client pays a third party
   // and the enrolment is settled — so they belong in the same list rather than
@@ -67,6 +70,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   pos: "POS",
   easebuzz_emi: "Easebuzz EMI",
   tabby: "Tabby",
+  tabby_dgo: "Tabby DGO",
   tamara: "Tamara",
   tamara_ksa: "Tamara KSA",
   billexpro: "Smart Invoice / BillExPro",

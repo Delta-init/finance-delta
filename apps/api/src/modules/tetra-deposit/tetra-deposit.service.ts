@@ -323,6 +323,8 @@ export function financeMethodFor(raw: string | undefined | null): PaymentMethod 
   if (!v) return "other";
   const slug = v.replace(/[\s/-]+/g, "_");
   if ((PAYMENT_METHODS as readonly string[]).includes(slug) && slug !== "easebuzz_emi") return slug as PaymentMethod;
+  // "Tabby DGO" — the DGO account (2026-11-18) — before plain Tabby, however it is spelt.
+  if (/tabby/.test(v) && /\bdgo\b/.test(v)) return "tabby_dgo";
   if (/tabby/.test(v)) return "tabby";
   // "Tamara KSA" — the Saudi account (2026-11-17) — before plain Tamara, however it is spelt.
   if (/tamara/.test(v) && /\bksa\b|saudi/.test(v)) return "tamara_ksa";

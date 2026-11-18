@@ -987,6 +987,20 @@ export async function decideTetraDeposit(auth: AuthContext, id: string, input: D
 }
 
 /**
+ * An approved course payment's invoice and receipt, told to CS Portal again — after it moved to another invoice
+ * (scripts/move-course-payment.ts, 2026-11-18). The decision is sent as it was; CS Portal keeps the invoice from a
+ * repeat. Throws when CS Portal can't be reached or refuses.
+ */
+export async function tellCommissionCourseInvoice(depositId: string): Promise<string> {
+  const row: any = await TetraDepositModel.findById(depositId).lean();
+  if (!row || row.status !== "approved") throw new AppError("CONFLICT", "Only an approved request's invoice is told to CS Portal");
+  const courseInvoice = await courseInvoiceForDecision(row);
+  if (!courseInvoice) throw new AppError("CONFLICT", "It has no invoice and receipt to tell");
+  const result = await sendFundingDecisionToCommission({ ...decisionFor(row), courseInvoice });
+  return `CS Portal has ${courseInvoice.invoiceNumber} / ${courseInvoice.receiptNumber}${result.already ? " (a repeat of the decision)" : ""}`;
+}
+
+/**
  * A decision CS Portal turned down, sent to it again as it was (the user, 2026-10-25: Approvals → "Didn't go
  * through" → Send again) — for when what it refused has been put right there, or it no longer refuses it (a repeated
  * transaction ID). Claimed first, so it is never sent twice at once. Turned down again, it stays where it was.

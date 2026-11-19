@@ -36,6 +36,11 @@
  *
  *   bun run backfill:lms --invoice IN-00464 --course-slug "CMA REGISTRATION=cma-us" --requeue-unmapped
  *   bun run backfill:lms --invoice IN-00464 --course-slug "CMA REGISTRATION=cma-us" --requeue-unmapped --apply
+ *
+ * A --course-slug is checked with the LMS first: a slug it doesn't publish
+ * stops the run, and its programme says whether the CS Portal gets the
+ * students (FOREX Trading only). --requeue-failed (with --invoice only) sends
+ * again what the LMS refused — once its course is put right.
  */
 
 import mongoose from "mongoose";
@@ -81,6 +86,50 @@ const SINCE = process.argv.includes("--since") && sinceArg ? new Date(sinceArg) 
 const INVOICES = [...new Set(process.argv.flatMap((a, i) => (a === "--invoice" && process.argv[i + 1] ? process.argv[i + 1]!.split(",") : []))
   .map((s) => s.trim().toUpperCase()).filter(Boolean))];
 const orgArg = process.argv.includes("--org") ? String(process.argv[process.argv.indexOf("--org") + 1] ?? "").trim() : "";
+/*
+ * Send again what the LMS refused (2026-11-19: two refused for a course slug
+ * that was never an LMS course). Only with --invoice: a refusal has a reason,
+ * and each is looked at before it is sent again — never all of them at once.
+ */
+const REQUEUE_FAILED = process.argv.includes("--requeue-failed");
+
+/**
+ * The LMS course a --course-slug names, asked of the LMS before anything is
+ * written (2026-11-19: a placeholder, "<the LMS course slug>", was written onto
+ * two invoices and the LMS refused them). A slug the LMS doesn't publish, or an
+ * LMS that can't be asked, stops the run. Its programme says whether the
+ * students go on to the CS Portal: only FOREX Trading (4x-trading) does.
+ */
+async function lmsCourseNamed(slug: string): Promise<{ title: string; program: string }> {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    console.error(`--course-slug: "${slug}" is not an LMS course slug (lower-case words joined by hyphens, like market-break-out-trading-program).\n\nNothing was changed.`);
+    process.exit(1);
+  }
+  const { env } = await import("../config/env");
+  const base = String(env.LMS_API_URL ?? "").replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+  if (!base) {
+    console.error("--course-slug: LMS_API_URL is not set, so the course can't be checked.\n\nNothing was changed.");
+    process.exit(1);
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/v1/courses/${encodeURIComponent(slug)}`, { signal: AbortSignal.timeout(15_000) });
+  } catch (err) {
+    console.error(`--course-slug: the LMS couldn't be asked about "${slug}" (${(err as Error).message}).\n\nNothing was changed.`);
+    process.exit(1);
+  }
+  if (res.status === 404) {
+    console.error(`--course-slug: the LMS has no published course "${slug}" — check the slug on the LMS's Courses page.\n\nNothing was changed.`);
+    process.exit(1);
+  }
+  const body = (await res.json().catch(() => null)) as { data?: { course?: Record<string, unknown> } & Record<string, unknown> } | null;
+  const course = (body?.data?.course ?? body?.data ?? null) as { slug?: string; title?: string; program?: string } | null;
+  if (!res.ok || !course || course.slug !== slug) {
+    console.error(`--course-slug: the LMS answered ${res.status} about "${slug}", not the course.\n\nNothing was changed.`);
+    process.exit(1);
+  }
+  return { title: String(course.title ?? slug), program: String(course.program ?? "") };
+}
 
 /** The organization --org names, by id or by name (any case); exits when it names none, or more than one. */
 async function orgNamed(name: string): Promise<mongoose.Types.ObjectId> {
@@ -107,6 +156,15 @@ async function run() {
   if (process.argv.includes("--org") && !orgArg) {
     console.error("--org needs an organization's id or name");
     process.exit(1);
+  }
+  if (REQUEUE_FAILED && !INVOICES.length) {
+    console.error("--requeue-failed only goes with --invoice: what the LMS refused is sent again by name, one by one.");
+    process.exit(1);
+  }
+  // Every course named is a real LMS course, before anything is read or written.
+  for (const { course, slug } of COURSE_SLUGS) {
+    const c = await lmsCourseNamed(slug);
+    console.log(`LMS course for "${course}": ${slug} — ${c.title}, ${c.program === "4x-trading" ? "FOREX Trading: its students go on to the CS Portal" : `${c.program || "no programme"}: not Forex, so the CS Portal won't get its students`}`);
   }
 
   await connectDb();
@@ -253,12 +311,14 @@ async function run() {
       }
     }
 
-    if (REQUEUE) {
-      const unmapped = existing.filter((r) => r.status === "unmapped");
+    if (REQUEUE || REQUEUE_FAILED) {
+      // Unmapped ones (--requeue-unmapped) and refused ones (--requeue-failed, the named invoices only).
+      const unmapped = existing.filter((r) => (REQUEUE && r.status === "unmapped") || (REQUEUE_FAILED && r.status === "failed"));
+      const which = [REQUEUE && "unmapped", REQUEUE_FAILED && "failed"].filter(Boolean).join(" or ");
       if (unmapped.length === 0) {
-        console.log("\nNo unmapped rows to requeue.");
+        console.log(`\nNo ${which} rows to requeue.`);
       } else if (!APPLY) {
-        console.log(`\n--requeue-unmapped would clear and requeue ${unmapped.length}. Add --apply to do it.`);
+        console.log(`\n${[REQUEUE && "--requeue-unmapped", REQUEUE_FAILED && "--requeue-failed"].filter(Boolean).join(" ")} would clear and requeue ${unmapped.length} (${which}). Add --apply to do it.`);
       } else {
         await LmsProvision.deleteMany({ _id: { $in: unmapped.map((r) => r._id) } });
         let again = 0;

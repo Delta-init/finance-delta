@@ -7,6 +7,8 @@
  *   3. --apply: the named invoice gets its LMS course and a pending provisioning row; every other stuck enrolment —
  *      the same course included — is left exactly as it was. Run again: nothing more.
  *   4. Without --invoice, as before: every unmapped row counted.
+ *   5. --course-slug asked of the LMS first: a placeholder, a slug it doesn't publish, or an LMS that can't be asked
+ *      stops the run; its programme said. --requeue-failed (only with --invoice): what the LMS refused, sent again.
  *
  * Run through scripts/backfill-lms-invoice-e2e.sh (a throwaway mongod; nothing reads a .env).
  */
@@ -23,6 +25,22 @@ function check(label: string, ok: boolean, detail = "") {
   else { fail++; console.log(`  \x1b[31m✗ ${label}${detail ? ` — ${detail}` : ""}\x1b[0m`); }
 }
 const step = (s: string) => console.log(`\n\x1b[1m${s}\x1b[0m`);
+
+/* A stand-in LMS: its public course page, for the two courses it has. */
+const COURSES: Record<string, { title: string; program: string }> = {
+  "cma-us": { title: "CMA US", program: "" },
+  "market-break-out-trading-program": { title: "MARKET BREAK-OUT TRADING PROGRAM", program: "4x-trading" },
+};
+const lms = Bun.serve({
+  port: 0,
+  fetch(req) {
+    const m = new URL(req.url).pathname.match(/^\/api\/v1\/courses\/([^/]+)$/);
+    const c = m ? COURSES[decodeURIComponent(m[1]!)] : undefined;
+    if (!m || !c) return Response.json({ success: false, message: "Course not found" }, { status: 404 });
+    return Response.json({ success: true, data: { slug: decodeURIComponent(m[1]!), title: c.title, program: c.program || null, status: "published" } });
+  },
+});
+process.env.LMS_API_URL = `http://127.0.0.1:${lms.port}`;
 
 await mongoose.connect(uri);
 const db = mongoose.connection.db!;
@@ -61,8 +79,9 @@ const otherCourse = await enrolment(orgA, "IN-00334", "Ai Academy Softeware Mast
 const sharedA = await enrolment(orgA, "IN-00031", "CMA REGISTRATION", "shared-a@e2e-backfill.test");
 const sharedB = await enrolment(orgB, "IN-00031", "CMA REGISTRATION", "shared-b@e2e-backfill.test");
 
-async function run(...args: string[]) {
-  const p = Bun.spawn(["bun", "--no-env-file", "src/scripts/backfill-lms-provisions.ts", ...args], { stdout: "pipe", stderr: "pipe", env: process.env });
+async function run(...args: string[]) { return runWith({}, ...args); }
+async function runWith(env: Record<string, string>, ...args: string[]) {
+  const p = Bun.spawn(["bun", "--no-env-file", "src/scripts/backfill-lms-provisions.ts", ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } });
   const out = (await new Response(p.stdout).text()) + (await new Response(p.stderr).text());
   return { code: await p.exited, out };
 }
@@ -121,6 +140,48 @@ step("4. Without --invoice, as before");
 r = await run("--requeue-unmapped");
 check("every unmapped row is counted", r.code === 0 && /would clear and requeue 4\b/.test(r.out) && !/only /.test(r.out), r.out);
 
+step("5. The LMS course checked first; what the LMS refused, sent again");
+// As a run with a placeholder for a slug left them (2026-11-19): the slug on the invoice, the LMS's refusal on the row.
+async function refused(org: typeof orgA, invoiceNumber: string, email: string) {
+  const id = await enrolment(org, invoiceNumber, "DPF", email);
+  await db.collection("invoices").updateOne({ _id: id }, { $set: { "enrolment.lmsCourseSlug": "<the LMS course slug>" } });
+  await db.collection("lmsprovisions").updateOne({ invoiceId: id }, { $set: { status: "failed", lastError: 'No course with slug "<the LMS course slug>"' } });
+  return id;
+}
+const manaf = await refused(orgB, "IN-00027", "dpf-1@e2e-backfill.test");
+const pooja = await refused(orgB, "IN-00024", "dpf-2@e2e-backfill.test");
+const elseRefused = await refused(orgB, "IN-00099", "dpf-3@e2e-backfill.test");
+const dpfStill = async () => {
+  for (const id of [manaf, pooja, elseRefused]) {
+    if ((await rowOf(id))?.status !== "failed" || (await slugOf(id)) !== "<the LMS course slug>") return false;
+  }
+  return true;
+};
+const dpf = ["--invoice", "IN-00027,IN-00024", "--org", "Delta Banglore E2E"];
+r = await run(...dpf, "--course-slug", "DPF=<the LMS course slug>", "--requeue-failed", "--apply");
+check("a placeholder for a slug: stops, nothing changed", r.code !== 0 && /is not an LMS course slug/.test(r.out) && /Nothing was changed/.test(r.out) && (await dpfStill()), r.out);
+r = await run(...dpf, "--course-slug", "DPF=market-breakout", "--requeue-failed", "--apply");
+check("a slug the LMS doesn't publish: stops, nothing changed", r.code !== 0 && /the LMS has no published course "market-breakout"/.test(r.out) && (await dpfStill()), r.out);
+r = await runWith({ LMS_API_URL: "http://127.0.0.1:9" }, ...dpf, "--course-slug", "DPF=market-break-out-trading-program", "--requeue-failed", "--apply");
+check("an LMS that can't be asked: stops, nothing changed", r.code !== 0 && /couldn't be asked/.test(r.out) && (await dpfStill()), r.out);
+r = await run("--course-slug", "DPF=market-break-out-trading-program", "--requeue-failed", "--apply");
+check("--requeue-failed without --invoice: stops", r.code !== 0 && /--requeue-failed only goes with --invoice/.test(r.out) && (await dpfStill()), r.out);
+r = await run("--invoice", "IN-00464", "--course-slug", "CMA REGISTRATION=cma-us");
+check("a course that isn't Forex: said — the CS Portal won't get them", r.code === 0 && /cma-us — CMA US, no programme: not Forex/.test(r.out), r.out);
+r = await run(...dpf, "--course-slug", "DPF=market-break-out-trading-program", "--requeue-failed");
+check("the dry run: the course and that it's Forex, what it would do — nothing changed",
+  r.code === 0 && /market-break-out-trading-program — MARKET BREAK-OUT TRADING PROGRAM, FOREX Trading: its students go on to the CS Portal/.test(r.out)
+  && /would set "DPF" → market-break-out-trading-program on 2 invoice/.test(r.out) && /would clear and requeue 2 \(failed\)/.test(r.out) && (await dpfStill()), r.out);
+r = await run(...dpf, "--course-slug", "DPF=market-break-out-trading-program", "--requeue-failed", "--apply");
+const mRow = (await rowOf(manaf)) as any, pRow = (await rowOf(pooja)) as any;
+check("--apply: both sent again on that course — pending, once each",
+  r.code === 0 && /requeued 2\b/.test(r.out) && mRow?.status === "pending" && pRow?.status === "pending"
+  && mRow?.payload?.courseSlug === "market-break-out-trading-program" && pRow?.payload?.courseSlug === "market-break-out-trading-program"
+  && (await rowsOf(manaf)) === 1 && (await rowsOf(pooja)) === 1, `${r.out} ${JSON.stringify({ mRow, pRow })}`);
+check("…the invoices name that course now", (await slugOf(manaf)) === "market-break-out-trading-program" && (await slugOf(pooja)) === "market-break-out-trading-program");
+check("…and a refused one not named stays as it was", (await rowOf(elseRefused))?.status === "failed" && (await slugOf(elseRefused)) === "<the LMS course slug>");
+
 console.log(`\n${pass}/${pass + fail} checks passed`);
+lms.stop(true);
 await mongoose.disconnect();
 process.exit(fail ? 1 : 0);

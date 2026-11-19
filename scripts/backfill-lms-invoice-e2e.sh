@@ -45,7 +45,8 @@ mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --bind_ip 127.0.0.1 --fork --log
 export MONGODB_URI="mongodb://127.0.0.1:$MONGO_PORT/finance-backfill-lms-invoice-e2e"
 export JWT_ACCESS_SECRET="$LONG"
 export JWT_REFRESH_SECRET="$LONG"
-# Configured, so the script queues — at an address where nothing listens: nothing is sent.
+# Configured, so the script queues. The check points LMS_API_URL at its own stand-in, which only answers course
+# lookups; nothing is ever provisioned (the worker does not run in a script).
 export LMS_API_URL="http://127.0.0.1:9" LMS_S2S_SECRET="e2e-finance-to-lms-secret-long-enough"
 export COMMISSION_API_URL="" COMMISSION_S2S_SECRET="" RESEND_API_KEY=""
 export FROM_EMAIL="billing@e2e-test.com"

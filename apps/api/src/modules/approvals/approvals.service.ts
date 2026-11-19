@@ -47,6 +47,17 @@ const collectedOf = (r: any): number => Math.max(r.amountPaidMinor ?? 0, r.enrol
 /** A CS Portal deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
 const depositPaidBy = (r: any): string =>
   (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
+const RECHECK_FIELD: Record<string, string> = {
+  email: "the student's email", mt5: "the MT5 login", amount: "the amount", receipt: "the receipt", other: "something else",
+};
+/** A CS Portal bonus approved here and sent back to recheck (2026-11-19): who, what, and why — one line. */
+const recheckFlag = (rc: any): string => {
+  const what = (rc.fields ?? []).map((f: string) => RECHECK_FIELD[f] ?? f).join(", ");
+  const head = rc.from === "cs"
+    ? `Corrected in CS Portal by ${rc.byName || "the CS"} after the broker admin sent it back`
+    : `Sent back by ${rc.byName || "a broker admin"} (broker admin) to recheck`;
+  return `${head}${what ? `: ${what}` : ""}${rc.note ? ` — “${rc.note}”` : ""}`;
+};
 
 /**
  * A CS Portal deposit's amount as the CS typed it — AED for most — never converted (the user, 2026-10-30: the
@@ -710,7 +721,7 @@ const LIST_KINDS: ListKind[] = [
         TetraDepositModel,
         narrowed({ organizationId: ctx.org, ...which }, ctx, "tetra_deposit"),
         { $cond: [{ $eq: ["$status", "pending"] }, firstOf("$requestedAt", "$createdAt"), firstOf("$decision.decidedAt", "$updatedAt")] },
-        "type student amountMinor currency amountOriginal amountCurrency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason",
+        "type student amountMinor currency amountOriginal amountCurrency paymentMethod payments.method requestedBy initiatingMentor team requestedAt createdAt status decision delivery closedReason recheck",
         ctx,
       );
       return {
@@ -728,6 +739,8 @@ const LIST_KINDS: ListKind[] = [
             // Sent back to its CS to correct reads as an invoice sent back does.
             status: r.status === "rejected" && r.decision?.sentBack ? "returned" : r.status,
             ...(r.type === "BONUS" ? { bonus: true } : {}),
+            // Approved, then sent back from CS Portal to recheck (2026-11-19): said on the row while it waits.
+            ...(r.recheck?.at ? { flags: [recheckFlag(r.recheck)] } : {}),
             at: iso(r.__at),
             submittedAt: iso(r.requestedAt ?? r.createdAt),
             decidedAt: waiting ? undefined : iso(r.decision?.decidedAt),

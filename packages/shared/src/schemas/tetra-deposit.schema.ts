@@ -187,6 +187,27 @@ export const inboundTetraDepositSchema = z.preprocess(
 export type InboundTetraDeposit = z.infer<typeof inboundTetraDepositObject>;
 
 /**
+ * Sent back here to recheck (the user, 2026-11-19): a bonus approved here that CS Portal's broker admin found wrong
+ * (the amount against the receipt, say) — `from` "broker_admin" — or that the CS corrected after the broker admin sent
+ * it back to them — "cs". The request as it stands now, as the intake takes it, and who sent it back, what, and why.
+ * `key` makes a repeat the same recheck.
+ */
+export const tetraRecheckFields = ["email", "mt5", "amount", "receipt", "other"] as const;
+export const tetraDepositRecheckSchema = z.object({
+  key: z.string().trim().min(1).max(80),
+  from: z.enum(["broker_admin", "cs"]),
+  byName: z.string().trim().max(120).optional().default(""),
+  fields: z.array(z.enum(tetraRecheckFields)).max(6).optional().default([]),
+  note: z.string().trim().max(1000).optional().default(""),
+});
+export type TetraDepositRecheckInfo = z.infer<typeof tetraDepositRecheckSchema>;
+export const inboundTetraDepositRecheckSchema = z.preprocess(
+  gatherEnrolmentPayment,
+  inboundTetraDepositObject.extend({ recheck: tetraDepositRecheckSchema }),
+);
+export type InboundTetraDepositRecheck = z.infer<typeof inboundTetraDepositRecheckSchema>;
+
+/**
  * pending   waiting for an accountant
  * approved  / rejected — decided here, and sent back to CS Portal
  * closed    nothing left to decide: gone from CS Portal, or decided there
@@ -278,6 +299,26 @@ export const tetraDepositSchema = z.object({
   }).optional(),
   /** Sent again after the request it replaces was sent back or rejected: its reason, and that request here when it came through finance. */
   resubmit: z.object({ reason: z.string(), previousId: z.string().optional(), previousStatus: z.string().optional() }).optional(),
+  /**
+   * Sent back here to recheck after it was approved (2026-11-19): by CS Portal's broker admin ("broker_admin"), or
+   * corrected by the CS after the broker admin sent it to them ("cs") — what, why, and the approval it replaced.
+   */
+  recheck: z.object({
+    from: z.enum(["broker_admin", "cs"]),
+    byName: z.string(),
+    fields: z.array(z.string()),
+    note: z.string(),
+    at: z.string(),
+    previous: z.object({
+      amountMinor: z.number(),
+      currency: z.string(),
+      decidedByName: z.string(),
+      decidedAt: z.string(),
+      transactionId: z.string().optional(),
+      receiptNumber: z.string().optional(),
+      invoiceNumber: z.string().optional(),
+    }).optional(),
+  }).optional(),
   delivery: z.object({
     state: tetraDepositDeliverySchema,
     attempts: z.number(),

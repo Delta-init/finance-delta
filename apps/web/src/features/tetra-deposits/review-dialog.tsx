@@ -126,6 +126,45 @@ export function TetraTypeTag({ deposit }: { deposit: TetraDeposit }) {
   return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title="A course payment — approving it confirms the payment; a broker admin in CS Portal then credits the bonus">Bonus</span>;
 }
 
+/* ── Sent back here to recheck (2026-11-19) ─────────────────────────────────── */
+
+const RECHECK_FIELD: Record<string, string> = {
+  email: "the student's email", mt5: "the MT5 login", amount: "the amount", receipt: "the receipt", other: "something else",
+};
+const whenText = (iso?: string) => (iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "");
+
+/** A bonus approved here and sent back to recheck: from CS Portal's broker admin, or corrected by the CS after them. */
+export const recheckLabel = (d: TetraDeposit | null | undefined) =>
+  !d?.recheck ? "" : d.recheck.from === "cs" ? "Corrected after broker admin" : "Sent back by broker admin";
+
+/** Said above the amount, so it is checked against the receipt before it is approved again. */
+export function RecheckNote({ deposit }: { deposit: TetraDeposit }) {
+  const r = deposit.recheck;
+  if (!r) return null;
+  const p = r.previous;
+  const what = r.fields.map((f) => RECHECK_FIELD[f] ?? f).join(", ");
+  return (
+    <div className="mb-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+      <p className="font-medium">
+        {r.from === "cs"
+          ? `Corrected in CS Portal by ${r.byName || "the CS"} after the broker admin sent it back`
+          : `Sent back to recheck by ${r.byName || "a broker admin"} (broker admin, CS Portal)`}
+        {r.at ? ` · ${whenText(r.at)}` : ""}
+      </p>
+      {what && <p>{r.from === "cs" ? "Changed or checked" : "What looks wrong"}: {what}</p>}
+      {r.note && <p className="whitespace-pre-wrap">“{r.note}”</p>}
+      {p && (
+        <p className="text-foreground-muted">
+          Approved before: <MoneyDisplay minor={p.amountMinor} currency={p.currency} />
+          {p.decidedByName ? ` by ${p.decidedByName}` : ""}{p.decidedAt ? `, ${whenText(p.decidedAt)}` : ""}
+          {p.receiptNumber ? ` — receipt ${p.receiptNumber} taken back off ${p.invoiceNumber || "the invoice"}` : ""}
+        </p>
+      )}
+      {deposit.status === "pending" && <p>Check the amount against the receipt, then approve it again (at the right amount) or send it back to the CS.</p>}
+    </div>
+  );
+}
+
 export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   const cp = deposit.coursePayment;
   const ep = deposit.enrolmentPayment;
@@ -178,6 +217,7 @@ export function TetraDepositFacts({ deposit }: { deposit: TetraDeposit }) {
   ];
   return (
     <div className="rounded-lg bg-surface-muted p-3 text-sm">
+      <RecheckNote deposit={deposit} />
       <p className="text-lg font-semibold"><MoneyDisplay minor={deposit.amountMinor} currency={deposit.currency} /> <span className="text-xs font-normal text-foreground-muted">{isBonus(deposit) ? "paid by the student" : amountWord(deposit)}</span></p>
       {mt5BonusOf(deposit) !== null && (
         <p className="text-xs text-foreground-muted">

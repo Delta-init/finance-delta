@@ -10,7 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useReopenTetraDeposit, useTetraDeposits } from "./api";
-import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy, typedApproved, typedPaid } from "./review-dialog";
+import { TetraDepositReviewDialog, TetraTypeTag, isBonus, mt5BonusOf, paidBy, recheckLabel, typedApproved, typedPaid } from "./review-dialog";
 
 /**
  * CS Portal's deposits on the Approvals page: the ones waiting for a
@@ -37,6 +37,12 @@ function Waiting({ deposit, onReview, onSendBack }: { deposit: TetraDeposit; onR
           {deposit.resubmit && (
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title={deposit.resubmit.reason ? `It was sent back: ${deposit.resubmit.reason}` : undefined}>
               Sent again, corrected
+            </span>
+          )}
+          {/* Approved here, then sent back from CS Portal to recheck (2026-11-19). */}
+          {deposit.recheck && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800" title={deposit.recheck.note || undefined}>
+              {recheckLabel(deposit)}
             </span>
           )}
         </div>

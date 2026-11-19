@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import type {
-  DecideTetraDepositInput, DeleteTetraDepositInput, InboundTetraDeposit, PageMeta, TetraDeposit, TetraDepositCounts, TetraDepositDecisionResult,
-  TetraDepositListQuery, TetraDepositView,
+  DecideTetraDepositInput, DeleteTetraDepositInput, InboundTetraDeposit, InboundTetraDepositRecheck, PageMeta, TetraDeposit, TetraDepositCounts,
+  TetraDepositDecisionResult, TetraDepositListQuery, TetraDepositView,
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
 import { env } from "../../config/env";
@@ -155,6 +155,30 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
     ...(r.resubmit?.of
       ? { resubmit: { reason: String(r.resubmit.reason ?? ""), ...(r.resubmit.previousId ? { previousId: String(r.resubmit.previousId) } : {}) } }
       : {}),
+    ...(r.recheck?.at
+      ? {
+          recheck: {
+            from: r.recheck.from === "cs" ? ("cs" as const) : ("broker_admin" as const),
+            byName: String(r.recheck.byName ?? ""),
+            fields: (r.recheck.fields ?? []).map(String),
+            note: String(r.recheck.note ?? ""),
+            at: iso(r.recheck.at),
+            ...(r.recheck.previous
+              ? {
+                  previous: {
+                    amountMinor: Number(r.recheck.previous.amountMinor) || 0,
+                    currency: String(r.recheck.previous.currency ?? r.currency ?? "USD"),
+                    decidedByName: String(r.recheck.previous.decidedByName ?? ""),
+                    decidedAt: iso(r.recheck.previous.decidedAt),
+                    ...(r.recheck.previous.transactionId ? { transactionId: String(r.recheck.previous.transactionId) } : {}),
+                    ...(r.recheck.previous.receiptNumber ? { receiptNumber: String(r.recheck.previous.receiptNumber) } : {}),
+                    ...(r.recheck.previous.invoiceNumber ? { invoiceNumber: String(r.recheck.previous.invoiceNumber) } : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(withEvents
       ? {
           events: (r.events ?? []).map((e: any) => ({
@@ -172,22 +196,27 @@ export function tetraDepositDTO(r: any, withEvents = false): TetraDeposit {
  * by the permission so a custom role granting it is included, and the
  * accountants. Never fails the handover it reports.
  */
+/** Whoever decides a CS Portal request here: tetra_deposit:approve (or every permission), and the accountants. */
+async function depositApproverEmails(organizationId: string): Promise<string[]> {
+  const orgId = new Types.ObjectId(organizationId);
+  const roles = await Role.find({
+    organizationId: orgId,
+    $or: [{ permissions: "tetra_deposit:approve" }, { permissions: "*" }],
+  }).select("_id");
+  const approvers = roles.length
+    ? await User.find({
+        status: "active",
+        memberships: {
+          $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) }, status: { $nin: ["suspended", "invited"] } },
+        },
+      }).select("email")
+    : [];
+  return withAccountants(orgId, approvers.map((u) => u.email as string).filter(Boolean));
+}
+
 async function notifyDepositWaiting(organizationId: string, d: TetraDeposit): Promise<void> {
   try {
-    const orgId = new Types.ObjectId(organizationId);
-    const roles = await Role.find({
-      organizationId: orgId,
-      $or: [{ permissions: "tetra_deposit:approve" }, { permissions: "*" }],
-    }).select("_id");
-    const approvers = roles.length
-      ? await User.find({
-          status: "active",
-          memberships: {
-            $elemMatch: { organizationId: orgId, roleId: { $in: roles.map((r) => r._id) }, status: { $nin: ["suspended", "invited"] } },
-          },
-        }).select("email")
-      : [];
-    const to = await withAccountants(orgId, approvers.map((u) => u.email as string).filter(Boolean));
+    const to = await depositApproverEmails(organizationId);
     if (to.length === 0) {
       logger.warn({ organizationId, depositId: d.id }, "CS Portal deposit received but nobody here can approve it");
       return;
@@ -781,6 +810,131 @@ async function removeDeletedRequest(row: any, input: { byName: string; reason: s
   }
   logger.info({ externalId: row.externalId, was: row.status }, "tetra deposit removed — deleted in CS Portal");
   return { outcome: "removed", message: `Taken off Delta Finance (it was ${row.status})`, removed: [] };
+}
+
+/* ── Sent back here to recheck ───────────────────────────────────────────── */
+
+const RECHECK_FIELD: Record<string, string> = {
+  email: "the student's email", mt5: "the MT5 login", amount: "the amount", receipt: "the receipt", other: "something else",
+};
+const recheckWhat = (fields: string[]) => fields.map((f) => RECHECK_FIELD[f] ?? f).join(", ");
+
+/**
+ * A bonus approved here, sent back to recheck (the user, 2026-11-19): CS Portal's broker admin found it wrong — the
+ * amount against the receipt, say — and sent it here rather than to the CS (`from` "broker_admin"); or the CS
+ * corrected the amount or the receipt after the broker admin sent it to them ("cs"). Back to pending as the request
+ * now stands, its approval's payment taken off the invoice first (all or nothing — a reconciled one refuses), the
+ * approval it replaces kept in `recheck.previous`; an accountant decides it again on Approvals, and that decision goes
+ * to CS Portal as any does. The same `recheck.key` again is a repeat: answered as it is.
+ */
+export async function recheckTetraDeposit(organizationId: string, input: InboundTetraDepositRecheck): Promise<TetraDeposit> {
+  const org = new Types.ObjectId(organizationId);
+  const row = await TetraDepositModel.findOne({ organizationId: org, externalId: input.externalId }).lean<any>();
+  if (!row) throw new AppError("NOT_FOUND", "Delta Finance doesn't have this request");
+  const r = input.recheck;
+  if (row.recheck?.key === r.key) {
+    if (row.status === "pending") return tetraDepositDTO(row);
+    throw new AppError("CONFLICT", "Delta Finance has decided it again already — open it again in CS Portal");
+  }
+  if (row.type !== "BONUS") throw new AppError("CONFLICT", "Only a bonus is rechecked in Delta Finance");
+  if (row.status === "pending") throw new AppError("CONFLICT", "Delta Finance is already deciding it again");
+  if (row.status !== "approved") throw new AppError("CONFLICT", `It is ${row.status} in Delta Finance — it can't be sent back for a recheck`);
+  if (row.delivery?.state === "failed") {
+    throw new AppError("CONFLICT", "Its approval didn't go through to CS Portal — Delta Finance reopens it on Approvals instead");
+  }
+  if (row.delivery?.state && row.delivery.state !== "delivered") {
+    throw new AppError("CONFLICT", "Delta Finance is still sending its decision — try again in a minute");
+  }
+
+  let removed: RemovedPayment[] = [];
+  try {
+    removed = await takeOffRecordedPayments(row);
+  } catch (err) {
+    if (err instanceof AppError) throw new AppError("CONFLICT", `Not sent back — its payment can't come off the invoice: ${err.message}`);
+    throw err;
+  }
+
+  const now = new Date();
+  const d = row.decision ?? {};
+  const previous = {
+    amountMinor: typeof d.approvedAmountMinor === "number" ? d.approvedAmountMinor : row.amountMinor,
+    currency: String(row.currency ?? "USD"),
+    decidedByName: String(d.decidedByName ?? ""),
+    ...(d.decidedAt ? { decidedAt: d.decidedAt } : {}),
+    transactionId: String(d.transactionId ?? ""),
+    receiptNumber: String(row.courseInvoice?.receiptNumber ?? ""),
+    invoiceNumber: String(row.courseInvoice?.invoiceNumber ?? ""),
+  };
+  const who = r.byName || (r.from === "cs" ? "the CS" : "a broker admin");
+  const what = recheckWhat(r.fields);
+  const newAmount = input.amountMinor !== previous.amountMinor || input.currency !== previous.currency
+    ? ` — amount ${money(previous.amountMinor, previous.currency)} → ${money(input.amountMinor, input.currency)}`
+    : "";
+  const text = [
+    r.from === "cs"
+      ? `Corrected in CS Portal by ${who} after the broker admin sent it back${what ? `: ${what}` : ""}${newAmount}`
+      : `Sent back by ${who} (broker admin, CS Portal) to recheck${what ? `: ${what}` : ""}`,
+    r.note ? `“${r.note}”` : "",
+    `Approved before${previous.decidedByName ? ` by ${previous.decidedByName}` : ""} at ${money(previous.amountMinor, previous.currency)}${removed.length ? ` — its payment ${removedText(removed)}` : ""}`,
+  ].filter(Boolean).join(" · ");
+
+  const updated = await TetraDepositModel.findOneAndUpdate(
+    { _id: row._id, status: "approved" },
+    {
+      $set: {
+        status: "pending",
+        amountMinor: input.amountMinor,
+        currency: input.currency,
+        ...(input.amountOriginal && input.amountCurrency ? { amountOriginal: input.amountOriginal, amountCurrency: input.amountCurrency } : {}),
+        ...(input.coursePayment ? { coursePayment: input.coursePayment } : {}),
+        student: input.student,
+        team: input.team,
+        paymentMethod: input.paymentMethod,
+        mt5Login: input.mt5Login,
+        mt5Accounts: input.mt5Accounts,
+        screenshotUrl: input.screenshotUrl,
+        payments: input.payments,
+        notes: input.notes,
+        recheck: { key: r.key, from: r.from, byName: r.byName, fields: r.fields, note: r.note, at: now, previous },
+      },
+      $unset: {
+        decision: "", delivery: "", courseInvoice: "", closedReason: "",
+        ...(input.amountOriginal && input.amountCurrency ? {} : { amountOriginal: "", amountCurrency: "" }),
+      },
+      $push: { events: { at: now, kind: "recheck", byName: who, text } },
+    },
+    { new: true },
+  ).lean();
+  if (!updated) throw new AppError("CONFLICT", "It changed meanwhile in Delta Finance — try again");
+
+  const dto = tetraDepositDTO(updated);
+  logger.info({ depositId: dto.id, externalId: dto.externalId, from: r.from, removed }, "CS Portal bonus sent back to recheck");
+  void notifyRecheck(organizationId, dto, text);
+  return dto;
+}
+
+/** The accountants told a bonus is back with them to recheck, and why. Never fails the call it reports. */
+async function notifyRecheck(organizationId: string, d: TetraDeposit, text: string): Promise<void> {
+  try {
+    const to = await depositApproverEmails(organizationId);
+    if (to.length === 0) return;
+    const prev = d.recheck?.previous;
+    await sendNotice({
+      log: { organizationId, kind: "tetra_deposit_notice" },
+      to,
+      subject: `Bonus sent back to recheck: ${d.student.name} — ${money(d.amountMinor, d.currency)}`,
+      title: d.recheck?.from === "cs" ? "A corrected CS Portal bonus is back for approval" : "A CS Portal bonus was sent back to recheck",
+      lines: [
+        text,
+        [d.coursePayment?.product, paidBy(d) && `Paid by ${paidBy(d)}`, d.mt5Login && `MT5 ${d.mt5Login}`, d.team && `Team ${d.team}`].filter(Boolean).join(" · "),
+        `${prev?.receiptNumber ? `Its receipt ${prev.receiptNumber} was taken back off ${prev.invoiceNumber || "the invoice"}. ` : ""}Check the amount against the receipt, then approve it again (at the right amount) or send it back to the CS.`,
+      ].filter(Boolean),
+      actionLabel: "Review it",
+      actionUrl: `${env.WEB_ORIGIN}/approvals`,
+    });
+  } catch (err) {
+    logger.error({ err, depositId: d.id }, "Could not tell the accountants a bonus was sent back to recheck");
+  }
 }
 
 /* ── Decided, and sent back ──────────────────────────────────────────────── */

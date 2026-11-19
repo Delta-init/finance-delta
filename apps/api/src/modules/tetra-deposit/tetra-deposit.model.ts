@@ -93,6 +93,30 @@ const tetraDepositSchema = new Schema({
     type: new Schema({ of: { type: String, default: "" }, reason: { type: String, default: "" }, previousId: { type: String, default: "" } }, { _id: false }),
     default: undefined,
   },
+  /**
+   * Sent back here to recheck after it was approved (the user, 2026-11-19): by CS Portal's broker admin, or corrected
+   * by the CS after the broker admin sent it to them. `key` is CS Portal's for the recheck (a repeat is the same one);
+   * `previous` the approval it replaced, whose payment came off its invoice.
+   */
+  recheck: {
+    type: new Schema({
+      key: { type: String, required: true },
+      from: { type: String, enum: ["broker_admin", "cs"], required: true },
+      byName: { type: String, default: "" },
+      fields: { type: [String], default: [] },
+      note: { type: String, default: "" },
+      at: { type: Date, required: true },
+      previous: {
+        type: new Schema({
+          amountMinor: { type: Number }, currency: { type: String }, decidedByName: { type: String, default: "" },
+          decidedAt: { type: Date }, transactionId: { type: String, default: "" },
+          receiptNumber: { type: String, default: "" }, invoiceNumber: { type: String, default: "" },
+        }, { _id: false }),
+        default: undefined,
+      },
+    }, { _id: false }),
+    default: undefined,
+  },
   delivery: {
     state: { type: String, enum: ["sending", "queued", "delivered", "failed"] },
     attempts: { type: Number },

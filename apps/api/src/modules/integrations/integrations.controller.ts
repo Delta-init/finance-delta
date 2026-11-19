@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundBalancePaymentSchema, inboundSalesNoteSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundTetraDepositRecheckSchema, inboundBalancePaymentSchema, inboundSalesNoteSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { CRM_COMMISSION_MONTH } from "@delta/shared";
 import { payoutsForCrm } from "../crm-commission/crm-commission.service";
@@ -8,7 +8,7 @@ import { Item } from "../inventory/item.model";
 import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
 import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
-import { intakeTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
+import { intakeTetraDeposit, recheckTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 import { walletForHrms } from "./hrms-wallet.service";
 
 /**
@@ -146,6 +146,19 @@ export const takeTetraDeposit = asyncHandler(async (req: Request, res: Response)
   const orgId = await organizationOf(req);
   const parsed = inboundTetraDepositSchema.parse(req.body);
   ok(res, await intakeTetraDeposit(orgId, parsed));
+});
+
+/**
+ * POST /integrations/tetra-deposits/recheck { …the intake's body, recheck: { key, from, byName, fields, note } } — a
+ * bonus approved here, sent back to recheck by CS Portal's broker admin, or corrected by the CS after the broker admin
+ * sent it to them (2026-11-19): back to pending, its payment off the invoice. 404 when finance never had it; 409 with a
+ * plain reason when it can't be (not a bonus, not approved, being decided again, a reconciled payment). Safe to repeat
+ * with the same key.
+ */
+export const recheckTetraDepositHandler = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const parsed = inboundTetraDepositRecheckSchema.parse(req.body);
+  ok(res, await recheckTetraDeposit(orgId, parsed));
 });
 
 /**

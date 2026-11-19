@@ -28,6 +28,14 @@
  *   bun run backfill:lms --requeue-unmapped --apply
  *   bun run backfill:lms --course-slug "Delta Wave Theory=delta-wave-theory-trading-programme" \
  *                        --requeue-unmapped --apply
+ *
+ * Only some invoices (2026-11-19): --invoice IN-00464 (again, or comma
+ * separated) keeps every part of the run to those — the course slug, the
+ * requeue, the never-queued — and leaves every other enrolment exactly as it
+ * is, so nobody else is sent an LMS invitation by surprise:
+ *
+ *   bun run backfill:lms --invoice IN-00464 --course-slug "CMA REGISTRATION=cma-us" --requeue-unmapped
+ *   bun run backfill:lms --invoice IN-00464 --course-slug "CMA REGISTRATION=cma-us" --requeue-unmapped --apply
  */
 
 import mongoose from "mongoose";
@@ -64,10 +72,40 @@ const COURSE_SLUGS = process.argv.reduce<{ course: string; slug: string }[]>((ac
 }, []);
 const sinceArg = process.argv[process.argv.indexOf("--since") + 1];
 const SINCE = process.argv.includes("--since") && sinceArg ? new Date(sinceArg) : null;
+/*
+ * Only these invoices (the user, 2026-11-19: "backfill this student" — one
+ * student whose course was linked to the LMS after the close was approved).
+ * Named as printed, IN-00464. An invoice number can be in two organizations
+ * (IN-00031 is): --org then says which — its id or its name — or nothing runs.
+ */
+const INVOICES = [...new Set(process.argv.flatMap((a, i) => (a === "--invoice" && process.argv[i + 1] ? process.argv[i + 1]!.split(",") : []))
+  .map((s) => s.trim().toUpperCase()).filter(Boolean))];
+const orgArg = process.argv.includes("--org") ? String(process.argv[process.argv.indexOf("--org") + 1] ?? "").trim() : "";
+
+/** The organization --org names, by id or by name (any case); exits when it names none, or more than one. */
+async function orgNamed(name: string): Promise<mongoose.Types.ObjectId> {
+  const { Organization } = await import("../modules/organization/organization.model");
+  const found = /^[a-f0-9]{24}$/i.test(name)
+    ? await Organization.find({ _id: name }).select("_id name").lean()
+    : await Organization.find({ name: { $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }).select("_id name").lean();
+  if (found.length !== 1) {
+    console.error(`--org "${name}" names ${found.length ? `${found.length} organizations` : "no organization"} — give its id or its exact name.`);
+    process.exit(1);
+  }
+  return found[0]!._id as mongoose.Types.ObjectId;
+}
 
 async function run() {
   if (SINCE && Number.isNaN(SINCE.getTime())) {
     console.error(`--since "${sinceArg}" is not a date. Use YYYY-MM-DD.`);
+    process.exit(1);
+  }
+  if (process.argv.includes("--invoice") && !INVOICES.length) {
+    console.error("--invoice needs an invoice number, as printed: IN-00464");
+    process.exit(1);
+  }
+  if (process.argv.includes("--org") && !orgArg) {
+    console.error("--org needs an organization's id or name");
     process.exit(1);
   }
 
@@ -86,11 +124,40 @@ async function run() {
     "enrolment.course": { $exists: true, $ne: "" },
   };
   if (SINCE) query["approval.at"] = { $gte: SINCE };
+  if (INVOICES.length) query.invoiceNumber = { $in: INVOICES };
+  if (orgArg) query.organizationId = await orgNamed(orgArg);
 
   const approved = await Invoice.find(query)
     .select("_id organizationId invoiceNumber customerName approval external enrolment lineItems customerId totalMinor")
     .sort({ "approval.at": 1 })
     .lean();
+
+  /*
+   * Every invoice named is found, once — or nothing is done. A typo'd number
+   * would otherwise be a quiet "nothing to do", and a number two organizations
+   * share would send both students.
+   */
+  if (INVOICES.length) {
+    const { Organization } = await import("../modules/organization/organization.model");
+    let wrong = false;
+    for (const number of INVOICES) {
+      const hits = approved.filter((i) => String(i.invoiceNumber).toUpperCase() === number);
+      if (hits.length === 1) continue;
+      wrong = true;
+      if (!hits.length) {
+        console.error(`${number}: not an approved enrolment from a sales CRM${orgArg ? " in that organization" : ""} — check the number.`);
+        continue;
+      }
+      const orgs = await Organization.find({ _id: { $in: hits.map((h) => h.organizationId) } }).select("_id name").lean();
+      console.error(`${number} is in ${hits.length} organizations — add --org with one of: ${orgs.map((o) => `${o.name} (${o._id})`).join(", ")}`);
+    }
+    if (wrong) {
+      console.error("\nNothing was changed.");
+      await mongoose.disconnect();
+      process.exit(1);
+    }
+    console.log(`only ${INVOICES.join(", ")}: ${approved.map((i) => `${i.invoiceNumber} ${i.customerName ?? ""} (${(i as { enrolment?: { course?: string } }).enrolment?.course ?? ""})`).join("; ")}`);
+  }
 
   const already = new Set(
     (await LmsProvision.find({ invoiceId: { $in: approved.map((i) => i._id) } }).select("invoiceId").lean())

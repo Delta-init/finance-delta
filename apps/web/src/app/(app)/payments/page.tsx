@@ -5,7 +5,8 @@ import { PAYMENT_METHODS, formatMoney, paymentMethodLabel } from "@delta/shared"
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { usePayments, useDeletePaymentFromList, fetchAllPayments, type PaymentDTO } from "@/features/payments/api";
+import { usePayments, useDeletePaymentFromList, fetchAllPayments, usePaymentSummary, type PaymentDTO } from "@/features/payments/api";
+import { PaymentSummaryCards } from "@/features/payments/PaymentSummaryCards";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -67,6 +68,8 @@ export default function PaymentsPage() {
     dateTo: dateTo || undefined,
   };
   const { data, isLoading, isPlaceholderData } = usePayments(queryParams);
+  // The cards above the table (2026-11-20): what these same filters match, per currency.
+  const summary = usePaymentSummary(queryParams);
   // Deleting a payment is the broad invoice right, as on the invoice itself (2026-10-16).
   const { can } = useCan();
   const canDelete = can("invoice:write");
@@ -206,6 +209,9 @@ export default function PaymentsPage() {
           </p>
         )}
       </div>
+
+      {/* An API from before the cards answers 404: the page then simply has none. */}
+      {!summary.error && <PaymentSummaryCards summary={summary.data} loading={summary.isLoading} refreshing={summary.isPlaceholderData} />}
 
       <DataTable
         columns={columns}

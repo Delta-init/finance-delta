@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type QueryParams } from "@/lib/api";
+import type { PaymentListSummary } from "@delta/shared";
+import { api, qs, type QueryParams } from "@/lib/api";
 
 export interface PaymentDTO {
   id: string;
@@ -33,6 +34,20 @@ export function usePayments(params: QueryParams = {}) {
         ).toString()}`
       ),
     placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * The cards above the Payments table (2026-11-20): what its filters match — the table's own, without its paging and
+ * order. The last figures stay while new ones load; an API from before the cards answers 404 and the page has none.
+ */
+export function usePaymentSummary(params: QueryParams = {}) {
+  const { page: _p, pageSize: _s, sort: _o, dir: _d, ...filters } = params as Record<string, unknown>;
+  return useQuery({
+    queryKey: [...KEY, "summary", filters],
+    queryFn: () => api.get<PaymentListSummary>(`payments/summary${qs(filters as QueryParams)}`),
+    placeholderData: (prev) => prev,
+    retry: false,
   });
 }
 

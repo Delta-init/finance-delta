@@ -73,7 +73,7 @@ export { isRupeePayment, isVatFreePayment, RUPEE_METHOD, RUPEE_METHODS };
 const upperOf = (path: string) => ({ $toUpper: { $ifNull: [path, ""] } });
 const ownCurrencyExpr = { $cond: [{ $eq: [upperOf("$currency"), ""] }, "AED", upperOf("$currency")] };
 /** paidCurrency: the currency it was made in when not the invoice's — "" when it was. */
-const paidCurrencyExpr = (p: string) => ({
+export const paidCurrencyExpr = (p: string) => ({
   $switch: {
     branches: [
       { case: { $and: [{ $ne: [upperOf(`${p}.original.currency`), ""] }, { $ne: [upperOf(`${p}.original.currency`), ownCurrencyExpr] }] }, then: upperOf(`${p}.original.currency`) },
@@ -83,7 +83,7 @@ const paidCurrencyExpr = (p: string) => ({
   },
 });
 /** paidAmountMinor, for the currency `cur` it was made in: 0 when the amount was never recorded. */
-const paidAmountExpr = (p: string, cur: unknown) => ({ $cond: [
+export const paidAmountExpr = (p: string, cur: unknown) => ({ $cond: [
   { $and: [{ $eq: [upperOf(`${p}.original.currency`), cur] }, { $gt: [`${p}.original.amountMinor`, 0] }] }, `${p}.original.amountMinor`,
   { $cond: [{ $and: [{ $eq: [upperOf(`${p}.bankCurrency`), cur] }, { $gt: [`${p}.bankAmountMinor`, 0] }] }, `${p}.bankAmountMinor`, 0] },
 ] });

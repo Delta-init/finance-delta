@@ -781,6 +781,45 @@ export interface InvoiceListSummary {
   byCurrency: InvoiceListSummaryCurrency[];
 }
 
+/** One method's payments on the Payments list's cards (2026-11-20). */
+export interface PaymentListSummaryMethod {
+  method: string;
+  count: number;
+  amountMinor: number;
+}
+
+/** One currency's line on the Payments list's cards (2026-11-20): the payments on invoices in that currency. */
+export interface PaymentListSummaryCurrency {
+  /** The invoices' currency. */
+  currency: string;
+  /** Payments on those invoices, wherever they were paid. */
+  count: number;
+  /** Received in this currency — not the payments made in another currency whose amount there was recorded. */
+  amountMinor: number;
+  /** The same by method, largest first. */
+  byMethod: PaymentListSummaryMethod[];
+  /**
+   * Paid in other currencies, a line for each, never converted: how many and how much in it, what they were recorded
+   * as in this currency, and by method. Then those whose amount there was never recorded — still in `amountMinor`.
+   */
+  foreign?: Array<{
+    currency: string;
+    count: number;
+    amountMinor: number;
+    recordedMinor: number;
+    unknownCount: number;
+    unknownMinor: number;
+    byMethod: PaymentListSummaryMethod[];
+  }>;
+}
+
+/** The Payments list's cards: what its filters match, per currency. */
+export interface PaymentListSummary {
+  /** Every payment the filters match — what the table lists. */
+  count: number;
+  byCurrency: PaymentListSummaryCurrency[];
+}
+
 /** Sending an invoice back needs a reason whoever raised it can act on. */
 export const returnInvoiceSchema = z.object({
   reason: z.string().trim().min(1, "Say what needs correcting").max(300),

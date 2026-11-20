@@ -1,5 +1,7 @@
 import { Types, type PipelineStage } from "mongoose";
+import type { PaymentListSummary } from "@delta/shared";
 import { Invoice } from "./invoice.model";
+import { paidAmountExpr, paidCurrencyExpr } from "./payment-tax-invoice";
 
 export interface PaymentDTO {
   id: string;
@@ -17,20 +19,20 @@ export interface PaymentDTO {
   createdAt: string;
 }
 
-export async function listPayments(
-  orgId: string,
-  params: {
-    invoiceId?: string;
-    method?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    q?: string;
-    sort?: string;
-    dir?: string;
-    limit?: number;
-    page?: number;
-  },
-): Promise<{ data: PaymentDTO[]; meta: { total: number; page: number; pageSize: number; totalPages: number } }> {
+/** What the Payments list is filtered by — the table and its cards alike. */
+export interface PaymentFilters {
+  invoiceId?: string;
+  method?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  q?: string;
+}
+
+/**
+ * One row per payment the filters match: the invoices of the organization with a payment, unwound, then the payment's
+ * own filters and the search. The list and its cards (2026-11-20) both start here, so they always agree.
+ */
+function matchedPayments(orgId: string, params: PaymentFilters): PipelineStage[] {
   const invoiceMatch: Record<string, unknown> = {
     organizationId: new Types.ObjectId(orgId),
     "payments.0": { $exists: true },
@@ -61,6 +63,23 @@ export async function listPayments(
     searchMatch.$or = [{ invoiceNumber: re }, { customerName: re }];
   }
 
+  return [
+    { $match: invoiceMatch },
+    { $unwind: "$payments" },
+    ...(hasPaymentFilter ? [{ $match: paymentMatch }] : []),
+    ...(params.q ? [{ $match: searchMatch }] : []),
+  ];
+}
+
+export async function listPayments(
+  orgId: string,
+  params: PaymentFilters & {
+    sort?: string;
+    dir?: string;
+    limit?: number;
+    page?: number;
+  },
+): Promise<{ data: PaymentDTO[]; meta: { total: number; page: number; pageSize: number; totalPages: number } }> {
   const SORT_FIELDS: Record<string, string> = {
     paidOn: "payments.paidOn",
     amount: "payments.amountMinor",
@@ -76,10 +95,7 @@ export async function listPayments(
   const skip = (page - 1) * pageSize;
 
   const pipeline: PipelineStage[] = [
-    { $match: invoiceMatch },
-    { $unwind: "$payments" },
-    ...(hasPaymentFilter ? [{ $match: paymentMatch }] : []),
-    ...(params.q ? [{ $match: searchMatch }] : []),
+    ...matchedPayments(orgId, params),
     // Ending in the payment's id, so paging (and an export reading every page) never repeats or skips one.
     { $sort: { [sortField]: sortDir as 1 | -1, "payments.createdAt": -1, "payments._id": -1 } },
   ];
@@ -117,6 +133,92 @@ export async function listPayments(
     data: rows as PaymentDTO[],
     meta: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
   };
+}
+
+/*
+ * The Payments list's cards (the user, 2026-11-20: "add stats cards in the payments page also"): what the same filters
+ * match — how many payments, what was received, by method — a line per currency, never added together and never
+ * converted.
+ *
+ * A payment made in another currency than its invoice's (rupees on an AED invoice: the original, or a rupee method)
+ * whose amount there was recorded is counted in that currency, as it was paid — in Paid in other currencies and under
+ * its method — and not in Received, as the Invoices cards do (2026-11-13). One whose amount there was never recorded
+ * stays in Received at what was recorded, and the card says how many.
+ */
+export async function paymentSummary(orgId: string, params: PaymentFilters): Promise<PaymentListSummary> {
+  const own = { $let: { vars: { c: { $toUpper: { $ifNull: ["$currency", ""] } } }, in: { $cond: [{ $eq: ["$$c", ""] }, "AED", "$$c"] } } };
+  const [out] = await Invoice.aggregate<{
+    total: Array<{ n: number }>;
+    received: Array<{ _id: string; count: number; amountMinor: number }>;
+    methods: Array<{ _id: { o: string; c: string; m: string }; count: number; amountMinor: number }>;
+    foreign: Array<{ _id: { c: string; f: string }; count: number; amountMinor: number; recordedMinor: number; unknownCount: number; unknownMinor: number }>;
+  }>([
+    ...matchedPayments(orgId, params),
+    { $addFields: { _own: own, _cur: paidCurrencyExpr("$payments"), _paid: { $ifNull: ["$payments.amountMinor", 0] } } },
+    { $addFields: { _amt: paidAmountExpr("$payments", "$_cur") } },
+    // Shown as it was paid when that is known: its own currency and amount; else the invoice's, as recorded.
+    {
+      $addFields: {
+        _away: { $and: [{ $ne: ["$_cur", ""] }, { $gt: ["$_amt", 0] }] },
+      },
+    },
+    {
+      $facet: {
+        total: [{ $count: "n" }],
+        received: [
+          { $group: { _id: "$_own", count: { $sum: 1 }, amountMinor: { $sum: { $cond: ["$_away", 0, "$_paid"] } } } },
+        ],
+        methods: [
+          {
+            $group: {
+              _id: { o: "$_own", c: { $cond: ["$_away", "$_cur", "$_own"] }, m: { $ifNull: ["$payments.method", ""] } },
+              count: { $sum: 1 },
+              amountMinor: { $sum: { $cond: ["$_away", "$_amt", "$_paid"] } },
+            },
+          },
+        ],
+        foreign: [
+          { $match: { _cur: { $ne: "" } } },
+          {
+            $group: {
+              _id: { c: "$_own", f: "$_cur" },
+              count: { $sum: { $cond: ["$_away", 1, 0] } },
+              amountMinor: { $sum: { $cond: ["$_away", "$_amt", 0] } },
+              recordedMinor: { $sum: { $cond: ["$_away", "$_paid", 0] } },
+              unknownCount: { $sum: { $cond: ["$_away", 0, 1] } },
+              unknownMinor: { $sum: { $cond: ["$_away", 0, "$_paid"] } },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+
+  const byCurrency = (out?.received ?? []).map((g) => {
+    const methods = (out?.methods ?? [])
+      .filter((m) => m._id.o === g._id && m._id.c === g._id)
+      .map((m) => ({ method: m._id.m, count: m.count, amountMinor: m.amountMinor }))
+      .sort((a, b) => b.amountMinor - a.amountMinor || b.count - a.count || a.method.localeCompare(b.method));
+    const foreign = (out?.foreign ?? [])
+      .filter((f) => f._id.c === g._id)
+      .map((f) => ({
+        currency: f._id.f,
+        count: f.count,
+        amountMinor: f.amountMinor,
+        recordedMinor: f.recordedMinor,
+        unknownCount: f.unknownCount,
+        unknownMinor: f.unknownMinor,
+        // How it was paid in that currency, by method.
+        byMethod: (out?.methods ?? [])
+          .filter((m) => m._id.o === g._id && m._id.c === f._id.f)
+          .map((m) => ({ method: m._id.m, count: m.count, amountMinor: m.amountMinor }))
+          .sort((a, b) => b.amountMinor - a.amountMinor || b.count - a.count || a.method.localeCompare(b.method)),
+      }))
+      .sort((a, b) => b.count - a.count || a.currency.localeCompare(b.currency));
+    return { currency: g._id, count: g.count, amountMinor: g.amountMinor, byMethod: methods, ...(foreign.length ? { foreign } : {}) };
+  });
+
+  return { count: out?.total[0]?.n ?? 0, byCurrency };
 }
 
 export async function getPayment(orgId: string, paymentId: string): Promise<PaymentDTO | null> {

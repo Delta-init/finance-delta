@@ -7,6 +7,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", requirePermission("invoice:read"), c.list);
+// Before "/:id", or "summary" would be read as a payment's id.
+router.get("/summary", requirePermission("invoice:read"), c.summary);
 router.get("/:id", requirePermission("invoice:read"), c.get);
 
 export default router;

@@ -275,8 +275,8 @@ const INA = new Types.ObjectId().toString(), OMAR = new Types.ObjectId().toStrin
 const inrLine = (role: string, amount: number, amountInr: number, student: string, rupeeShare: number, plan: number, planInr: number) =>
   ({ ...line(role, amount, student), amountInr, rupeeShare, plan, planInr });
 root.crms[0].people.push(
-  { userId: INA, name: "Ina", roles: ["sales"], amount: 750, payable: 375, percent: 50, level: "Level 2", sales: 1, amountInr: 5000, payableInr: 2500, lines: [inrLine("sales", 750, 5000, "S20", 0.25, 1000, 20000)] },
-  { userId: OMAR, name: "Omar", roles: ["sales"], amount: 0, payable: 0, percent: 100, level: "Level 1", sales: 1, amountInr: 8000, payableInr: 8000, lines: [inrLine("sales", 0, 8000, "S21", 1, 400, 8000)] },
+  { userId: INA, name: "Ina", email: "ina@e2e.test", roles: ["sales"], amount: 750, payable: 375, percent: 50, level: "Level 2", sales: 1, amountInr: 5000, payableInr: 2500, lines: [inrLine("sales", 750, 5000, "S20", 0.25, 1000, 20000)] },
+  { userId: OMAR, name: "Omar", email: "omar@e2e.test", roles: ["sales"], amount: 0, payable: 0, percent: 100, level: "Level 1", sales: 1, amountInr: 8000, payableInr: 8000, lines: [inrLine("sales", 0, 8000, "S21", 1, 400, 8000)] },
 );
 root.crms[0].totalInr = 13000;
 root.crms[0].payableInrTotal = 10500;
@@ -315,6 +315,22 @@ check("…never twice", /paid already/.test(await refusal(pay(INA, ORG, { part: 
 const paidAed = await pay(INA);
 const expAed = await Expense.findById(paidAed.expense.id).lean<any>();
 check("the AED part paid as ever: AED 375, its own expense", expAed?.currency === "AED" && expAed.totalMinor === 37500 && !/rupees/.test(expAed.description), j({ c: expAed?.currency, t: expAed?.totalMinor }));
+// What the CRMs and HRMS read back (2026-11-20): the rupee part apart, and somebody whose month is only rupees too.
+const back9a = await svc.payoutsForCrm("delta", M);
+const omarRow = back9a.find((x) => x.userId === OMAR) as any;
+check("the CRM reads Omar's month though it's all rupees: AED 0, marked rupees only, his INR 8,000 approved",
+  omarRow?.amount === 0 && omarRow.inrOnly === true && omarRow.state === "approved" && omarRow.inr?.amount === 8000 && omarRow.inr.state === "approved"
+  && back9a.filter((x) => x.userId === OMAR).length === 1, j(omarRow));
+check("…Ina's row isn't marked rupees only", (back9a.find((x) => x.userId === INA) as any)?.inrOnly === undefined);
+const { walletForHrms } = await import("../modules/integrations/hrms-wallet.service");
+const walletOf = async (email: string) => (await walletForHrms({ employeeId: new Types.ObjectId().toString(), emails: [email], month: M })).crm;
+const inaW = await walletOf("ina@e2e.test");
+const inaMain = inaW.find((r) => !r.part), inaInr = inaW.find((r) => r.part === "inr");
+check("HRMS wallet: Ina's AED row as before (paid 375), her rupee part its own INR row — earned 5,000, approved and paid 2,500",
+  inaW.length === 2 && inaMain?.currency === "AED" && inaMain.earned === 750 && inaMain.approved === 375 && inaMain.state === "paid"
+  && inaInr?.currency === "INR" && inaInr.earned === 5000 && inaInr.payable === 2500 && inaInr.approved === 2500 && inaInr.state === "paid" && inaInr.reference === "INR-1", j(inaW));
+const omarW = await walletOf("omar@e2e.test");
+check("…Omar: only the INR row (nothing in AED), approved 8,000", omarW.length === 1 && omarW[0]?.part === "inr" && omarW[0].approved === 8000 && omarW[0].state === "approved", j(omarW));
 await svc.revokeCrmCommission(ORG, MONA, false, { crm: "delta", month: M, userId: OMAR });
 omar = (await deltaNow()).people.find((p) => p.userId === OMAR)!;
 check("an approval taken back takes the rupee part back too", omar.inr?.state === "earned" && omar.inr.payout === null, j(omar.inr));

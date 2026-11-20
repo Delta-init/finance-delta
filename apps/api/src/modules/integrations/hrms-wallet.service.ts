@@ -44,6 +44,9 @@ export interface HrmsWalletPayroll {
 export interface HrmsWalletCrm {
   crm: string;
   crmName: string;
+  /** "inr" (2026-11-20): the part earned on what clients paid in rupees — its own row, in INR, never added into the
+   *  main row's AED. Absent: the main part. */
+  part?: "inr";
   currency: string;
   /** Commission earned in the month, as the CRM counts it. */
   earned: number;
@@ -166,10 +169,10 @@ async function crmCommission(emails: string[], month: string): Promise<{ rows: H
     .filter((p) => p.email && emails.includes(p.email.trim().toLowerCase()))
     .map((p) => ({ c, p, key: `${c.code}:${month}:${p.userId}` })));
   const payouts = mine.length
-    ? await CrmCommissionPayout.find({ key: { $in: mine.map((m) => m.key) } }).lean<any[]>()
+    ? await CrmCommissionPayout.find({ key: { $in: mine.flatMap((m) => [m.key, `${m.key}:INR`]) } }).lean<any[]>()
     : [];
   const payoutOf = new Map(payouts.map((p) => [String(p.key), p]));
-  const rows = mine.map(({ c, p, key }): HrmsWalletCrm => {
+  const rows: HrmsWalletCrm[] = mine.map(({ c, p, key }): HrmsWalletCrm => {
     const payout = payoutOf.get(key);
     return {
       crm: c.code,
@@ -190,6 +193,32 @@ async function crmCommission(emails: string[], month: string): Promise<{ rows: H
       reference: payout?.reference ?? "",
     };
   });
+  // The part earned in rupees (2026-11-20): its own row in INR beside the main one — approved with it and paid on its
+  // own (its payout's key ends ":INR"), so HRMS shows it apart rather than inside the AED figure.
+  for (const { c, p, key } of mine) {
+    const payout = payoutOf.get(`${key}:INR`);
+    const earned = Number(p.amountInr) || 0;
+    if (!(earned > 0) && !payout) continue;
+    rows.push({
+      crm: c.code,
+      crmName: c.name,
+      part: "inr",
+      currency: "INR",
+      earned,
+      payable: typeof p.payableInr === "number" ? p.payableInr : null,
+      percent: p.percent ?? null,
+      level: p.level ?? null,
+      sales: Number(p.sales) || 0,
+      waiting: 0, // commission still waiting for a full payment is counted whole in AED until then
+      state: payout?.state ?? "earned",
+      approved: payout ? major(payout.amountMinor) : null,
+      approvedAt: payout ? day(payout.approvedAt) : null,
+      payrollRunNumber: payout?.payrollRunNumber ?? "",
+      paidOn: day(payout?.paidOn ?? null),
+      paymentMethod: payout?.paymentMethod ?? "",
+      reference: payout?.reference ?? "",
+    });
+  }
   // Nothing earned and nothing approved is not worth a row.
   return { rows: rows.filter((r) => r.earned > 0 || r.waiting > 0 || r.approved !== null), error: null };
 }

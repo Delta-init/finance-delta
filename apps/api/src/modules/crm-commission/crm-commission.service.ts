@@ -461,22 +461,43 @@ export async function commissionInvoice(id: string) {
 export async function payoutsForCrm(crm: string, month: string) {
   const rows = await CrmCommissionPayout.find({ crm, month }).lean<any[]>();
   // One row a person, as before — the main part: a CRM from before the rupee part keeps reading it as their month.
-  // The rupee part (2026-11-13) rides on it as `inr`; somebody with only a rupee part has no row here.
+  // The rupee part (2026-11-13) rides on it as `inr`. Somebody whose month is only rupees (a close paid wholly in
+  // rupees) has no main part: since 2026-11-20 they get a row too — `amount` 0, `inrOnly`, its approval from the rupee
+  // part — so My Pay shows where their rupees stand.
   const inrOf = new Map(rows.filter((p) => p.part === "inr").map((p) => [String(p.userId), p]));
-  return rows.filter((p) => p.part !== "inr").map((p) => {
-    const inr = inrOf.get(String(p.userId));
-    return {
-      userId: String(p.userId),
-      state: p.state as "approved" | "paid",
-      amount: (p.amountMinor ?? 0) / 100,
-      currency: p.currency ?? "AED",
-      approvedByName: p.approvedByName ?? "",
-      approvedAt: new Date(p.approvedAt).toISOString(),
-      paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : null,
-      paymentMethod: p.paymentMethod ?? null,
-      reference: p.reference ?? null,
-      ...(inr ? { inr: { state: inr.state as "approved" | "paid", amount: (inr.amountMinor ?? 0) / 100, paidOn: inr.paidOn ? new Date(inr.paidOn).toISOString().slice(0, 10) : null } } : {}),
-    };
-  });
+  const day = (d: unknown) => (d ? new Date(d as string).toISOString().slice(0, 10) : null);
+  const inrView = (inr: any) => ({ state: inr.state as "approved" | "paid", amount: (inr.amountMinor ?? 0) / 100, paidOn: day(inr.paidOn) });
+  const main = rows.filter((p) => p.part !== "inr");
+  const withMain = new Set(main.map((p) => String(p.userId)));
+  return [
+    ...main.map((p) => {
+      const inr = inrOf.get(String(p.userId));
+      return {
+        userId: String(p.userId),
+        state: p.state as "approved" | "paid",
+        amount: (p.amountMinor ?? 0) / 100,
+        currency: p.currency ?? "AED",
+        approvedByName: p.approvedByName ?? "",
+        approvedAt: new Date(p.approvedAt).toISOString(),
+        paidOn: day(p.paidOn),
+        paymentMethod: p.paymentMethod ?? null,
+        reference: p.reference ?? null,
+        ...(inr ? { inr: inrView(inr) } : {}),
+      };
+    }),
+    ...[...inrOf.values()].filter((inr) => !withMain.has(String(inr.userId))).map((inr) => ({
+      userId: String(inr.userId),
+      state: inr.state as "approved" | "paid",
+      amount: 0,
+      currency: "AED", // the main part's currency (none here): the sales CRMs keep commission in AED
+      approvedByName: inr.approvedByName ?? "",
+      approvedAt: new Date(inr.approvedAt).toISOString(),
+      paidOn: day(inr.paidOn),
+      paymentMethod: inr.paymentMethod ?? null,
+      reference: inr.reference ?? null,
+      inrOnly: true as const,
+      inr: inrView(inr),
+    })),
+  ];
 }
 

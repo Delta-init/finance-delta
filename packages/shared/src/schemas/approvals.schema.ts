@@ -137,6 +137,8 @@ export const approvalRowSchema = z.object({
   crm: z.enum(ENROLMENT_CRMS).optional(),
   /** An enrolment invoice from a sales CRM: the academy it was sold for. */
   academy: z.enum(ACADEMIES).optional(),
+  /** Tagged DUBAI-STUD (2026-11-20): sold for Bangalore by the Sales CRM, Draw or Remote — a Dubai student in the LMS and CS Portal. */
+  dubaiStudent: z.boolean().optional(),
   /**
    * An enrolment invoice from a sales CRM: what finance flagged on it to check
    * before deciding — an unmapped course, a rep with no account here, an email

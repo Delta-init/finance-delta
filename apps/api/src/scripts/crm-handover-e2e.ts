@@ -828,6 +828,54 @@ async function main() {
     }
   }
 
+  step("G. DUBAI-STUD (the user, 2026-11-20): a Bangalore close from the Sales CRM, Draw or Remote");
+  {
+    const { Tag } = await import("../modules/tag/tag.model");
+    const tagsNamed = () => Tag.find({ organizationId: new Types.ObjectId(orgId), name: /^dubai-stud$/i }).lean();
+    const tagged = async (externalId: string) => {
+      const [tag] = await tagsNamed();
+      const inv = await Invoice.findOne({ "external.externalId": externalId }).lean();
+      const cust = inv ? await Customer.findById(inv.customerId).lean() : null;
+      const has = (ids: unknown) => !!tag && ((ids ?? []) as unknown[]).some((x) => String(x) === String(tag._id));
+      return { invoice: has(inv?.tagIds), client: has((cust as { tagIds?: unknown[] } | null)?.tagIds), inv };
+    };
+
+    // From step F: a Sales CRM close for Bangalore — sent back and corrected twice since.
+    const blr = await tagged("e2e-academy-blr");
+    check("Case 1 — the Sales CRM close for Bangalore is tagged DUBAI-STUD, invoice and client", blr.invoice && blr.client, JSON.stringify(blr));
+    const tags = await tagsNamed();
+    check("...the tag made once, named DUBAI-STUD", tags.length === 1 && tags[0]?.name === "DUBAI-STUD", JSON.stringify(tags.map((x) => x.name)));
+    check("Case 2 — the Remote CRM close for Dubai is not", !(await tagged("e2e-academy-dxb")).invoice);
+    check("...nor the Banglore CRM's, nor a close that said no academy", !(await tagged("e2e-academy-blrcrm")).invoice && !(await tagged("e2e-academy-silent")).invoice);
+
+    const draw = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-ds-draw", "driftone@e2e-test.com", "Draw Bangalore Student"), source: "draw-crm", crm: "draw", academy: "bangalore",
+    });
+    const remote = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-ds-remote", "driftone@e2e-test.com", "Remote Bangalore Student"), crm: "remote", academy: "bangalore",
+    });
+    check("Case 1 — a Draw close and a Remote close for Bangalore: both tagged", draw.status === 200 && remote.status === 200 && (await tagged("e2e-ds-draw")).invoice && (await tagged("e2e-ds-remote")).invoice, `${show(draw)} ${show(remote)}`);
+    check("...still one tag", (await tagsNamed()).length === 1);
+
+    // Kept through a correction; one taken off by hand stays off through one.
+    const rem = await tagged("e2e-ds-remote");
+    await request("POST", `/invoices/${rem.inv?._id}/approval/return`, { reason: "Check the fee" }, adminAuth.token);
+    const fixed = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-ds-remote", "driftone@e2e-test.com", "Remote Bangalore Student"), crm: "remote", academy: "bangalore",
+    });
+    check("Case 3 — corrected, it keeps the tag", fixed.status === 200 && (await tagged("e2e-ds-remote")).invoice, show(fixed));
+    const [tag] = await tagsNamed();
+    await Invoice.updateOne({ _id: rem.inv?._id }, { $pull: { tagIds: tag!._id } });
+    await request("POST", `/invoices/${rem.inv?._id}/approval/return`, { reason: "Again" }, adminAuth.token);
+    const again = await signedPost(orgId, "/api/v1/integrations/enrolments", {
+      ...enrolment("e2e-ds-remote", "driftone@e2e-test.com", "Remote Bangalore Student"), crm: "remote", academy: "bangalore",
+    });
+    check("...taken off by hand, a correction does not put it back", again.status === 200 && !(await tagged("e2e-ds-remote")).invoice, show(again));
+    const dto = await request("GET", `/invoices/${(await tagged("e2e-ds-draw")).inv?._id}`, undefined, adminAuth.token);
+    const dtoTags = (dto.body?.data as unknown as { tags?: Array<{ name: string }> } | undefined)?.tags ?? [];
+    check("an approver reading the invoice sees the tag", dtoTags.some((x) => x.name === "DUBAI-STUD"), JSON.stringify(dtoTags));
+  }
+
   step("G. One email, one client (the user, 2026-10-10)");
   {
     // Four different people closed with one email in the Remote CRM were all

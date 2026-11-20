@@ -68,6 +68,8 @@ export async function provisionEnrolment(input: {
   crm?: string;
   /** The academy it was sold for: a "bangalore" student is put in the LMS's Bangalore academy. */
   academy?: "dubai" | "bangalore";
+  /** DUBAI-STUD (2026-11-20): sold for Bangalore by the Dubai side — a new student goes in the Dubai academy. */
+  dubaiStudent?: true;
 }): Promise<LmsProvisionResult> {
   // The LMS mounts everything under /api/v1. Accepted with or without it, so a
   // base URL copied from a browser's address bar works either way rather than

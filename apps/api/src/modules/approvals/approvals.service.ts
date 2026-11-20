@@ -23,6 +23,7 @@ import { BalancePaymentModel } from "../balance-payment/balance-payment.model";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { LmsProvision } from "../integrations/lms-provision.model";
+import { dubaiStudTagId } from "../../lib/dubai-student";
 
 /**
  * What is waiting on this person, across every kind of approval.
@@ -621,9 +622,11 @@ const LIST_KINDS: ListKind[] = [
         // Waiting: since it was sent. Decided: when it was — a resubmitted
         // invoice keeps its last decision's time until it is decided again.
         { $cond: [{ $eq: ["$approval.state", "pending"] }, firstOf("$approval.submittedAt", "$createdAt"), firstOf("$approval.at", "$approval.submittedAt", "$createdAt")] },
-        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.academy enrolment.declaredPaidMinor external.source external.flags createdAt",
+        "invoiceNumber customerName salespersonName totalMinor amountPaidMinor currency approval enrolment.course enrolment.crm enrolment.academy enrolment.declaredPaidMinor external.source external.flags tagIds createdAt",
         ctx,
       );
+      // DUBAI-STUD (2026-11-20): this organization's tag, to say which rows carry it.
+      const dubaiTag = await dubaiStudTagId(ctx.org, false);
       return {
         total,
         rows: docs.map((r): ApprovalRow => {
@@ -639,6 +642,8 @@ const LIST_KINDS: ListKind[] = [
             crm: crm ?? undefined,
             // And the academy it was sold for, beside it; none for one typed here.
             academy: crm || r.enrolment?.academy ? enrolmentAcademy(r.enrolment?.academy, crm) : undefined,
+            // Sold for Bangalore by the Dubai side: a Dubai student in the LMS and CS Portal.
+            ...(dubaiTag && (r.tagIds ?? []).some((t: unknown) => String(t) === String(dubaiTag)) ? { dubaiStudent: true } : {}),
             // What finance flagged on it when the CRM handed it over, to check before deciding.
             flags: r.external?.flags?.length ? r.external.flags : undefined,
             // What was collected, and the fee it is part of.

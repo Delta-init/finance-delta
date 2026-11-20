@@ -47,3 +47,19 @@ export function AcademyTag({ academy, className }: { academy?: Academy | null; c
     </span>
   );
 }
+
+/**
+ * DUBAI-STUD (2026-11-20): sold for the Bangalore academy by the Sales CRM, Draw or Remote. Its money is in the
+ * Bangalore books; the LMS and CS Portal look after the student as a Dubai student. Shown beside the academy.
+ */
+export function DubaiStudTag({ show, className }: { show?: boolean | null; className?: string }) {
+  if (!show) return null;
+  return (
+    <span
+      className={cn("inline-flex items-center whitespace-nowrap rounded-full border border-amber-500/40 px-2 py-0.5 text-[11px] font-medium text-amber-700", className)}
+      title="Sold for the Bangalore academy by the Dubai side — a Dubai student in the LMS and CS Portal"
+    >
+      DUBAI-STUD
+    </span>
+  );
+}

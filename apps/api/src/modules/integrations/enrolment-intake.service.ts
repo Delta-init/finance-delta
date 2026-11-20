@@ -12,6 +12,7 @@ import { findOrCreateCustomer } from "../customer/customer.service";
 import { createInvoice, updateInvoice } from "../invoice/invoice.service";
 import { notifyApprovers } from "../invoice/approval-notify.service";
 import { closeIsForAnother, correctionIsForAnother, emailBelongsToAnother, phoneKnown } from "./client-identity";
+import { isDubaiStudent, tagDubaiStudentQuietly, tagIfDubaiStudentQuietly } from "../../lib/dubai-student";
 
 /**
  * Taking an enrolment from another system.
@@ -418,6 +419,9 @@ export async function intakeEnrolment(
 
   if (elsewhere) await moveOut(elsewhere, orgId, { id: invoice.id, number: invoice.invoiceNumber }, intakeAcademy(input));
 
+  // Sold by the Sales CRM, Draw or Remote for the Bangalore academy: DUBAI-STUD (2026-11-20), on the invoice and client.
+  await tagIfDubaiStudentQuietly(orgId, invoice.id);
+
   logger.info(
     { orgId, source: input.source, externalId: input.externalId, invoice: invoice.invoiceNumber, flags },
     "Enrolment taken from an external system",
@@ -585,6 +589,8 @@ async function resubmitReturned(
   customerIdBefore: string,
 ): Promise<InboundEnrolmentResult> {
   const flags: string[] = [];
+  // DUBAI-STUD as it is before the correction: kept through it, never added or taken off by it (2026-11-20).
+  const wasDubaiStudent = await isDubaiStudent(invoiceId);
   const salesperson = await resolveSalesperson(orgId, input, flags);
   // The client as corrected; the invoice is put in their name below.
   const customerId = await correctedCustomer(orgId, customerIdBefore, input.customer, flags);
@@ -700,6 +706,9 @@ async function resubmitReturned(
     await doc.save();
     void notifyApprovers(doc as never);
   }
+
+  // DUBAI-STUD kept through the correction — on the invoice, and on the client it is now in the name of.
+  if (wasDubaiStudent) await tagDubaiStudentQuietly(orgId, invoiceId, String(updated.customerId ?? customerId ?? ""));
 
   logger.info(
     { orgId, source: input.source, externalId: input.externalId, invoice: updated.invoiceNumber, flags },

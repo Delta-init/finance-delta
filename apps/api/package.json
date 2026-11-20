@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo \"(lint) api\"",
     "backfill:lms": "bun src/scripts/backfill-lms-provisions.ts",
+    "backfill:dubai-stud": "bun src/scripts/backfill-dubai-stud.ts",
     "verify:lms": "bun src/scripts/verify-lms-enrolment.ts"
   },
   "dependencies": {

@@ -67,6 +67,11 @@ export async function sendStudentToCommission(input: {
    * CS Portal gives the student only to that academy's teams.
    */
   academy?: "dubai" | "bangalore";
+  /**
+   * DUBAI-STUD (2026-11-20): sold for the Bangalore academy by the Sales CRM, Draw or Remote. CS Portal gives them
+   * to a Dubai team; their money stays Bangalore's (the academy above).
+   */
+  dubaiStudent?: true;
   /** Who closed it: the sales CRM's rep, by their email there — on the student there, for their Sales account. */
   closedBy?: { email: string; name: string; crm: string };
   lmsUserId?: string;

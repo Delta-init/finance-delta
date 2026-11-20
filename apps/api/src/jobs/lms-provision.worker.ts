@@ -1,5 +1,6 @@
 import { enrolmentAcademy, enrolmentCrm, NO_COMMISSION_CRMS, type Academy, type EnrolmentCrm } from "@delta/shared";
 import { logger } from "../lib/logger";
+import { dubaiStudentField } from "../lib/dubai-student";
 import {
   lmsConfigured, provisionEnrolment, updateEnrolmentAccess, LmsPermanentError, type LmsPaymentStatus, type EnrolmentFeeSummary,
 } from "../lib/lms-client";
@@ -82,7 +83,8 @@ export async function drainLmsProvisions(): Promise<number> {
   let sent = 0;
   for (const row of due) {
     try {
-      const result = await provisionEnrolment(row.payload as never);
+      // DUBAI-STUD (2026-11-20): read when sent, so the tag as it is now decides — the LMS puts a new one in Dubai.
+      const result = await provisionEnrolment({ ...(row.payload as object), ...(await dubaiStudentField(row.invoiceId)) } as never);
       const sentStatus = (row.payload as { paymentStatus?: LmsPaymentStatus } | undefined)?.paymentStatus;
       row.set({
         status: "sent",
@@ -177,6 +179,7 @@ export async function drainLmsExtraCourses(): Promise<number> {
           amount: 0,
           amountMinor: 0,
           ...(paymentStatus ? { paymentStatus } : {}),
+          ...(await dubaiStudentField(row.invoiceId)),
         } as never);
         await LmsProvision.updateOne({ _id: row._id }, {
           $set: {
@@ -328,8 +331,10 @@ export async function drainCommissionStudents(): Promise<number> {
         ...(language ? { language } : {}),
         // Which sales CRM sold it — shown as a tag on the student there.
         ...(crm ? { crm } : {}),
-        // Which academy it was sold for — only that academy's teams are given them.
+        // Which academy it was sold for — only that academy's teams are given them…
         academy,
+        // …unless it is a DUBAI-STUD (2026-11-20): sold for Bangalore, given to a Dubai team, its money Bangalore's.
+        ...(await dubaiStudentField(row.invoiceId)),
         // Who closed it: shown on the student there, and their Sales account sees the students they closed.
         ...(closedBy ? { closedBy } : {}),
         lmsUserId: row.lmsUserId ?? undefined,

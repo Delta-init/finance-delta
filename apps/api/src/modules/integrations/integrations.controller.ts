@@ -10,6 +10,7 @@ import { enrolmentStatusesFor } from "./enrolment-status.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 import { intakeTetraDeposit, recheckTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 import { walletForHrms } from "./hrms-wallet.service";
+import { dgoCollectionsForHrms } from "./hrms-dgo-collections.service";
 
 /**
  * A signed machine call carries no session, so it carries no organization
@@ -203,4 +204,18 @@ export const hrmsWallet = asyncHandler(async (req: Request, res: Response) => {
     .map((e: unknown) => String(e ?? "").trim().toLowerCase())
     .filter((e: string) => /^\S+@\S+\.\S+$/.test(e)))].slice(0, 5) as string[];
   ok(res, await walletForHrms({ employeeId, emails, month }));
+});
+
+/**
+ * POST /integrations/hrms/dgo-collections { hrmsOrgId, month } — HRMS's DGO Points budget (2026-11-21) asking for a
+ * month's eligible collections: payments received in the Dubai month, net of VAT, in the base currency, with the
+ * reconciled share, back-dated payments still waiting, and credit notes for information. Read-only. POST, like the
+ * wallet above, so HRMS signs it with the client it already has.
+ */
+export const hrmsDgoCollections = asyncHandler(async (req: Request, res: Response) => {
+  const hrmsOrgId = String(req.body?.hrmsOrgId ?? "").trim();
+  const month = String(req.body?.month ?? "");
+  if (!/^[\w-]{1,64}$/.test(hrmsOrgId)) throw new AppError("VALIDATION_ERROR", "hrmsOrgId is the HRMS organisation id");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new AppError("VALIDATION_ERROR", "month is YYYY-MM");
+  ok(res, await dgoCollectionsForHrms({ hrmsOrgId, month }));
 });

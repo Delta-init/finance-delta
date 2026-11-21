@@ -55,4 +55,7 @@ router.get("/crm-commission/payouts", c.crmCommissionPayouts);
 // HRMS's wallet page asking what finance knows about one person's month (2026-11-04). Read-only.
 router.post("/hrms/wallet", c.hrmsWallet);
 
+// HRMS's DGO Points budget asking for a month's eligible collections, net of VAT (2026-11-21). Read-only.
+router.post("/hrms/dgo-collections", c.hrmsDgoCollections);
+
 export default router;

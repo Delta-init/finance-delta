@@ -82,6 +82,11 @@ export interface EnrolmentStatus {
   payments: { amountMinor: number; paidOn: string; method: string; receiptNumber?: string }[];
   balancePayments: { externalId: string; amountMinor: number; currency: string; method: string; paidOn: string; status: string; reason?: string; decidedAt?: string; decidedBy?: string; receiptNumber?: string }[];
   /**
+   * The course changes the CRM asked for (2026-11-23), oldest first, each with where it stands: the course and fee
+   * asked for, and once decided, when and by whom — with why when rejected, and the approver's note when there was one.
+   */
+  courseChanges: { externalId: string; status: string; course: string; priceMinor: number; currency: string; reason?: string; decidedAt?: string; decidedBy?: string; note?: string }[];
+  /**
    * What finance flagged on the invoice, as it stands now — the same flags the
    * handover answered with (an unmapped course, a rep with no account here, an
    * email that belongs to another client), updated by a correction. [] when none.
@@ -215,6 +220,9 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
   // The balance payments its salespeople recorded (2026-10-13), each with where it stands.
   const { balancePaymentsFor } = await import("../balance-payment/balance-payment.service");
   const recorded = await balancePaymentsFor(invoices.map((i) => i._id));
+  // And the course changes they asked for (2026-11-23), each with where it stands.
+  const { courseChangesFor } = await import("../course-change/course-change.service");
+  const changes = await courseChangesFor(invoices.map((i) => i._id));
 
   return invoices.map((i) => {
     const ext = i.external as { externalId?: string; flags?: string[] } | undefined;
@@ -251,6 +259,7 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
         ...(p.receiptNumber ? { receiptNumber: p.receiptNumber } : {}),
       })),
       balancePayments: recorded.get(String(i._id)) ?? [],
+      courseChanges: changes.get(String(i._id)) ?? [],
       flags: ext?.flags ?? [],
       lms: p ? lmsOf(p) : null,
       commission,

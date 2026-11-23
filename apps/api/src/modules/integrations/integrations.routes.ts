@@ -31,6 +31,11 @@ router.post("/enrolments/sales-note", c.updateEnrolmentSalesNote);
 // it stands comes back with the enrolment's status.
 router.post("/enrolments/balance-payments", c.takeBalancePayment);
 
+// A finance-approved enrolment moved to another course, asked for in the CRM
+// that closed it (2026-11-23), for accounts to approve. Idempotent on the CRM's
+// own id; where it stands comes back with the enrolment's status.
+router.post("/enrolments/course-changes", c.takeCourseChange);
+
 // Media ERP asking for money out of Marketing's allocation. Lands as a
 // drawdown waiting for review; idempotent on the caller's own id, like the
 // enrolments above.

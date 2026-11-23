@@ -6,8 +6,8 @@
  * Finance knows a client by their email, and copies the customer's name onto what it makes for them — so renaming the
  * customer on its page leaves every invoice under the old name. This renames the customer (each organization's with
  * that email), sets their phone when one is given, and writes the new name on their invoices, credit notes,
- * quotations and sales orders, the CRM balance payments and CS Portal payments towards those invoices, and takes off
- * the "the client's email already belongs to <old name>" flag an invoice carries for it.
+ * quotations and sales orders, the CRM balance payments and course changes and CS Portal payments towards those
+ * invoices, and takes off the "the client's email already belongs to <old name>" flag an invoice carries for it.
  *
  * Names come on the command line, never in this file. Reads and prints only, unless --write; --write first saves what
  * it changes to an undo file (--undo <file> puts it back). Run it from apps/api on the server (Bun reads MONGODB_URI
@@ -34,16 +34,17 @@ interface Undo {
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 async function models() {
-  const [{ Customer }, { Invoice }, { CreditNote }, { Quotation }, { SalesOrder }, { BalancePaymentModel }, { TetraDepositModel }] = await Promise.all([
+  const [{ Customer }, { Invoice }, { CreditNote }, { Quotation }, { SalesOrder }, { BalancePaymentModel }, { CourseChangeModel }, { TetraDepositModel }] = await Promise.all([
     import("../modules/customer/customer.model"),
     import("../modules/invoice/invoice.model"),
     import("../modules/credit-note/credit-note.model"),
     import("../modules/quotation/quotation.model"),
     import("../modules/salesorder/salesorder.model"),
     import("../modules/balance-payment/balance-payment.model"),
+    import("../modules/course-change/course-change.model"),
     import("../modules/tetra-deposit/tetra-deposit.model"),
   ]);
-  return { Customer, Invoice, CreditNote, Quotation, SalesOrder, BalancePayment: BalancePaymentModel, TetraDeposit: TetraDepositModel } as Record<string, mongoose.Model<any>>;
+  return { Customer, Invoice, CreditNote, Quotation, SalesOrder, BalancePayment: BalancePaymentModel, CourseChange: CourseChangeModel, TetraDeposit: TetraDepositModel } as Record<string, mongoose.Model<any>>;
 }
 
 export async function renameCustomer(opts: {
@@ -102,6 +103,9 @@ export async function renameCustomer(opts: {
     const ids = invoices.map((i) => i._id);
     for (const p of await M.BalancePayment!.find({ invoiceId: { $in: ids } }).select("invoiceNumber customerName status").lean<any[]>()) {
       field("BalancePayment", p, "customerName", name, { kind: "CRM balance payment", number: p.invoiceNumber, detail: String(p.status ?? "") });
+    }
+    for (const p of await M.CourseChange!.find({ invoiceId: { $in: ids } }).select("invoiceNumber customerName status").lean<any[]>()) {
+      field("CourseChange", p, "customerName", name, { kind: "CRM course change", number: p.invoiceNumber, detail: String(p.status ?? "") });
     }
     for (const t of await M.TetraDeposit!.find({ "enrolmentPayment.invoiceId": { $in: ids }, "enrolmentPayment.invoice": { $exists: true } }).select("enrolmentPayment status").lean<any[]>()) {
       field("TetraDeposit", t, "enrolmentPayment.invoice.customerName", name, { kind: "CS Portal payment", number: t.enrolmentPayment?.invoiceNumber ?? "", detail: String(t.status ?? "") });

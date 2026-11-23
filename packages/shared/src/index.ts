@@ -31,6 +31,7 @@ export * from "./schemas/budget.schema";
 export * from "./schemas/approvals.schema";
 export * from "./schemas/tetra-deposit.schema";
 export * from "./schemas/balance-payment.schema";
+export * from "./schemas/course-change.schema";
 export * from "./schemas/procurement.schema";
 export * from "./schemas/advance.schema";
 export * from "./schemas/crm-commission.schema";

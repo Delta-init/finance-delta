@@ -49,6 +49,7 @@ const KIND_LABEL: Record<ApprovalType, string> = {
   fund_request: "Fund requests",
   tetra_deposit: "CS Portal deposits",
   balance_payment: "Balance payments",
+  course_change: "Course changes",
   expense: "Expense claims",
   bill: "Bills",
   payroll: "Payroll runs",

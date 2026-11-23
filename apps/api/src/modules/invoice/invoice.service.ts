@@ -1427,15 +1427,16 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   }
 
   const objectId = new Types.ObjectId(id);
-  const [{ CreditNote }, { CommissionRecord }, { Quotation }, { BalancePaymentModel }, { TetraDepositModel }] = await Promise.all([
+  const [{ CreditNote }, { CommissionRecord }, { Quotation }, { BalancePaymentModel }, { CourseChangeModel }, { TetraDepositModel }] = await Promise.all([
     import("../credit-note/credit-note.model"),
     import("../commission/commission-record.model"),
     import("../quotation/quotation.model"),
     import("../balance-payment/balance-payment.model"),
+    import("../course-change/course-change.model"),
     import("../tetra-deposit/tetra-deposit.model"),
   ]);
 
-  const [credited, commissioned, quoted, balance, deposit] = await Promise.all([
+  const [credited, commissioned, quoted, balance, courseChange, deposit] = await Promise.all([
     CreditNote.exists({ organizationId: orgId, invoiceId: objectId }),
     CommissionRecord.exists({ organizationId: orgId, invoiceId: objectId }),
     Quotation.exists({
@@ -1443,6 +1444,7 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
       $or: [{ "convertedTo.invoiceId": objectId }, { "convertedTo.invoiceIds": objectId }],
     }),
     BalancePaymentModel.exists({ organizationId: orgId, invoiceId: objectId }),
+    CourseChangeModel.exists({ organizationId: orgId, invoiceId: objectId }),
     // A deleted deposit no longer holds its invoice.
     TetraDepositModel.exists({ organizationId: orgId, status: { $ne: "deleted" }, $or: [{ "courseInvoice.invoiceId": objectId }, { "enrolmentPayment.invoiceId": objectId }] }),
   ]);
@@ -1451,6 +1453,7 @@ export async function deleteInvoice(orgId: string, id: string): Promise<void> {
   if (commissioned) throw new AppError("CONFLICT", "A commission was calculated from this invoice, so it cannot be deleted");
   if (quoted) throw new AppError("CONFLICT", "A quotation was converted into this invoice, so it cannot be deleted");
   if (balance) throw new AppError("CONFLICT", "A balance payment from a sales CRM refers to this invoice, so it cannot be deleted");
+  if (courseChange) throw new AppError("CONFLICT", "A course change from a sales CRM refers to this invoice, so it cannot be deleted");
   if (deposit) throw new AppError("CONFLICT", "A CS Portal payment refers to this invoice, so it cannot be deleted");
 
   // Gone from the database once deleted, so CS Portal is told from what it was.

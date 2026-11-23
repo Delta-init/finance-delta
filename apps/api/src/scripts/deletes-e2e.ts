@@ -4,8 +4,8 @@
  *
  *   Invoices   any status once nothing is paid against it; with payments,
  *              refused until each is deleted (the balance and status worked
- *              out again); a credit note, a balance payment or a Tetra payment
- *              referring to it refuses; an enrolment's queued LMS provisioning
+ *              out again); a credit note, a balance payment, a course change or a
+ *              Tetra payment referring to it refuses; an enrolment's queued LMS provisioning
  *              and its instalment reminders stop with it, a done one stays;
  *   Bills      a payment can be deleted (status worked out again: part paid,
  *              then back to approved), then the bill; not on a voided bill;
@@ -117,6 +117,10 @@ async function main() {
   await db.collection("balancepayments").insertOne({ organizationId: org._id, source: "crm", externalId: "bp-1", invoiceId: new Types.ObjectId(bal), amountMinor: 10_00, currency: "AED", method: "cash", paidOn: "2026-10-15" });
   r = await request("DELETE", `/invoices/${bal}`, tA);
   check("a sales CRM balance payment refers to it: refused", r.status === 409 && /balance payment/.test(r.body?.error?.message ?? ""), show(r.body));
+  const changed = await invoice("IN-4B", "sent");
+  await db.collection("coursechanges").insertOne({ organizationId: org._id, source: "crm", externalId: "cc-1", invoiceId: new Types.ObjectId(changed), course: { name: "Other course" }, priceMinor: 50_00, currency: "AED", status: "rejected" });
+  r = await request("DELETE", `/invoices/${changed}`, tA);
+  check("a sales CRM course change refers to it (even a rejected one): refused", r.status === 409 && /course change/.test(r.body?.error?.message ?? "") && !!(await inv(changed)), show(r.body));
   const tetra = await invoice("IN-5", "sent");
   await db.collection("tetradeposits").insertOne({ organizationId: org._id, externalId: "td-1", courseInvoice: { invoiceId: new Types.ObjectId(tetra) } });
   r = await request("DELETE", `/invoices/${tetra}`, tA);

@@ -27,6 +27,8 @@ import { useReopenTetraDeposit, useResendTetraDeposit, useTetraDeposit } from "@
 import { TetraDepositReviewDialog } from "@/features/tetra-deposits/review-dialog";
 import { useBalancePayment } from "@/features/balance-payments/api";
 import { BalancePaymentReviewDialog } from "@/features/balance-payments/review-dialog";
+import { useCourseChange } from "@/features/course-changes/api";
+import { CourseChangeReviewDialog } from "@/features/course-changes/review-dialog";
 import { formatWhen } from "@/features/tetra-deposits/status";
 
 /**
@@ -57,6 +59,7 @@ const TYPE_LABEL: Record<ApprovalType, string> = {
   fund_request: "Fund request",
   tetra_deposit: "Tetra deposit",
   balance_payment: "Balance payment",
+  course_change: "Course change",
   expense: "Expense claim",
   bill: "Bill",
   payroll: "Payroll",
@@ -238,12 +241,15 @@ export default function ApprovalsPage() {
   const [depositStart, setDepositStart] = useState<"approved" | "sentBack">("approved");
   const [balanceId, setBalanceId] = useState<string | null>(null);
   const balanceTarget = useBalancePayment(balanceId);
+  const [courseChangeId, setCourseChangeId] = useState<string | null>(null);
+  const courseChangeTarget = useCourseChange(courseChangeId);
   const depositTarget = useTetraDeposit(depositId);
 
   const decide = (row: ApprovalRow) => {
     if (row.type === "fund_request") setFundId(row.id);
     else if (row.type === "tetra_deposit") { setDepositStart("approved"); setDepositId(row.id); }
     else if (row.type === "balance_payment") setBalanceId(row.id);
+    else if (row.type === "course_change") setCourseChangeId(row.id);
   };
   // A bonus straight back to its CS, with what to correct (2026-10-13) — like an invoice's Send back.
   const sendBack = (row: ApprovalRow) => { setDepositStart("sentBack"); setDepositId(row.id); };
@@ -551,6 +557,7 @@ export default function ApprovalsPage() {
       <FundingReviewDialog request={fundTarget} onClose={() => setFundId(null)} />
       <TetraDepositReviewDialog deposit={depositTarget.data ?? null} start={depositStart} onClose={() => setDepositId(null)} />
       <BalancePaymentReviewDialog payment={balanceTarget.data ?? null} onClose={() => setBalanceId(null)} />
+      <CourseChangeReviewDialog change={courseChangeTarget.data ?? null} onClose={() => setCourseChangeId(null)} />
     </div>
   );
 }

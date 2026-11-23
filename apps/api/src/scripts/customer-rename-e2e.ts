@@ -4,9 +4,9 @@
  *
  * What it proves: the dry run lists the customer and everything carrying their name, and writes nothing; --expect with
  * the wrong count is refused; --write renames the customer (every organization's with that email), sets the phone,
- * writes the name on invoices, credit notes, quotations, sales orders, CRM balance payments and CS Portal payments,
- * and takes off only the "already belongs to <old name>" flag; another customer is untouched; a second run has
- * nothing to do; the undo file puts it all back; bad arguments are refused.
+ * writes the name on invoices, credit notes, quotations, sales orders, CRM balance payments and course changes and
+ * CS Portal payments, and takes off only the "already belongs to <old name>" flag; another customer is untouched; a
+ * second run has nothing to do; the undo file puts it all back; bad arguments are refused.
  *
  * Run through scripts/customer-rename-e2e.sh (throwaway mongod, no .env anywhere).
  */
@@ -57,6 +57,7 @@ await db.collection("creditnotes").insertOne({ organizationId: ORG, customerId: 
 await db.collection("quotations").insertOne({ organizationId: ORG, customerId: c1, customerName: OLD, quoteNumber: "QT-1", status: "sent" });
 await db.collection("salesorders").insertOne({ organizationId: ORG, customerId: c1, customerName: OLD, orderNumber: "SO-1", status: "open" });
 await db.collection("balancepayments").insertOne({ organizationId: ORG, invoiceId: i2, invoiceNumber: "IN-2", customerName: OLD, status: "approved", source: "crm", externalId: "x", amountMinor: 1, currency: "AED", method: "cash", paidOn: "2026-10-31" });
+await db.collection("coursechanges").insertOne({ organizationId: ORG, invoiceId: i1, invoiceNumber: "IN-1", customerName: OLD, status: "pending", source: "crm", externalId: "cc-1", course: { name: "Course B" }, priceMinor: 1, currency: "AED" });
 await db.collection("tetradeposits").insertOne({ organizationId: ORG, type: "ENROLMENT_PAYMENT", status: "APPROVED", student: { name: NEW }, enrolmentPayment: { invoiceId: i2, invoiceNumber: "IN-2", paidOn: "2026-10-31", invoice: { customerName: OLD, course: "Course A" } } });
 
 const names = async () => ({
@@ -65,6 +66,7 @@ const names = async () => ({
   others: [
     (await db.collection("creditnotes").findOne({}))?.customerName, (await db.collection("quotations").findOne({}))?.customerName,
     (await db.collection("salesorders").findOne({}))?.customerName, (await db.collection("balancepayments").findOne({}))?.customerName,
+    (await db.collection("coursechanges").findOne({}))?.customerName,
     (await db.collection("tetradeposits").findOne({}))?.enrolmentPayment?.invoice?.customerName,
   ],
 });
@@ -72,15 +74,15 @@ const before = await names();
 
 step("1. Dry run");
 const dry = await renameCustomer({ email: " Client.One@e2e.local ", name: ` ${NEW} `, phone: "+974 3000 1904", write: false });
-same("lists both customers with that email, their 3 invoices, the credit note, quotation, sales order, balance payment and CS Portal payment",
+same("lists both customers with that email, their 3 invoices, the credit note, quotation, sales order, balance payment, course change and CS Portal payment",
   dry.rows.map((r) => [r.kind, r.number]).sort(),
-  [["CRM balance payment", "IN-2"], ["CS Portal payment", "IN-2"], ["credit note", "CN-1"], ["customer", "CUST-00001"], ["customer", "CUST-00007"],
+  [["CRM balance payment", "IN-2"], ["CRM course change", "IN-1"], ["CS Portal payment", "IN-2"], ["credit note", "CN-1"], ["customer", "CUST-00001"], ["customer", "CUST-00007"],
     ["invoice", "IN-1"], ["invoice", "IN-2"], ["invoice", "IN-3"], ["quotation", "QT-1"], ["sales order", "SO-1"]].sort());
-check("…every one would change; the flag is said to come off IN-1", dry.changing === 10 && /flag comes off/.test(dry.rows.find((r) => r.number === "IN-1")?.detail ?? ""), JSON.stringify(dry.rows));
+check("…every one would change; the flag is said to come off IN-1", dry.changing === 11 && /flag comes off/.test(dry.rows.find((r) => r.number === "IN-1")?.detail ?? ""), JSON.stringify(dry.rows));
 same("…nothing written", await names(), before);
 
 step("2. Refusals");
-check("--expect with the wrong count", await refused(renameCustomer({ email: EMAIL, name: NEW, write: true, expect: 3 }), /--expect 3, but 10/));
+check("--expect with the wrong count", await refused(renameCustomer({ email: EMAIL, name: NEW, write: true, expect: 3 }), /--expect 3, but 11/));
 same("…nothing written", await names(), before);
 check("an email nobody has", await refused(renameCustomer({ email: "nobody@e2e.local", name: NEW, write: false }), /No customer/));
 check("no name", await refused(renameCustomer({ email: EMAIL, name: " ", write: false }), /--name/));
@@ -88,12 +90,12 @@ check("a phone that isn't one", await refused(renameCustomer({ email: EMAIL, nam
 
 step("3. Written");
 const undoFile = `${process.env.TMPDIR ?? "/tmp"}/customer-rename-e2e-${Date.now()}.json`;
-const done = await renameCustomer({ email: EMAIL, name: NEW, phone: "+974 3000 1904", write: true, expect: 10, undoFile });
+const done = await renameCustomer({ email: EMAIL, name: NEW, phone: "+974 3000 1904", write: true, expect: 11, undoFile });
 const after = await names();
 same("both customers renamed, with the phone", after.customers, [[NEW, "+974 3000 1904"], [NEW, "+974 3000 1904"]]);
 same("their invoices renamed; only the wrong-owner flag off IN-1; someone else's invoice untouched", after.invoices,
   [["IN-1", NEW, ["Another flag stays"]], ["IN-2", NEW, []], ["IN-3", NEW, []], ["IN-9", "Someone Else", []]]);
-same("credit note, quotation, sales order, balance payment and CS Portal payment renamed", after.others, [NEW, NEW, NEW, NEW, NEW]);
+same("credit note, quotation, sales order, balance payment, course change and CS Portal payment renamed", after.others, [NEW, NEW, NEW, NEW, NEW, NEW]);
 check("Someone Else's customer untouched", (await db.collection("customers").findOne({ _id: c3 }))?.name === "Someone Else");
 const again = await renameCustomer({ email: EMAIL, name: NEW, phone: "+974 3000 1904", write: false });
 check("run again: nothing more to change", again.changing === 0, JSON.stringify(again.rows.filter((r) => r.change)));

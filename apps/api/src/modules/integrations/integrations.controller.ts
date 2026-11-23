@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundTetraDepositRecheckSchema, inboundBalancePaymentSchema, inboundSalesNoteSchema } from "@delta/shared";
+import { inboundEnrolmentSchema, inboundFundingRequestSchema, inboundTetraDepositSchema, inboundTetraDepositRecheckSchema, inboundBalancePaymentSchema, inboundCourseChangeSchema, inboundSalesNoteSchema } from "@delta/shared";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { CRM_COMMISSION_MONTH } from "@delta/shared";
 import { payoutsForCrm } from "../crm-commission/crm-commission.service";
@@ -110,6 +110,14 @@ export const takeBalancePayment = asyncHandler(async (req: Request, res: Respons
   const input = inboundBalancePaymentSchema.parse(req.body);
   const { intakeBalancePayment } = await import("../balance-payment/balance-payment.service");
   ok(res, await intakeBalancePayment(orgId, input));
+});
+
+/** A sales CRM's course change (2026-11-23): waits for accounts; the enrolment's status says where it stands. */
+export const takeCourseChange = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = await organizationOf(req);
+  const input = inboundCourseChangeSchema.parse(req.body);
+  const { intakeCourseChange } = await import("../course-change/course-change.service");
+  ok(res, await intakeCourseChange(orgId, input));
 });
 
 /**

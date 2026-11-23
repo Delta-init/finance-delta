@@ -20,6 +20,7 @@ import { PayrollOrgLink } from "../payroll-mapping/org-link.model";
 import { FundingRequestModel } from "../budget/budget.model";
 import { TetraDepositModel } from "../tetra-deposit/tetra-deposit.model";
 import { BalancePaymentModel } from "../balance-payment/balance-payment.model";
+import { CourseChangeModel } from "../course-change/course-change.model";
 import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { LmsProvision } from "../integrations/lms-provision.model";
@@ -45,6 +46,8 @@ const iso = (value: unknown) => (value ? new Date(value as string).toISOString()
  * beside it, as `feeMinor`.
  */
 const collectedOf = (r: any): number => Math.max(r.amountPaidMinor ?? 0, r.enrolment?.declaredPaidMinor ?? 0);
+/** A course change in a few words: "MBT → MBT + DWT". */
+const courseMove = (r: any): string => [r.fromCourse, r.course?.name].filter(Boolean).join(" → ");
 /** A CS Portal deposit paid more than one way: every payment's method ("CARD PAYMENT + Cash deposit"), else its one. */
 const depositPaidBy = (r: any): string =>
   (r.payments?.length ? [...new Set(r.payments.map((p: any) => String(p.method)))].join(" + ") : r.paymentMethod);
@@ -183,6 +186,30 @@ const KINDS: Kind[] = [
           title: r.customerName || r.invoiceNumber,
           subtitle: [r.invoiceNumber, r.course, r.recordedBy?.name].filter(Boolean).join(" · "),
           amountMinor: r.amountMinor, currency: r.currency ?? "AED",
+          at: iso(r.createdAt), href: "/approvals",
+        })),
+      };
+    },
+  },
+  {
+    // Course changes asked for in the sales CRMs (2026-11-23), decided like balance payments.
+    type: "course_change",
+    label: "Course changes",
+    href: "/approvals",
+    allowed: (can) => can("invoice:write") && can("invoice:read"),
+    read: async (org) => {
+      const filter = { organizationId: org, status: "pending" };
+      const [count, rows] = await Promise.all([
+        CourseChangeModel.countDocuments(filter),
+        CourseChangeModel.find(filter).sort({ createdAt: -1 }).limit(LATEST).select("customerName invoiceNumber fromCourse course.name priceMinor currency requestedBy createdAt").lean(),
+      ]);
+      return {
+        count,
+        items: rows.map((r: any) => ({
+          id: String(r._id),
+          title: r.customerName || r.invoiceNumber,
+          subtitle: [r.invoiceNumber, courseMove(r), r.requestedBy?.name].filter(Boolean).join(" · "),
+          amountMinor: r.priceMinor, currency: r.currency ?? "AED",
           at: iso(r.createdAt), href: "/approvals",
         })),
       };
@@ -514,6 +541,7 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   fund_request: { text: ["title", "requestedByName", "platform"], raiser: ["requestedByName"] },
   tetra_deposit: { text: ["student.name", "student.code", "student.email", "requestedBy", "initiatingMentor", "team"], raiser: ["requestedBy", "initiatingMentor"] },
   balance_payment: { text: ["customerName", "invoiceNumber", "course", "recordedBy.name"], raiser: ["recordedBy.name"] },
+  course_change: { text: ["customerName", "invoiceNumber", "fromCourse", "course.name", "requestedBy.name"], raiser: ["requestedBy.name"] },
   expense: { text: ["description", "expenseNumber", "categoryName", "subcategoryName", "submittedByName"], raiser: ["submittedByName"] },
   bill: { text: ["vendorName", "billNumber"], raiser: [] },
   payroll: { text: ["runNumber", "hrmsOrgName", "importedByName"], raiser: ["importedByName"] },
@@ -784,6 +812,45 @@ const LIST_KINDS: ListKind[] = [
             amountMinor: r.amountMinor,
             currency: r.currency ?? "AED",
             raisedBy: r.recordedBy?.name || undefined,
+            status: r.status,
+            at: iso(r.__at),
+            submittedAt: iso(r.createdAt),
+            decidedAt: waiting ? undefined : iso(r.decision?.decidedAt),
+            decidedBy: waiting ? undefined : r.decision?.decidedByName || undefined,
+            reason: r.status === "rejected" ? r.decision?.reason || undefined : undefined,
+            href: "/approvals",
+            decideHere: waiting || undefined,
+          };
+        }),
+      };
+    },
+  },
+  {
+    type: "course_change",
+    label: "Course changes",
+    allowed: (can) => can("invoice:write") && can("invoice:read"),
+    list: async (ctx) => {
+      const states = statesFor(ctx.status, { pending: ["pending"], approved: ["approved"], rejected: ["rejected"] });
+      const { docs, total } = await newest(
+        CourseChangeModel,
+        narrowed({ organizationId: ctx.org, status: { $in: states } }, ctx, "course_change"),
+        // A claim in progress is not a decision: while it waits, when it was asked for.
+        { $cond: [{ $eq: ["$status", "pending"] }, "$createdAt", firstOf("$decision.decidedAt", "$updatedAt")] },
+        "customerName invoiceNumber fromCourse course priceMinor currency requestedBy status decision createdAt",
+        ctx,
+      );
+      return {
+        total,
+        rows: docs.map((r): ApprovalRow => {
+          const waiting = r.status === "pending";
+          return {
+            id: String(r._id),
+            type: "course_change",
+            title: r.customerName || r.invoiceNumber,
+            subtitle: [r.invoiceNumber, courseMove(r)].filter(Boolean).join(" · "),
+            amountMinor: r.priceMinor,
+            currency: r.currency ?? "AED",
+            raisedBy: r.requestedBy?.name || undefined,
             status: r.status,
             at: iso(r.__at),
             submittedAt: iso(r.createdAt),
@@ -1308,6 +1375,7 @@ const RAISER_MODELS: { type: string; model: Model<any>; match: Record<string, un
   { type: "fund_request", model: FundingRequestModel, match: {} },
   { type: "tetra_deposit", model: TetraDepositModel, match: {} },
   { type: "balance_payment", model: BalancePaymentModel, match: {} },
+  { type: "course_change", model: CourseChangeModel, match: {} },
   { type: "expense", model: Expense, match: { "source.kind": { $ne: "hrms_procurement" } } },
   { type: "payroll", model: PayrollRun, match: {} },
 ];

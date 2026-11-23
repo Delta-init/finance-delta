@@ -37,6 +37,7 @@ import { CommissionRecord } from "../modules/commission/commission-record.model"
 import { CreditNote } from "../modules/credit-note/credit-note.model";
 import { Quotation } from "../modules/quotation/quotation.model";
 import { BalancePaymentModel } from "../modules/balance-payment/balance-payment.model";
+import { CourseChangeModel } from "../modules/course-change/course-change.model";
 import { TetraDepositModel } from "../modules/tetra-deposit/tetra-deposit.model";
 import { LmsProvision } from "../modules/integrations/lms-provision.model";
 import { InstalmentReminder } from "../modules/invoice/instalment-reminder.model";
@@ -95,16 +96,18 @@ export async function planDelete(numbers: string[], orgId?: string): Promise<Del
 
     const commissions = await CommissionRecord.find({ invoiceId: id }).lean<any[]>();
     for (const c of commissions) if (c.status === "paid") mine.push(`a commission of ${formatMoney(c.commissionMinor ?? 0, cur)} (${c.salespersonName}) from it was already paid out`);
-    const [credited, quoted, balance, deposit] = await Promise.all([
+    const [credited, quoted, balance, courseChange, deposit] = await Promise.all([
       CreditNote.exists({ invoiceId: id }),
       Quotation.exists({ $or: [{ "convertedTo.invoiceId": id }, { "convertedTo.invoiceIds": id }] }),
       BalancePaymentModel.exists({ invoiceId: id }),
+      CourseChangeModel.exists({ invoiceId: id }),
       // A deleted deposit (Tetra Deposits → Delete) no longer holds its invoice.
       TetraDepositModel.exists({ status: { $ne: "deleted" }, $or: [{ "courseInvoice.invoiceId": id }, { "enrolmentPayment.invoiceId": id }] }),
     ]);
     if (credited) mine.push("a credit note refers to it");
     if (quoted) mine.push("a quotation was converted into it");
     if (balance) mine.push("a balance payment from a sales CRM refers to it");
+    if (courseChange) mine.push("a course change from a sales CRM refers to it");
     if (deposit) mine.push("a CS Portal payment refers to it");
 
     const lms = await LmsProvision.findOne({ invoiceId: id }).select("status commission.state").lean<any>();

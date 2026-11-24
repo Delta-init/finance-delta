@@ -12,7 +12,7 @@ import { ACADEMIES, ENROLMENT_CRMS } from "./invoice.schema";
  * read (procurement lives in HRMS) says so in `unavailable` and counts nothing,
  * rather than reporting a confident zero.
  */
-export const approvalTypeSchema = z.enum(["invoice", "fund_request", "tetra_deposit", "balance_payment", "course_change", "expense", "bill", "payroll", "procurement", "salary_advance", "hiring", "reimbursement"]);
+export const approvalTypeSchema = z.enum(["invoice", "fund_request", "tetra_deposit", "balance_payment", "course_change", "expense", "bill", "payroll", "procurement", "salary_advance", "hiring", "reimbursement", "one_time_payment"]);
 export type ApprovalType = z.infer<typeof approvalTypeSchema>;
 
 export const approvalItemSchema = z.object({

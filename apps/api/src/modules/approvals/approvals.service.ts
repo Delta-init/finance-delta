@@ -9,7 +9,7 @@ import {
 } from "@delta/shared";
 import type { AuthContext } from "../../middleware/auth";
 import { logger } from "../../lib/logger";
-import { hrmsClient, type HrmsProcurementRequest, type HrmsReimbursement, type HrmsSalaryAdvance } from "../../lib/hrms-client";
+import { hrmsClient, type HrmsOneTimePayment, type HrmsProcurementRequest, type HrmsReimbursement, type HrmsSalaryAdvance } from "../../lib/hrms-client";
 import { HiringDecision } from "../hiring/hiring-decision.model";
 import { hiringRequestsOf } from "../hiring/hiring.service";
 import { Invoice } from "../invoice/invoice.model";
@@ -366,6 +366,28 @@ const KINDS: Kind[] = [
     },
   },
   {
+    // One-time payments HR sent for finance to pay directly (2026-11-24: the user, "not in the approvals and one time
+    // payment request area is not showing any count on the side bar").
+    type: "one_time_payment",
+    label: "One-time payments",
+    href: "/one-time-payments",
+    allowed: (can) => can("expense:approve"),
+    read: async (org) => {
+      const rows = await liveFromHrms(org, oneTimePaymentsOf);
+      rows.sort((a, b) => String(b.r.createdAt).localeCompare(String(a.r.createdAt)));
+      return {
+        count: rows.length,
+        items: rows.slice(0, LATEST).map(({ r, from }) => ({
+          id: r._id,
+          title: `${r.label} — ${r.employee?.name ?? "employee"}`,
+          subtitle: [r.employee?.department?.name ?? from, `for ${r.month}`].filter(Boolean).join(" · "),
+          amountMinor: Math.round((r.amount || 0) * 100), currency: r.employee?.currency || "AED",
+          at: iso(r.createdAt), href: "/one-time-payments",
+        })),
+      };
+    },
+  },
+  {
     // Hiring requests HR approved whose cost is not budgeted (2026-10-15).
     type: "hiring",
     label: "Hiring requests",
@@ -438,6 +460,20 @@ function reimbursementsOf(hrmsOrgId: string): Promise<HrmsReimbursement[]> {
 /** A claim was just decided: the next count asks HRMS again. */
 export function forgetReimbursements(hrmsOrgId: string): void {
   reimbursementCache.delete(hrmsOrgId);
+}
+
+/* One-time payments waiting on finance (2026-11-24), kept two minutes the same way. */
+const oneTimeCache = new Map<string, { at: number; value: Promise<HrmsOneTimePayment[]> }>();
+function oneTimePaymentsOf(hrmsOrgId: string): Promise<HrmsOneTimePayment[]> {
+  const hit = oneTimeCache.get(hrmsOrgId);
+  if (hit && Date.now() - hit.at < PROCUREMENT_TTL_MS) return hit.value;
+  const value = hrmsClient.oneTimePayments(hrmsOrgId);
+  oneTimeCache.set(hrmsOrgId, { at: Date.now(), value });
+  return value;
+}
+/** A one-time payment was just decided: the next count asks HRMS again. */
+export function forgetOneTimePayments(hrmsOrgId: string): void {
+  oneTimeCache.delete(hrmsOrgId);
 }
 
 /*
@@ -548,6 +584,7 @@ const SEARCH_FIELDS: Record<string, { text: string[]; raiser: string[] }> = {
   procurement: { text: ["description", "expenseNumber"], raiser: [] },
   salary_advance: { text: ["description", "expenseNumber"], raiser: [] },
   reimbursement: { text: ["description", "expenseNumber"], raiser: [] },
+  one_time_payment: { text: ["description", "expenseNumber"], raiser: [] },
   hiring: { text: ["request.title", "request.department", "request.raisedBy", "decidedByName"], raiser: ["request.raisedBy"] },
 };
 
@@ -1183,6 +1220,69 @@ const LIST_KINDS: ListKind[] = [
         rows.push(...docs.map((r): ApprovalRow => ({
           id: String(r._id),
           type: "reimbursement",
+          title: r.description,
+          subtitle: [r.expenseNumber, "HRMS"].filter(Boolean).join(" · "),
+          amountMinor: r.totalMinor ?? 0,
+          currency: r.currency ?? "AED",
+          status: "approved",
+          at: iso(r.__at),
+          decidedAt: iso(r.approvedAt),
+          decidedBy: r.approvedByName || undefined,
+          href: `/expenses/${r._id}`,
+        })));
+      }
+      return unreadable ? Object.assign({ total, rows }, { unreadable }) : { total, rows };
+    },
+  },
+  {
+    // One-time payments (2026-11-24): waiting read live from HRMS; paid is the expense it made. One finance refused is
+    // kept only in HRMS (the One-time Payments page's Rejected tab).
+    type: "one_time_payment",
+    label: "One-time payments",
+    allowed: (can) => can("expense:approve"),
+    list: async (ctx) => {
+      const rows: ApprovalRow[] = [];
+      let total = 0;
+      let unreadable = "";
+      if (ctx.status === "pending" || ctx.status === "all") {
+        try {
+          const waiting = (await liveFromHrms(ctx.org, oneTimePaymentsOf))
+            .map(({ r, from }): ApprovalRow => {
+              const at = iso(r.createdAt);
+              return {
+                id: r._id,
+                type: "one_time_payment",
+                title: `${r.label} — ${r.employee?.name ?? "employee"}`,
+                subtitle: [r.employee?.department?.name ?? from, `for ${r.month}`].filter(Boolean).join(" · "),
+                amountMinor: Math.round((r.amount || 0) * 100),
+                currency: r.employee?.currency || "AED",
+                raisedBy: r.createdBy?.name || undefined,
+                status: "pending",
+                at,
+                submittedAt: at,
+                href: "/one-time-payments",
+              };
+            })
+            .filter((row) => inRange(row.at, ctx.range) && rowMatches(row, ctx))
+            .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+          total += waiting.length;
+          rows.push(...waiting.slice(0, ctx.limit));
+        } catch {
+          unreadable = "the ones waiting in HRMS could not be read";
+        }
+      }
+      if (ctx.status === "approved" || ctx.status === "all") {
+        const { docs, total: approved } = await newest(
+          Expense,
+          narrowed({ organizationId: ctx.org, "source.kind": "hrms_one_time", status: { $in: ["approved", "paid"] } }, ctx, "one_time_payment"),
+          firstOf("$approvedAt", "$createdAt"),
+          "expenseNumber description totalMinor currency approvedByName approvedAt createdAt",
+          ctx,
+        );
+        total += approved;
+        rows.push(...docs.map((r): ApprovalRow => ({
+          id: String(r._id),
+          type: "one_time_payment",
           title: r.description,
           subtitle: [r.expenseNumber, "HRMS"].filter(Boolean).join(" · "),
           amountMinor: r.totalMinor ?? 0,

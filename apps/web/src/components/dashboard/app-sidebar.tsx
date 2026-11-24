@@ -165,7 +165,7 @@ const NAV: NavGroup[] = [
       // Hiring requests whose cost is not budgeted, after HR approved them in HRMS (2026-10-15).
       { href: "/hiring", label: "Hiring Requests", icon: UserPlus, enabled: true, permission: "expense:approve", badge: "hiring" },
       // Bonuses and one-offs HR sends from HRMS to be paid directly, off the payslip.
-      { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve" },
+      { href: "/one-time-payments", label: "One-time Payments", icon: Banknote, enabled: true, permission: "expense:approve", badge: "one_time_payment" },
       // Employees' claims HR approved in HRMS, paid by finance — then Paid in HRMS (2026-11-16).
       { href: "/reimbursements", label: "Reimbursements", icon: ReceiptText, enabled: true, permission: "expense:approve", badge: "reimbursement" },
       // Every deposit CS Portal sent — the record; they are decided on Approvals.

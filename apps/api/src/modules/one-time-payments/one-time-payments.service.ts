@@ -12,6 +12,7 @@ import { User } from "../user/user.model";
 import { nextNumber } from "../sequence/sequence.service";
 import { AppError } from "../../lib/http";
 import { requireReference } from "../invoice/payment-reference";
+import { forgetOneTimePayments } from "../approvals/approvals.service";
 
 /**
  * One-time payments from HRMS — a bonus or commission HR sent for finance to
@@ -214,6 +215,8 @@ export async function markPaid(orgId: string, userId: string, id: string, input:
     }
     await Expense.updateOne({ _id: expense._id, "source.deliveredAt": { $exists: false } }, { $set: { "source.deliveredAt": new Date() } });
   }
+  // The sidebar's count asks HRMS again rather than showing it still waiting.
+  forgetOneTimePayments(input.hrmsOrgId);
   return { expense: { id: String(expense._id), expenseNumber: expense.expenseNumber, totalMinor: expense.totalMinor, currency: expense.currency } };
 }
 
@@ -228,5 +231,6 @@ export async function reject(orgId: string, id: string, input: RejectOneTimePaym
     );
   }
   await hrmsClient.rejectOneTimePayment(input.hrmsOrgId, id, { note: input.note || undefined });
+  forgetOneTimePayments(input.hrmsOrgId);
   return { rejected: true };
 }

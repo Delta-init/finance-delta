@@ -1,9 +1,9 @@
 "use client";
 
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronRight, FileSpreadsheet, Search, X, type LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, FileSpreadsheet, Loader2, Search, X, type LucideIcon } from "lucide-react";
 import { ANALYSIS_DIMENSION_LABELS, type AnalysisGroup, type AnalysisRecord, type AnalysisReport } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useUrlParam, writeQuery } from "@/lib/url-state";
 import { cn } from "@/lib/utils";
-import { useAnalysisReport } from "./api";
+import { fetchAnalysisReport, useAnalysisReport } from "./api";
+import { toast } from "@/lib/toast";
 
 /*
  * The Expense and Revenue reports (the user, 2026-10-24: "a report on expenses and revenue — all expenses, by
@@ -97,18 +98,43 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   const otherLabel = other ? placeLabel(other.organizationName) : "";
   const cols = (cash ? 6 : 4) + (other ? 1 : 0);
 
+  // Exports ask for the report afresh, for exactly what is picked now (2026-11-26: Collected exported the Invoiced
+  // figures still on screen while it loaded). `exported` is that answer, for the export's columns to read.
+  const exported = useRef<AnalysisReport | null>(null);
+  const [bySalesperson, setBySalesperson] = useState(false);
+  const fresh = async () => {
+    const r = await fetchAnalysisReport(config.kind, params);
+    if (r.basis !== basis) throw new Error("The report changed while exporting — try again");
+    exported.current = r;
+    return r;
+  };
+  const runBySalesperson = async () => {
+    setBySalesperson(true);
+    try {
+      const r = await fresh();
+      if (!r.records.length && !r.other?.records.length) { toast.error("Nothing to export for the current filters"); return; }
+      exportBySalesperson(config, r, basis, period.from, period.to);
+      toast.success(`Exported ${basis === "collected" ? "collected payments" : "invoices"} by salesperson`);
+    } catch (e) {
+      toast.error((e as Error).message || "Export failed");
+    } finally {
+      setBySalesperson(false);
+    }
+  };
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader icon={config.icon} title={config.title} description={config.description}
         action={data ? (
           <div className="flex flex-wrap items-center gap-2">
             {config.kind === "revenue" && (
-              <Button variant="outline" size="sm" onClick={() => exportBySalesperson(config, data, basis, period.from, period.to)}>
-                <FileSpreadsheet className="mr-1.5 h-4 w-4 text-success" /> Excel by salesperson
+              <Button variant="outline" size="sm" onClick={runBySalesperson} disabled={bySalesperson}>
+                {bySalesperson ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <FileSpreadsheet className="mr-1.5 h-4 w-4 text-success" />} Excel by salesperson
               </Button>
             )}
-            <ExportButton<AnalysisRecord> resource="" filename={`${config.kind}-report`} title={config.title} formats={["excel", "csv", "pdf"]}
-              fetchRows={async () => data.records} columns={exportColumns(config, data, hidden)} />
+            <ExportButton<AnalysisRecord> resource="" filename={`${config.kind}-report-${config.bases.find((b) => b.key === basis)?.label.toLowerCase() ?? basis}`}
+              title={`${config.title} — ${config.bases.find((b) => b.key === basis)?.label ?? basis}`} formats={["excel", "csv", "pdf"]}
+              fetchRows={async () => (await fresh()).records} columns={exportColumns(config, basis, () => exported.current ?? data, hidden)} />
           </div>
         ) : null} />
 
@@ -424,9 +450,14 @@ function cashColumns(currency: string): Column<AnalysisRecord>[] {
   ];
 }
 
-/** The export: the records on screen, with a column for every dimension. */
-function exportColumns(config: AnalysisConfig, data: AnalysisReport, hidden: string[]) {
-  const name = (dim: string, key: string | undefined) => data.options[dim]?.find((o) => o.key === key)?.name ?? key ?? "";
+/**
+ * The export: the report asked afresh (`report()` — read when the rows are written), with a column for every
+ * dimension the basis has; revenue under Invoiced also what came in on each invoice and what is still owed.
+ */
+function exportColumns(config: AnalysisConfig, basis: string, report: () => AnalysisReport, hidden: string[]) {
+  const name = (dim: string, key: string | undefined) => report().options[dim]?.find((o) => o.key === key)?.name ?? key ?? "";
+  const cur = () => report().currency;
+  const invoiced = config.kind === "revenue" && basis === "invoiced";
   return [
     { header: "Date", value: (r: AnalysisRecord) => r.date },
     { header: "Number", value: (r: AnalysisRecord) => r.number },
@@ -434,11 +465,12 @@ function exportColumns(config: AnalysisConfig, data: AnalysisReport, hidden: str
     { header: "Details", value: (r: AnalysisRecord) => r.detail },
     ...[...config.groupBys, ...config.filters].filter((d, i, all) => all.indexOf(d) === i && d !== "month" && !hidden.includes(d))
       .map((dim) => ({ header: label(dim), value: (r: AnalysisRecord) => name(dim, r.dims[dim]) })),
-    { header: `Amount (${data.currency})`, value: (r: AnalysisRecord) => r.amountMinor / 100 },
-    ...(data.records.some((r) => r.collectedMinor !== undefined) ? [
-      { header: `Collected (${data.currency})`, value: (r: AnalysisRecord) => (r.collectedMinor === undefined ? "" : r.collectedMinor / 100) },
-      { header: `Still owed (${data.currency})`, value: (r: AnalysisRecord) => (r.owedMinor === undefined ? "" : r.owedMinor / 100) },
+    { header: invoiced ? "Invoiced" : config.kind === "revenue" ? "Collected" : "Amount", value: (r: AnalysisRecord) => r.amountMinor / 100 },
+    ...(invoiced ? [
+      { header: "Collected on it", value: (r: AnalysisRecord) => (r.collectedMinor === undefined ? "" : r.collectedMinor / 100) },
+      { header: "Still owed", value: (r: AnalysisRecord) => (r.owedMinor === undefined ? "" : r.owedMinor / 100) },
     ] : []),
+    { header: "Currency", value: () => cur() },
   ];
 }
 
@@ -455,7 +487,8 @@ function PlaceTag({ label: text }: { label: string }) {
  * Excel by salesperson (the user, 2026-11-25: "excel export by each employee and total, each a separate sheet, and an
  * overview with each employee and amount"): an Overview sheet — each salesperson's count and amount here and, beside,
  * in the other organization (rupees, never added) — with a total; then a sheet per salesperson with every record of
- * theirs, both organizations', and their totals. Exactly the records on screen (period, basis, filters, search).
+ * theirs, both organizations', and their totals. The report asked afresh for the period, basis, filters and search
+ * picked (2026-11-26); Collected and Invoiced each get their own columns.
  */
 function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis: string, from: string, to: string) {
   const other = data.other ?? null;
@@ -479,21 +512,35 @@ function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis
   const overview: Array<Array<string | number>> = [
     [`${config.title} — ${what} by salesperson`, period],
     [],
-    ["Salesperson", "Count", `Amount (${data.currency})`, ...(other ? [`${place} count`, `${place} (${other.currency})`] : [])],
+    ["Salesperson", basis === "collected" ? "Payments" : "Records", `${what} (${data.currency})`, ...(other ? [`${place} count`, `${place} (${other.currency})`] : [])],
     ...list.map((p) => [p.name, p.here.length, sum(p.here), ...(other ? [p.there.length, sum(p.there)] : [])]),
     ["Total", data.records.length, sum(data.records), ...(other ? [other.records.length, sum(other.records)] : [])],
   ];
   if (other) overview.push([], [`${place} figures are ${other.organizationName}'s, in ${other.currency} — not converted or added to the ${data.currency} column.`]);
   if (data.capped) overview.push([], [`Only the newest ${data.records.length.toLocaleString()} records are listed — narrow the period for every one.`]);
 
+  const where = (there: boolean) => (there ? place : data.currency === "AED" ? "Dubai" : "Here");
+  const theirs = (r: AnalysisRecord, there: boolean) => (other ? [there ? r.amountMinor / 100 : ""] : []);
+  // Collected: each payment — its receipt or tax invoice number, the invoice, method and bank. Invoiced: each invoice
+  // (a pro-forma's payments as their tax invoices) — what came in on it and what is still owed.
   const sheetOf = (p: Mine) => {
-    const head = ["Date", "Number", "For", "Details", "Course / product", "Where", `Amount (${data.currency})`, ...(other ? [`${place} (${other.currency})`] : [])];
-    const row = (r: AnalysisRecord, there: boolean) => [
-      r.date, r.number, r.title, r.detail, nameOf("course", r.dims.course), there ? place : data.currency === "AED" ? "Dubai" : "Here",
-      there ? "" : r.amountMinor / 100, ...(other ? [there ? r.amountMinor / 100 : ""] : []),
-    ];
+    const collected = basis === "collected";
+    const head = collected
+      ? ["Date paid", "Number", "Invoice", "Customer", "Course / product", "Method", "Bank account", "Where", `Collected (${data.currency})`, ...(other ? [`${place} (${other.currency})`] : [])]
+      : ["Date", "Number", "Customer", "Course / product", "Where", `Invoiced (${data.currency})`, "Collected on it", "Still owed", ...(other ? [`${place} (${other.currency})`] : [])];
+    const row = (r: AnalysisRecord, there: boolean) => collected
+      ? [r.date, r.number, r.detail.split(" · ")[0] ?? "", r.title, nameOf("course", r.dims.course), nameOf("method", r.dims.method), nameOf("bank", r.dims.bank), where(there),
+        there ? "" : r.amountMinor / 100, ...theirs(r, there)]
+      : [r.date, r.number, r.title, nameOf("course", r.dims.course), where(there),
+        there ? "" : r.amountMinor / 100, there || r.collectedMinor === undefined ? "" : r.collectedMinor / 100, there || r.owedMinor === undefined ? "" : r.owedMinor / 100, ...theirs(r, there)];
     const rows = [...p.here.map((r) => row(r, false)), ...p.there.map((r) => row(r, true))].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-    return { title: p.name, rows: [[p.name, period], [], head, ...rows, ["Total", `${p.here.length + p.there.length} records`, "", "", "", "", sum(p.here), ...(other ? [sum(p.there)] : [])]] };
+    const n = p.here.length + p.there.length;
+    const owed = Math.round(p.here.reduce((s, r) => s + (r.owedMinor ?? 0), 0)) / 100;
+    const got = Math.round(p.here.reduce((s, r) => s + (r.collectedMinor ?? 0), 0)) / 100;
+    const total = collected
+      ? ["Total", `${n} payment${n === 1 ? "" : "s"}`, "", "", "", "", "", "", sum(p.here), ...(other ? [sum(p.there)] : [])]
+      : ["Total", `${n} record${n === 1 ? "" : "s"}`, "", "", "", sum(p.here), got, owed, ...(other ? [sum(p.there)] : [])];
+    return { title: p.name, rows: [[p.name, `${what} · ${period}`], [], head, ...rows, total] };
   };
-  exportWorkbook(`${config.kind}-by-salesperson${from ? `-${from}` : ""}${to ? `-${to}` : ""}`, [{ title: "Overview", rows: overview }, ...list.map(sheetOf)]);
+  exportWorkbook(`${config.kind}-${basis}-by-salesperson${from ? `-${from}` : ""}${to ? `-${to}` : ""}`, [{ title: "Overview", rows: overview }, ...list.map(sheetOf)]);
 }

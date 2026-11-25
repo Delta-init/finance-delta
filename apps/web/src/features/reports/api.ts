@@ -173,9 +173,19 @@ export function useCustomerStatement(
 
 // ── Expense and Revenue reports (2026-10-24) ──────────────────────────────────
 
+const analysisQs = (params: Record<string, string>) => new URLSearchParams(Object.entries(params).filter(([, v]) => v !== ""));
+
+/**
+ * The report asked afresh for exactly these parameters (2026-11-26): what an export saves — never the figures still on
+ * screen from the tab before (the screen keeps the last answer while the next loads: Invoiced exported under Collected).
+ */
+export function fetchAnalysisReport(kind: "expense" | "revenue", params: Record<string, string>): Promise<AnalysisReport> {
+  return api.get<AnalysisReport>(`reports/${kind}-analysis?${analysisQs(params).toString()}`);
+}
+
 /** An Expense or Revenue report: the period, basis, grouping and filters as query parameters. */
 export function useAnalysisReport(kind: "expense" | "revenue", params: Record<string, string>) {
-  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== ""));
+  const qs = analysisQs(params);
   return useQuery({
     queryKey: [...KEY, "analysis", kind, qs.toString()],
     queryFn: () => api.get<AnalysisReport>(`reports/${kind}-analysis?${qs.toString()}`),

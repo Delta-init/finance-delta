@@ -7,6 +7,7 @@ import { Organization } from "../organization/organization.model";
 import { Item } from "../inventory/item.model";
 import { intakeEnrolment, updateSalesNote } from "./enrolment-intake.service";
 import { enrolmentStatusesFor } from "./enrolment-status.service";
+import { oldBooksPaymentsSince } from "./old-books-payments.service";
 import { fundingRequestStatuses as statusesOfFundingRequests, intakeFundingRequest } from "../budget/budget.service";
 import { intakeTetraDeposit, recheckTetraDeposit, withdrawTetraDeposit } from "../tetra-deposit/tetra-deposit.service";
 import { walletForHrms } from "./hrms-wallet.service";
@@ -196,6 +197,17 @@ export const crmCommissionPayouts = asyncHandler(async (req: Request, res: Respo
   if (!/^[a-z0-9-]{1,40}$/.test(crm)) throw new AppError("VALIDATION_ERROR", "crm is required");
   if (!CRM_COMMISSION_MONTH.test(month)) throw new AppError("VALIDATION_ERROR", "month is YYYY-MM");
   ok(res, await payoutsForCrm(crm, month));
+});
+
+/**
+ * GET /integrations/old-books/payments?from=YYYY-MM-DD — the old books' invoices with money paid on or after `from`,
+ * each with its salesperson's email, fee and payments (2026-11-25): counted for the salesperson in the sales CRMs and
+ * Root. Read-only.
+ */
+export const oldBooksPayments = asyncHandler(async (req: Request, res: Response) => {
+  const from = String(req.query.from ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !Number.isFinite(Date.parse(from))) throw new AppError("VALIDATION_ERROR", "from is YYYY-MM-DD");
+  ok(res, await oldBooksPaymentsSince(from));
 });
 
 /**

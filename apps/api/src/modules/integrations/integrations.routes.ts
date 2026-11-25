@@ -57,6 +57,10 @@ router.post("/tetra-deposits/recheck", c.recheckTetraDepositHandler);
 // A sales CRM's My Pay asking where finance stands on its people's commission for a month (2026-10-21).
 router.get("/crm-commission/payouts", c.crmCommissionPayouts);
 
+// The old books' payments since a day, with each salesperson's email (2026-11-25): the sales CRMs and Root count
+// them for the salesperson. Read-only.
+router.get("/old-books/payments", c.oldBooksPayments);
+
 // HRMS's wallet page asking what finance knows about one person's month (2026-11-04). Read-only.
 router.post("/hrms/wallet", c.hrmsWallet);
 

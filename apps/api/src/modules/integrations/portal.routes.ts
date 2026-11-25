@@ -13,6 +13,7 @@ import {
 import { pendingForPortal } from "./portal-pending.service";
 import { financeWatchForPortal } from "./portal-watch.service";
 import { financeReportForPortal } from "./portal-report.service";
+import { oldBooksPaymentsSince } from "./old-books-payments.service";
 
 const router = Router();
 
@@ -144,6 +145,20 @@ router.get(
     const data = await financeReportForPortal({ org: str(req.query.org), from: str(req.query.from), to: str(req.query.to) });
     if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
     res.json({ success: true, data });
+  }),
+);
+
+/**
+ * The old books' invoices with money paid on or after `from` (YYYY-MM-DD) — the Root portal's Manager TV line for
+ * the money no CRM counts (2026-11-25). Root reaches finance this way with what it already has (FINANCE_HQ_API_URL,
+ * FINANCE_HQ_SSO_SECRET); the CRMs ask the same list at /integrations/old-books/payments. Read-only.
+ */
+router.get(
+  "/old-books/payments",
+  asyncHandler(async (req: Request, res: Response) => {
+    const from = typeof req.query.from === "string" ? req.query.from : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !Number.isFinite(Date.parse(from))) throw new AppError("VALIDATION_ERROR", "from is YYYY-MM-DD");
+    res.json({ success: true, data: await oldBooksPaymentsSince(from) });
   }),
 );
 

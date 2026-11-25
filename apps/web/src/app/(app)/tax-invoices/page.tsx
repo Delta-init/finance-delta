@@ -21,6 +21,7 @@ import { useCurrency } from "@/lib/currency-context";
 import { downloadTaxInvoicePdf } from "@/features/invoices/invoice-pdf";
 import { useTaxDocuments, useTaxInvoices, type ProformaRow, type TaxDocumentRow, type TaxInvoiceRow } from "@/features/tax-invoices/api";
 import { Download, FileCheck2, Search } from "lucide-react";
+import { UserPicker } from "@/features/users/UserPicker";
 
 type Tab = "all" | "tis" | "proformas";
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -132,7 +133,13 @@ export default function TaxInvoicesPage() {
   // with a payment by it, a TI by its own payment's, an invoice by any of its payments'.
   const [methodParam, setMethod] = useUrlParam("method", "all");
   const method = (PAYMENT_METHODS as readonly string[]).includes(methodParam) ? methodParam : "all";
-  const params = { from: paid.from || undefined, to: paid.to || undefined, q: q || undefined, method: method === "all" ? undefined : method };
+  // One salesperson's (2026-11-25: "add a salesperson filter … in the pro-forma tax invoice page also"), on every tab:
+  // the invoice's salesperson — for a TI, its pro-forma's.
+  const [salespersonId, setSalespersonId] = useUrlParam("salesperson", "");
+  const params = {
+    from: paid.from || undefined, to: paid.to || undefined, q: q || undefined, method: method === "all" ? undefined : method,
+    salespersonId: /^[a-f\d]{24}$/i.test(salespersonId) ? salespersonId : undefined,
+  };
   const { data, isLoading, isPlaceholderData } = useTaxInvoices(params);
   const { data: org } = useOrganization();
   const [page, setPage] = useState(1);
@@ -152,7 +159,7 @@ export default function TaxInvoicesPage() {
     paidIn: paidIn === "all" ? undefined : paidIn,
   };
   const docs = useTaxDocuments({ ...docParams, page: tab === "all" ? page : 1, pageSize });
-  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending, paidIn, method]);
+  useEffect(() => setPage(1), [tab, paid.from, paid.to, q, docType, pending, paidIn, method, salespersonId]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function pdf(t: Pick<TaxInvoiceRow, "number" | "invoiceId" | "paymentId" | "customerId">) {
@@ -426,6 +433,15 @@ export default function TaxInvoicesPage() {
               {paymentMethodChoices(method).map((m) => <SelectItem key={m} value={m}>{paymentMethodLabel(m)}</SelectItem>)}
             </SelectContent>
           </Select>
+        </Field>
+        <Field label="Salesperson">
+          <UserPicker
+            value={salespersonId}
+            onChange={(id) => setSalespersonId(id)}
+            clearLabel="All"
+            fallbackLabel={data?.proformas.find((p) => p.salespersonId === salespersonId)?.salespersonName}
+            className="w-[180px]"
+          />
         </Field>
         {tab === "all" && (
           <>

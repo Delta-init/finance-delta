@@ -28,7 +28,8 @@ export const taxInvoices = asyncHandler(async (req, res) => {
   const { listProformasAndTaxInvoices } = await import("./payment-tax-invoice");
   const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
   const method = typeof req.query.method === "string" && /^[a-z_]{2,40}$/.test(req.query.method) ? req.query.method : undefined;
-  ok(res, await listProformasAndTaxInvoices(orgId(req), { from: day(req.query.from), to: day(req.query.to), q: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : undefined, method }));
+  const salespersonId = typeof req.query.salespersonId === "string" && /^[a-f\d]{24}$/i.test(req.query.salespersonId) ? req.query.salespersonId : undefined;
+  ok(res, await listProformasAndTaxInvoices(orgId(req), { from: day(req.query.from), to: day(req.query.to), q: typeof req.query.q === "string" ? req.query.q.slice(0, 100) : undefined, method, salespersonId }));
 });
 
 /** …→ All tax documents: invoices and payment tax invoices in one list, a page at a time, with what they come to. */

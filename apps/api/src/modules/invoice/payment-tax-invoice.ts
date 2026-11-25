@@ -308,6 +308,8 @@ export async function emailTaxInvoices(orgId: string, invoiceId: unknown, paymen
 
 export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
+  /** The salesperson's id (2026-11-25), for the page's salesperson filter. */
+  salespersonId: string | null;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
   /** Of what is paid, what was paid in other currencies — a line each — and what all of that was recorded as (2026-11-13). */
@@ -330,8 +332,11 @@ export interface TaxInvoiceRow {
  */
 export async function listProformasAndTaxInvoices(
   orgId: string,
-  /** `method` (2026-11-18): only pro-formas with a payment by it, and only the tax invoices of payments by it. */
-  opts: { from?: string; to?: string; q?: string; method?: string } = {},
+  /**
+   * `method` (2026-11-18): only pro-formas with a payment by it, and only the tax invoices of payments by it.
+   * `salespersonId` (2026-11-25): only one salesperson's pro-formas, and their tax invoices.
+   */
+  opts: { from?: string; to?: string; q?: string; method?: string; salespersonId?: string } = {},
 ): Promise<{ proformas: ProformaRow[]; taxInvoices: TaxInvoiceRow[]; totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -350,8 +355,9 @@ export async function listProformasAndTaxInvoices(
     "proforma.at": { $exists: true },
     status: { $ne: "void" },
     ...(method ? { "payments.method": method } : {}),
+    ...(opts.salespersonId ? { salespersonId: new Types.ObjectId(opts.salespersonId) } : {}),
     ...(ranged ? { $or: [{ issueDate: range }, { "payments.paidOn": range }, { "cancelledTaxInvoices.paidOn": range }] } : {}),
-  }).select("invoiceNumber customerId customerName salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma payments cancelledTaxInvoices")
+  }).select("invoiceNumber customerId customerName salespersonId salespersonName enrolment.course lineItems.description issueDate currency totalMinor taxTotalMinor amountPaidMinor balanceMinor status proforma payments cancelledTaxInvoices")
     .sort({ issueDate: -1, invoiceNumber: -1 }).lean<any[]>();
 
   const proformas: ProformaRow[] = [];
@@ -383,7 +389,7 @@ export async function listProformasAndTaxInvoices(
     if ((!ranged || inRange(d.issueDate) || tis.some((t) => byMethod(t) && inRange(t.paidOn))) && matches(course, ...tis.map((t) => t.number))) {
       proformas.push({
         id: base.invoiceId, invoiceNumber: base.invoiceNumber, customerId: base.customerId, customerName: base.customerName, course,
-        salespersonName: String(d.salespersonName ?? ""), issueDate: day(d.issueDate), currency: base.currency,
+        salespersonName: String(d.salespersonName ?? ""), salespersonId: d.salespersonId ? String(d.salespersonId) : null, issueDate: day(d.issueDate), currency: base.currency,
         totalMinor: d.totalMinor ?? 0, taxTotalMinor: d.taxTotalMinor ?? 0, amountPaidMinor: d.amountPaidMinor ?? 0, balanceMinor: d.balanceMinor ?? 0,
         status: String(d.status ?? ""), taxInvoices: tis.filter((t) => !t.cancelled).map((t) => t.number), proformaAt: new Date(d.proforma.at).toISOString(),
         foreign: paidInOtherCurrencies(d.payments, base.currency).lines, foreignRecordedMinor: paidInOtherCurrencies(d.payments, base.currency).recordedMinor,
@@ -451,7 +457,7 @@ export interface TaxDocumentTotals {
  */
 export async function listTaxDocuments(
   orgId: string,
-  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: string; method?: string; page?: number; pageSize?: number } = {},
+  opts: { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: boolean; paidIn?: string; method?: string; salespersonId?: string; page?: number; pageSize?: number } = {},
 ): Promise<{ rows: TaxDocumentRow[]; total: number; page: number; pageSize: number; totals: Record<string, TaxDocumentTotals> }> {
   const { Invoice } = await import("./invoice.model");
   const { Types } = await import("mongoose");
@@ -493,6 +499,8 @@ export async function listTaxDocuments(
         ...(opts.type === "invoice" ? invoices : opts.type === "ti" ? proformas : { $or: [invoices, proformas] }),
         ...(opts.pending ? { balanceMinor: { $gt: 0 } } : {}),
         ...(method ? { "payments.method": method } : {}),
+        // One salesperson's (2026-11-25): an invoice's own, a TI its pro-forma's.
+        ...(opts.salespersonId ? { salespersonId: new Types.ObjectId(opts.salespersonId) } : {}),
       },
     },
     // What was paid on the invoice in other currencies: each such payment, then a line per currency.

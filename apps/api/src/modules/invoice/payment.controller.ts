@@ -1,8 +1,17 @@
 import type { Request } from "express";
+import { Types } from "mongoose";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import { getPayment, listPayments, paymentSummary, type PaymentFilters } from "./payment.service";
 
 const orgId = (req: Request) => req.auth!.organizationId;
+
+/** One salesperson's payments (2026-11-25): an id, else refused rather than silently showing everyone's. */
+function salespersonOf(req: Request): string | undefined {
+  const v = typeof req.query.salespersonId === "string" ? req.query.salespersonId.trim() : "";
+  if (!v) return undefined;
+  if (!Types.ObjectId.isValid(v) || !/^[a-f\d]{24}$/i.test(v)) throw new AppError("VALIDATION_ERROR", "Invalid salesperson");
+  return v;
+}
 
 /** The list's filters, read the same way for the table and its cards. */
 const filtersOf = (req: Request): PaymentFilters => ({
@@ -11,6 +20,7 @@ const filtersOf = (req: Request): PaymentFilters => ({
   dateFrom: req.query.dateFrom as string | undefined,
   dateTo: req.query.dateTo as string | undefined,
   q: req.query.q as string | undefined,
+  salespersonId: salespersonOf(req),
 });
 
 export const list = asyncHandler(async (req, res) => {

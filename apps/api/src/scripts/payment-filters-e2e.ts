@@ -11,6 +11,8 @@
  *   - an expense matches by its method and its account (link, or name on an older one);
  *   - another organization's account of the same name is never matched;
  *   - the cards count what the table lists, under these filters too.
+ *   - (2026-11-25) the Payments list and its cards, and the pro-forma & tax invoice lists, by salesperson — the
+ *     invoice's (a TI its pro-forma's); each payment row says whose it is; a salesperson that is not an id is refused.
  *
  * Run through scripts/payment-filters-e2e.sh (throwaway mongod, no .env anywhere).
  */
@@ -26,8 +28,10 @@ const { Invoice } = await import("../modules/invoice/invoice.model");
 const { Expense } = await import("../modules/expense/expense.model");
 const { BankAccount } = await import("../modules/banking/bank-account.model");
 const inv = await import("../modules/invoice/invoice.service");
+const payments = await import("../modules/invoice/payment.service");
+const taxes = await import("../modules/invoice/payment-tax-invoice");
 const ex = await import("../modules/expense/expense.service");
-const { invoiceQuerySchema, expenseQuerySchema } = await import("@delta/shared");
+const { invoiceQuerySchema, expenseQuerySchema, taxDocumentQuerySchema } = await import("@delta/shared");
 
 let failures = 0, checks = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -121,6 +125,38 @@ await exps("By card from Delta Petty", { paymentMethod: "card", bankAccountId: S
 await exps("From no account", { bankAccountId: "none" }, ["EXP-4"]);
 await exps("Another organization's account", { bankAccountId: String(ELSEWHERE) }, []);
 await exps("No filter", {}, ["EXP-1", "EXP-2", "EXP-3", "EXP-4"]);
+
+/* ── 3 ── */
+step("3. By salesperson: Payments, pro-formas and tax invoices (2026-11-25)");
+const ben = new Types.ObjectId();
+const ti = (number: string) => ({ number, netMinor: 9_524, taxMinor: 476, issuedAt: new Date("2026-11-10") });
+const doc = (o: { who: Types.ObjectId; name: string; proforma?: boolean; tis?: string[] }) => Invoice.collection.insertOne({
+  organizationId: ORG, invoiceNumber: `IN-${String(++n).padStart(5, "0")}`, customerId: new Types.ObjectId(), customerName: `Client ${n}`,
+  salespersonId: o.who, salespersonName: o.name, issueDate: new Date("2026-11-10"), dueDate: new Date("2999-01-01"), currency: "AED",
+  status: "partial", totalMinor: 30_000, amountPaidMinor: 10_000 * (o.tis?.length || 1), balanceMinor: 30_000 - 10_000 * (o.tis?.length || 1), lineItems: [],
+  ...(o.proforma ? { proforma: { at: new Date("2026-11-10") } } : {}),
+  payments: (o.tis?.length ? o.tis : [""]).map((t) => ({ ...pay({ method: "card", bank: BANK }), paidOn: new Date("2026-11-10"), ...(t ? { taxInvoice: ti(t) } : {}) })),
+  createdAt: new Date(), updatedAt: new Date(),
+});
+await doc({ who: ben, name: "Ben" });                               // IN-00008 Ben's invoice, paid by card
+await doc({ who: ben, name: "Ben", proforma: true, tis: ["TI-00001"] });   // IN-00009 Ben's pro-forma, one TI
+await doc({ who: anna, name: "Anna", proforma: true, tis: ["TI-00002"] }); // IN-00010 Anna's pro-forma, one TI
+const bens = await payments.listPayments(String(ORG), { salespersonId: String(ben), limit: 100 });
+check("Payments: Ben's only — IN-00008, IN-00009", j(bens.data.map((r) => r.invoiceNumber).sort()) === j(["IN-00008", "IN-00009"]), j(bens.data));
+check("…each row says whose it is", bens.data.every((r) => r.salespersonName === "Ben" && r.salespersonId === String(ben)), j(bens.data));
+const benCards = await payments.paymentSummary(String(ORG), { salespersonId: String(ben) });
+check("…the cards count the same (2)", benCards.count === 2 && benCards.count === bens.meta.total, j(benCards));
+const everyone = await payments.listPayments(String(ORG), { limit: 100 });
+check("Payments with no salesperson chosen: everyone's, Anna's named too", everyone.meta.total > bens.meta.total && everyone.data.some((r) => r.salespersonName === "Anna"), j(everyone.meta));
+const docs = await taxes.listTaxDocuments(String(ORG), { salespersonId: String(ben), pageSize: 100 });
+const docNums = docs.rows.map((r: any) => r.number ?? r.invoiceNumber).sort();
+check("All tax documents: Ben's invoice and his TI only — not Anna's TI-00002", docNums.includes("TI-00001") && !docNums.includes("TI-00002") && docs.rows.every((r: any) => r.salespersonName === undefined || r.salespersonName === "Ben"), j(docs.rows.map((r: any) => [r.number, r.invoiceNumber, r.salespersonName])));
+const pf = await taxes.listProformasAndTaxInvoices(String(ORG), { salespersonId: String(ben) });
+check("Pro-formas tab: Ben's IN-00009 only, with his id", j(pf.proformas.map((r) => r.invoiceNumber)) === j(["IN-00009"]) && pf.proformas[0]?.salespersonId === String(ben), j(pf.proformas));
+check("Tax invoices tab: Ben's TI-00001 only", j(pf.taxInvoices.map((r) => r.number)) === j(["TI-00001"]), j(pf.taxInvoices));
+const allPf = await taxes.listProformasAndTaxInvoices(String(ORG), {});
+check("…no salesperson chosen: both pro-formas", allPf.proformas.length === 2 && allPf.taxInvoices.length === 2, j(allPf.proformas.map((r) => r.invoiceNumber)));
+check("a salesperson that is not an id is refused", !taxDocumentQuerySchema.safeParse({ salespersonId: "anna" }).success && taxDocumentQuerySchema.safeParse({ salespersonId: String(ben) }).success);
 
 console.log(`\n${checks - failures}/${checks} passed`);
 await mongoose.disconnect();

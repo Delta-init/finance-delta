@@ -18,6 +18,9 @@ export interface PaymentDTO {
   notes: string;
   currency: string;
   createdAt: string;
+  /** The invoice's salesperson (2026-11-25) — absent from an API before it. */
+  salespersonId?: string | null;
+  salespersonName?: string;
 }
 
 const KEY = ["payments"] as const;

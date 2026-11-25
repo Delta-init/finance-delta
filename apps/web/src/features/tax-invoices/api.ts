@@ -7,6 +7,8 @@ import { api, type PageMeta } from "@/lib/api";
 /** A pro-forma (VAT on payments received): the enrolment's invoice, not itself a tax invoice. */
 export interface ProformaRow {
   id: string; invoiceNumber: string; customerId: string; customerName: string; course: string; salespersonName: string;
+  /** The salesperson's id (2026-11-25) — absent from an API before it. */
+  salespersonId?: string | null;
   issueDate: string; currency: string; totalMinor: number; taxTotalMinor: number; amountPaidMinor: number; balanceMinor: number;
   status: string; taxInvoices: string[]; proformaAt: string;
   /** Of what is paid, what was paid in other currencies — a line each — and what all of that was recorded as (2026-11-13). */
@@ -30,12 +32,13 @@ export interface TaxInvoicesAnswer {
   totals: Record<string, { count: number; amountMinor: number; netMinor: number; taxMinor: number }>;
 }
 
-export function taxInvoicesPath(params: { from?: string; to?: string; q?: string; method?: string }) {
+/** `salespersonId` (2026-11-25): only one salesperson's pro-formas and their tax invoices. */
+export function taxInvoicesPath(params: { from?: string; to?: string; q?: string; method?: string; salespersonId?: string }) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v).map(([k, v]) => [k, String(v)])).toString();
   return `invoices/tax-invoices${qs ? `?${qs}` : ""}`;
 }
 
-export function useTaxInvoices(params: { from?: string; to?: string; q?: string; method?: string }) {
+export function useTaxInvoices(params: { from?: string; to?: string; q?: string; method?: string; salespersonId?: string }) {
   return useQuery({
     queryKey: ["invoices", "tax-invoices", params],
     queryFn: () => api.get<TaxInvoicesAnswer>(taxInvoicesPath(params)),
@@ -73,7 +76,7 @@ export interface TaxDocumentTotals {
   foreign: Array<{ currency: string; count: number; amountMinor: number; recordedMinor: number; taxMinor: number; unknownCount: number; unknownMinor: number }>;
 }
 // A type, not an interface: it goes to the API as query parameters, which want an index signature.
-export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes"; paidIn?: string; method?: string };
+export type TaxDocumentParams = { from?: string; to?: string; q?: string; type?: "invoice" | "ti"; pending?: "yes"; paidIn?: string; method?: string; salespersonId?: string };
 
 /** All tax documents (2026-11-12): invoices and payment tax invoices in one list, a page at a time from the server. */
 export function useTaxDocuments(params: TaxDocumentParams & { page: number; pageSize: number }) {

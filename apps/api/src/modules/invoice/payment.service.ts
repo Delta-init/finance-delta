@@ -17,6 +17,9 @@ export interface PaymentDTO {
   notes: string;
   currency: string;
   createdAt: string;
+  /** The invoice's salesperson (2026-11-25). */
+  salespersonId: string | null;
+  salespersonName: string;
 }
 
 /** What the Payments list is filtered by — the table and its cards alike. */
@@ -26,6 +29,8 @@ export interface PaymentFilters {
   dateFrom?: string;
   dateTo?: string;
   q?: string;
+  /** Only payments on one salesperson's invoices (2026-11-25: "add a salesperson filter in the payments area"). */
+  salespersonId?: string;
 }
 
 /**
@@ -38,6 +43,7 @@ function matchedPayments(orgId: string, params: PaymentFilters): PipelineStage[]
     "payments.0": { $exists: true },
   };
   if (params.invoiceId) invoiceMatch._id = new Types.ObjectId(params.invoiceId);
+  if (params.salespersonId) invoiceMatch.salespersonId = new Types.ObjectId(params.salespersonId);
 
   // Payment-level filters applied after $unwind
   const paymentMatch: Record<string, unknown> = {};
@@ -121,6 +127,8 @@ export async function listPayments(
           notes: { $ifNull: ["$payments.notes", ""] },
           currency: 1,
           createdAt: { $toString: "$payments.createdAt" },
+          salespersonId: { $cond: [{ $ifNull: ["$salespersonId", false] }, { $toString: "$salespersonId" }, null] },
+          salespersonName: { $ifNull: ["$salespersonName", ""] },
         },
       },
     ]),

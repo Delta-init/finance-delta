@@ -133,6 +133,8 @@ export const taxDocumentQuerySchema = z.object({
   paidIn: z.string().trim().regex(/^(own|other|[A-Za-z]{3})$/).optional(),
   /** Only those paid by one method (2026-11-18): a TI by its own payment's, an invoice by any of its payments'. */
   method: z.string().trim().regex(/^[a-z_]{2,40}$/, "Invalid payment method").optional(),
+  /** Only one salesperson's (2026-11-25): the invoice's — for a TI, its pro-forma's. */
+  salespersonId: z.string().trim().regex(/^[a-f\d]{24}$/i, "Invalid salesperson").optional(),
 });
 export type TaxDocumentQuery = z.infer<typeof taxDocumentQuerySchema>;
 

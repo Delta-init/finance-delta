@@ -24,6 +24,8 @@ import { FilterToggle } from "@/components/ui/filter-toggle";
 import { DateRangeQuick, useUrlDateRange } from "@/components/ui/date-range-quick";
 import type { ExportColumn } from "@/lib/export";
 import { CreditCard, Search, X, Printer, Trash2 } from "lucide-react";
+import { UserPicker } from "@/features/users/UserPicker";
+import { SalespersonLink } from "@/components/split-view/salesperson-link";
 
 // The list an invoice payment can actually use, so the filter cannot offer a
 // method no payment will ever have.
@@ -33,6 +35,7 @@ const PAYMENTS_EXPORT_COLUMNS: ExportColumn<PaymentDTO>[] = [
   { header: "Date", value: (p) => p.paidOn },
   { header: "Invoice", value: (p) => p.invoiceNumber },
   { header: "Customer", value: (p) => p.customerName },
+  { header: "Salesperson", value: (p) => p.salespersonName ?? "" },
   { header: "Method", value: (p) => paymentMethodLabel(p.method) },
   { header: "Account", value: (p) => p.accountName || "" },
   { header: "Reference", value: (p) => p.reference || "" },
@@ -54,11 +57,13 @@ export default function PaymentsPage() {
   const t = useTableQuery({ initialSort: { key: "paidOn", dir: "desc" } });
   // In the address bar (2026-10-22), folded away until Filters is pressed.
   const [method, setMethod] = useUrlParam("method", "all");
+  // One salesperson's payments (2026-11-25: "add a salesperson filter in the payments area") — the invoice's.
+  const [salespersonId, setSalespersonId] = useUrlParam("salesperson", "");
   // When it was paid: Today, This week, This month, Last 30 days or Custom (2026-10-22) — beside the search.
   const paid = useUrlDateRange({ fromKey: "from", toKey: "to" });
   const dateFrom = paid.from, dateTo = paid.to;
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const filterCount = countFilters(method);
+  const filterCount = countFilters(method, salespersonId);
 
 
   const queryParams = {
@@ -66,6 +71,7 @@ export default function PaymentsPage() {
     method: method === "all" ? undefined : method,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    salespersonId: salespersonId || undefined,
   };
   const { data, isLoading, isPlaceholderData } = usePayments(queryParams);
   // The cards above the table (2026-11-20): what these same filters match, per currency.
@@ -76,8 +82,8 @@ export default function PaymentsPage() {
   const del = useDeletePaymentFromList();
   const [deleting, setDeleting] = useState<PaymentDTO | null>(null);
 
-  const hasFilters = method !== "all" || paid.range !== "all" || !!t.q;
-  const clear = () => { setMethod("all"); paid.setRange("all"); t.setQ(""); };
+  const hasFilters = method !== "all" || !!salespersonId || paid.range !== "all" || !!t.q;
+  const clear = () => { setMethod("all"); setSalespersonId(""); paid.setRange("all"); t.setQ(""); };
 
   const columns: Column<PaymentDTO>[] = [
     {
@@ -101,6 +107,11 @@ export default function PaymentsPage() {
       header: "Customer",
       sortable: true,
       cell: (p) => p.customerName,
+    },
+    {
+      key: "salesperson",
+      header: "Salesperson",
+      cell: (p) => (p.salespersonName ? <SalespersonLink userId={p.salespersonId} name={p.salespersonName} /> : <span className="text-foreground-muted">—</span>),
     },
     {
       key: "method",
@@ -196,6 +207,15 @@ export default function PaymentsPage() {
               ))}
             </SelectContent>
           </Select>
+        </Field>
+        <Field label="Salesperson">
+          <UserPicker
+            value={salespersonId}
+            onChange={(id) => setSalespersonId(id)}
+            clearLabel="All"
+            fallbackLabel={data?.data.find((p) => p.salespersonId === salespersonId)?.salespersonName}
+            className="w-[180px]"
+          />
         </Field>
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clear} className="self-end">

@@ -79,7 +79,11 @@ export interface EnrolmentStatus {
   /** The course, the next instalment's date (YYYY-MM-DD, "" when nothing is owed), every payment recorded, and the CRM's balance payments with where each stands (2026-10-13). */
   course: string;
   nextDueOn: string;
-  payments: { amountMinor: number; paidOn: string; method: string; receiptNumber?: string }[];
+  /**
+   * Every payment recorded. `id`: finance's own id for it, and `taxInvoiceNumber` its tax invoice (TI-…), so a CRM can
+   * tell apart a payment accounts recorded here and bring it in once (2026-11-25).
+   */
+  payments: { id?: string; amountMinor: number; paidOn: string; method: string; receiptNumber?: string; taxInvoiceNumber?: string }[];
   balancePayments: { externalId: string; amountMinor: number; currency: string; method: string; paidOn: string; status: string; reason?: string; decidedAt?: string; decidedBy?: string; receiptNumber?: string }[];
   /**
    * The course changes the CRM asked for (2026-11-23), oldest first, each with where it stands: the course and fee
@@ -255,8 +259,10 @@ export async function enrolmentStatusesFor(orgId: unknown, source: string, exter
       course: ((i.enrolment as { course?: string } | undefined)?.course) ?? "",
       nextDueOn: ((i.balanceMinor as number) ?? 0) > 0 && i.dueDate && i.status !== "void" ? new Date(i.dueDate as unknown as string).toISOString().slice(0, 10) : "",
       payments: ((i.payments as any[]) ?? []).map((p) => ({
+        ...(p._id ? { id: String(p._id) } : {}),
         amountMinor: p.amountMinor, paidOn: p.paidOn ? new Date(p.paidOn).toISOString().slice(0, 10) : "", method: p.method,
         ...(p.receiptNumber ? { receiptNumber: p.receiptNumber } : {}),
+        ...(p.taxInvoice?.number ? { taxInvoiceNumber: p.taxInvoice.number } : {}),
       })),
       balancePayments: recorded.get(String(i._id)) ?? [],
       courseChanges: changes.get(String(i._id)) ?? [],

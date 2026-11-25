@@ -221,6 +221,12 @@ async function main() {
   check("course and next due date", s?.course === "Market Breakout" && s?.nextDueOn === plus(dayOf(0), 29) && s?.balanceMinor === 20_000, JSON.stringify(s).slice(0, 300));
   check("every payment on the invoice, with the receipt number where there is one", s?.payments?.length === 3
     && s.payments.some((p: any) => p.amountMinor === 20_000 && p.receiptNumber === approved?.decision?.receiptNumber && p.paidOn === dayOf(-1)), JSON.stringify(s?.payments));
+  // 2026-11-25: each with finance's own id and its tax invoice — a CRM brings in a payment accounts recorded here once.
+  const onInvoice = ((await inv(a.id)).payments as any[]) ?? [];
+  check("…each with finance's own id for it, and its tax invoice number where it has one",
+    (s?.payments ?? []).every((p: any) => onInvoice.some((q) => String(q._id) === p.id && (q.taxInvoice?.number ?? undefined) === p.taxInvoiceNumber))
+      && new Set((s?.payments ?? []).map((p: any) => p.id)).size === 3,
+    JSON.stringify({ status: s?.payments, invoice: onInvoice.map((q) => ({ id: q._id, ti: q.taxInvoice?.number })) }));
   const bp = s?.balancePayments ?? [];
   check("each balance payment it sent, with where it stands", bp.length === 3
     && bp[0].externalId === "pay-1" && bp[0].status === "approved" && bp[0].receiptNumber === approved?.decision?.receiptNumber && bp[0].decidedBy === "Accounts Admin"

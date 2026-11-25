@@ -14,6 +14,7 @@ import { pendingForPortal } from "./portal-pending.service";
 import { financeWatchForPortal } from "./portal-watch.service";
 import { financeReportForPortal } from "./portal-report.service";
 import { oldBooksPaymentsSince } from "./old-books-payments.service";
+import { paymentNumbersFor } from "./payment-numbers.service";
 
 const router = Router();
 
@@ -159,6 +160,20 @@ router.get(
     const from = typeof req.query.from === "string" ? req.query.from : "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !Number.isFinite(Date.parse(from))) throw new AppError("VALIDATION_ERROR", "from is YYYY-MM-DD");
     res.json({ success: true, data: await oldBooksPaymentsSince(from) });
+  }),
+);
+
+/**
+ * POST /service/payment-numbers { invoiceNumbers, externalIds? } — each invoice's payments with their tax invoice and receipt
+ * numbers (2026-11-25): the Root Manager TV export puts the TI beside each payment. Read-only; at most 2,000.
+ */
+router.post(
+  "/payment-numbers",
+  asyncHandler(async (req: Request, res: Response) => {
+    const list = Array.isArray(req.body?.invoiceNumbers) ? req.body.invoiceNumbers : null;
+    if (!list) throw new AppError("VALIDATION_ERROR", "invoiceNumbers is a list");
+    const ids = Array.isArray(req.body?.externalIds) ? req.body.externalIds.map(String) : [];
+    res.json({ success: true, data: await paymentNumbersFor(list.map(String), ids) });
   }),
 );
 

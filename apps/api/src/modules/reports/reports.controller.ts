@@ -191,5 +191,5 @@ export const expenseAnalysis = asyncHandler(async (req, res) => {
 
 /** GET /reports/revenue-analysis?from&to&basis=invoiced|collected&groupBy=salesperson&<dimension>=<key>…&q= */
 export const revenueAnalysis = asyncHandler(async (req, res) => {
-  ok(res, await getRevenueAnalysis(org(req), analysisQuery(req, REVENUE_DIMENSION_KEYS, "invoiced", "salesperson")));
+  ok(res, await getRevenueAnalysis(org(req), analysisQuery(req, REVENUE_DIMENSION_KEYS, "invoiced", "salesperson"), { userId: req.auth!.userId, isSuperAdmin: req.auth!.isSuperAdmin }));
 });

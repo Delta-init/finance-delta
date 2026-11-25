@@ -242,21 +242,92 @@ function crmOf(inv: any): { key: string; name: string } {
   return inv.external?.source ? { key: String(inv.external.source), name: String(inv.external.source) } : { key: NONE, name: "Typed in finance" };
 }
 
-export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promise<AnalysisReport> {
-  if (q.basis !== "invoiced" && q.basis !== "collected") throw new AppError("VALIDATION_ERROR", "basis must be invoiced or collected");
-  const org = oid(orgId);
-  const range = { ...(q.from ? { $gte: startOf(q.from) } : {}), ...(q.to ? { $lte: endOf(q.to) } : {}) };
-  const ranged = Object.keys(range).length > 0;
-  const inRange = (d: Date | string | undefined) => !!d && (!q.from || new Date(d) >= startOf(q.from)) && (!q.to || new Date(d) <= endOf(q.to));
-  const [currency, depts, banks] = await Promise.all([orgCurrency(orgId), departmentNames(orgId), bankNames(orgId)]);
-
-  // Each salesperson's department here.
-  const people = await User.find({ "memberships.organizationId": org }).select("memberships").lean<any[]>();
+/** Each person's department in an organization, by user id. */
+async function departmentsOfPeople(orgId: string): Promise<Map<string, string>> {
+  const people = await User.find({ "memberships.organizationId": oid(orgId) }).select("memberships").lean<any[]>();
   const deptOf = new Map<string, string>();
   for (const u of people) {
     const m = (u.memberships ?? []).find((x: any) => String(x.organizationId) === orgId);
     if (m?.departmentId) deptOf.set(String(u._id), String(m.departmentId));
   }
+  return deptOf;
+}
+
+export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery, viewer?: { userId: string; isSuperAdmin?: boolean }): Promise<AnalysisReport> {
+  if (q.basis !== "invoiced" && q.basis !== "collected") throw new AppError("VALIDATION_ERROR", "basis must be invoiced or collected");
+  const [currency, depts, deptOf] = await Promise.all([orgCurrency(orgId), departmentNames(orgId), departmentsOfPeople(orgId)]);
+  const names = new Names();
+  const { records, extraTotals } = await revenueRecords(orgId, q, names, deptOf, depts);
+  const report = finish("revenue", q, currency, records, names, REVENUE_DIMENSION_KEYS, extraTotals);
+  if (viewer) await withOtherOrganization(report, orgId, currency, q, names, deptOf, depts, viewer);
+  return report;
+}
+
+/**
+ * The other organization's money beside the report (the user, 2026-11-25: "if Bangalore received the amount, also
+ * show here and mention it's in Bangalore"): the organization keeping its books in another currency (Delta Banglore,
+ * rupees, beside Delta International's dirhams) — read for the same period, filters, search and grouping; each person
+ * is the same user in both, and their department is the one here. Its figures stay in its own currency, on the group
+ * (`other`) and in the report (`report.other`), never added to this one's. Only for someone who is in that
+ * organization too (or a super admin).
+ */
+async function withOtherOrganization(
+  report: AnalysisReport, orgId: string, currency: string, q: AnalysisQuery, names: Names,
+  deptOf: Map<string, string>, depts: Map<string, string>, viewer: { userId: string; isSuperAdmin?: boolean },
+): Promise<void> {
+  const others = await Organization.find({ _id: { $ne: oid(orgId) }, baseCurrency: { $nin: [currency, null, ""] } })
+    .select("name baseCurrency").lean<{ _id: Types.ObjectId; name: string; baseCurrency: string }[]>();
+  if (!others.length) return;
+  const me = await User.findById(viewer.userId).select("memberships").lean<{ memberships?: { organizationId: unknown }[] } | null>();
+  const mine = new Set((me?.memberships ?? []).map((m) => String(m.organizationId)));
+  const other = others.find((o) => viewer.isSuperAdmin || mine.has(String(o._id)));
+  if (!other) return;
+  const otherId = String(other._id);
+  const otherCurrency = String(other.baseCurrency).toUpperCase();
+  const { records } = await revenueRecords(otherId, q, names, deptOf, depts);
+  // Its values in the filter lists too (a person only in that organization), counted there, so they can be picked.
+  for (const dim of REVENUE_DIMENSION_KEYS) {
+    const opts = (report.options[dim] ??= []);
+    const counts = new Map<string, number>();
+    for (const r of records) counts.set(r.dims[dim] ?? NONE, (counts.get(r.dims[dim] ?? NONE) ?? 0) + 1);
+    for (const [key, count] of counts) if (!opts.some((o) => o.key === key)) opts.push({ key, name: names.name(dim, key), count });
+  }
+  const needle = (q.search ?? "").trim().toLowerCase();
+  const kept = records
+    .filter((r) => Object.entries(q.filters).every(([dim, key]) => (r.dims[dim] ?? NONE) === key))
+    .filter((r) => !needle || `${r.number} ${r.title} ${r.detail}`.toLowerCase().includes(needle))
+    .map((r) => ({ ...r, currency: otherCurrency }));
+  if (!kept.length) return;
+  const byKey = new Map<string, { amountMinor: number; count: number }>();
+  for (const r of kept) {
+    const k = r.dims[q.groupBy] ?? NONE;
+    const t = byKey.get(k) ?? { amountMinor: 0, count: 0 };
+    t.amountMinor += r.amountMinor;
+    t.count++;
+    byKey.set(k, t);
+  }
+  for (const g of report.groups) {
+    const t = byKey.get(g.key);
+    if (t) { g.other = t; byKey.delete(g.key); }
+  }
+  // Keys only the other organization has: their own rows, after this one's.
+  for (const [key, t] of [...byKey.entries()].sort((a, b) => b[1].amountMinor - a[1].amountMinor)) {
+    report.groups.push({ key, name: names.name(q.groupBy, key), count: 0, amountMinor: 0, other: t });
+  }
+  kept.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
+  report.other = {
+    organizationId: otherId, organizationName: other.name, currency: otherCurrency,
+    amountMinor: kept.reduce((s, r) => s + r.amountMinor, 0), count: kept.length, records: kept.slice(0, MAX_RECORDS),
+  };
+}
+
+/** One organization's revenue records for a query, named into `names`; departments as `deptOf` says (the report's). */
+async function revenueRecords(orgId: string, q: AnalysisQuery, names: Names, deptOf: Map<string, string>, depts: Map<string, string>) {
+  const org = oid(orgId);
+  const range = { ...(q.from ? { $gte: startOf(q.from) } : {}), ...(q.to ? { $lte: endOf(q.to) } : {}) };
+  const ranged = Object.keys(range).length > 0;
+  const inRange = (d: Date | string | undefined) => !!d && (!q.from || new Date(d) >= startOf(q.from)) && (!q.to || new Date(d) <= endOf(q.to));
+  const banks = await bankNames(orgId);
 
   const SELECT = "invoiceNumber customerId customerName salespersonId salespersonName issueDate status totalMinor baseTotalMinor balanceMinor exchangeRate payments enrolment.course enrolment.crm enrolment.academy external.source lineItems.description proforma";
   const credits = await CreditNote.find({ organizationId: org, status: { $in: ["issued", "applied"] }, ...(ranged ? { issuedAt: range } : {}) })
@@ -270,7 +341,6 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
     ] }).select(SELECT).lean<any[]>()
     : await Invoice.find({ ...invoiceFilter, ...(ranged ? { payments: { $elemMatch: { paidOn: range } } } : { "payments.0": { $exists: true } }) }).select(SELECT).lean<any[]>();
 
-  const names = new Names();
   const rate = (inv: any) => Number(inv.exchangeRate) > 0 ? Number(inv.exchangeRate) : 1;
   const invoiceDims = (inv: any, date: string): Record<string, string> => {
     const sp = inv.salespersonId ? String(inv.salespersonId) : NONE;
@@ -354,7 +424,7 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
 
   // Worked out afresh for each set of records it is given — every currency's, then the one shown (2026-11-07) — so
   // nothing is carried from one call into the next.
-  return finish("revenue", q, currency, records, names, REVENUE_DIMENSION_KEYS, (kept) => {
+  const extraTotals = (kept: AnalysisRecord[]): Partial<AnalysisReport["totals"]> => {
     let invoicedMinor = 0, creditMinor = 0, outstandingMinor = 0, collectedMinor = 0;
     if (q.basis === "invoiced") {
       invoicedMinor = kept.filter((r) => r.amountMinor >= 0 && !r.id.startsWith("cn:")).reduce((s, r) => s + r.amountMinor, 0);
@@ -372,7 +442,8 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery): Promi
     }
     collectedMinor = kept.reduce((s, r) => s + r.amountMinor, 0);
     return { collectedMinor };
-  });
+  };
+  return { records, extraTotals };
 }
 
 /** Reads the filter keys a report allows from a query string; unknown ones are refused. */

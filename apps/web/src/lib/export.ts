@@ -69,6 +69,25 @@ export function exportSheetsToExcel<T>(filename: string, columns: ExportColumn<T
   XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
 }
 
+/**
+ * A workbook whose sheets each have their own columns (2026-11-25: the Revenue report by salesperson — an overview
+ * sheet, then one sheet per person). Each column is as wide as its longest value.
+ */
+export function exportWorkbook(filename: string, sheets: { title: string; rows: Array<Array<string | number>> }[]): void {
+  const wb = XLSX.utils.book_new();
+  const used = new Set<string>();
+  for (const sheet of sheets) {
+    let name = sheet.title.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Sheet";
+    for (let i = 2; used.has(name.toLowerCase()); i++) name = `${name.slice(0, 31 - String(i).length - 1)} ${i}`;
+    used.add(name.toLowerCase());
+    const ws = XLSX.utils.aoa_to_sheet(sheet.rows);
+    const widths = (sheet.rows[0] ?? []).map((_, c) => Math.max(10, Math.min(45, Math.max(...sheet.rows.map((r) => String(r[c] ?? "").length)) + 2)));
+    ws["!cols"] = widths.map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
+}
+
 export function exportToPdf<T>(title: string, filename: string, columns: ExportColumn<T>[], rows: T[]): void {
   const { headers, body } = matrix(columns, rows);
   const doc = new jsPDF({ orientation: columns.length > 6 ? "landscape" : "portrait" });

@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronRight, Search, X, type LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, FileSpreadsheet, Search, X, type LucideIcon } from "lucide-react";
 import { ANALYSIS_DIMENSION_LABELS, type AnalysisGroup, type AnalysisRecord, type AnalysisReport } from "@delta/shared";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MoneyDisplay } from "@/components/ui/money";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { ExportButton } from "@/components/ui/export-button";
+import { exportWorkbook } from "@/lib/export";
 import { DateRangeQuick, rangeDates, useUrlDateRange } from "@/components/ui/date-range-quick";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -91,13 +92,25 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   const total = data?.totals.amountMinor ?? 0;
   // Revenue under Invoiced: collected and still owed beside each invoiced amount.
   const cash = !!data?.groups.some((g) => g.collectedMinor !== undefined);
-  const cols = cash ? 6 : 4;
+  // The other organization's money beside it (2026-11-25: Bangalore's rupees on Delta HQ's revenue), never added.
+  const other = data?.other ?? null;
+  const otherLabel = other ? placeLabel(other.organizationName) : "";
+  const cols = (cash ? 6 : 4) + (other ? 1 : 0);
 
   return (
     <div className="space-y-5 p-6">
       <PageHeader icon={config.icon} title={config.title} description={config.description}
-        action={data ? <ExportButton<AnalysisRecord> resource="" filename={`${config.kind}-report`} title={config.title} formats={["excel", "csv", "pdf"]}
-          fetchRows={async () => data.records} columns={exportColumns(config, data, hidden)} /> : null} />
+        action={data ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {config.kind === "revenue" && (
+              <Button variant="outline" size="sm" onClick={() => exportBySalesperson(config, data, basis, period.from, period.to)}>
+                <FileSpreadsheet className="mr-1.5 h-4 w-4 text-success" /> Excel by salesperson
+              </Button>
+            )}
+            <ExportButton<AnalysisRecord> resource="" filename={`${config.kind}-report`} title={config.title} formats={["excel", "csv", "pdf"]}
+              fetchRows={async () => data.records} columns={exportColumns(config, data, hidden)} />
+          </div>
+        ) : null} />
 
       {/* Period, basis and grouping */}
       <div className="flex flex-wrap items-center gap-3">
@@ -201,6 +214,15 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                   })}
                 </CardContent></Card>
               ))}
+            {other && !isLoading && (
+              <Card className="border-primary/40"><CardContent className="space-y-1.5 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                  {basis === "collected" ? "Collected" : "Invoiced"} in {otherLabel} <PlaceTag label={otherLabel} />
+                </p>
+                <MoneyDisplay minor={other.amountMinor} currency={other.currency} className="mt-1 block text-2xl font-bold tabular-nums text-primary" />
+                <p className="text-xs text-foreground-muted">{other.count.toLocaleString()} {basis === "collected" ? "payment" : "record"}{other.count === 1 ? "" : "s"} · {other.organizationName} · in {other.currency}, not added above</p>
+              </CardContent></Card>
+            )}
           </div>
 
           <div className={cn("grid gap-5 transition-opacity lg:grid-cols-5", refreshing && "pointer-events-none opacity-60")}>
@@ -213,6 +235,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                     <tr><th className="px-4 py-2 text-left font-medium">{label(groupBy)}</th><th className="px-3 py-2 text-right font-medium">Count</th>
                       <th className="px-3 py-2 text-right font-medium">{cash ? "Invoiced" : "Amount"}</th>
                       {cash && <><th className="px-3 py-2 text-right font-medium">Collected</th><th className="px-3 py-2 text-right font-medium">Still owed</th></>}
+                      {other && <th className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right font-medium">{otherLabel} ({other.currency})</th>}
                       <th className="px-4 py-2 text-right font-medium">Share</th></tr>
                   </thead>
                   <tbody>
@@ -220,7 +243,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                     {!isLoading && !data?.groups.length && <tr><td colSpan={cols} className="px-4 py-10 text-center text-foreground-muted">Nothing in this period with these filters.</td></tr>}
                     {data?.groups.map((g) => (
                       <Fragment key={g.key}>
-                        <GroupRow g={g} total={total} currency={currency} cash={cash} onOpen={() => setOpen({ g, dim: groupBy })}
+                        <GroupRow g={g} total={total} currency={currency} cash={cash} other={other ? { currency: other.currency, label: otherLabel } : undefined} onOpen={() => setOpen({ g, dim: groupBy })}
                           expander={g.sub?.length ? (
                             <button type="button" onClick={(e) => { e.stopPropagation(); setExpanded(expanded === g.key ? null : g.key); }}
                               className="text-foreground-subtle hover:text-foreground" aria-label="Subcategories">
@@ -228,7 +251,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                             </button>
                           ) : null} />
                         {expanded === g.key && g.sub?.map((s) => (
-                          <GroupRow key={s.key} g={s} total={total} currency={currency} nested
+                          <GroupRow key={s.key} g={s} total={total} currency={currency} nested other={other ? { currency: other.currency, label: otherLabel } : undefined}
                             onOpen={() => setOpen({ g: { ...s, name: `${g.name} › ${s.name}` }, dim: "subcategory" })} />
                         ))}
                       </Fragment>
@@ -237,7 +260,10 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                   {!!data?.groups.length && (
                     <tfoot className="border-t border-border font-semibold">
                       <tr><td className="px-4 py-2">Total</td><td className="px-3 py-2 text-right tabular-nums">{data.totals.count}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={total} currency={currency} /></td><td className="px-4 py-2" /></tr>
+                        <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={total} currency={currency} /></td>
+                        {cash && <><td className="px-3 py-2" /><td className="px-3 py-2" /></>}
+                        {other && <td className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right text-primary"><MoneyDisplay minor={other.amountMinor} currency={other.currency} /></td>}
+                        <td className="px-4 py-2" /></tr>
                     </tfoot>
                   )}
                 </table>
@@ -303,6 +329,14 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
             </DialogHeader>
             <Records records={data.records.filter((r) => (r.dims[open.dim] ?? "__none") === open.g.key)}
               currency={currency} capped={data.capped} onOpen={(r) => router.push(r.href)} compact />
+            {other && open.g.other && (
+              <div className="space-y-2 border-t border-border pt-3">
+                <p className="text-sm font-medium">In {otherLabel} <PlaceTag label={otherLabel} /> · {open.g.other.count} · <MoneyDisplay minor={open.g.other.amountMinor} currency={other.currency} className="text-primary" /></p>
+                <Records records={other.records.filter((r) => (r.dims[open.dim] ?? "__none") === open.g.key)}
+                  currency={other.currency} capped={false} onOpen={() => {}} compact />
+                <p className="text-xs text-foreground-muted">These are in {other.organizationName} — switch to it to open one.</p>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       )}
@@ -310,19 +344,25 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   );
 }
 
-function GroupRow({ g, total, currency, cash, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; cash?: boolean; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
+function GroupRow({ g, total, currency, cash, other, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; cash?: boolean; other?: { currency: string; label: string }; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
+  const onlyThere = !!g.other && g.count === 0 && g.amountMinor === 0;
   const share = total ? Math.round((g.amountMinor / total) * 1000) / 10 : 0;
   return (
     <tr className={cn("cursor-pointer border-t border-border hover:bg-surface-muted", nested && "bg-surface-muted/50 text-[13px]")} onClick={onOpen}>
       <td className={cn("px-4 py-2", nested && "pl-11")}>
-        <div className="flex items-center gap-2">{expander}<span className={cn(!nested && "font-medium")}>{g.name}</span></div>
+        <div className="flex items-center gap-2">{expander}<span className={cn(!nested && "font-medium")}>{g.name}</span>{onlyThere && other && <PlaceTag label={`${other.label} only`} />}</div>
       </td>
-      <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{g.count}</td>
-      <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={g.amountMinor} currency={currency} className={cn(g.amountMinor < 0 && "text-danger")} /></td>
+      <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{g.count}{g.other ? <span className="ml-1 text-xs text-primary">+{g.other.count}</span> : null}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-right">{onlyThere ? <span className="text-foreground-subtle">—</span> : <MoneyDisplay minor={g.amountMinor} currency={currency} className={cn(g.amountMinor < 0 && "text-danger")} />}</td>
       {cash && <>
         <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={g.collectedMinor ?? 0} currency={currency} className="text-success" /></td>
         <td className="whitespace-nowrap px-3 py-2 text-right">{(g.owedMinor ?? 0) > 0 ? <MoneyDisplay minor={g.owedMinor ?? 0} currency={currency} className="text-warning" /> : <span className="text-foreground-subtle">—</span>}</td>
       </>}
+      {other && (
+        <td className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right">
+          {g.other ? <span className="inline-flex items-center gap-1.5"><MoneyDisplay minor={g.other.amountMinor} currency={other.currency} className="text-primary" /><PlaceTag label={other.label} /></span> : <span className="text-foreground-subtle">—</span>}
+        </td>
+      )}
       <td className="px-4 py-2">
         <div className="flex items-center justify-end gap-2">
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-muted"><span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, share))}%` }} /></span>
@@ -400,4 +440,60 @@ function exportColumns(config: AnalysisConfig, data: AnalysisReport, hidden: str
       { header: `Still owed (${data.currency})`, value: (r: AnalysisRecord) => (r.owedMinor === undefined ? "" : r.owedMinor / 100) },
     ] : []),
   ];
+}
+
+/** "Delta Banglore" → "Bangalore"; any other organization by its own name. */
+function placeLabel(orgName: string): string {
+  return /bang?a?lore/i.test(orgName) ? "Bangalore" : orgName;
+}
+
+function PlaceTag({ label: text }: { label: string }) {
+  return <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">{text}</span>;
+}
+
+/**
+ * Excel by salesperson (the user, 2026-11-25: "excel export by each employee and total, each a separate sheet, and an
+ * overview with each employee and amount"): an Overview sheet — each salesperson's count and amount here and, beside,
+ * in the other organization (rupees, never added) — with a total; then a sheet per salesperson with every record of
+ * theirs, both organizations', and their totals. Exactly the records on screen (period, basis, filters, search).
+ */
+function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis: string, from: string, to: string) {
+  const other = data.other ?? null;
+  const place = other ? placeLabel(other.organizationName) : "";
+  const nameOf = (dim: string, key: string | undefined) => data.options[dim]?.find((o) => o.key === key)?.name ?? key ?? "—";
+  type Mine = { name: string; here: AnalysisRecord[]; there: AnalysisRecord[] };
+  const people = new Map<string, Mine>();
+  const add = (r: AnalysisRecord, where: "here" | "there") => {
+    const key = r.dims.salesperson ?? "__none";
+    const p = people.get(key) ?? { name: nameOf("salesperson", key), here: [], there: [] };
+    p[where].push(r);
+    people.set(key, p);
+  };
+  for (const r of data.records) add(r, "here");
+  for (const r of other?.records ?? []) add(r, "there");
+  const sum = (rs: AnalysisRecord[]) => Math.round(rs.reduce((s, r) => s + r.amountMinor, 0)) / 100;
+  const list = [...people.values()].sort((a, b) => sum(b.here) - sum(a.here) || sum(b.there) - sum(a.there) || a.name.localeCompare(b.name));
+  const what = basis === "collected" ? "Collected" : "Invoiced";
+  const period = from || to ? `${from || "…"} to ${to || "…"}` : "All time";
+
+  const overview: Array<Array<string | number>> = [
+    [`${config.title} — ${what} by salesperson`, period],
+    [],
+    ["Salesperson", "Count", `Amount (${data.currency})`, ...(other ? [`${place} count`, `${place} (${other.currency})`] : [])],
+    ...list.map((p) => [p.name, p.here.length, sum(p.here), ...(other ? [p.there.length, sum(p.there)] : [])]),
+    ["Total", data.records.length, sum(data.records), ...(other ? [other.records.length, sum(other.records)] : [])],
+  ];
+  if (other) overview.push([], [`${place} figures are ${other.organizationName}'s, in ${other.currency} — not converted or added to the ${data.currency} column.`]);
+  if (data.capped) overview.push([], [`Only the newest ${data.records.length.toLocaleString()} records are listed — narrow the period for every one.`]);
+
+  const sheetOf = (p: Mine) => {
+    const head = ["Date", "Number", "For", "Details", "Course / product", "Where", `Amount (${data.currency})`, ...(other ? [`${place} (${other.currency})`] : [])];
+    const row = (r: AnalysisRecord, there: boolean) => [
+      r.date, r.number, r.title, r.detail, nameOf("course", r.dims.course), there ? place : data.currency === "AED" ? "Dubai" : "Here",
+      there ? "" : r.amountMinor / 100, ...(other ? [there ? r.amountMinor / 100 : ""] : []),
+    ];
+    const rows = [...p.here.map((r) => row(r, false)), ...p.there.map((r) => row(r, true))].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    return { title: p.name, rows: [[p.name, period], [], head, ...rows, ["Total", `${p.here.length + p.there.length} records`, "", "", "", "", sum(p.here), ...(other ? [sum(p.there)] : [])]] };
+  };
+  exportWorkbook(`${config.kind}-by-salesperson${from ? `-${from}` : ""}${to ? `-${to}` : ""}`, [{ title: "Overview", rows: overview }, ...list.map(sheetOf)]);
 }

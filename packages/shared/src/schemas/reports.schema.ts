@@ -217,6 +217,11 @@ export type AnalysisGroup = {
   owedMinor?: number;
   /** A category's subcategories, when grouped by category. */
   sub?: AnalysisGroup[];
+  /**
+   * Revenue (2026-11-25): the same key's money in the other organization (Delta Banglore, in rupees) — shown beside,
+   * never added. A group with only this has count and amountMinor 0.
+   */
+  other?: { amountMinor: number; count: number };
 };
 
 export type AnalysisReport = {
@@ -252,6 +257,19 @@ export type AnalysisReport = {
   byCurrency?: Array<AnalysisReport["totals"] & { currency: string }>;
   /** More records matched than are listed (the newest are). */
   capped: boolean;
+  /**
+   * Revenue (the user, 2026-11-25: "if Bangalore received the amount, also show here and mention it's in Bangalore"):
+   * the same period, filters and grouping in the organization keeping its books in rupees — its own currency, never
+   * converted or added to the figures above. Absent: there is none, or the viewer isn't in it.
+   */
+  other?: {
+    organizationId: string;
+    organizationName: string;
+    currency: string;
+    amountMinor: number;
+    count: number;
+    records: AnalysisRecord[];
+  };
 };
 
 // ── 8.2 Payables ──────────────────────────────────────────────────────────────

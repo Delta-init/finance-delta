@@ -16,6 +16,7 @@ import {
   useInvoiceSummary,
 } from "@/features/reports/api";
 import type { AgedItem, InvoiceSummaryGroup } from "@delta/shared";
+import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -142,6 +143,8 @@ export default function ReceivablesPage() {
         <span className="text-foreground-subtle">→</span>
         <DatePicker value={to} onChange={setTo} placeholder="To" />
       </div>
+
+      <OtherCurrencies lines={[paymentsData?.otherCurrencies, agedData?.otherCurrencies, summaryData?.otherCurrencies]} />
 
       {/* ── Payments received ── */}
       <section className="space-y-3">

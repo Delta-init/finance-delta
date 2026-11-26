@@ -1,6 +1,14 @@
 // ── Shared report response types ──────────────────────────────────────────────
 // No Zod needed — these are server-computed outputs, not user inputs.
 
+/**
+ * Money in a currency other than the organization's, left out of a report's figures (the user, 2026-11-26: "fix the
+ * same currency mixing in the dashboard and the other reports too" — each added every amount whatever its currency,
+ * so rupees went into a dirham total as dirhams). A line per currency and per figure it would have gone into (`what`),
+ * as recorded — never converted, never added in.
+ */
+export type OtherCurrencyLine = { currency: string; what: string; amountMinor: number; count: number };
+
 export type AgedItem = {
   id: string;
   number: string;
@@ -29,6 +37,8 @@ export type ReceivedPaymentsReport = {
   currency: string;
   totalMinor: number;
   byPeriod: { label: string; amountMinor: number }[];
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 export type AgedReceivablesReport = {
@@ -40,6 +50,8 @@ export type AgedReceivablesReport = {
   band61to90: AgedItem[];
   band90plus: AgedItem[];
   totals: AgedTotals;
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 export type InvoiceSummaryGroup = {
@@ -57,6 +69,8 @@ export type InvoiceSummaryReport = {
   currency: string;
   groupBy: "salesperson" | "customer" | "tag" | "department";
   items: InvoiceSummaryGroup[];
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 // ── 8.1d Daily income / expense / revenue ─────────────────────────────────────
@@ -166,6 +180,8 @@ export type DashboardBreakdown = {
   count: number;
   groups: DailyBreakdownGroup[];
   records: DailyBreakdownRecord[];
+  /** What is in another currency than the organization's: apart, as recorded; not in the total, groups or records. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 // ── Expense and Revenue reports (the user, 2026-10-24) ───────────────────────
@@ -307,6 +323,8 @@ export type MadePaymentsReport = {
   currency: string;
   totalMinor: number;
   byVendor: { vendorId: string; vendorName: string; amountMinor: number }[];
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 export type AgedPayablesReport = {
@@ -318,17 +336,28 @@ export type AgedPayablesReport = {
   band61to90: AgedItem[];
   band90plus: AgedItem[];
   totals: AgedTotals;
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 // ── 8.3 Profit & Loss ─────────────────────────────────────────────────────────
 
 export type PLCategory = { label: string; amountMinor: number };
 
+/**
+ * Expenses and supplier bills in a currency other than the organization's (2026-11-26): INR 20,000 of rent was added
+ * into an AED total as 20,000 dirhams. They are out of `expenses.total`, its breakdown and the net profit, and given
+ * here as they were recorded — a line per currency, in that currency, never converted or added in.
+ */
+export type PLOtherCurrency = { currency: string; amountMinor: number; count: number; breakdown: PLCategory[] };
+
 export type PLPeriod = {
   from: string;
   to: string;
-  income: { total: number; breakdown: PLCategory[] };
-  expenses: { total: number; breakdown: PLCategory[] };
+  /** `total`: invoices in the organization's own currency only; one in another currency is in `otherCurrencies`. */
+  income: { total: number; breakdown: PLCategory[]; otherCurrencies?: OtherCurrencyLine[] };
+  /** `total` and `breakdown`: the organization's own currency only. `otherCurrencies`: the rest, apart — absent when there is none. */
+  expenses: { total: number; breakdown: PLCategory[]; otherCurrencies?: PLOtherCurrency[] };
   netProfitMinor: number;
 };
 
@@ -351,6 +380,8 @@ export type BalanceSheetReport = {
     total: number;
   };
   equity: number;
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 // ── 8.5 Cash Flow ─────────────────────────────────────────────────────────────
@@ -363,6 +394,8 @@ export type CashFlowReport = {
   investing: { net: number };
   financing: { net: number };
   netChange: number;
+  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 // ── 8.6 Tax ───────────────────────────────────────────────────────────────────
@@ -392,7 +425,8 @@ export type SalesByItemReport = {
   to: string;
   currency: string;
   items: SalesItemRow[];
-  grandTotalMinor: number;
+  grandTotalMinor: number;  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 export type ExpenseCategoryRow = {
@@ -406,7 +440,8 @@ export type ExpenseByCategoryReport = {
   to: string;
   currency: string;
   categories: ExpenseCategoryRow[];
-  grandTotalMinor: number;
+  grandTotalMinor: number;  /** What is in another currency than the organization's — apart, as recorded; not in the figures above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 };
 
 export type CustomerStatementLine = {

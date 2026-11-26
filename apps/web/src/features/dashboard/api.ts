@@ -2,6 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { DashboardBreakdown, DashboardBreakdownKind } from "@delta/shared";
 import { api, qs } from "@/lib/api";
+import type { OtherCurrencyLine } from "@delta/shared";
 
 export interface DashboardStats {
   currency: string;
@@ -25,10 +26,14 @@ export interface DashboardStats {
   recentInvoices: Array<{
     id: string; number: string; customerName: string;
     status: string; dueDate: string; totalMinor: number; balanceMinor: number;
+    /** The invoice's own currency (2026-11-26); absent from an older API. */
+    currency?: string;
   }>;
   topCustomers: Array<{ name: string; revenueMinor: number; invoiceCount: number }>;
   expenseBreakdown: Array<{ category: string; categoryKey?: string; totalMinor: number }>;
   aging: { current: number; band1to30: number; band31to60: number; band61to90: number; band90plus: number; total: number };
+  /** What is in another currency than the organization's (2026-11-26): apart, not in any figure above. Absent: none. */
+  otherCurrencies?: OtherCurrencyLine[];
 }
 
 export function useDashboardStats() {

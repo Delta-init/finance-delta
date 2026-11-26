@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { hasPermission, type Permission } from "@delta/shared";
 import { SectionCards } from "@/components/dashboard/section-cards";
+import { DashboardOtherCurrencies } from "@/components/dashboard/other-currencies";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
 import { RecentInvoices } from "@/components/dashboard/recent-invoices";
 import { TopCustomers } from "@/components/dashboard/top-customers";
@@ -66,6 +67,8 @@ export default async function DashboardPage() {
       {/* Every card, chart and list below opens where its figure came from (2026-10-26). */}
       <DashboardBreakdownProvider>
       <SectionCards />
+      {/* What the cards leave out: money in another currency than the organization's, apart (2026-11-26). */}
+      <DashboardOtherCurrencies />
 
       {/* What the PSPs still hold for us, per account (2026-11-06). Nothing without PSP accounts or banking access. */}
       {can("banking:read") && <PspUnsettledCard />}

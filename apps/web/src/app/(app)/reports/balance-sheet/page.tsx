@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useBalanceSheet } from "@/features/reports/api";
+import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 
@@ -60,6 +61,8 @@ export default function BalanceSheetPage() {
         <span className="text-sm text-foreground-muted">As of date:</span>
         <DatePicker value={asOf} onChange={setAsOf} placeholder="Select date" />
       </div>
+
+      <OtherCurrencies lines={data?.otherCurrencies} />
 
       {/* Summary row */}
       <div className="grid gap-4 sm:grid-cols-3">

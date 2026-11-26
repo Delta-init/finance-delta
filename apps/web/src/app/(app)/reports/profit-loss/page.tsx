@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useProfitLoss } from "@/features/reports/api";
+import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -75,6 +76,38 @@ export default function ProfitLossPage() {
           </div>
         ))}
       </div>
+
+      {/* Invoices in another currency than the organization's: apart too, out of Total Income and Net Profit. */}
+      <OtherCurrencies lines={data?.income.otherCurrencies} />
+
+      {/* Expenses and supplier bills in another currency than the organization's (2026-11-26: rupees were added into
+          the dirham total): apart, as recorded — not in the cards above, the breakdown below or the net profit. */}
+      {!isLoading && !!data?.expenses.otherCurrencies?.length && (
+        <div className="rounded-xl border border-warning/40 bg-surface p-5">
+          <h3 className="font-semibold">Expenses in other currencies</h3>
+          <p className="mt-1 text-sm text-foreground-muted">
+            Recorded in a currency other than this organization&apos;s. They are not in Total Expenses or Net Profit, and are never converted.
+          </p>
+          <div className="mt-4 grid gap-6 sm:grid-cols-2">
+            {data.expenses.otherCurrencies.map((other) => (
+              <div key={other.currency}>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <MoneyDisplay minor={other.amountMinor} currency={other.currency} className="text-xl font-bold tabular-nums text-warning" />
+                  <span className="text-xs text-foreground-muted">
+                    {other.count.toLocaleString()} {other.count === 1 ? "record" : "records"}
+                  </span>
+                </div>
+                {other.breakdown.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between py-1.5 pl-4">
+                    <span className="text-sm text-foreground-muted">{item.label}</span>
+                    <MoneyDisplay minor={item.amountMinor} currency={other.currency} className="text-sm" />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Comparative note */}
       {data?.prior && change !== null && (

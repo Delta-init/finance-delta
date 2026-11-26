@@ -10,6 +10,7 @@ import { MoneyDisplay } from "@/components/ui/money";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { useSalesByItem, useExpenseByCategory } from "@/features/reports/api";
 import type { SalesItemRow, ExpenseCategoryRow } from "@delta/shared";
+import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -118,6 +119,8 @@ export default function OtherReportsPage() {
         <span className="text-foreground-subtle">→</span>
         <DatePicker value={to} onChange={setTo} placeholder="To" />
       </div>
+
+      <OtherCurrencies lines={[salesData?.otherCurrencies, expenseData?.otherCurrencies]} />
 
       {/* Sales by item */}
       <section className="space-y-3">

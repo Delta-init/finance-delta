@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api";
 import { useCurrency } from "@/lib/currency-context";
 import { Breakdown } from "@/features/reports/DailyBreakdownDialog";
 import { useDashboardBreakdown, type DashboardBreakdownParams } from "./api";
+import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 /**
  * What was clicked on the dashboard (the user, 2026-10-26: "breakdown of the stat and graph and all"). A figure that
@@ -59,6 +60,7 @@ function Part({ params, money, showTitle }: { params: DashboardBreakdownParams; 
   return (
     <div className="space-y-2">
       <p className="text-xs text-foreground-muted">{showTitle ? <span className="font-semibold text-foreground">{data.title} · </span> : null}{data.scope}</p>
+      <OtherCurrencies lines={data.otherCurrencies} className="mb-3" />
       <Breakdown data={data} money={money} />
     </div>
   );

@@ -89,6 +89,8 @@ export function RecentInvoices() {
                     </td>
                     <td className="px-5 py-3 text-foreground-muted">{fmtDate(inv.dueDate)}</td>
                     <td className="px-5 py-3 text-right font-numeric font-medium">
+                      {/* An invoice in another currency says so: a bare number here reads as the organization's. */}
+                      {inv.currency && data?.currency && inv.currency !== data.currency ? <span className="mr-1 text-xs font-normal text-warning">{inv.currency}</span> : null}
                       {(inv.totalMinor / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </td>
                   </tr>

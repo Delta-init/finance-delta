@@ -15,7 +15,8 @@ import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
 import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
-import { crmOf } from "../reports/reports.service";
+import type { OtherCurrencyLine } from "@delta/shared";
+import { apart, baseCurrencyOf, crmOf } from "../reports/reports.service";
 
 function oid(id: string) { return new Types.ObjectId(id); }
 
@@ -162,10 +163,17 @@ export interface DashboardStats {
     dueDate: string;
     totalMinor: number;
     balanceMinor: number;
+    /** The invoice's own currency: a list shows each as it is. */
+    currency: string;
   }>;
   topCustomers: Array<{ name: string; revenueMinor: number; invoiceCount: number }>;
   expenseBreakdown: Array<{ category: string; categoryKey: string; totalMinor: number }>;
   aging: { current: number; band1to30: number; band31to60: number; band61to90: number; band90plus: number; total: number };
+  /**
+   * What is in another currency than the organization's (2026-11-26): every figure above is the organization's own
+   * currency only — rupees were added into the dirham cards as dirhams. Apart, as recorded; absent when there is none.
+   */
+  otherCurrencies?: OtherCurrencyLine[];
 }
 
 export async function getDashboardStats(orgId: string, currency = "AED"): Promise<DashboardStats> {
@@ -179,8 +187,19 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
 
   // Expense figures here are profit-and-loss ones: advances, payroll clearing, VAT, loan principal are left out.
   const pnl = await pnlExpenseFilter(orgId);
+  // The organization's own currency only (the user, 2026-11-26): every card added amounts whatever their currency.
+  // One with no currency on it is the organization's. What each card leaves out is noted apart, as recorded.
+  const base = await baseCurrencyOf(orgId);
+  const own = { currency: { $in: [base, base.toLowerCase(), null, ""] } };
+  const notOwn = { currency: { $nin: [base, base.toLowerCase(), null, ""] } };
+  const isOwn = (currency: unknown) => String(currency || base).toUpperCase() === base;
+  const other = apart(base);
   const sum = async (model: any, match: Record<string, unknown>, field: string): Promise<number> =>
-    ((await model.aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: `$${field}` } } }]))[0]?.total as number) ?? 0;
+    ((await model.aggregate([{ $match: { ...match, ...own } }, { $group: { _id: null, total: { $sum: `$${field}` } } }]))[0]?.total as number) ?? 0;
+  const leftOut = async (model: any, match: Record<string, unknown>, field: string, what: string): Promise<void> => {
+    const rows = await model.aggregate([{ $match: { ...match, ...notOwn } }, { $group: { _id: "$currency", total: { $sum: `$${field}` }, count: { $sum: 1 } } }]);
+    for (const r of rows as { _id: unknown; total?: number; count?: number }[]) other.own(r._id, r.total ?? 0, what, r.count ?? 1);
+  };
 
   const [
     revMtd, revLm,
@@ -201,33 +220,39 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
     sum(Bill, billCostMatch(orgId, lm.from, lm.to), "subtotalMinor"),
     sum(Expense, expenseCostMatch(orgId, lm.from, lm.to, pnl), "totalMinor"),
     // Receivables, overdue and aging all come from this one list, so they agree with each other.
-    Invoice.find({ organizationId: oid(orgId), ...OPEN_INVOICE }).select("dueDate balanceMinor").lean<any[]>(),
+    Invoice.find({ organizationId: oid(orgId), ...OPEN_INVOICE, ...own }).select("dueDate balanceMinor").lean<any[]>(),
     Invoice.find({ organizationId: oid(orgId), status: { $ne: "void" } })
       .sort({ createdAt: -1 }).limit(7)
-      .select("invoiceNumber customerName status dueDate totalMinor balanceMinor")
+      .select("invoiceNumber customerName status dueDate totalMinor balanceMinor currency")
       .lean<any[]>(),
     // Top customers (last 6 months)
     Invoice.aggregate([
-      { $match: revenueMatch(orgId, sixMonths.from, sixMonths.to) },
+      { $match: { ...revenueMatch(orgId, sixMonths.from, sixMonths.to), ...own } },
       { $group: { _id: "$customerName", revenue: { $sum: "$subtotalMinor" }, count: { $sum: 1 } } },
       { $sort: { revenue: -1 } },
       { $limit: 5 },
     ]),
     // Expense by category (last 3 months)
     Expense.aggregate([
-      { $match: categoryMatch(orgId, threeMonths.from, threeMonths.to, pnl) },
+      { $match: { ...categoryMatch(orgId, threeMonths.from, threeMonths.to, pnl), ...own } },
       { $group: { _id: "$category", total: { $sum: "$totalMinor" } } },
       { $sort: { total: -1 } },
       { $limit: 6 },
     ]),
     movements(orgId, sixMonths.from, sixMonths.to),
+    leftOut(Invoice, revenueMatch(orgId, mtd.from, mtd.to), "subtotalMinor", "Revenue this month"),
+    leftOut(Bill, billCostMatch(orgId, mtd.from, mtd.to), "subtotalMinor", "Expenses this month"),
+    leftOut(Expense, expenseCostMatch(orgId, mtd.from, mtd.to, pnl), "totalMinor", "Expenses this month"),
+    leftOut(Invoice, { organizationId: oid(orgId), ...OPEN_INVOICE }, "balanceMinor", "Receivables"),
+    leftOut(Bill, { organizationId: oid(orgId), ...OPEN_BILL }, "balanceMinor", "Payables"),
+    leftOut(Expense, { organizationId: oid(orgId), ...UNPAID_EXPENSE }, "totalMinor", "Payables"),
   ]);
 
   // Cash flow by month (last 6 months)
   const monthMap = new Map<string, { inflowMinor: number; outflowMinor: number }>();
   for (let i = 5; i >= 0; i--) monthMap.set(monthKey(shift(cur, -i)), { inflowMinor: 0, outflowMinor: 0 });
-  for (const mv of cash.inflow) { const b = monthMap.get(mv.date.slice(0, 7)); if (b) b.inflowMinor += mv.amountMinor; }
-  for (const mv of cash.outflow) { const b = monthMap.get(mv.date.slice(0, 7)); if (b) b.outflowMinor += mv.amountMinor; }
+  for (const mv of cash.inflow) { const b = monthMap.get(mv.date.slice(0, 7)); if (b && isOwn(mv.currency)) b.inflowMinor += mv.amountMinor; }
+  for (const mv of cash.outflow) { const b = monthMap.get(mv.date.slice(0, 7)); if (b && isOwn(mv.currency)) b.outflowMinor += mv.amountMinor; }
   const cashflow = [...monthMap.entries()].map(([key, val]) => {
     const [y, m] = key.split("-").map(Number);
     return { month: `${MONTH_LABELS[m! - 1]} ${y}`, key, ...val };
@@ -275,6 +300,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
       dueDate: dateOnly(d.dueDate),
       totalMinor: d.totalMinor ?? 0,
       balanceMinor: d.balanceMinor ?? 0,
+      currency: String(d.currency || base).toUpperCase(),
     })),
     topCustomers: topCustAgg.map((c: { _id: string; revenue: number; count: number }) => ({
       name: c._id,
@@ -287,6 +313,7 @@ export async function getDashboardStats(orgId: string, currency = "AED"): Promis
       totalMinor: e.total,
     })),
     aging,
+    ...other.lines(),
   };
 }
 
@@ -461,6 +488,11 @@ export async function getDashboardBreakdown(orgId: string, q: BreakdownQuery): P
       throw new AppError("VALIDATION_ERROR", "Unknown breakdown");
   }
 
+  // The card counts the organization's own currency only (2026-11-26); so does what is behind it. The rest is noted
+  // apart, as recorded, never in the total or the groups.
+  const other = apart(await baseCurrencyOf(orgId));
+  const ownRecords = records.filter((r) => other.own(r.currency, r.amountMinor, title));
+  records.splice(0, records.length, ...ownRecords);
   records.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
   const groups: DailyBreakdownGroup[] = GROUPS[q.kind].map(({ key, label }) => {
     const by = new Map<string, { name: string; count: number; amountMinor: number }>();
@@ -473,5 +505,5 @@ export async function getDashboardBreakdown(orgId: string, q: BreakdownQuery): P
     }
     return { key, label, items: [...by.values()].sort((a, b) => b.amountMinor - a.amountMinor) };
   });
-  return { kind: q.kind, title, scope, totalMinor: records.reduce((t, r) => t + r.amountMinor, 0), count: records.length, groups, records };
+  return { kind: q.kind, title, scope, totalMinor: records.reduce((t, r) => t + r.amountMinor, 0), count: records.length, groups, records, ...other.lines() };
 }

@@ -25,6 +25,7 @@ import type {
   CustomerStatementLine,
 } from "@delta/shared";
 import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
+import type { OtherCurrencyLine } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
@@ -84,6 +85,33 @@ function emptyAgedTotals(
 
 // ── 8.1a Received Payments ────────────────────────────────────────────────────
 
+/**
+ * Keeps another currency's money out of a report's figures (the user, 2026-11-26: "fix the same currency mixing in the
+ * dashboard and the other reports too"). Every report here added amounts whatever their currency — an invoice, a bill
+ * or an expense in rupees went into a dirham total as dirhams. `own` says whether an amount is in the organization's
+ * own currency (one with none on it is); if it is not, the amount is noted apart under the figure it would have gone
+ * into, as recorded, and the caller leaves it out. `lines` is what the report carries: a line per currency and figure.
+ */
+export function apart(base: string) {
+  const by = new Map<string, OtherCurrencyLine>();
+  return {
+    own(currency: unknown, amountMinor: number, what: string, count = 1): boolean {
+      const c = String(currency || base).toUpperCase();
+      if (c === base) return true;
+      const key = `${c}|${what}`;
+      const line = by.get(key) ?? { currency: c, what, amountMinor: 0, count: 0 };
+      line.amountMinor += amountMinor;
+      line.count += count;
+      by.set(key, line);
+      return false;
+    },
+    lines(): { otherCurrencies?: OtherCurrencyLine[] } {
+      const list = [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency) || a.what.localeCompare(b.what));
+      return list.length ? { otherCurrencies: list } : {};
+    },
+  };
+}
+
 export async function getReceivedPayments(
   orgId: string,
   from: string,
@@ -100,6 +128,7 @@ export async function getReceivedPayments(
     .select("payments currency")
     .lean();
 
+  const other = apart(await baseCurrencyOf(orgId));
   let totalMinor = 0;
   const byPeriodMap = new Map<string, number>();
 
@@ -108,6 +137,7 @@ export async function getReceivedPayments(
     for (const p of payments) {
       const paidOn = new Date(p.paidOn);
       if (paidOn >= fromDate && paidOn <= toDate) {
+        if (!other.own((inv as unknown as { currency?: string }).currency, p.amountMinor, "Payments received")) continue;
         totalMinor += p.amountMinor;
         const key = dateOnly(paidOn).slice(0, 7); // YYYY-MM
         byPeriodMap.set(key, (byPeriodMap.get(key) ?? 0) + p.amountMinor);
@@ -119,7 +149,7 @@ export async function getReceivedPayments(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([label, amountMinor]) => ({ label, amountMinor }));
 
-  return { from, to, currency, totalMinor, byPeriod };
+  return { from, to, currency, totalMinor, byPeriod, ...other.lines() };
 }
 
 // ── 8.1b Aged Receivables ─────────────────────────────────────────────────────
@@ -133,9 +163,10 @@ export async function getAgedReceivables(
     status: { $in: ["sent", "viewed", "partial", "overdue"] },
     balanceMinor: { $gt: 0 },
   })
-    .select("invoiceNumber customerName issueDate dueDate totalMinor balanceMinor")
+    .select("invoiceNumber customerName issueDate dueDate totalMinor balanceMinor currency")
     .lean();
 
+  const other = apart(await baseCurrencyOf(orgId));
   const today = new Date();
   const bands = {
     current: [] as AgedItem[],
@@ -147,6 +178,7 @@ export async function getAgedReceivables(
 
   for (const inv of invoices) {
     const d = inv as unknown as Record<string, unknown>;
+    if (!other.own(d.currency, (d.balanceMinor as number) ?? 0, "Still owed")) continue;
     const dueDate = new Date(d.dueDate as Date);
     const daysOverdue = daysApart(dueDate, today);
     const item: AgedItem = {
@@ -168,6 +200,7 @@ export async function getAgedReceivables(
     currency,
     ...bands,
     totals: emptyAgedTotals(bands.current, bands.band1to30, bands.band31to60, bands.band61to90, bands.band90plus),
+    ...other.lines(),
   };
 }
 
@@ -185,7 +218,7 @@ export async function getInvoiceSummary(
     issueDate: { $gte: startOf(from), $lte: endOf(to) },
     status: { $nin: ["draft", "void"] },
   })
-    .select("salespersonId salespersonName customerId customerName tagIds totalMinor balanceMinor amountPaidMinor")
+    .select("salespersonId salespersonName customerId customerName tagIds totalMinor balanceMinor amountPaidMinor currency")
     .lean();
 
   // department grouping: resolve each salesperson's department from their org membership
@@ -208,8 +241,10 @@ export async function getInvoiceSummary(
 
   const groupMap = new Map<string, { id: string; label: string; count: number; totalMinor: number; paidMinor: number; outstandingMinor: number }>();
 
+  const other = apart(await baseCurrencyOf(orgId));
   for (const inv of invoices) {
     const d = inv as unknown as Record<string, unknown>;
+    if (!other.own(d.currency, (d.totalMinor as number) ?? 0, "Invoiced")) continue;
     let id: string;
     let label: string;
 
@@ -257,6 +292,7 @@ export async function getInvoiceSummary(
     currency,
     groupBy,
     items: [...groupMap.values()].sort((a, b) => b.totalMinor - a.totalMinor),
+    ...other.lines(),
   };
 }
 
@@ -384,7 +420,7 @@ export async function getDailyReport(
 }
 
 /** The organization's own currency. */
-async function baseCurrencyOf(orgId: string): Promise<string> {
+export async function baseCurrencyOf(orgId: string): Promise<string> {
   const { Organization } = await import("../organization/organization.model");
   const org = await Organization.findById(orgId).select("baseCurrency").lean<{ baseCurrency?: string } | null>();
   return String(org?.baseCurrency ?? "AED").toUpperCase();
@@ -545,9 +581,10 @@ export async function getMadePayments(
     organizationId: oid(orgId),
     "payments.0": { $exists: true },
   })
-    .select("vendorId vendorName payments")
+    .select("vendorId vendorName payments currency")
     .lean();
 
+  const other = apart(await baseCurrencyOf(orgId));
   let totalMinor = 0;
   const byVendorMap = new Map<string, { vendorId: string; vendorName: string; amountMinor: number }>();
 
@@ -557,6 +594,7 @@ export async function getMadePayments(
     for (const p of payments) {
       const paidOn = new Date(p.paidOn);
       if (paidOn >= fromDate && paidOn <= toDate) {
+        if (!other.own(d.currency, p.amountMinor, "Payments made")) continue;
         totalMinor += p.amountMinor;
         const vid = String(d.vendorId);
         const existing = byVendorMap.get(vid) ?? { vendorId: vid, vendorName: (d.vendorName as string) ?? "Unknown", amountMinor: 0 };
@@ -572,6 +610,7 @@ export async function getMadePayments(
     currency,
     totalMinor,
     byVendor: [...byVendorMap.values()].sort((a, b) => b.amountMinor - a.amountMinor),
+    ...other.lines(),
   };
 }
 
@@ -586,9 +625,10 @@ export async function getAgedPayables(
     status: { $in: ["approved", "partially_paid", "overdue"] },
     balanceMinor: { $gt: 0 },
   })
-    .select("billNumber vendorName billDate dueDate totalMinor balanceMinor")
+    .select("billNumber vendorName billDate dueDate totalMinor balanceMinor currency")
     .lean();
 
+  const other = apart(await baseCurrencyOf(orgId));
   const today = new Date();
   const bands = {
     current: [] as AgedItem[],
@@ -600,6 +640,7 @@ export async function getAgedPayables(
 
   for (const bill of bills) {
     const d = bill as unknown as Record<string, unknown>;
+    if (!other.own(d.currency, (d.balanceMinor as number) ?? 0, "Still owed")) continue;
     const dueDate = new Date(d.dueDate as Date);
     const daysOverdue = daysApart(dueDate, today);
     const item: AgedItem = {
@@ -621,19 +662,29 @@ export async function getAgedPayables(
     currency,
     ...bands,
     totals: emptyAgedTotals(bands.current, bands.band1to30, bands.band31to60, bands.band61to90, bands.band90plus),
+    ...other.lines(),
   };
 }
 
 // ── 8.3 Profit & Loss ─────────────────────────────────────────────────────────
 
-async function computePL(orgId: string, from: string, to: string): Promise<PLPeriod> {
+/**
+ * One period's income, expenses and what is left, in the organization's own currency (`base`).
+ *
+ * An expense or a supplier bill in another currency is not this currency's money (the user, 2026-11-26: "fix finance's
+ * profit and loss so rupee expenses are not added into AED" — every amount was summed whatever its currency, so
+ * INR 20,000 went into an AED total as 20,000 dirhams). It is left out of the expenses, their breakdown and the net
+ * profit, and given apart, as recorded: a line per currency, never converted — as the Expense report and the Daily
+ * Report keep them. One with no currency on it is the organization's.
+ */
+async function computePL(orgId: string, from: string, to: string, base: string): Promise<PLPeriod> {
   const [invoices, bills, expenses] = await Promise.all([
     Invoice.find({
       organizationId: oid(orgId),
       issueDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $nin: ["draft", "void"] },
     })
-      .select("subtotalMinor")
+      .select("subtotalMinor currency")
       .lean(),
 
     Bill.find({
@@ -641,7 +692,7 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
       billDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $nin: ["draft", "voided"] },
     })
-      .select("subtotalMinor")
+      .select("subtotalMinor currency")
       .lean(),
 
     // Only what counts in the P&L: advances, payroll clearing, VAT, loan principal are recorded but not expenses.
@@ -653,31 +704,55 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
       "source.kind": { $ne: "bill" },
       ...pnl,
     })
-      .select("category totalMinor")
+      .select("category totalMinor currency")
       .lean()),
   ]);
+  // After the rest, as before: this and the P&L filter above both seed an organization's first categories.
+  const nameMap = await categoryNameMap(orgId);
 
-  const incomeTotal = invoices.reduce((s, i) => s + ((i.subtotalMinor as number) ?? 0), 0);
-
-  const billExpenses = bills.reduce((s, b) => s + ((b.subtotalMinor as number) ?? 0), 0);
-
-  const categoryMap = new Map<string, number>();
-  let expenseTotal = 0;
-  for (const exp of expenses) {
-    const d = exp as unknown as Record<string, unknown>;
-    const cat = (d.category as string) ?? "other";
-    const amt = (d.totalMinor as number) ?? 0;
-    expenseTotal += amt;
-    categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + amt);
+  // An invoice in another currency is not this currency's income either: apart, as recorded.
+  const otherIncome = apart(base);
+  let incomeTotal = 0;
+  for (const inv of invoices) {
+    const d = inv as unknown as Record<string, unknown>;
+    const amount = (d.subtotalMinor as number) ?? 0;
+    if (otherIncome.own(d.currency, amount, "Invoice revenue")) incomeTotal += amount;
   }
 
-  const nameMap = await categoryNameMap(orgId);
-  const expenseCategories: PLCategory[] = [
-    { label: "Supplier bills", amountMinor: billExpenses },
-    ...[...categoryMap.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
-  ].filter((c) => c.amountMinor > 0);
+  // Each currency's supplier bills and expenses by category — the organization's own, and every other one apart.
+  type Costs = { bills: number; byCategory: Map<string, number>; count: number };
+  const costs = new Map<string, Costs>();
+  const costsIn = (currency: unknown): Costs => {
+    const key = String(currency || base).toUpperCase();
+    const c = costs.get(key) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+    costs.set(key, c);
+    return c;
+  };
+  for (const bill of bills) {
+    const d = bill as unknown as Record<string, unknown>;
+    const c = costsIn(d.currency);
+    c.bills += (d.subtotalMinor as number) ?? 0;
+    c.count++;
+  }
+  for (const exp of expenses) {
+    const d = exp as unknown as Record<string, unknown>;
+    const c = costsIn(d.currency);
+    const cat = (d.category as string) ?? "other";
+    c.byCategory.set(cat, (c.byCategory.get(cat) ?? 0) + ((d.totalMinor as number) ?? 0));
+    c.count++;
+  }
+  const breakdownOf = (c: Costs): PLCategory[] => [
+    { label: "Supplier bills", amountMinor: c.bills },
+    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
+  ].filter((line) => line.amountMinor > 0);
+  const totalOf = (c: Costs) => c.bills + [...c.byCategory.values()].reduce((s, n) => s + n, 0);
 
-  const totalExpenses = billExpenses + expenseTotal;
+  const own = costs.get(base) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+  const totalExpenses = totalOf(own);
+  const otherCurrencies = [...costs.entries()]
+    .filter(([currency]) => currency !== base)
+    .map(([currency, c]) => ({ currency, amountMinor: totalOf(c), count: c.count, breakdown: breakdownOf(c) }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
 
   return {
     from,
@@ -685,10 +760,12 @@ async function computePL(orgId: string, from: string, to: string): Promise<PLPer
     income: {
       total: incomeTotal,
       breakdown: [{ label: "Invoice revenue", amountMinor: incomeTotal }],
+      ...otherIncome.lines(),
     },
     expenses: {
       total: totalExpenses,
-      breakdown: expenseCategories,
+      breakdown: breakdownOf(own),
+      ...(otherCurrencies.length ? { otherCurrencies } : {}),
     },
     netProfitMinor: incomeTotal - totalExpenses,
   };
@@ -700,13 +777,14 @@ export async function getProfitLoss(
   to: string,
   currency = "AED",
 ): Promise<PLReport> {
-  const current = await computePL(orgId, from, to);
+  const base = await baseCurrencyOf(orgId);
+  const current = await computePL(orgId, from, to, base);
 
   // Prior period: same duration shifted back
   const duration = endOf(to).getTime() - startOf(from).getTime();
   const priorTo = new Date(startOf(from).getTime() - 86_400_000);
   const priorFrom = new Date(priorTo.getTime() - duration);
-  const prior = await computePL(orgId, dateOnly(priorFrom), dateOnly(priorTo));
+  const prior = await computePL(orgId, dateOnly(priorFrom), dateOnly(priorTo), base);
 
   return { ...current, currency, prior };
 }
@@ -730,7 +808,7 @@ export async function getBalanceSheet(
           balanceMinor: { $gt: 0 },
         },
       },
-      { $group: { _id: null, total: { $sum: "$balanceMinor" } } },
+      { $group: { _id: "$currency", total: { $sum: "$balanceMinor" }, count: { $sum: 1 } } },
     ]),
     Bill.aggregate([
       {
@@ -741,12 +819,16 @@ export async function getBalanceSheet(
           balanceMinor: { $gt: 0 },
         },
       },
-      { $group: { _id: null, total: { $sum: "$balanceMinor" } } },
+      { $group: { _id: "$currency", total: { $sum: "$balanceMinor" }, count: { $sum: 1 } } },
     ]),
   ]);
 
-  const ar = (receivableAgg[0]?.total as number) ?? 0;
-  const ap = (payableAgg[0]?.total as number) ?? 0;
+  // Each currency's balance on its own: the organization's is the figure, the rest are apart.
+  const other = apart(await baseCurrencyOf(orgId));
+  const ownTotal = (rows: { _id: unknown; total?: number; count?: number }[], what: string) =>
+    rows.reduce((sum, r) => (other.own(r._id, r.total ?? 0, what, r.count ?? 1) ? sum + (r.total ?? 0) : sum), 0);
+  const ar = ownTotal(receivableAgg, "Accounts receivable");
+  const ap = ownTotal(payableAgg, "Accounts payable");
 
   return {
     asOf,
@@ -754,6 +836,7 @@ export async function getBalanceSheet(
     assets: { accountsReceivable: ar, total: ar },
     liabilities: { accountsPayable: ap, total: ap },
     equity: ar - ap,
+    ...other.lines(),
   };
 }
 
@@ -773,15 +856,16 @@ export async function getCashFlow(
     organizationId: oid(orgId),
     "payments.0": { $exists: true },
   })
-    .select("payments")
+    .select("payments currency")
     .lean();
 
+  const other = apart(await baseCurrencyOf(orgId));
   let inflows = 0;
   for (const inv of invoices) {
     const payments = (inv as unknown as { payments: { amountMinor: number; paidOn: Date }[] }).payments ?? [];
     for (const p of payments) {
       const paidOn = new Date(p.paidOn);
-      if (paidOn >= fromDate && paidOn <= toDate) inflows += p.amountMinor;
+      if (paidOn >= fromDate && paidOn <= toDate && other.own((inv as unknown as { currency?: string }).currency, p.amountMinor, "Money in")) inflows += p.amountMinor;
     }
   }
 
@@ -790,7 +874,7 @@ export async function getCashFlow(
     organizationId: oid(orgId),
     "payments.0": { $exists: true },
   })
-    .select("payments")
+    .select("payments currency")
     .lean();
 
   let billOutflows = 0;
@@ -798,7 +882,7 @@ export async function getCashFlow(
     const payments = (bill as unknown as { payments: { amountMinor: number; paidOn: Date }[] }).payments ?? [];
     for (const p of payments) {
       const paidOn = new Date(p.paidOn);
-      if (paidOn >= fromDate && paidOn <= toDate) billOutflows += p.amountMinor;
+      if (paidOn >= fromDate && paidOn <= toDate && other.own((bill as unknown as { currency?: string }).currency, p.amountMinor, "Money out")) billOutflows += p.amountMinor;
     }
   }
 
@@ -812,9 +896,10 @@ export async function getCashFlow(
         "source.kind": { $ne: "bill" },
       },
     },
-    { $group: { _id: null, total: { $sum: "$totalMinor" } } },
+    { $group: { _id: "$currency", total: { $sum: "$totalMinor" }, count: { $sum: 1 } } },
   ]);
-  const expenseOutflows = (expenseAgg[0]?.total as number) ?? 0;
+  const expenseOutflows = (expenseAgg as { _id: unknown; total?: number; count?: number }[])
+    .reduce((sum, r) => (other.own(r._id, r.total ?? 0, "Money out", r.count ?? 1) ? sum + (r.total ?? 0) : sum), 0);
 
   const outflows = billOutflows + expenseOutflows;
 
@@ -826,6 +911,7 @@ export async function getCashFlow(
     investing: { net: 0 },
     financing: { net: 0 },
     netChange: inflows - outflows,
+    ...other.lines(),
   };
 }
 
@@ -949,13 +1035,15 @@ export async function getSalesByItem(
     issueDate: { $gte: startOf(from), $lte: endOf(to) },
     status: { $nin: ["draft", "void"] },
   })
-    .select("lineItems")
+    .select("lineItems currency")
     .lean();
 
   const itemMap = new Map<string, { description: string; qty: number; revenueMinor: number }>();
+  const other = apart(await baseCurrencyOf(orgId));
 
   for (const inv of invoices) {
     const lines = (inv as unknown as { lineItems: { itemId?: string; description: string; quantity: number; lineSubtotalMinor: number }[] }).lineItems ?? [];
+    if (!other.own((inv as unknown as { currency?: string }).currency, lines.reduce((sum, l) => sum + (l.lineSubtotalMinor ?? 0), 0), "Sales")) continue;
     for (const line of lines) {
       const key = line.itemId ?? `__desc:${line.description}`;
       const existing = itemMap.get(key) ?? { description: line.description, qty: 0, revenueMinor: 0 };
@@ -981,6 +1069,7 @@ export async function getSalesByItem(
     currency,
     items,
     grandTotalMinor: items.reduce((s, i) => s + i.revenueMinor, 0),
+    ...other.lines(),
   };
 }
 
@@ -1004,7 +1093,7 @@ export async function getExpenseByCategory(
     },
     {
       $group: {
-        _id: { c: "$category", s: "$subcategory" },
+        _id: { c: "$category", s: "$subcategory", cur: "$currency" },
         sub: { $first: "$subcategoryName" },
         count: { $sum: 1 },
         totalMinor: { $sum: "$totalMinor" },
@@ -1014,7 +1103,10 @@ export async function getExpenseByCategory(
   ]);
 
   const nameMap = await categoryNameMap(orgId);
-  const categories = agg.map((a: { _id: { c: string; s: string | null }; sub?: string; count: number; totalMinor: number }) => ({
+  // The organization's own currency only; a category's rupees are apart, not a second line of dirhams.
+  const other = apart(await baseCurrencyOf(orgId));
+  type CategoryRow = { _id: { c: string; s: string | null; cur?: string | null }; sub?: string; count: number; totalMinor: number };
+  const categories = (agg as CategoryRow[]).filter((a) => other.own(a._id.cur, a.totalMinor, "Expenses", a.count)).map((a) => ({
     category: categoryLabel(nameMap.get(a._id.c) ?? a._id.c, a._id.s ? a.sub || a._id.s : ""),
     count: a.count,
     totalMinor: a.totalMinor,
@@ -1026,6 +1118,7 @@ export async function getExpenseByCategory(
     currency,
     categories,
     grandTotalMinor: categories.reduce((s, c) => s + c.totalMinor, 0),
+    ...other.lines(),
   };
 }
 

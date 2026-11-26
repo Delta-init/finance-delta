@@ -73,6 +73,21 @@ function backoffMs(attempts: number): number {
   return Math.min(2 ** attempts * 1000, 15 * 60_000);
 }
 
+/*
+ * A course the LMS doesn't know (2026-11-26): "No course with slug …" is a 4xx, but not always for good — on 24–25 Nov
+ * the Market Breakout course was renamed in the LMS and put back, and the 13 closes of those two days were given up on
+ * at once. It is tried again every quarter of an hour for two days before it stops, so a rename put right heals itself.
+ */
+const MISSING_COURSE = /no course with slug/i;
+const MISSING_COURSE_WAIT_MS = 2 * 24 * 60 * 60_000;
+
+/** Whether a failure stops the row for good: a permanent refusal — a missing course only once it has been missing two days. */
+export function stopsForGood(err: unknown, since: Date | null | undefined, now = Date.now()): boolean {
+  if (!(err instanceof LmsPermanentError)) return false;
+  if (MISSING_COURSE.test(err.message) && since && now - new Date(since).getTime() < MISSING_COURSE_WAIT_MS) return false;
+  return true;
+}
+
 export async function drainLmsProvisions(): Promise<number> {
   if (!lmsConfigured()) return 0;
 
@@ -122,14 +137,14 @@ export async function drainLmsProvisions(): Promise<number> {
         "Enrolment provisioned in the LMS",
       );
     } catch (err) {
-      const permanent = err instanceof LmsPermanentError;
+      const permanent = stopsForGood(err, (row as { createdAt?: Date }).createdAt);
       const attempts = (row.attempts ?? 0) + 1;
       row.set({
         attempts,
         lastError: (err as Error).message?.slice(0, 500),
-        // A malformed payload or an unknown course fails identically forever.
-        // Somebody has to map it; retrying every minute only buries the rows
-        // that would have worked. Anything else is waited out.
+        // A malformed payload fails identically forever, and so does a course
+        // that stays unknown: somebody has to map it — after two days of
+        // retries (stopsForGood). Anything else is waited out.
         status: permanent ? "failed" : "pending",
         nextAttemptAt: new Date(Date.now() + backoffMs(attempts)),
       });
@@ -205,7 +220,8 @@ export async function drainLmsExtraCourses(): Promise<number> {
         sent++;
         logger.info({ invoice: row.invoiceNumber, course: result.courseSlug, repeat: result.alreadyProcessed }, "Further course of an enrolment provisioned in the LMS");
       } catch (err) {
-        const permanent = err instanceof LmsPermanentError;
+        // A further course the LMS doesn't know: two days of retries from when it was queued (the enrolment's send).
+        const permanent = stopsForGood(err, (row as { sentAt?: Date }).sentAt ?? (row as { createdAt?: Date }).createdAt);
         const attempts = (extra.attempts ?? 0) + 1;
         await LmsProvision.updateOne({ _id: row._id }, {
           $set: {

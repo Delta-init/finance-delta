@@ -15,6 +15,7 @@ import { financeWatchForPortal } from "./portal-watch.service";
 import { financeReportForPortal } from "./portal-report.service";
 import { oldBooksPaymentsSince } from "./old-books-payments.service";
 import { paymentNumbersFor } from "./payment-numbers.service";
+import { agingReportForPortal, expensesReportForPortal, financeOverviewForPortal, organizationsForPortal, revenueReportForPortal } from "./portal-finance-reports.service";
 
 const router = Router();
 
@@ -174,6 +175,56 @@ router.post(
     if (!list) throw new AppError("VALIDATION_ERROR", "invoiceNumbers is a list");
     const ids = Array.isArray(req.body?.externalIds) ? req.body.externalIds.map(String) : [];
     res.json({ success: true, data: await paymentNumbersFor(list.map(String), ids) });
+  }),
+);
+
+/*
+ * The Root portal's Report Org → Finance and revenue (2026-11-26): the organizations here, one organization's headline
+ * figures for a period, the Revenue report (invoiced or collected, grouped and filtered) and the Expense report (by
+ * expense or paid date, grouped and filtered) — each from the functions finance's own pages use; see
+ * portal-finance-reports.service. Read-only, one organization per call.
+ */
+router.get(
+  "/reports/organizations",
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.json({ success: true, data: await organizationsForPortal() });
+  }),
+);
+
+router.get(
+  "/reports/overview",
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = await financeOverviewForPortal(req.query as Record<string, unknown>);
+    if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+    res.json({ success: true, data });
+  }),
+);
+
+router.get(
+  "/reports/revenue",
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = await revenueReportForPortal(req.query as Record<string, unknown>);
+    if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+    res.json({ success: true, data });
+  }),
+);
+
+router.get(
+  "/reports/expenses",
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = await expensesReportForPortal(req.query as Record<string, unknown>);
+    if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+    res.json({ success: true, data });
+  }),
+);
+
+/** What is still owed on open invoices (kind=receivables) or open bills (kind=payables), as of now (2026-11-27). Read-only. */
+router.get(
+  "/reports/aging",
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = await agingReportForPortal(req.query as Record<string, unknown>);
+    if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+    res.json({ success: true, data });
   }),
 );
 

@@ -2130,7 +2130,11 @@ export async function updatePayment(
   const next: Record<string, unknown> = {
     amountMinor: input.amountMinor, chargesMinor: input.chargesMinor ?? 0, bankAmountMinor: input.bankAmountMinor ?? keepForeign,
   };
-  stampAccount(next, account, doc.currency ?? "AED");
+  // What it was paid in where it was taken (rupees typed in a CRM or CS Portal): into an account of that currency,
+  // that is what lands when no amount is given — it used to be left out of the account, asking for a figure the
+  // payment already had (2026-11-26).
+  const paidAs = p.original as { currency?: string; amountMinor?: number } | undefined;
+  stampAccount(next, account, doc.currency ?? "AED", paidAs);
   const moves = String(next.bankAccountId ?? "") !== String(p.bankAccountId ?? "")
     || (next.bankNote ? null : next.bankAmountMinor ?? null) !== (p.bankNote ? null : p.bankAmountMinor ?? null)
     || new Date(input.paidOn).getTime() !== new Date(p.paidOn as Date).getTime();
@@ -2164,7 +2168,7 @@ export async function updatePayment(
   p.accountName = input.accountName ?? "";
   p.chargesMinor = input.chargesMinor ?? 0;
   p.bankAmountMinor = input.bankAmountMinor ?? keepForeign;
-  stampAccount(p, account, doc.currency ?? "AED");
+  stampAccount(p, account, doc.currency ?? "AED", paidAs);
   p.emi =
     input.method === "easebuzz_emi" && input.emi
       ? {
@@ -2412,7 +2416,9 @@ export async function recordPayment(
     ...(input.bankAmountMinor ? { bankAmountMinor: input.bankAmountMinor } : {}),
     ...(input.statementDate ? { statementDate: new Date(`${input.statementDate}T00:00:00.000Z`) } : {}),
   };
-  stampAccount(payment, account, doc.currency ?? "AED");
+  // Typed in rupees where it was taken, into the rupee account: those rupees are what lands (2026-11-26 — only an
+  // enrolment's own payments did this; a balance payment or a CS Portal course payment stayed out of the account).
+  stampAccount(payment, account, doc.currency ?? "AED", from?.original);
   const lateNow = await lateForDate(orgId, late, input.paidOn, null, null);
   payment.lateEntry = lateNow.next ?? null;
 

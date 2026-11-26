@@ -111,7 +111,9 @@ const paymentSubSchema = new Schema(
       default: undefined,
     },
     /** As the client paid it, when not in the invoice's currency — rupees (2026-11-13). rate: the invoice's
-        currency for one unit of `currency`. Kept for what is shown; the bank line still goes by bankAmountMinor. */
+        currency for one unit of `currency`. Shown as it was paid — and, into an account of that currency, it is
+        what lands unless an amount received is given (2026-11-26; before, only an enrolment's own payments did,
+        and the others stayed out of the account asking for it). */
     original: {
       type: new Schema({ currency: String, amountMinor: Number, rate: Number }, { _id: false }),
       default: undefined,

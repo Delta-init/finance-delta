@@ -74,8 +74,9 @@ export async function resolvePaymentAccount(
 
 /**
  * What lands in the account, in its currency, or why nothing can: the payment less charges when the account is in the
- * invoice's currency; else the amount given in the account's currency (`bankAmountMinor`), or the close's original
- * when that was in the account's currency.
+ * invoice's currency; else the amount given in the account's currency (`bankAmountMinor`), or what the payment was
+ * made in where it was taken (`original` — a close's, a balance payment's, a CS Portal course payment's) when that was
+ * in the account's currency.
  */
 export function landingOf(
   account: Account, invoiceCurrency: string,

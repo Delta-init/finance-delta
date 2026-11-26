@@ -88,10 +88,12 @@ const linesIn = () => BankTransaction.find({ accountId: new Types.ObjectId(yaroo
 const base = { from: B.invoiceNumber, to: A.invoiceNumber, receipt: "RCT-00074", tell, dir };
 
 step("Before");
-// As CS Portal's rupee payments are recorded: in Yaroon, waiting for the rupees received (no bank line yet).
-const yaroonNote = (await load(B)).payments[0]?.bankNote ?? "";
-check("two invoices for the one course, each with its own payment in Yaroon",
-  (await load(A)).amountPaidMinor === 1_283_000 && (await load(B)).amountPaidMinor === 656_087 && String((await load(B)).payments[0]?.bankAccountId) === yaroon.id,
+// As CS Portal's rupee payments are recorded since 2026-11-26: in Yaroon with the rupees typed there — a line each
+// (before, they waited beside the account for the rupees received to be given).
+const inYaroon = async () => (await linesIn()).reduce((s, l) => s + l.amountMinor, 0);
+check("two invoices for the one course, each with its own payment in Yaroon — ₹335,930 and ₹167,965, a line each",
+  (await load(A)).amountPaidMinor === 1_283_000 && (await load(B)).amountPaidMinor === 656_087 && String((await load(B)).payments[0]?.bankAccountId) === yaroon.id
+  && !(await load(B)).payments[0]?.bankNote && (await linesIn()).length === 2 && (await lineFor(B)).length === 1 && (await inYaroon()) === 50_389_500,
   j({ lines: (await linesIn()).map((l) => l.reference), pay: (await load(A)).payments.map((p: any) => ({ acc: p.bankAccountId, amt: p.bankAmountMinor, cur: p.bankCurrency, note: p.bankNote })) }));
 
 step("Dry run and refusals: nothing changes");
@@ -118,9 +120,10 @@ check("the first invoice: AED 19,390.87 paid, AED 609.13 left, part paid, its du
   a.amountPaidMinor === 1_939_087 && a.balanceMinor === 60_913 && a.status === "partial" && a.dueDate.toISOString().slice(0, 10) === "2026-10-13", j({ p: a.amountPaidMinor, b: a.balanceMinor, s: a.status, d: a.dueDate }));
 check("the second invoice: no payment left, void", b.payments.length === 0 && b.status === "void", j({ p: b.payments.length, s: b.status }));
 const lines = await linesIn();
-check("Yaroon: the moved payment still in it, as it was (its note too) — no bank line made or lost",
-  String(moved?.bankAccountId) === yaroon.id && moved?.bankCurrency === "INR" && (moved?.bankNote ?? "") === yaroonNote && lines.length === 0 && (await lineFor(B)).length === 0,
-  j({ acc: moved?.bankAccountId, cur: moved?.bankCurrency, note: moved?.bankNote, lines: lines.length }));
+check("Yaroon: the moved payment still in it with its ₹167,965 — its line now the first invoice's, none left on the second, the balance as it was",
+  String(moved?.bankAccountId) === yaroon.id && moved?.bankCurrency === "INR" && !moved?.bankNote && moved?.bankAmountMinor === 16_796_500
+  && lines.length === 2 && (await lineFor(B)).length === 0 && (await lineFor(A)).length === 2 && (await inYaroon()) === 50_389_500,
+  j({ acc: moved?.bankAccountId, cur: moved?.bankCurrency, note: moved?.bankNote, amt: moved?.bankAmountMinor, lines: lines.length }));
 const dep = await TetraDepositModel.findOne({ externalId: "second" }).lean<any>();
 check("the CS Portal request points at the first invoice, its event says so, and CS Portal was told",
   dep?.courseInvoice?.invoiceNumber === A.invoiceNumber && String(dep?.courseInvoice?.paymentId) === String(moved?._id) && dep?.courseInvoice?.created === false
@@ -134,7 +137,7 @@ check("a backup of both invoices and the request, as they were", !!done.backupFi
 step("Run again");
 const again = await moveCoursePayment({ ...base, fixRef: parseFixRef("RCT-00042=262761388982"), write: true });
 const a2 = await load(A);
-check("nothing recorded twice, nothing else changed", a2.payments.length === 2 && a2.amountPaidMinor === 1_939_087 && (await linesIn()).length === 0
+check("nothing recorded twice, nothing else changed", a2.payments.length === 2 && a2.amountPaidMinor === 1_939_087 && (await linesIn()).length === 2 && (await inYaroon()) === 50_389_500
   && again.lines.some((l) => /Already on IN-00001/.test(l)) && again.lines.some((l) => /already void/.test(l)), again.lines.join("\n"));
 
 await mongoose.disconnect();

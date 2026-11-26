@@ -247,6 +247,65 @@ step("9. The backfill: a payment from before, as one net line, becomes two");
   check("a payment whose line was reconciled: skipped, saying why", rows.length === 1 && /reconciled/.test(rows[0]!.skipped ?? "") && !rows[0]!.done, j(rows));
 }
 
+/* ── 10 ── */
+step("10. Typed in rupees where it was taken (a balance payment, a CS Portal course payment): those rupees land");
+{
+  const rupees = { currency: "INR", amountMinor: 16_796_500, rate: 0.03906 };
+  const inr = { method: "inr_bank_account", paidOn: "2026-11-12", reference: "", notes: "", accountName: "", chargesMinor: 0 };
+  const from = (ref: string, original: { currency: string; amountMinor: number; rate: number }) => ({ externalRef: ref, original });
+  const i10 = await invoice(9_000_000);
+  let before = await balanceOf(yaroon.id);
+  d = await inv.recordPayment(ORG, i10, { ...inr, amountMinor: 656_087 } as never, undefined, from("e2e:balance-1", rupees));
+  p = lastPayment(d);
+  check("recorded with its rupees: ₹167,965 in Yaroon Bank straight away, nothing asked", p.bankAccountId === yaroon.id && p.inBank === true && !p.bankNote
+    && p.bankAmountMinor === 16_796_500 && p.bankCurrency === "INR" && (await balanceOf(yaroon.id)) - before === 16_796_500, j(p));
+  const line10 = (await linesOf(yaroon.id)).find((l) => l.matches?.[0]?.referenceId === i10);
+  check("its line: a credit of ₹167,965, matched to the invoice", line10?.amountMinor === 16_796_500 && line10?.type === "credit" && line10?.currency === "INR", j(line10));
+  before = await balanceOf(yaroon.id);
+  d = await inv.recordPayment(ORG, i10, { ...inr, amountMinor: 367_000 } as never, undefined, from("e2e:balance-2", { currency: "USD", amountMinor: 100_000, rate: 3.67 }));
+  p = lastPayment(d);
+  check("typed in dollars into the rupee account: still out, saying why — dollars are not rupees", p.inBank === false && /Yaroon Bank is in INR/.test(p.bankNote ?? "") && (await balanceOf(yaroon.id)) === before, j(p));
+
+  // As one recorded before 2026-11-26: its rupees on it, yet left out with the note.
+  const asBefore = async (id: string, amountMinor: number, original?: typeof rupees) => {
+    const made = lastPayment(await pay(id, { ...inr, amountMinor }));
+    if (original) await Invoice.updateOne({ _id: id, "payments._id": new Types.ObjectId(made.id) }, { $set: { "payments.$.original": original } });
+    return made.id as string;
+  };
+  const old1 = await asBefore(i10, 200_000, { currency: "INR", amountMinor: 5_000_000, rate: 0.04 });
+  check("one from before the fix: against Yaroon Bank, out of it, though its rupees are on it", (await balanceOf(yaroon.id)) === before);
+  d = await edit(i10, old1, { ...inr, amountMinor: 200_000, notes: "looked at" });
+  p = d.payments.find((x: any) => x.id === old1);
+  check("edited without giving an amount: its ₹50,000 land", p.inBank === true && !p.bankNote && p.bankAmountMinor === 5_000_000 && (await balanceOf(yaroon.id)) - before === 5_000_000, j(p));
+  d = await edit(i10, old1, { ...inr, amountMinor: 200_000, bankAmountMinor: 4_990_000 });
+  check("an amount given by hand still wins: ₹49,900", d.payments.find((x: any) => x.id === old1)?.bankAmountMinor === 4_990_000 && (await balanceOf(yaroon.id)) - before === 4_990_000);
+
+  // The script for those already recorded.
+  const { rupeesIntoAccount, undoRupeesIntoAccount } = await import("./rupees-into-account");
+  const i11 = await invoice(9_000_000);
+  const withRupees = await asBefore(i11, 300_000, { currency: "INR", amountMinor: 7_500_000, rate: 0.04 });
+  const noRupees = await asBefore(i11, 100_000);
+  before = await balanceOf(yaroon.id);
+  const number11 = (await Invoice.findById(i11).lean<any>()).invoiceNumber as string;
+  const mine = (ls: string[]) => ls.filter((l) => l.includes(number11));
+  let run = await rupeesIntoAccount({ orgId: ORG, write: false });
+  check("the script, dry: this invoice's payment with rupees to put in, the one without listed apart; nothing written",
+    mine(run.lines).some((l) => /→ INR 75,000\.00 into Yaroon Bank/.test(l)) && mine(run.lines).some((l) => /Yaroon Bank is in INR$/.test(l)) && run.put === 0 && (await balanceOf(yaroon.id)) === before, j(run.lines));
+  check("…and the dollars one is with those it can't help, not put in as rupees", run.lines.filter((l) => /→/.test(l)).length === 1, j(run.lines));
+  check("a count that isn't the one found is refused, nothing changed", /Expected 5 to put in, found 1/.test(await refusal(rupeesIntoAccount({ orgId: ORG, write: true, expect: 5 }))) && (await balanceOf(yaroon.id)) === before);
+  const undoFile = (await import("node:path")).join((await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "rupees-into-account-")), "undo.json");
+  run = await rupeesIntoAccount({ orgId: ORG, write: true, expect: 1, undoFile });
+  let got = (await Invoice.findById(i11).lean<any>()).payments.find((x: any) => String(x._id) === withRupees);
+  check("written: ₹75,000 in Yaroon Bank, its line matched to the invoice, the note gone", run.put === 1 && (await balanceOf(yaroon.id)) - before === 7_500_000 && !got.bankNote && got.bankAmountMinor === 7_500_000
+    && !!got.bankTransactionId && (await linesOf(yaroon.id)).some((l) => String(l._id) === String(got.bankTransactionId) && l.matches?.[0]?.referenceId === i11), j({ run: run.lines, got }));
+  const still = (await Invoice.findById(i11).lean<any>()).payments.find((x: any) => String(x._id) === noRupees);
+  check("the one with no rupees on record is as it was: out, asking for them", !still.bankTransactionId && /give the amount received in INR/.test(still.bankNote), j(still));
+  check("run again: nothing to put in", (await rupeesIntoAccount({ orgId: ORG, write: true })).put === 0 && (await balanceOf(yaroon.id)) - before === 7_500_000);
+  const undone = await undoRupeesIntoAccount(undoFile);
+  got = (await Invoice.findById(i11).lean<any>()).payments.find((x: any) => String(x._id) === withRupees);
+  check("undone: out of Yaroon Bank again, its note back", /taken out/.test(undone.join()) && (await balanceOf(yaroon.id)) === before && !got.bankTransactionId && /give the amount received in INR/.test(got.bankNote), j({ undone, got }));
+}
+
 // The approval's own emails and notices finish in the background first.
 await Bun.sleep(1500);
 await mongoose.disconnect();

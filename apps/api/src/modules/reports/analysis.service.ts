@@ -6,6 +6,9 @@ import {
   PAYMENT_METHOD_LABELS,
   categoryLabel,
   enrolmentCrm,
+  paidAmountMinor,
+  paidCurrency,
+  type AnalysisForeign,
   type AnalysisGroup,
   type AnalysisOption,
   type AnalysisRecord,
@@ -257,10 +260,95 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery, viewer
   if (q.basis !== "invoiced" && q.basis !== "collected") throw new AppError("VALIDATION_ERROR", "basis must be invoiced or collected");
   const [currency, depts, deptOf] = await Promise.all([orgCurrency(orgId), departmentNames(orgId), departmentsOfPeople(orgId)]);
   const names = new Names();
-  const { records, extraTotals } = await revenueRecords(orgId, q, names, deptOf, depts);
-  const report = finish("revenue", q, currency, records, names, REVENUE_DIMENSION_KEYS, extraTotals);
+  const { records, extraTotals } = await revenueRecords(orgId, q, names, deptOf, depts, currency);
+  // Collected: money paid in another currency than its invoice's is not this currency's — it is left out of the report
+  // and shown beside it, as paid (withOtherCurrencies).
+  const away = records.filter((r) => r.recordedMinor !== undefined);
+  const own = away.length ? records.filter((r) => r.recordedMinor === undefined) : records;
+  const report = finish("revenue", q, currency, own, names, REVENUE_DIMENSION_KEYS, extraTotals);
+  withOtherCurrencies(report, own, away, q, names);
   if (viewer) await withOtherOrganization(report, orgId, currency, q, names, deptOf, depts, viewer);
   return report;
+}
+
+/** Whether a record passes the report's filters and search — as `finish` keeps them. */
+function keeps(q: AnalysisQuery): (r: AnalysisRecord) => boolean {
+  const needle = (q.search ?? "").trim().toLowerCase();
+  return (r) => Object.entries(q.filters).every(([dim, key]) => (r.dims[dim] ?? NONE) === key)
+    && (!needle || `${r.number} ${r.title} ${r.detail}`.toLowerCase().includes(needle));
+}
+
+/**
+ * Money paid in other currencies beside the Collected report (the user, 2026-11-26: "show INR collected as separate
+ * instead of summing AED, same as the payment page"): a payment in rupees on an AED invoice was counted at what it was
+ * recorded as, inside Collected. It is now left out of the totals, groups and records, and given as it was paid — on
+ * each group (`foreign`) and on the report (`report.foreign`), a line per currency, never converted, with what those
+ * payments were recorded as. One whose amount in that currency was never recorded stays in Collected, and its
+ * currency's line says how many — as the Payments list's cards and the Daily Report do. The same filters, search and
+ * grouping; their values are in the filter lists too, so an "INR Transfer" with nothing in dirhams can still be picked.
+ */
+function withOtherCurrencies(report: AnalysisReport, own: AnalysisRecord[], away: AnalysisRecord[], q: AnalysisQuery, names: Names): void {
+  for (const dim of away.length ? REVENUE_DIMENSION_KEYS : []) {
+    const opts = (report.options[dim] ??= []);
+    const byKey = new Map(opts.map((o) => [o.key, o]));
+    for (const r of away) {
+      const key = r.dims[dim] ?? NONE;
+      const o = byKey.get(key);
+      if (o) { o.count++; continue; }
+      const made = { key, name: names.name(dim, key), count: 1 };
+      opts.push(made);
+      byKey.set(key, made);
+    }
+    opts.sort((a, b) => (dim === "month" ? b.key.localeCompare(a.key) : a.name.localeCompare(b.name)));
+  }
+
+  const keep = keeps(q);
+  const kept = away.filter(keep);
+  type Line = NonNullable<AnalysisReport["foreign"]>["lines"][number];
+  const lines = new Map<string, Line>();
+  const lineOf = (currency: string): Line => {
+    const l = lines.get(currency) ?? { currency, amountMinor: 0, count: 0, recordedMinor: 0, unknownCount: 0, unknownMinor: 0 };
+    lines.set(currency, l);
+    return l;
+  };
+  const byGroup = new Map<string, Map<string, AnalysisForeign>>();
+  for (const r of kept) {
+    const cur = String(r.currency).toUpperCase();
+    const l = lineOf(cur);
+    l.amountMinor += r.amountMinor;
+    l.recordedMinor += r.recordedMinor ?? 0;
+    l.count++;
+    const key = r.dims[q.groupBy] ?? NONE;
+    const g = byGroup.get(key) ?? new Map<string, AnalysisForeign>();
+    const t = g.get(cur) ?? { currency: cur, amountMinor: 0, count: 0 };
+    t.amountMinor += r.amountMinor;
+    t.count++;
+    g.set(cur, t);
+    byGroup.set(key, g);
+  }
+  // Paid in another currency with no amount in it on record: still counted above, as recorded — said, not hidden.
+  for (const r of own) {
+    if (!r.paidIn || !keep(r)) continue;
+    const l = lineOf(r.paidIn.toUpperCase());
+    l.unknownCount++;
+    l.unknownMinor += r.amountMinor;
+  }
+  if (!lines.size) return;
+
+  const order = [...lines.values()].sort((a, b) => b.recordedMinor - a.recordedMinor || b.count - a.count || a.currency.localeCompare(b.currency));
+  const rank = new Map(order.map((l, i) => [l.currency, i]));
+  const listed = (g: Map<string, AnalysisForeign>) => [...g.values()].sort((a, b) => rank.get(a.currency)! - rank.get(b.currency)!);
+  for (const g of report.groups) {
+    const t = byGroup.get(g.key);
+    if (t) { g.foreign = listed(t); byGroup.delete(g.key); }
+  }
+  // Keys with nothing in the report's currency: their own rows, after the others.
+  const count = (g: Map<string, AnalysisForeign>) => [...g.values()].reduce((n, t) => n + t.count, 0);
+  for (const [key, t] of [...byGroup.entries()].sort((a, b) => count(b[1]) - count(a[1]))) {
+    report.groups.push({ key, name: names.name(q.groupBy, key), count: 0, amountMinor: 0, foreign: listed(t) });
+  }
+  kept.sort((a, b) => b.date.localeCompare(a.date) || (b.recordedMinor ?? 0) - (a.recordedMinor ?? 0));
+  report.foreign = { lines: order, records: kept.slice(0, MAX_RECORDS) };
 }
 
 /**
@@ -284,6 +372,7 @@ async function withOtherOrganization(
   if (!other) return;
   const otherId = String(other._id);
   const otherCurrency = String(other.baseCurrency).toUpperCase();
+  // Everything it took, in its own currency as it recorded it — its payments are not split by currency here.
   const { records } = await revenueRecords(otherId, q, names, deptOf, depts);
   // Its values in the filter lists too (a person only in that organization), counted there, so they can be picked.
   for (const dim of REVENUE_DIMENSION_KEYS) {
@@ -321,15 +410,22 @@ async function withOtherOrganization(
   };
 }
 
-/** One organization's revenue records for a query, named into `names`; departments as `deptOf` says (the report's). */
-async function revenueRecords(orgId: string, q: AnalysisQuery, names: Names, deptOf: Map<string, string>, depts: Map<string, string>) {
+/**
+ * One organization's revenue records for a query, named into `names`; departments as `deptOf` says (the report's).
+ *
+ * `apartFrom` (the report's own currency, given for the organization the report is about): under Collected, a payment
+ * made in another currency than its invoice's comes as it was paid — `currency` and `amountMinor` in that currency,
+ * `recordedMinor` what it was recorded as — and one whose amount in that currency was never recorded comes as
+ * recorded, with `paidIn`. Without it every payment is what it was recorded as, as before.
+ */
+async function revenueRecords(orgId: string, q: AnalysisQuery, names: Names, deptOf: Map<string, string>, depts: Map<string, string>, apartFrom?: string) {
   const org = oid(orgId);
   const range = { ...(q.from ? { $gte: startOf(q.from) } : {}), ...(q.to ? { $lte: endOf(q.to) } : {}) };
   const ranged = Object.keys(range).length > 0;
   const inRange = (d: Date | string | undefined) => !!d && (!q.from || new Date(d) >= startOf(q.from)) && (!q.to || new Date(d) <= endOf(q.to));
   const banks = await bankNames(orgId);
 
-  const SELECT = "invoiceNumber customerId customerName salespersonId salespersonName issueDate status totalMinor baseTotalMinor balanceMinor exchangeRate payments enrolment.course enrolment.crm enrolment.academy external.source lineItems.description proforma";
+  const SELECT = "invoiceNumber customerId customerName salespersonId salespersonName issueDate status currency totalMinor baseTotalMinor balanceMinor exchangeRate payments enrolment.course enrolment.crm enrolment.academy external.source lineItems.description proforma";
   const credits = await CreditNote.find({ organizationId: org, status: { $in: ["issued", "applied"] }, ...(ranged ? { issuedAt: range } : {}) })
     .select("creditNoteNumber invoiceId customerName issuedAt totalMinor reason").lean<any[]>();
   const invoiceFilter: Record<string, unknown> = { organizationId: org, status: { $nin: ["draft", "void"] } };
@@ -408,10 +504,17 @@ async function revenueRecords(orgId: string, q: AnalysisQuery, names: Names, dep
         if (!inRange(p.paidOn) && ranged) continue;
         const date = dayOf(p.paidOn);
         const bank = p.bankAccountId ? String(p.bankAccountId) : NONE;
+        const recorded = Math.round((p.amountMinor ?? 0) * rate(inv));
+        // Paid in another currency than the invoice's (rupees on an AED invoice): as it was paid, never what it was
+        // converted to (the user, 2026-11-26) — or, its amount there never recorded, as recorded and said so.
+        const invoiceCurrency = inv.currency || apartFrom;
+        const paidIn = apartFrom ? paidCurrency(p, invoiceCurrency) : null;
+        const paid = paidIn ? paidAmountMinor(p, invoiceCurrency) : 0;
         records.push({
           id: `${inv._id}:${p._id ?? date}`, date, number: p.receiptNumber || inv.invoiceNumber, title: inv.customerName ?? "",
           detail: [inv.invoiceNumber, methodName(String(p.method ?? "other")), inv.salespersonName].filter(Boolean).join(" · "),
-          amountMinor: Math.round((p.amountMinor ?? 0) * rate(inv)), href: `/invoices/${inv._id}`,
+          ...(paidIn && paid > 0 ? { amountMinor: paid, currency: paidIn, recordedMinor: recorded } : { amountMinor: recorded, ...(paidIn ? { paidIn } : {}) }),
+          href: `/invoices/${inv._id}`,
           dims: {
             ...invoiceDims(inv, date),
             method: names.set("method", String(p.method ?? NONE), p.method ? methodName(String(p.method)) : "Not said"),

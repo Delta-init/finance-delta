@@ -96,7 +96,13 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   // The other organization's money beside it (2026-11-25: Bangalore's rupees on Delta HQ's revenue), never added.
   const other = data?.other ?? null;
   const otherLabel = other ? placeLabel(other.organizationName) : "";
-  const cols = (cash ? 6 : 4) + (other ? 1 : 0);
+  // Revenue under Collected (2026-11-26: "show INR collected as separate instead of summing AED, same as the payment
+  // page"): money paid in another currency than its invoice's — beside, as it was paid, never converted or added.
+  const foreign = data?.foreign ?? null;
+  const foreignLines = useMemo(() => (foreign?.lines ?? []).filter((l) => l.count > 0), [foreign]);
+  const foreignHead = foreignLines.length === 1 ? `Paid in ${foreignLines[0]!.currency}` : foreignLines.length ? "Other currencies" : "";
+  const records = useMemo(() => (data ? everyRecord(data) : []), [data]);
+  const cols = (cash ? 6 : 4) + (other ? 1 : 0) + (foreignHead ? 1 : 0);
 
   // Exports ask for the report afresh, for exactly what is picked now (2026-11-26: Collected exported the Invoiced
   // figures still on screen while it loaded). `exported` is that answer, for the export's columns to read.
@@ -112,7 +118,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
     setBySalesperson(true);
     try {
       const r = await fresh();
-      if (!r.records.length && !r.other?.records.length) { toast.error("Nothing to export for the current filters"); return; }
+      if (!r.records.length && !r.other?.records.length && !r.foreign?.records.length) { toast.error("Nothing to export for the current filters"); return; }
       exportBySalesperson(config, r, basis, period.from, period.to);
       toast.success(`Exported ${basis === "collected" ? "collected payments" : "invoices"} by salesperson`);
     } catch (e) {
@@ -134,7 +140,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
             )}
             <ExportButton<AnalysisRecord> resource="" filename={`${config.kind}-report-${config.bases.find((b) => b.key === basis)?.label.toLowerCase() ?? basis}`}
               title={`${config.title} — ${config.bases.find((b) => b.key === basis)?.label ?? basis}`} formats={["excel", "csv", "pdf"]}
-              fetchRows={async () => (await fresh()).records} columns={exportColumns(config, basis, () => exported.current ?? data, hidden)} />
+              fetchRows={async () => everyRecord(await fresh())} columns={exportColumns(config, basis, () => exported.current ?? data, hidden)} />
           </div>
         ) : null} />
 
@@ -240,6 +246,26 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                   })}
                 </CardContent></Card>
               ))}
+            {foreign && !isLoading && (
+              // As the Payments list's card: what was actually paid, a line per currency, and what is still counted above.
+              <Card className="border-warning/40" title="What clients actually paid in other currencies — not in Collected, and never converted"><CardContent className="space-y-1.5 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Paid in other currencies</p>
+                {foreignLines.map((l) => (
+                  <div key={l.currency}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                      <MoneyDisplay minor={l.amountMinor} currency={l.currency} className={cn("block font-bold tabular-nums text-warning", foreignLines.length > 1 ? "text-lg" : "mt-1 text-2xl")} />
+                      <span className="shrink-0 text-xs text-foreground-muted">{l.count.toLocaleString()} payment{l.count === 1 ? "" : "s"}</span>
+                    </div>
+                    {l.recordedMinor > 0 && <p className="text-xs text-foreground-muted">recorded as <MoneyDisplay minor={l.recordedMinor} currency={currency} /> · not in Collected</p>}
+                  </div>
+                ))}
+                {foreign.lines.filter((l) => l.unknownCount > 0).map((l) => (
+                  <p key={`${l.currency}-unknown`} className="text-xs text-foreground-muted">
+                    {l.unknownCount.toLocaleString()} {l.currency} payment{l.unknownCount === 1 ? "" : "s"} without the amount recorded — still in Collected (<MoneyDisplay minor={l.unknownMinor} currency={currency} />)
+                  </p>
+                ))}
+              </CardContent></Card>
+            )}
             {other && !isLoading && (
               <Card className="border-primary/40"><CardContent className="space-y-1.5 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -261,6 +287,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                     <tr><th className="px-4 py-2 text-left font-medium">{label(groupBy)}</th><th className="px-3 py-2 text-right font-medium">Count</th>
                       <th className="px-3 py-2 text-right font-medium">{cash ? "Invoiced" : "Amount"}</th>
                       {cash && <><th className="px-3 py-2 text-right font-medium">Collected</th><th className="px-3 py-2 text-right font-medium">Still owed</th></>}
+                      {foreignHead && <th className="whitespace-nowrap bg-warning/5 px-3 py-2 text-right font-medium">{foreignHead}</th>}
                       {other && <th className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right font-medium">{otherLabel} ({other.currency})</th>}
                       <th className="px-4 py-2 text-right font-medium">Share</th></tr>
                   </thead>
@@ -269,7 +296,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                     {!isLoading && !data?.groups.length && <tr><td colSpan={cols} className="px-4 py-10 text-center text-foreground-muted">Nothing in this period with these filters.</td></tr>}
                     {data?.groups.map((g) => (
                       <Fragment key={g.key}>
-                        <GroupRow g={g} total={total} currency={currency} cash={cash} other={other ? { currency: other.currency, label: otherLabel } : undefined} onOpen={() => setOpen({ g, dim: groupBy })}
+                        <GroupRow g={g} total={total} currency={currency} cash={cash} foreign={!!foreignHead} other={other ? { currency: other.currency, label: otherLabel } : undefined} onOpen={() => setOpen({ g, dim: groupBy })}
                           expander={g.sub?.length ? (
                             <button type="button" onClick={(e) => { e.stopPropagation(); setExpanded(expanded === g.key ? null : g.key); }}
                               className="text-foreground-subtle hover:text-foreground" aria-label="Subcategories">
@@ -277,7 +304,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                             </button>
                           ) : null} />
                         {expanded === g.key && g.sub?.map((s) => (
-                          <GroupRow key={s.key} g={s} total={total} currency={currency} nested other={other ? { currency: other.currency, label: otherLabel } : undefined}
+                          <GroupRow key={s.key} g={s} total={total} currency={currency} nested foreign={!!foreignHead} other={other ? { currency: other.currency, label: otherLabel } : undefined}
                             onOpen={() => setOpen({ g: { ...s, name: `${g.name} › ${s.name}` }, dim: "subcategory" })} />
                         ))}
                       </Fragment>
@@ -288,6 +315,11 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                       <tr><td className="px-4 py-2">Total</td><td className="px-3 py-2 text-right tabular-nums">{data.totals.count}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={total} currency={currency} /></td>
                         {cash && <><td className="px-3 py-2" /><td className="px-3 py-2" /></>}
+                        {foreignHead && (
+                          <td className="whitespace-nowrap bg-warning/5 px-3 py-2 text-right text-warning">
+                            {foreignLines.map((l) => <MoneyDisplay key={l.currency} minor={l.amountMinor} currency={l.currency} className="block" />)}
+                          </td>
+                        )}
                         {other && <td className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right text-primary"><MoneyDisplay minor={other.amountMinor} currency={other.currency} /></td>}
                         <td className="px-4 py-2" /></tr>
                     </tfoot>
@@ -338,7 +370,7 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
           )}
 
           {/* Every record */}
-          <Records title="Every record" records={data?.records ?? []} currency={currency} capped={!!data?.capped} onOpen={(r) => router.push(r.href)} isLoading={isLoading} isFetching={refreshing} />
+          <Records title="Every record" records={records} currency={currency} capped={!!data?.capped} onOpen={(r) => router.push(r.href)} isLoading={isLoading} isFetching={refreshing} />
         </>
       )}
 
@@ -351,9 +383,12 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
                 {open.g.count} record{open.g.count === 1 ? "" : "s"} · <MoneyDisplay minor={open.g.amountMinor} currency={currency} />
                 {open.g.collectedMinor !== undefined && <> invoiced · <MoneyDisplay minor={open.g.collectedMinor} currency={currency} className="text-success" /> collected
                   {(open.g.owedMinor ?? 0) > 0 && <> · <MoneyDisplay minor={open.g.owedMinor ?? 0} currency={currency} className="text-warning" /> still owed</>}</>}
+                {open.g.foreign?.map((f) => (
+                  <Fragment key={f.currency}> · <MoneyDisplay minor={f.amountMinor} currency={f.currency} className="text-warning" /> paid in {f.currency} ({f.count}), not added</Fragment>
+                ))}
               </DialogDescription>
             </DialogHeader>
-            <Records records={data.records.filter((r) => (r.dims[open.dim] ?? "__none") === open.g.key)}
+            <Records records={records.filter((r) => (r.dims[open.dim] ?? "__none") === open.g.key)}
               currency={currency} capped={data.capped} onOpen={(r) => router.push(r.href)} compact />
             {other && open.g.other && (
               <div className="space-y-2 border-t border-border pt-3">
@@ -370,23 +405,33 @@ export function AnalysisReportView({ config }: { config: AnalysisConfig }) {
   );
 }
 
-function GroupRow({ g, total, currency, cash, other, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; cash?: boolean; other?: { currency: string; label: string }; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
-  const onlyThere = !!g.other && g.count === 0 && g.amountMinor === 0;
+function GroupRow({ g, total, currency, cash, foreign, other, onOpen, expander, nested }: { g: AnalysisGroup; total: number; currency: string; cash?: boolean; /** The report has a column for money paid in other currencies. */ foreign?: boolean; other?: { currency: string; label: string }; onOpen: () => void; expander?: ReactNode; nested?: boolean }) {
+  // Nothing in the report's own currency: only the other organization's money, or only money paid in another currency.
+  const nothingHere = g.count === 0 && g.amountMinor === 0 && (!!g.other || !!g.foreign?.length);
+  const onlyThere = nothingHere && !!g.other && !g.foreign?.length;
+  const paidElsewhere = (g.foreign ?? []).reduce((n, f) => n + f.count, 0);
   const share = total ? Math.round((g.amountMinor / total) * 1000) / 10 : 0;
   return (
     <tr className={cn("cursor-pointer border-t border-border hover:bg-surface-muted", nested && "bg-surface-muted/50 text-[13px]")} onClick={onOpen}>
       <td className={cn("px-4 py-2", nested && "pl-11")}>
         <div className="flex items-center gap-2">{expander}<span className={cn(!nested && "font-medium")}>{g.name}</span>{onlyThere && other && <PlaceTag label={`${other.label} only`} />}</div>
       </td>
-      <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{g.count}{g.other ? <span className="ml-1 text-xs text-primary">+{g.other.count}</span> : null}</td>
-      <td className="whitespace-nowrap px-3 py-2 text-right">{onlyThere ? <span className="text-foreground-subtle">—</span> : <MoneyDisplay minor={g.amountMinor} currency={currency} className={cn(g.amountMinor < 0 && "text-danger")} />}</td>
+      <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{g.count}{paidElsewhere ? <span className="ml-1 text-xs text-warning">+{paidElsewhere}</span> : null}{g.other ? <span className="ml-1 text-xs text-primary">+{g.other.count}</span> : null}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-right">{nothingHere ? <span className="text-foreground-subtle">—</span> : <MoneyDisplay minor={g.amountMinor} currency={currency} className={cn(g.amountMinor < 0 && "text-danger")} />}</td>
       {cash && <>
         <td className="whitespace-nowrap px-3 py-2 text-right"><MoneyDisplay minor={g.collectedMinor ?? 0} currency={currency} className="text-success" /></td>
         <td className="whitespace-nowrap px-3 py-2 text-right">{(g.owedMinor ?? 0) > 0 ? <MoneyDisplay minor={g.owedMinor ?? 0} currency={currency} className="text-warning" /> : <span className="text-foreground-subtle">—</span>}</td>
       </>}
+      {foreign && (
+        <td className="whitespace-nowrap bg-warning/5 px-3 py-2 text-right">
+          {g.foreign?.length
+            ? g.foreign.map((f) => <MoneyDisplay key={f.currency} minor={f.amountMinor} currency={f.currency} className="block text-warning" />)
+            : <span className="text-foreground-subtle">—</span>}
+        </td>
+      )}
       {other && (
         <td className="whitespace-nowrap bg-primary/5 px-3 py-2 text-right">
-          {g.other ? <span className="inline-flex items-center gap-1.5"><MoneyDisplay minor={g.other.amountMinor} currency={other.currency} className="text-primary" /><PlaceTag label={other.label} /></span> : <span className="text-foreground-subtle">—</span>}
+          {g.other ?<span className="inline-flex items-center gap-1.5"><MoneyDisplay minor={g.other.amountMinor} currency={other.currency} className="text-primary" /><PlaceTag label={other.label} /></span> : <span className="text-foreground-subtle">—</span>}
         </td>
       )}
       <td className="px-4 py-2">
@@ -411,7 +456,19 @@ function Records({ title, records, currency, capped, onOpen, isLoading, isFetchi
     { key: "title", header: "For", cell: (r) => <span className="block max-w-[220px] truncate" title={r.title}>{r.title}</span> },
     { key: "detail", header: "Details", cell: (r) => <span className="block max-w-[280px] truncate text-xs text-foreground-muted" title={r.detail}>{r.detail || "—"}</span> },
     ...(records.some((r) => r.collectedMinor !== undefined) ? cashColumns(currency) : [
-      { key: "amount", header: "Amount", align: "right", cell: (r) => <MoneyDisplay minor={r.amountMinor} currency={currency} className={cn("font-medium", r.amountMinor < 0 && "text-danger")} /> },
+      { key: "amount", header: "Amount", align: "right", cell: (r) => r.recordedMinor !== undefined
+        // Paid in another currency (2026-11-26): what was paid, in that currency — and what it was recorded as.
+        ? (
+          <div className="whitespace-nowrap text-right">
+            <MoneyDisplay minor={r.amountMinor} currency={r.currency ?? currency} className="font-medium text-warning" />
+            <div className="text-[11px] text-foreground-muted">recorded as <MoneyDisplay minor={r.recordedMinor} currency={currency} /></div>
+          </div>
+        ) : r.paidIn ? (
+          <div className="whitespace-nowrap text-right">
+            <MoneyDisplay minor={r.amountMinor} currency={currency} className="font-medium" />
+            <div className="text-[11px] text-foreground-muted">paid in {r.paidIn}, amount not recorded</div>
+          </div>
+        ) : <MoneyDisplay minor={r.amountMinor} currency={currency} className={cn("font-medium", r.amountMinor < 0 && "text-danger")} /> },
     ] as Column<AnalysisRecord>[]),
   ];
   const table = (
@@ -470,8 +527,22 @@ function exportColumns(config: AnalysisConfig, basis: string, report: () => Anal
       { header: "Collected on it", value: (r: AnalysisRecord) => (r.collectedMinor === undefined ? "" : r.collectedMinor / 100) },
       { header: "Still owed", value: (r: AnalysisRecord) => (r.owedMinor === undefined ? "" : r.owedMinor / 100) },
     ] : []),
-    { header: "Currency", value: () => cur() },
+    // Its own currency on each row: a payment made in rupees is in rupees, as paid (2026-11-26) — never a rupee
+    // figure under a dirham heading — with what it was recorded as beside it.
+    { header: "Currency", value: (r: AnalysisRecord) => r.currency ?? cur() },
+    ...(report().foreign ? [
+      { header: `Recorded as (${cur()})`, value: (r: AnalysisRecord) => (r.recordedMinor === undefined ? "" : r.recordedMinor / 100) },
+    ] : []),
   ];
+}
+
+/**
+ * Every record of a report, the newest first: its own currency's, and — revenue under Collected — the payments made
+ * in another currency (`foreign`), each carrying its own `currency`.
+ */
+function everyRecord(report: AnalysisReport): AnalysisRecord[] {
+  const away = report.foreign?.records ?? [];
+  return away.length ? [...report.records, ...away].sort((a, b) => b.date.localeCompare(a.date)) : report.records;
 }
 
 /** "Delta Banglore" → "Bangalore"; any other organization by its own name. */
@@ -494,17 +565,25 @@ function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis
   const other = data.other ?? null;
   const place = other ? placeLabel(other.organizationName) : "";
   const nameOf = (dim: string, key: string | undefined) => data.options[dim]?.find((o) => o.key === key)?.name ?? key ?? "—";
-  type Mine = { name: string; here: AnalysisRecord[]; there: AnalysisRecord[] };
+  // Collected (2026-11-26): payments made in another currency (rupees on an AED invoice) — `away`, a column per
+  // currency, as paid; never in the report's own column.
+  const awayRecords = data.foreign?.records ?? [];
+  const awayCurrencies = (data.foreign?.lines ?? []).filter((l) => l.count > 0).map((l) => l.currency);
+  type Mine = { name: string; here: AnalysisRecord[]; there: AnalysisRecord[]; away: AnalysisRecord[] };
   const people = new Map<string, Mine>();
-  const add = (r: AnalysisRecord, where: "here" | "there") => {
+  const add = (r: AnalysisRecord, where: "here" | "there" | "away") => {
     const key = r.dims.salesperson ?? "__none";
-    const p = people.get(key) ?? { name: nameOf("salesperson", key), here: [], there: [] };
+    const p = people.get(key) ?? { name: nameOf("salesperson", key), here: [], there: [], away: [] };
     p[where].push(r);
     people.set(key, p);
   };
   for (const r of data.records) add(r, "here");
   for (const r of other?.records ?? []) add(r, "there");
+  for (const r of awayRecords) add(r, "away");
   const sum = (rs: AnalysisRecord[]) => Math.round(rs.reduce((s, r) => s + r.amountMinor, 0)) / 100;
+  const paidIn = (rs: AnalysisRecord[], c: string) => rs.filter((r) => r.currency === c);
+  const awayHead = awayCurrencies.flatMap((c) => [`Paid in ${c} count`, `Paid in ${c} (${c})`]);
+  const awayCells = (rs: AnalysisRecord[]) => awayCurrencies.flatMap((c) => [paidIn(rs, c).length, sum(paidIn(rs, c))]);
   const list = [...people.values()].sort((a, b) => sum(b.here) - sum(a.here) || sum(b.there) - sum(a.there) || a.name.localeCompare(b.name));
   const what = basis === "collected" ? "Collected" : "Invoiced";
   const period = from || to ? `${from || "…"} to ${to || "…"}` : "All time";
@@ -512,10 +591,11 @@ function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis
   const overview: Array<Array<string | number>> = [
     [`${config.title} — ${what} by salesperson`, period],
     [],
-    ["Salesperson", basis === "collected" ? "Payments" : "Records", `${what} (${data.currency})`, ...(other ? [`${place} count`, `${place} (${other.currency})`] : [])],
-    ...list.map((p) => [p.name, p.here.length, sum(p.here), ...(other ? [p.there.length, sum(p.there)] : [])]),
-    ["Total", data.records.length, sum(data.records), ...(other ? [other.records.length, sum(other.records)] : [])],
+    ["Salesperson", basis === "collected" ? "Payments" : "Records", `${what} (${data.currency})`, ...awayHead, ...(other ? [`${place} count`, `${place} (${other.currency})`] : [])],
+    ...list.map((p) => [p.name, p.here.length, sum(p.here), ...awayCells(p.away), ...(other ? [p.there.length, sum(p.there)] : [])]),
+    ["Total", data.records.length, sum(data.records), ...awayCells(awayRecords), ...(other ? [other.records.length, sum(other.records)] : [])],
   ];
+  if (awayCurrencies.length) overview.push([], [`Paid in ${awayCurrencies.join(", ")}: payments made in that currency on ${data.currency} invoices — as paid, not converted or added to the ${data.currency} column.`]);
   if (other) overview.push([], [`${place} figures are ${other.organizationName}'s, in ${other.currency} — not converted or added to the ${data.currency} column.`]);
   if (data.capped) overview.push([], [`Only the newest ${data.records.length.toLocaleString()} records are listed — narrow the period for every one.`]);
 
@@ -526,19 +606,20 @@ function exportBySalesperson(config: AnalysisConfig, data: AnalysisReport, basis
   const sheetOf = (p: Mine) => {
     const collected = basis === "collected";
     const head = collected
-      ? ["Date paid", "Number", "Invoice", "Customer", "Course / product", "Method", "Bank account", "Where", `Collected (${data.currency})`, ...(other ? [`${place} (${other.currency})`] : [])]
+      ? ["Date paid", "Number", "Invoice", "Customer", "Course / product", "Method", "Bank account", "Where", `Collected (${data.currency})`, ...awayCurrencies.map((c) => `Paid in ${c} (${c})`), ...(other ? [`${place} (${other.currency})`] : [])]
       : ["Date", "Number", "Customer", "Course / product", "Where", `Invoiced (${data.currency})`, "Collected on it", "Still owed", ...(other ? [`${place} (${other.currency})`] : [])];
-    const row = (r: AnalysisRecord, there: boolean) => collected
+    // A payment made in another currency: nothing under Collected, its amount under its own currency's column.
+    const row = (r: AnalysisRecord, there: boolean, away = false) => collected
       ? [r.date, r.number, r.detail.split(" · ")[0] ?? "", r.title, nameOf("course", r.dims.course), nameOf("method", r.dims.method), nameOf("bank", r.dims.bank), where(there),
-        there ? "" : r.amountMinor / 100, ...theirs(r, there)]
+        there || away ? "" : r.amountMinor / 100, ...awayCurrencies.map((c) => (away && r.currency === c ? r.amountMinor / 100 : "")), ...theirs(r, there)]
       : [r.date, r.number, r.title, nameOf("course", r.dims.course), where(there),
         there ? "" : r.amountMinor / 100, there || r.collectedMinor === undefined ? "" : r.collectedMinor / 100, there || r.owedMinor === undefined ? "" : r.owedMinor / 100, ...theirs(r, there)];
-    const rows = [...p.here.map((r) => row(r, false)), ...p.there.map((r) => row(r, true))].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-    const n = p.here.length + p.there.length;
+    const rows = [...p.here.map((r) => row(r, false)), ...p.there.map((r) => row(r, true)), ...(collected ? p.away.map((r) => row(r, false, true)) : [])].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const n = p.here.length + p.there.length + (collected ? p.away.length : 0);
     const owed = Math.round(p.here.reduce((s, r) => s + (r.owedMinor ?? 0), 0)) / 100;
     const got = Math.round(p.here.reduce((s, r) => s + (r.collectedMinor ?? 0), 0)) / 100;
     const total = collected
-      ? ["Total", `${n} payment${n === 1 ? "" : "s"}`, "", "", "", "", "", "", sum(p.here), ...(other ? [sum(p.there)] : [])]
+      ? ["Total", `${n} payment${n === 1 ? "" : "s"}`, "", "", "", "", "", "", sum(p.here), ...awayCurrencies.map((c) => sum(paidIn(p.away, c))), ...(other ? [sum(p.there)] : [])]
       : ["Total", `${n} record${n === 1 ? "" : "s"}`, "", "", "", sum(p.here), got, owed, ...(other ? [sum(p.there)] : [])];
     return { title: p.name, rows: [[p.name, `${what} · ${period}`], [], head, ...rows, total] };
   };

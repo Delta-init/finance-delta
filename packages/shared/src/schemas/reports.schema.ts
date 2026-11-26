@@ -200,10 +200,20 @@ export type AnalysisRecord = {
   /** Revenue under Invoiced: paid on this invoice so far, and still owed on it (2026-10-30: a part-paid invoice showed only its total). */
   collectedMinor?: number;
   owedMinor?: number;
+  /**
+   * Revenue under Collected (2026-11-26): a payment made in another currency than its invoice's — `amountMinor` is
+   * what was paid, in `currency`; this is what it was recorded as, in the report's currency.
+   */
+  recordedMinor?: number;
+  /** Paid in this currency, but the amount in it was never recorded — so it is counted as recorded, in the report's. */
+  paidIn?: string;
   href: string;
   /** Its key in each dimension; the names are in the report's options. */
   dims: Record<string, string>;
 };
+
+/** Money paid in one currency other than the invoices' own: as it was paid, never converted. */
+export type AnalysisForeign = { currency: string; amountMinor: number; count: number };
 
 export type AnalysisOption = { key: string; name: string; count: number };
 
@@ -222,6 +232,11 @@ export type AnalysisGroup = {
    * never added. A group with only this has count and amountMinor 0.
    */
   other?: { amountMinor: number; count: number };
+  /**
+   * Revenue under Collected (2026-11-26): the same key's payments made in other currencies (rupees on an AED invoice)
+   * — a line per currency, as paid; not in `amountMinor` or `count`. A group with only these has both 0.
+   */
+  foreign?: AnalysisForeign[];
 };
 
 export type AnalysisReport = {
@@ -268,6 +283,18 @@ export type AnalysisReport = {
     currency: string;
     amountMinor: number;
     count: number;
+    records: AnalysisRecord[];
+  };
+  /**
+   * Revenue under Collected (the user, 2026-11-26: "show INR collected as separate instead of summing AED, same as
+   * the payment page"): payments made in another currency than their invoice's — rupees on an AED invoice — as they
+   * were paid, never converted, and not in the totals, groups or records above. A line per currency: what was paid
+   * and how many, what those were recorded as in the report's currency, and the payments whose amount in that
+   * currency was never recorded (those stay in the totals). Absent: there are none.
+   */
+  foreign?: {
+    lines: Array<AnalysisForeign & { recordedMinor: number; unknownCount: number; unknownMinor: number }>;
+    /** Those payments, the newest first — each with its `currency` and `recordedMinor`. */
     records: AnalysisRecord[];
   };
 };

@@ -195,7 +195,7 @@ export default function ProfitLossPage() {
           <div className="rounded-xl border border-border bg-surface p-5">
             <h3 className="font-semibold mb-3">Income</h3>
             {data.income.breakdown.map((item) => (
-              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent onOpen={openLine(item.key, collected ? "Income collected" : "Invoice revenue")} />
+              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent onOpen={openLine(item.key, collected ? "Income collected" : item.label)} />
             ))}
             <PLRow label="Total Income" amountMinor={data.income.total} bold onOpen={openLine("income", "Total income")} />
           </div>

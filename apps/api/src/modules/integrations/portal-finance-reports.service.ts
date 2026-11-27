@@ -11,6 +11,7 @@ import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.mod
 import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
 import { PayrollRun } from "../payroll/payroll-run.model";
 import { Bill } from "../bill/bill.model";
+import { VendorCredit } from "../vendor-credit/vendor-credit.model";
 
 /*
  * The Root portal's Report Org → Finance and revenue (the user, 2026-11-26: "first I need report finance and revenue").
@@ -701,6 +702,17 @@ export async function vatReportForPortal(q: Record<string, unknown>) {
       vendor: b.vendorName || "—", month: iso(new Date(b.billDate)).slice(0, 7), status: titled(b.status),
       currency: cur(b.currency), amountMinor: b.taxTotalMinor ?? 0, netMinor: b.subtotalMinor ?? 0, totalMinor: b.totalMinor ?? 0, href: `/bills/${b._id}`,
     }));
+    // Vendor credits issued in the period (audit F14): their VAT off the input VAT, as finance's VAT report takes it.
+    const credits = await VendorCredit.find({ organizationId: orgId, issueDate: range, status: { $in: ["issued", "applied"] } })
+      .select("creditNumber vendorName sourceBillNumber issueDate status currency subtotalMinor taxTotalMinor totalMinor").lean<any[]>();
+    for (const v of credits) {
+      const day = iso(new Date(v.issueDate));
+      rows.push({
+        id: `vc:${v._id}`, date: day, number: v.creditNumber, title: v.vendorName || "—", detail: v.sourceBillNumber ? `Vendor credit on ${v.sourceBillNumber}` : "Vendor credit",
+        vendor: v.vendorName || "—", month: day.slice(0, 7), status: `Vendor credit (${titled(v.status)})`,
+        currency: cur(v.currency), amountMinor: -(v.taxTotalMinor ?? 0), netMinor: -(v.subtotalMinor ?? 0), totalMinor: -(v.totalMinor ?? 0), href: `/vendor-credits/${v._id}`,
+      });
+    }
     return done(rows, ["vendor", "month", "status"], ["amountMinor", "netMinor", "totalMinor"], ["month", "vendor", "status"], ["vendor", "month", "status", "netMinor", "totalMinor"]);
   }
 
@@ -804,9 +816,9 @@ export async function plLinesForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const basis = str(q.basis) === "collected" ? "collected" : "invoiced";
   const line = str(q.line);
-  if (!/^(income|bills|expenses|cat:[\w-]{1,80})$/.test(line)) return "line is income, bills, expenses or cat:<category>";
+  if (!/^(income|invoices|credit-notes|bills|vendor-credits|expenses|cat:[\w-]{1,80})$/.test(line)) return "line is income, invoices, credit-notes, bills, vendor-credits, expenses or cat:<category>";
   const { rows } = await profitLossLines(org.id, period.from, period.to, basis, line);
-  const income = line === "income";
+  const income = line === "income" || line === "invoices" || line === "credit-notes";
   return {
     generatedAt: new Date().toISOString(), org, period, basis, line,
     ...ledger(rows as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, income

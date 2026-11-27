@@ -90,7 +90,8 @@ export default function OtherReportsPage() {
         return (
           <div className="flex items-center justify-end gap-2">
             <div className="h-1.5 w-16 rounded-full bg-surface-muted overflow-hidden">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+              {/* A credit row (less vendor credits) is a minus: no bar. */}
+              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, pct)}%` }} />
             </div>
             <span className="text-foreground-muted text-xs w-7 text-right">{pct}%</span>
           </div>

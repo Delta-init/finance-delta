@@ -29,6 +29,8 @@ import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, category
 import type { OtherCurrencyLine } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
+import { CreditNote } from "../credit-note/credit-note.model";
+import { VendorCredit } from "../vendor-credit/vendor-credit.model";
 import { Expense } from "../expense/expense.model";
 import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
 import { payrollInPeriod } from "../payroll/payroll-month";
@@ -671,6 +673,32 @@ export async function getAgedPayables(
 // ── 8.3 Profit & Loss ─────────────────────────────────────────────────────────
 
 /**
+ * Credit notes that take income off in a period (audit F03, 2026-11-27): issued or applied, dated by the day they were
+ * issued — the Revenue report's date — never voided, and never on a void invoice (whose income is not counted either).
+ * Counted once, at issue, by the note itself: applying it to an invoice settles a balance, it is not income again, so
+ * nothing here looks at where it was applied. Before VAT, as the P&L counts income. Not money paid back: the
+ * collected view, which counts only payments, never sees it.
+ */
+async function periodCreditNotes(orgId: string, from: string, to: string) {
+  const notes = await CreditNote.find({ organizationId: oid(orgId), status: { $in: ["issued", "applied"] }, issuedAt: { $gte: startOf(from), $lte: endOf(to) } })
+    .select("creditNoteNumber invoiceId invoiceNumber customerName reason status currency subtotalMinor taxTotalMinor totalMinor issuedAt").lean<any[]>();
+  if (!notes.length) return [];
+  const live = new Set((await Invoice.find({ _id: { $in: notes.map((n) => n.invoiceId) }, status: { $ne: "void" } }).select("_id").lean<any[]>()).map((i) => String(i._id)));
+  return notes.filter((n) => live.has(String(n.invoiceId)));
+}
+
+/**
+ * Vendor credits that take supplier cost off in a period (audit F14, 2026-11-27): issued or applied, dated by their own
+ * issue date (as a bill counts by its bill date), never voided. Before VAT, as supplier bills are counted; their VAT
+ * comes off input VAT. Counted once, at issue — applying one to a bill only settles that bill — and never in the
+ * collected view: no money moved.
+ */
+async function periodVendorCredits(orgId: string, from: string, to: string) {
+  return VendorCredit.find({ organizationId: oid(orgId), status: { $in: ["issued", "applied"] }, issueDate: { $gte: startOf(from), $lte: endOf(to) } })
+    .select("creditNumber vendorName sourceBillNumber reason status currency subtotalMinor taxTotalMinor totalMinor issueDate").lean<any[]>();
+}
+
+/**
  * One period's income, expenses and what is left, in the organization's own currency (`base`).
  *
  * An expense or a supplier bill in another currency is not this currency's money (the user, 2026-11-26: "fix finance's
@@ -680,7 +708,7 @@ export async function getAgedPayables(
  * Report keep them. One with no currency on it is the organization's.
  */
 async function computePL(orgId: string, from: string, to: string, base: string): Promise<PLPeriod> {
-  const [invoices, bills, expenses] = await Promise.all([
+  const [invoices, bills, expenses, creditNotes, vendorCredits] = await Promise.all([
     Invoice.find({
       organizationId: oid(orgId),
       issueDate: { $gte: startOf(from), $lte: endOf(to) },
@@ -710,6 +738,8 @@ async function computePL(orgId: string, from: string, to: string, base: string):
     })
       .select("category totalMinor currency")
       .lean()),
+    periodCreditNotes(orgId, from, to),
+    periodVendorCredits(orgId, from, to),
   ]);
   // After the rest, as before: this and the P&L filter above both seed an organization's first categories.
   const nameMap = await categoryNameMap(orgId);
@@ -736,13 +766,21 @@ async function computePL(orgId: string, from: string, to: string, base: string):
     }
     incomeTotal += Math.max(0, amount - away);
   }
+  // Less the credit notes issued in the period (F03): the organization's own currency off the income; another
+  // currency's apart, as a minus beside that currency's invoices.
+  let creditTotal = 0;
+  for (const n of creditNotes) {
+    const amount = Number(n.subtotalMinor) || 0;
+    if (!otherIncome.own(n.currency, -amount, "Less credit notes")) continue;
+    creditTotal += amount;
+  }
 
   // Each currency's supplier bills and expenses by category — the organization's own, and every other one apart.
-  type Costs = { bills: number; byCategory: Map<string, number>; count: number };
+  type Costs = { bills: number; vendorCredits: number; byCategory: Map<string, number>; count: number };
   const costs = new Map<string, Costs>();
   const costsIn = (currency: unknown): Costs => {
     const key = String(currency || base).toUpperCase();
-    const c = costs.get(key) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+    const c = costs.get(key) ?? { bills: 0, vendorCredits: 0, byCategory: new Map<string, number>(), count: 0 };
     costs.set(key, c);
     return c;
   };
@@ -750,6 +788,12 @@ async function computePL(orgId: string, from: string, to: string, base: string):
     const d = bill as unknown as Record<string, unknown>;
     const c = costsIn(d.currency);
     c.bills += (d.subtotalMinor as number) ?? 0;
+    c.count++;
+  }
+  // Less the vendor credits issued in the period (F14), in their own currency.
+  for (const v of vendorCredits) {
+    const c = costsIn(v.currency);
+    c.vendorCredits += Number(v.subtotalMinor) || 0;
     c.count++;
   }
   for (const exp of expenses) {
@@ -761,11 +805,12 @@ async function computePL(orgId: string, from: string, to: string, base: string):
   }
   const breakdownOf = (c: Costs): PLCategory[] => [
     { key: "bills", label: "Supplier bills", amountMinor: c.bills },
+    { key: "vendor-credits", label: "Less vendor credits", amountMinor: -c.vendorCredits },
     ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ key: `cat:${slug}`, label: nameMap.get(slug) ?? slug, amountMinor })),
-  ].filter((line) => line.amountMinor > 0);
-  const totalOf = (c: Costs) => c.bills + [...c.byCategory.values()].reduce((s, n) => s + n, 0);
+  ].filter((line) => line.amountMinor !== 0);
+  const totalOf = (c: Costs) => c.bills - c.vendorCredits + [...c.byCategory.values()].reduce((s, n) => s + n, 0);
 
-  const own = costs.get(base) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+  const own = costs.get(base) ?? { bills: 0, vendorCredits: 0, byCategory: new Map<string, number>(), count: 0 };
   const totalExpenses = totalOf(own);
   const otherCurrencies = [...costs.entries()]
     .filter(([currency]) => currency !== base)
@@ -775,9 +820,14 @@ async function computePL(orgId: string, from: string, to: string, base: string):
   return {
     from,
     to,
+    // "invoices" is the invoices alone; "income" (the total) is invoices less credit notes — so each line's records,
+    // and the total's, add up to what is shown.
     income: {
-      total: incomeTotal,
-      breakdown: [{ key: "income", label: "Invoice revenue", amountMinor: incomeTotal }],
+      total: incomeTotal - creditTotal,
+      breakdown: [
+        { key: "invoices", label: "Invoice revenue", amountMinor: incomeTotal },
+        ...(creditTotal ? [{ key: "credit-notes", label: "Less credit notes", amountMinor: -creditTotal }] : []),
+      ],
       ...otherIncome.lines(),
     },
     expenses: {
@@ -785,7 +835,7 @@ async function computePL(orgId: string, from: string, to: string, base: string):
       breakdown: breakdownOf(own),
       ...(otherCurrencies.length ? { otherCurrencies } : {}),
     },
-    netProfitMinor: incomeTotal - totalExpenses,
+    netProfitMinor: incomeTotal - creditTotal - totalExpenses,
   };
 }
 
@@ -902,7 +952,7 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
  */
 export type PLLineRow = {
   id: string; date: string; number: string; title: string; detail: string; amountMinor: number; currency: string; href: string;
-  kind: "invoice" | "payment" | "bill" | "bill payment" | "expense";
+  kind: "invoice" | "payment" | "credit note" | "bill" | "bill payment" | "vendor credit" | "expense";
   grossMinor?: number; vatMinor?: number;
   crm?: string; salesperson?: string; category?: string; subcategory?: string; department?: string; method?: string; employee?: string; month: string;
 };
@@ -915,8 +965,11 @@ export async function profitLossLines(orgId: string, from: string, to: string, b
   const day = (d: unknown) => dateOnly(new Date(d as Date));
   const own = (c: unknown) => String(c || base).toUpperCase() === base;
   const rows: PLLineRow[] = [];
-  const wantIncome = line === "income";
+  // "income" is the whole income (invoices less credit notes); "invoices" and "credit-notes" its two lines (F03).
+  const wantIncome = line === "income" || line === "invoices";
+  const wantCredits = basis === "invoiced" && (line === "income" || line === "credit-notes");
   const wantBills = line === "bills" || line === "expenses";
+  const wantVendorCredits = basis === "invoiced" && (line === "expenses" || line === "vendor-credits");
   const wantCat = line === "expenses" ? null : line.startsWith("cat:") ? line.slice(4) : undefined;
 
   if (wantIncome) {
@@ -957,6 +1010,32 @@ export async function profitLossLines(orgId: string, from: string, to: string, b
           });
         }
       }
+    }
+  }
+
+  if (wantCredits) {
+    for (const n of await periodCreditNotes(orgId, from, to)) {
+      if (!own(n.currency)) continue;
+      const date = day(n.issuedAt);
+      const net = Number(n.subtotalMinor) || 0;
+      rows.push({
+        id: `cn:${n._id}`, date, month: date.slice(0, 7), number: n.creditNoteNumber, title: n.customerName ?? "", kind: "credit note",
+        detail: [`Credit note on ${n.invoiceNumber}`, n.reason].filter(Boolean).join(" — "),
+        amountMinor: -net, grossMinor: -(Number(n.totalMinor) || 0), vatMinor: -(Number(n.taxTotalMinor) || 0), currency: base, href: `/credit-notes/${n._id}`,
+      });
+    }
+  }
+
+  if (wantVendorCredits) {
+    for (const v of await periodVendorCredits(orgId, from, to)) {
+      if (!own(v.currency)) continue;
+      const date = day(v.issueDate);
+      rows.push({
+        id: `vc:${v._id}`, date, month: date.slice(0, 7), number: v.creditNumber, title: v.vendorName ?? "", kind: "vendor credit",
+        detail: [v.sourceBillNumber ? `Vendor credit on ${v.sourceBillNumber}` : "Vendor credit", v.reason].filter(Boolean).join(" — "),
+        amountMinor: -(Number(v.subtotalMinor) || 0), grossMinor: -(Number(v.totalMinor) || 0), vatMinor: -(Number(v.taxTotalMinor) || 0),
+        currency: base, href: `/vendor-credits/${v._id}`, category: "Supplier bills",
+      });
     }
   }
 
@@ -1227,7 +1306,7 @@ export async function getVATReport(
   to: string,
   currency = "AED",
 ): Promise<VATReport> {
-  const [tax, bills] = await Promise.all([
+  const [tax, bills, vendorCredits] = await Promise.all([
     outputTax(orgId, from, to),
 
     Bill.find({
@@ -1237,11 +1316,21 @@ export async function getVATReport(
     })
       .select("taxTotalMinor lineItems")
       .lean(),
+
+    // Vendor credits issued in the period (audit F14): their VAT comes off the input VAT the bills claimed.
+    VendorCredit.find({
+      organizationId: oid(orgId),
+      issueDate: { $gte: startOf(from), $lte: endOf(to) },
+      status: { $in: ["issued", "applied"] },
+    })
+      .select("taxTotalMinor lineItems")
+      .lean(),
   ]);
 
   const invoices = tax;
   const outputTaxMinor = invoices.reduce((s, i) => s + ((i.taxTotalMinor as number) ?? 0), 0);
-  const inputTaxMinor = bills.reduce((s, b) => s + ((b.taxTotalMinor as number) ?? 0), 0);
+  const inputTaxMinor = bills.reduce((s, b) => s + ((b.taxTotalMinor as number) ?? 0), 0)
+    - vendorCredits.reduce((s, v) => s + ((v.taxTotalMinor as number) ?? 0), 0);
 
   // Breakdown rows keyed by code (output, from invoices) and by rate (input,
   // from bills — bills carry a per-line taxPct but no tax code). Both sides are
@@ -1259,8 +1348,10 @@ export async function getVATReport(
     }
   }
 
-  // Input side — bill line taxes bucketed by rate (percentage).
-  for (const bill of bills) {
+  // Input side — bill line taxes bucketed by rate (percentage); a vendor credit's lines take theirs off.
+  const creditSign = new Set<unknown>(vendorCredits);
+  for (const bill of [...bills, ...vendorCredits]) {
+    const sign = creditSign.has(bill) ? -1 : 1;
     const lines = (bill as unknown as {
       lineItems?: { quantity: number; unitPriceMinor: number; discountPct?: number; taxPct?: number }[];
     }).lineItems ?? [];
@@ -1272,7 +1363,7 @@ export async function getVATReport(
       if (tax === 0) continue;
       const k = `in:${rate}`;
       const existing = byKey.get(k) ?? { code: `Input ${rate}%`, rate, outputMinor: 0, inputMinor: 0 };
-      existing.inputMinor += tax;
+      existing.inputMinor += sign * tax;
       byKey.set(k, existing);
     }
   }
@@ -1347,14 +1438,28 @@ export async function getExpenseByCategory(
   to: string,
   currency = "AED",
 ): Promise<ExpenseByCategoryReport> {
-  // Per category and subcategory (2026-10-21), of what counts in the P&L.
+  // Per category and subcategory (2026-10-21), of what counts in the P&L — counted exactly as the (invoiced) P&L counts
+  // its expenses (audit F13, 2026-11-27), so the two totals agree:
+  //   · a supplier bill is counted once, from the bill itself as the P&L counts it (by bill date, not draft or voided,
+  //     before VAT), filed under its own category and subcategory as before — its mirror expense, which carries the
+  //     VAT, is not counted on top;
+  //   · vendor credits issued in the period come off as "Less vendor credits";
+  //   · payroll counts in the month the pay is for, through its run (payroll-month.ts); its own dates are not changed.
+  const [pnl, payroll, bills, vendorCredits] = await Promise.all([
+    pnlExpenseFilter(orgId),
+    payrollInPeriod(orgId, from, to),
+    Bill.find({ organizationId: oid(orgId), billDate: { $gte: startOf(from), $lte: endOf(to) }, status: { $nin: ["draft", "voided"] } }).select("subtotalMinor currency category categoryName subcategory subcategoryName expenseId").lean<any[]>(),
+    periodVendorCredits(orgId, from, to),
+  ]);
   const agg = await Expense.aggregate([
     {
       $match: {
         organizationId: oid(orgId),
-        expenseDate: { $gte: startOf(from), $lte: endOf(to) },
         status: { $in: ["approved", "submitted"] },
-        ...(await pnlExpenseFilter(orgId)),
+        $and: [
+          { $or: [{ expenseDate: { $gte: startOf(from), $lte: endOf(to) }, "source.kind": { $nin: ["bill", "payroll"] } }, payroll.clause] },
+          pnl,
+        ],
       },
     },
     {
@@ -1377,6 +1482,26 @@ export async function getExpenseByCategory(
     count: a.count,
     totalMinor: a.totalMinor,
   }));
+  // Supplier bills before VAT, each under its own category and subcategory (named as its mirror expense names them —
+  // one filed before categories is "Other"), added into that category's line; then vendor credits as a minus. The
+  // organization's currency only; another's apart.
+  const ownBills = bills.filter((b) => other.own(b.currency, Number(b.subtotalMinor) || 0, "Supplier bills"));
+  const mirrors = new Map((await Expense.find({ _id: { $in: ownBills.map((b) => b.expenseId).filter(Boolean) } }).select("category categoryName subcategory subcategoryName").lean<any[]>()).map((e) => [String(e._id), e]));
+  const byLabel = new Map(categories.map((c) => [c.category, c]));
+  for (const b of ownBills) {
+    const m = b.expenseId ? mirrors.get(String(b.expenseId)) : undefined;
+    const cat = m?.category || b.category;
+    const sub = m ? m.subcategory : b.subcategory;
+    // A bill with no category and no expense of its own yet (one from before categories): "Supplier bills".
+    const label = cat ? categoryLabel(nameMap.get(cat) ?? m?.categoryName ?? b.categoryName ?? cat, sub ? m?.subcategoryName || b.subcategoryName || sub : "") : "Supplier bills";
+    const row = byLabel.get(label) ?? { category: label, count: 0, totalMinor: 0 };
+    if (!byLabel.has(label)) { byLabel.set(label, row); categories.push(row); }
+    row.count++;
+    row.totalMinor += Number(b.subtotalMinor) || 0;
+  }
+  const ownCredits = vendorCredits.filter((v) => other.own(v.currency, -(Number(v.subtotalMinor) || 0), "Less vendor credits"));
+  if (ownCredits.length) categories.push({ category: "Less vendor credits", count: ownCredits.length, totalMinor: -ownCredits.reduce((n, v) => n + (Number(v.subtotalMinor) || 0), 0) });
+  categories.sort((x, y) => y.totalMinor - x.totalMinor);
 
   return {
     from,

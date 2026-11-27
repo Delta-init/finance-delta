@@ -89,7 +89,11 @@ console.log("\nOther reports");
 const sales = await reports.getSalesByItem(org, from, to);
 check("sales by item: Course X 10,000 alone; Course Y's rupees apart", sales.items.length === 1 && sales.grandTotalMinor === 1_000_000 && apartOf(sales) === "INR|Sales|5000000|1", j(sales));
 const byCategory = await reports.getExpenseByCategory(org, from, to);
-check("expenses by category: Rent 1,200 and Marketing 800 = 2,000; the rupee rent apart, not a second Rent line", byCategory.grandTotalMinor === 200_000 && byCategory.categories.length === 2 && apartOf(byCategory) === "INR|Expenses|2000000|1", j(byCategory));
+// Since Phase 2B (audit F13, 2026-11-27) Expense by Category counts what the P&L counts: the dirham supplier bill
+// (700, before VAT) is in it, and the rupee bill apart — 2,700, the P&L's expenses.
+check("expenses by category: Rent 1,200, Marketing 800 and the supplier bill 700 = 2,700 (the P&L's); the rupee rent and bill apart, not a second Rent line",
+  byCategory.grandTotalMinor === 270_000 && byCategory.categories.length === 3 && byCategory.categories.some((c) => c.category === "Supplier bills" && c.totalMinor === 70_000)
+  && j((byCategory.otherCurrencies ?? []).map((l) => `${l.currency}|${l.what}|${l.amountMinor}|${l.count}`).sort()) === j(["INR|Expenses|2000000|1", "INR|Supplier bills|800000|1"]), j(byCategory));
 
 console.log("\nThe dashboard");
 const dash = await getDashboardStats(org);

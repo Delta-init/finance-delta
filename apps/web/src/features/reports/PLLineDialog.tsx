@@ -34,7 +34,7 @@ function Lines({ pick, money }: { pick: PLLinePick; money: (m: number) => string
     queryKey: ["reports", "profit-loss", "lines", pick.line, pick.from, pick.to, pick.basis],
     queryFn: () => api.get<{ currency: string; rows: Row[]; totalMinor: number }>(`reports/profit-loss/lines?from=${pick.from}&to=${pick.to}&basis=${pick.basis}&line=${encodeURIComponent(pick.line)}`),
   });
-  const income = pick.line === "income";
+  const income = pick.line === "income" || pick.line === "invoices" || pick.line === "credit-notes";
   const shown = useMemo(() => {
     const needle = text.trim().toLowerCase();
     return (data?.rows ?? []).filter((r) => !needle || `${r.number} ${r.title} ${r.detail} ${r.employee ?? ""}`.toLowerCase().includes(needle));

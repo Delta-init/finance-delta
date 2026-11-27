@@ -4,6 +4,9 @@ import { Organization } from "../organization/organization.model";
 import { BankAccount } from "../banking/bank-account.model";
 import { analysisFilters, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
 import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport } from "../reports/reports.service";
+import { Invoice } from "../invoice/invoice.model";
+import { User } from "../user/user.model";
+import { Department } from "../department/department.model";
 
 /*
  * The Root portal's Report Org → Finance and revenue (the user, 2026-11-26: "first I need report finance and revenue").
@@ -127,6 +130,17 @@ const query = (period: { from: string; to: string }, basis: string, groupBy: str
  */
 type Row = Record<string, unknown>;
 
+/**
+ * An invoice raised from CS Portal carries CS Portal's own source code where a sales CRM's carries the CRM, and the
+ * Revenue report gives that code as the name. Root's CRM filter says what it is (the user, 2026-11-27: "add CS Portal
+ * filter also").
+ */
+const CRM_NAMES: Record<string, string> = { "tetra-course": "CS Portal", "tetra-commission": "CS Portal (earlier)" };
+function nameCrms(report: AnalysisReport): void {
+  for (const o of report.options.crm ?? []) if (CRM_NAMES[o.key]) o.name = CRM_NAMES[o.key]!;
+  if (report.groupBy === "crm") for (const g of report.groups) if (CRM_NAMES[g.key]) g.name = CRM_NAMES[g.key]!;
+}
+
 function rowsOf(report: AnalysisReport, dims: readonly string[]): Row[] {
   const names = new Map(dims.map((dim) => [dim, new Map((report.options[dim] ?? []).map((o) => [o.key, o.name]))]));
   return [...report.records, ...(report.foreign?.records ?? [])].map((r) => {
@@ -241,7 +255,7 @@ export async function financeOverviewForPortal(q: Record<string, unknown>) {
     generatedAt: new Date().toISOString(),
     org, period, before,
     // Asked only of the money that came through one CRM; the P&L, what is owed and the bank are the organization's whole.
-    crm: filters.crm ?? null,
+    crm: filters.crm ? filters.crm.split("\u001f") : null,
     kpis: {
       grossInvoiced: { ...pair(invoiced.totals.invoicedMinor, invoicedBefore.totals.invoicedMinor), count: invoiced.totals.count },
       creditNotes: pair(invoiced.totals.creditMinor, invoicedBefore.totals.creditMinor),
@@ -288,6 +302,7 @@ export async function revenueReportForPortal(q: Record<string, unknown>) {
   if (!byDay && !(REVENUE_DIMENSION_KEYS as readonly string[]).includes(wanted)) return `groupBy is day or one of ${REVENUE_DIMENSION_KEYS.join(", ")}`;
 
   const report = await getRevenueAnalysis(org.id, query(period, basis, byDay ? "month" : wanted, analysisFilters(q, REVENUE_DIMENSION_KEYS), str(q.q).slice(0, 100)));
+  nameCrms(report);
   const page = pageOf(rowsOf(report, REVENUE_ROW_DIMENSIONS), q, REVENUE_ROW_DIMENSIONS);
   // Every customer of the period is too long a list to send for a filter nobody picks from.
   const { customer: _customers, ...options } = report.options;
@@ -348,6 +363,8 @@ export async function expensesReportForPortal(q: Record<string, unknown>) {
     groups: byDay ? [] : report.groups,
     months: report.months,
     days: daysOf(report),
+    // Every value each dimension has in the period, for the filters.
+    options: report.options,
     ...page,
     recordCount: report.totals.count,
     capped: report.capped,
@@ -384,11 +401,42 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
 
   const report = kind === "receivables" ? await getAgedReceivables(org.id, org.currency) : await getAgedPayables(org.id, org.currency);
   const needle = str(q.q).slice(0, 100).toLowerCase();
-  const rows: Row[] = BANDS.flatMap((band) => report[band.key].map((item): Row => ({
+  const every: Row[] = BANDS.flatMap((band) => report[band.key].map((item): Row => ({
     id: item.id, date: item.issuedDate, dueDate: item.dueDate, number: item.number, title: item.partyName, detail: "",
     amountMinor: item.balanceMinor, totalMinor: item.totalMinor, daysOverdue: Math.max(0, item.daysOverdue), band: band.name, bandKey: band.key,
     href: `/${kind === "receivables" ? "invoices" : "bills"}/${item.id}`,
-  }))).filter((r) => (due === "upcoming" ? r.bandKey === "current" : due === "overdue" ? r.bandKey !== "current" : true)
+  }))).filter((r) => (due === "upcoming" ? r.bandKey === "current" : due === "overdue" ? r.bandKey !== "current" : true));
+
+  // An open invoice's salesperson and their department — the aged list has neither. A bill has no salesperson.
+  if (kind === "receivables" && every.length) {
+    const orgId = new Types.ObjectId(org.id);
+    const [invoices, people, depts] = await Promise.all([
+      Invoice.find({ _id: { $in: every.map((r) => new Types.ObjectId(String(r.id))) } }).select("salespersonId salespersonName").lean<{ _id: Types.ObjectId; salespersonId?: Types.ObjectId; salespersonName?: string }[]>(),
+      User.find({ "memberships.organizationId": orgId }).select("memberships").lean<{ _id: Types.ObjectId; memberships?: { organizationId: Types.ObjectId; departmentId?: Types.ObjectId }[] }[]>(),
+      Department.find({ organizationId: orgId }).select("name").lean<{ _id: Types.ObjectId; name: string }[]>(),
+    ]);
+    const deptName = new Map(depts.map((x) => [String(x._id), x.name]));
+    const deptOf = new Map(people.map((u) => [String(u._id), deptName.get(String(u.memberships?.find((m) => String(m.organizationId) === org.id)?.departmentId ?? "")) ?? ""]));
+    const byId = new Map(invoices.map((i) => [String(i._id), i]));
+    for (const r of every) {
+      const i = byId.get(String(r.id));
+      r.salesperson = i?.salespersonName || "No salesperson";
+      r.department = (i?.salespersonId && deptOf.get(String(i.salespersonId))) || "No department";
+    }
+  }
+
+  // What each filter can be set to, counted before any of them is applied, so a list always offers what there is.
+  const FILTERS = kind === "receivables" ? (["party", "band", "salesperson", "department"] as const) : (["party", "band"] as const);
+  const field = (f: string) => (f === "party" ? "title" : f);
+  const options: Record<string, { key: string; name: string; count: number }[]> = {};
+  for (const f of FILTERS) {
+    const counts = new Map<string, number>();
+    for (const r of every) counts.set(String(r[field(f)] ?? ""), (counts.get(String(r[field(f)] ?? "")) ?? 0) + 1);
+    options[f] = [...counts.entries()].map(([name, n]) => ({ key: name, name: name || "—", count: n }))
+      .sort((a, b) => (f === "band" ? BANDS.findIndex((x) => x.name === a.key) - BANDS.findIndex((x) => x.name === b.key) : a.name.localeCompare(b.name)));
+  }
+  const asked = (f: string): string[] => (Array.isArray(q[f]) ? (q[f] as unknown[]) : [q[f]]).filter((x): x is string => typeof x === "string" && x !== "").slice(0, 50);
+  const rows = every.filter((r) => FILTERS.every((f) => { const want = asked(f); return !want.length || want.includes(String(r[field(f)] ?? "")); })
     && (!needle || `${r.number} ${r.title}`.toLowerCase().includes(needle)));
 
   const sum = (list: Row[], key: string) => list.reduce((n, r) => n + (Number(r[key]) || 0), 0);
@@ -414,7 +462,8 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
     org, kind, due: due || null, groupBy, asOf: report.asOf, currency: org.currency,
     totals: { amountMinor: sum(rows, "amountMinor"), count: rows.length, totalMinor: sum(rows, "totalMinor"), overdueMinor: sum(overdue, "amountMinor"), overdueCount: overdue.length },
     groups,
-    ...pageOf(rows, { sort: "dueDate", dir: "asc", ...q }, ["dueDate", "daysOverdue", "totalMinor"]),
+    options,
+    ...pageOf(rows, { sort: "dueDate", dir: "asc", ...q }, ["dueDate", "daysOverdue", "totalMinor", "salesperson", "department"]),
     recordCount: rows.length,
     capped: false,
     otherCurrencies: report.otherCurrencies ?? [],

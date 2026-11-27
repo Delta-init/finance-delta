@@ -116,7 +116,7 @@ function finish(
 
   const needle = (q.search ?? "").trim().toLowerCase();
   const kept = all.filter((r) => {
-    for (const [dim, key] of Object.entries(q.filters)) if ((r.dims[dim] ?? NONE) !== key) return false;
+    for (const [dim, key] of Object.entries(q.filters)) if (!keeps1(key, r.dims[dim] ?? NONE)) return false;
     return !needle || `${r.number} ${r.title} ${r.detail}`.toLowerCase().includes(needle);
   });
 
@@ -274,7 +274,7 @@ export async function getRevenueAnalysis(orgId: string, q: AnalysisQuery, viewer
 /** Whether a record passes the report's filters and search — as `finish` keeps them. */
 function keeps(q: AnalysisQuery): (r: AnalysisRecord) => boolean {
   const needle = (q.search ?? "").trim().toLowerCase();
-  return (r) => Object.entries(q.filters).every(([dim, key]) => (r.dims[dim] ?? NONE) === key)
+  return (r) => Object.entries(q.filters).every(([dim, key]) => keeps1(key, r.dims[dim] ?? NONE))
     && (!needle || `${r.number} ${r.title} ${r.detail}`.toLowerCase().includes(needle));
 }
 
@@ -383,7 +383,7 @@ async function withOtherOrganization(
   }
   const needle = (q.search ?? "").trim().toLowerCase();
   const kept = records
-    .filter((r) => Object.entries(q.filters).every(([dim, key]) => (r.dims[dim] ?? NONE) === key))
+    .filter((r) => Object.entries(q.filters).every(([dim, key]) => keeps1(key, r.dims[dim] ?? NONE)))
     .filter((r) => !needle || `${r.number} ${r.title} ${r.detail}`.toLowerCase().includes(needle))
     .map((r) => ({ ...r, currency: otherCurrency }));
   if (!kept.length) return;
@@ -554,9 +554,20 @@ export function analysisFilters(query: Record<string, unknown>, allowed: readonl
   const out: Record<string, string> = {};
   for (const dim of allowed) {
     const v = query[dim];
-    if (typeof v === "string" && v) out[dim] = v.slice(0, 200);
+    // Several values of one dimension (?course=a&course=b — Root's Report Org, 2026-11-27): any of them keeps a record.
+    const list = (Array.isArray(v) ? v : [v]).filter((x): x is string => typeof x === "string" && x !== "").map((x) => x.slice(0, 200)).slice(0, MANY);
+    if (list.length) out[dim] = list.join(ANY_OF);
   }
   return out;
 }
+
+/**
+ * Between the values of one dimension when several are asked for: a character no key has, so a course or an account
+ * named with a comma is still one value. One value — every caller before this — has none and is compared as it was.
+ */
+const ANY_OF = "\u001f";
+const MANY = 50;
+/** Whether a record's key in a dimension is the one asked for, or one of the several. */
+const keeps1 = (asked: string, key: string) => (asked.includes(ANY_OF) ? asked.split(ANY_OF).includes(key) : asked === key);
 
 export { EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS };

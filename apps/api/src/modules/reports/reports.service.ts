@@ -685,7 +685,7 @@ async function computePL(orgId: string, from: string, to: string, base: string):
       issueDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $nin: ["draft", "void"] },
     })
-      .select("subtotalMinor currency")
+      .select("subtotalMinor currency payments.amountMinor payments.method payments.original payments.bankCurrency payments.bankAmountMinor")
       .lean(),
 
     Bill.find({
@@ -717,7 +717,21 @@ async function computePL(orgId: string, from: string, to: string, base: string):
   for (const inv of invoices) {
     const d = inv as unknown as Record<string, unknown>;
     const amount = (d.subtotalMinor as number) ?? 0;
-    if (otherIncome.own(d.currency, amount, "Invoice revenue")) incomeTotal += amount;
+    if (!otherIncome.own(d.currency, amount, "Invoice revenue")) continue;
+    // Paid in another currency on this organization's own invoice (rupees on an AED course — 2026-11-27: "income need
+    // to show INR income also separate instead of summing in AED"): that part comes out of the AED income at what it
+    // was recorded as — a rupee payment carries no VAT — and is given apart, as paid. One whose amount in that currency
+    // was never recorded stays in, as the Collected report keeps it.
+    const invCurrency = String(d.currency || base).toUpperCase();
+    let away = 0;
+    for (const p of (d.payments as any[] | undefined) ?? []) {
+      const paidIn = paidCurrency(p, invCurrency);
+      const paid = paidIn ? paidAmountMinor(p, invCurrency) : 0;
+      if (!paidIn || paid <= 0) continue;
+      away += Number(p.amountMinor) || 0;
+      otherIncome.own(paidIn, paid, "Invoice revenue");
+    }
+    incomeTotal += Math.max(0, amount - away);
   }
 
   // Each currency's supplier bills and expenses by category — the organization's own, and every other one apart.

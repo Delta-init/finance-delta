@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useProfitLoss } from "@/features/reports/api";
-import { OtherCurrencies } from "@/features/reports/OtherCurrencies";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
@@ -110,8 +109,32 @@ export default function ProfitLossPage() {
         ))}
       </div>
 
-      {/* Invoices in another currency than the organization's: apart too, out of Total Income and Net Profit. */}
-      <OtherCurrencies lines={data?.income.otherCurrencies} />
+      {/* Income in another currency than the organization's (2026-11-27: "show INR income separate instead of summing on
+          AED") — rupees paid on AED invoices, and invoices in another currency: apart, as paid, out of Total Income and
+          Net Profit. One box per currency, like the expenses below. */}
+      {!isLoading && !!data?.income.otherCurrencies?.length && (
+        <div className="rounded-xl border border-warning/40 bg-surface p-5">
+          <h3 className="font-semibold">Income in other currencies</h3>
+          <p className="mt-1 text-sm text-foreground-muted">
+            {collected ? "Payments received" : "Paid on this period's invoices"} in a currency other than this organization&apos;s. Not in Total Income or Net Profit, and never converted.
+          </p>
+          <div className="mt-4 grid gap-6 sm:grid-cols-2">
+            {Object.values(data.income.otherCurrencies.reduce<Record<string, { currency: string; amountMinor: number; count: number }>>((by, l) => {
+              const t = (by[l.currency] ??= { currency: l.currency, amountMinor: 0, count: 0 });
+              t.amountMinor += l.amountMinor;
+              t.count += l.count;
+              return by;
+            }, {})).map((other) => (
+              <div key={other.currency} className="flex flex-wrap items-baseline justify-between gap-x-2">
+                <MoneyDisplay minor={other.amountMinor} currency={other.currency} className="text-xl font-bold tabular-nums text-warning" />
+                <span className="text-xs text-foreground-muted">
+                  {other.count.toLocaleString()} {other.count === 1 ? "record" : "records"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Expenses and supplier bills in another currency than the organization's (2026-11-26: rupees were added into
           the dirham total): apart, as recorded — not in the cards above, the breakdown below or the net profit. */}

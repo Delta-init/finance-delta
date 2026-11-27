@@ -78,7 +78,7 @@ function bandOf(due: Date | null | undefined, asOf: Date): { band: string; overd
 }
 
 /** Sums rows into sections, per currency, in the order `layout` gives (lines with nothing are left out). */
-function sidesOf(rows: FPRow[], base: string, layout: { key: string; title: string; lines: { key: string; label: string }[]; showTotal?: boolean }[], totals: (sum: (section: string, line?: string) => number, currency: string) => FPTotal[]): FPSide[] {
+export function sidesOf(rows: FPRow[], base: string, layout: { key: string; title: string; lines: { key: string; label: string }[]; showTotal?: boolean }[], totals: (sum: (section: string, line?: string) => number, currency: string) => FPTotal[]): FPSide[] {
   const currencies = [...new Set([base, ...rows.map((r) => r.currency)])];
   return currencies.map((currency) => {
     const mine = rows.filter((r) => r.currency === currency);
@@ -107,7 +107,7 @@ const monthsOf = (from: string, to: string) => monthEnds(from, to).map((end) => 
 type Acc = { _id: Types.ObjectId; accountName: string; accountType: string; currency: string; openingBalanceMinor?: number; openingDate: Date; currentBalanceMinor?: number; isActive?: boolean; lastReconciledAt?: Date; lastReconciledStatementBalanceMinor?: number };
 type Line = { _id: Types.ObjectId; accountId: Types.ObjectId; date: Date; createdAt?: Date; amountMinor: number; description?: string; reference?: string; status?: string; matches?: { type: string; referenceId: string; referenceNumber: string }[]; transfer?: { id: unknown; otherAccountName?: string } | null; settlement?: { number?: string } | null; category?: string | null; subcategory?: string | null; isReconciled?: boolean };
 
-async function bankData(orgId: string) {
+export async function bankData(orgId: string) {
   const [accounts, lines] = await Promise.all([
     BankAccount.find({ organizationId: oid(orgId) }).lean<Acc[]>(),
     BankTransaction.find({ organizationId: oid(orgId) }).select("accountId date createdAt amountMinor description reference status matches transfer settlement category subcategory isReconciled").lean<Line[]>(),
@@ -175,7 +175,7 @@ function lineRow(l: Line, acc: Acc | undefined, where: { section: string; line: 
 }
 
 /** Balance of each account as at the end of `d` (opening counts from its opening date). */
-function balancesAt(data: BankData, d: string | null): Map<string, number> {
+export function balancesAt(data: BankData, d: string | null): Map<string, number> {
   const out = new Map<string, number>();
   const cut = d ? endOf(d).getTime() : Infinity;
   for (const a of data.accounts) out.set(String(a._id), new Date(a.openingDate).getTime() <= cut ? Number(a.openingBalanceMinor) || 0 : 0);
@@ -224,7 +224,7 @@ function cashflowOf(data: BankData, base: string, from: string, to: string) {
 }
 
 /** Each account as of `asOf`: balance, last line, reconciliation — and what is stored on it now, for comparison. */
-function accountsAt(data: BankData, asOf: string) {
+export function accountsAt(data: BankData, asOf: string) {
   const bal = balancesAt(data, asOf), all = balancesAt(data, null);
   const cut = endOf(asOf).getTime();
   return data.accounts.map((a) => {
@@ -488,7 +488,7 @@ const ADV_LAYOUT = [
   { key: "other_loans", title: "Other employee loan deductions (no matching amount given in finance)", lines: [{ key: "other", label: "Loan repayment deductions (e.g. visa loans)" }], showTotal: true },
 ];
 
-async function advancesOf(orgId: string, base: string, asOf: string, warnings: string[]) {
+export async function advancesOf(orgId: string, base: string, asOf: string, warnings: string[]) {
   const cut = endOf(asOf).getTime();
   const [expenses, runs] = await Promise.all([
     Expense.find({ organizationId: oid(orgId), category: "employee_advances", status: { $in: ["approved", "submitted"] } }).select("expenseNumber description expenseDate paidOn totalMinor currency notes source.kind source.key subcategoryName").lean<any[]>(),

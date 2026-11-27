@@ -6,6 +6,7 @@ import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, get
 import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossLines, profitLossPeriod } from "../reports/reports.service";
 import { getManagementProfit, managementRows, MP_LINES, type MPView } from "../reports/management-profit.service";
 import { financialReport, FP_REPORTS, linesOf, type FPReport } from "../reports/financial-position.service";
+import { reconciliationReport, RC_REPORTS, rcLinesOf, type RCReport } from "../reports/reconciliation.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -900,6 +901,41 @@ export async function financialLinesForPortal(q: Record<string, unknown>) {
     ...ledger(picked as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, {
       filters, sums: report === "receivables" || report === "obligations" ? ["amountMinor", "originalMinor", "settledMinor", "creditMinor"] : ["amountMinor"],
       groups: filters, groupBy: str(q.groupBy) || filters[0]!, sort: ["title", ...filters, "overdueDays"], text: (x) => `${x.number} ${x.title} ${x.detail}`,
+    }),
+  };
+}
+
+/**
+ * Reconciliation and data integrity for Root (Phase 5, 2026-11-27): ?report=bank | psp | invoices | expenses | payroll
+ * | advances | historical | exceptions | summary — the same calculation as finance's /reports/reconciliation. Read-only.
+ */
+export async function reconciliationForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(RC_REPORTS as string[]).includes(report)) return `report is one of ${RC_REPORTS.join(", ")}`;
+  const { rows: _rows, ...out } = await reconciliationReport(org.id, report as RCReport, period.from, period.to);
+  return { generatedAt: new Date().toISOString(), org, period, ...out };
+}
+
+/** The records behind one of its figures (?line=<section>:<line> | <section> | all), with severity, status and module filters. */
+export async function reconciliationLinesForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(RC_REPORTS as string[]).includes(report)) return `report is one of ${RC_REPORTS.join(", ")}`;
+  const r = await reconciliationReport(org.id, report as RCReport, period.from, period.to);
+  const picked = rcLinesOf(r.rows, str(q.line) || "all").map((x) => ({ ...x, severityName: x.severity ? x.severity[0]!.toUpperCase() + x.severity.slice(1) : "—" }));
+  const filters = ["category", "severityName", "status", "module", "account", "month"];
+  return {
+    generatedAt: new Date().toISOString(), org, period, report, asOf: r.asOf,
+    ...ledger(picked as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, {
+      filters, sums: ["amountMinor"], groups: filters, groupBy: str(q.groupBy) || (report === "exceptions" ? "severityName" : "category"),
+      sort: ["title", "category", "severityName", "status", "ageDays"], text: (x) => `${x.number} ${x.title} ${x.detail} ${(x as any).exception ?? ""}`,
     }),
   };
 }

@@ -3,6 +3,7 @@ import { asyncHandler, ok, AppError } from "../../lib/http";
 import * as svc from "./reports.service";
 import * as mp from "./management-profit.service";
 import * as fp from "./financial-position.service";
+import * as rc from "./reconciliation.service";
 import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
@@ -168,6 +169,32 @@ export const financialReportLines = asyncHandler(async (req, res) => {
   if (!(fp.FP_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${fp.FP_REPORTS.join(", ")}`);
   const r = await fp.financialReport(org(req), report as fp.FPReport, from, to);
   const rows = fp.linesOf(r.rows, String(req.query.line ?? "all"));
+  ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
+});
+
+/**
+ * Reconciliation and data integrity (Phase 5, 2026-11-27): ?report=bank | psp | invoices | expenses | payroll |
+ * advances | historical | exceptions | summary, from..to (as of `to`, at most today).
+ */
+export const reconciliationReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(rc.RC_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${rc.RC_REPORTS.join(", ")}`);
+  const { rows: _rows, ...out } = await rc.reconciliationReport(org(req), report as rc.RCReport, from, to);
+  ok(res, out);
+});
+
+/** …the records behind one of its figures: ?line=<section>:<line> | <section> | all. */
+export const reconciliationReportLines = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(rc.RC_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${rc.RC_REPORTS.join(", ")}`);
+  const r = await rc.reconciliationReport(org(req), report as rc.RCReport, from, to);
+  const rows = rc.rcLinesOf(r.rows, String(req.query.line ?? "all"));
   ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
 });
 

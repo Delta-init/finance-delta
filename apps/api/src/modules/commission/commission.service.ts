@@ -287,8 +287,15 @@ export async function markPaid(
 ): Promise<{ updated: number }> {
   const ids = input.recordIds.map(oid);
   const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+  // Commission a payroll run holds is paid by that run, inside the payroll expense — never marked paid here as well
+  // (audit F22). Refused whole, so nothing is half done.
+  const onPayroll = await CommissionRecord.find({ _id: { $in: ids }, organizationId: oid(orgId), status: "earned", payrollRunId: { $ne: null } })
+    .select("invoiceNumber payrollRunNumber").lean<{ invoiceNumber: string; payrollRunNumber?: string }[]>();
+  if (onPayroll.length) {
+    throw new AppError("CONFLICT", `${onPayroll.map((r) => `${r.invoiceNumber} (payroll ${r.payrollRunNumber || "run"})`).join(", ")} ${onPayroll.length === 1 ? "is" : "are"} on a payroll run — it is paid with the run. Take it off the run first.`);
+  }
   const result = await CommissionRecord.updateMany(
-    { _id: { $in: ids }, organizationId: oid(orgId), status: "earned" },
+    { _id: { $in: ids }, organizationId: oid(orgId), status: "earned", payrollRunId: null },
     {
       $set: {
         status: "paid",
@@ -303,11 +310,12 @@ export async function markPaid(
 
 export async function cancelRecord(orgId: string, id: string): Promise<CommissionRecordDTO> {
   const doc = await CommissionRecord.findOneAndUpdate(
-    { _id: oid(id), organizationId: oid(orgId), status: "earned" },
+    // Not one a payroll run holds (audit F22): that run would still pay it.
+    { _id: oid(id), organizationId: oid(orgId), status: "earned", payrollRunId: null },
     { $set: { status: "cancelled" } },
     { new: true },
   );
-  if (!doc) throw new AppError("NOT_FOUND", "Commission record not found or already processed");
+  if (!doc) throw new AppError("NOT_FOUND", "Commission record not found, already processed, or on a payroll run (take it off the run first)");
   return recordToDTO(doc as unknown as CommissionRecordDoc);
 }
 

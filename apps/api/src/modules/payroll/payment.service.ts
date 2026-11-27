@@ -47,6 +47,12 @@ async function loadRun(orgId: string, runId: string) {
  * transfer once accounts have the details). Not on a run that is paid: what is
  * held there was settled as not owed.
  */
+/** The bank's running balances worked out again — the same service every other way money moves uses (audit F25). */
+async function recalculateBankBalances(orgId: string, accountId: Types.ObjectId): Promise<void> {
+  const { recalculateRunningBalances } = await import("../banking/banking.service");
+  await recalculateRunningBalances(orgId, accountId);
+}
+
 export async function setLineHold(
   orgId: string, runId: string, lineId: string, input: { hold: boolean; reason?: string }, actor: { userId: string },
 ) {
@@ -222,27 +228,37 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   const paymentId = `${run.runNumber}-P${run.payments.length + ((run as unknown as { deletedPayments?: unknown[] }).deletedPayments?.length ?? 0) + 1}`;
 
   // ── The money moves first ────────────────────────────────────────────────
-  // Negative: a payroll is a debit. addTransaction infers direction from the
-  // sign, and the balance moves with it.
-  const transaction = await BankTransaction.create({
-    organizationId: oid(orgId),
-    accountId: account._id,
-    accountName: account.accountName,
-    currency: account.currency,
-    date: paidOn,
-    description: `Payroll ${run.runNumber} · ${run.period} · ${allocations.length} people`,
-    reference: input.reference ?? paymentId,
-    amountMinor: -amountMinor,
-    type: "debit",
-    runningBalanceMinor: (account.currentBalanceMinor ?? 0) - amountMinor,
-    source: "manual",
-    status: "matched",
-    matches: [{ type: "payroll", referenceId: String(run._id), referenceNumber: run.runNumber, amountMinor }],
-  });
-  await BankAccount.updateOne(
-    { _id: account._id },
-    { $set: { currentBalanceMinor: (account.currentBalanceMinor ?? 0) - amountMinor } },
-  );
+  // Negative: a payroll is a debit. The line carries a key of its own (the run and the payment number), unique per
+  // account through the existing externalId index, so the same payment can never be written to the bank twice — two
+  // clicks at once, or a retry, compute the same payment number and the second is refused here, before anything else
+  // happens (2026-11-27, audit F25).
+  let transaction;
+  try {
+    transaction = await BankTransaction.create({
+      organizationId: oid(orgId),
+      accountId: account._id,
+      accountName: account.accountName,
+      currency: account.currency,
+      date: paidOn,
+      description: `Payroll ${run.runNumber} · ${run.period} · ${allocations.length} people`,
+      reference: input.reference ?? paymentId,
+      externalId: `payroll:${run._id}:${paymentId}`,
+      amountMinor: -amountMinor,
+      type: "debit",
+      runningBalanceMinor: (account.currentBalanceMinor ?? 0) - amountMinor,
+      source: "manual",
+      status: "matched",
+      matches: [{ type: "payroll", referenceId: String(run._id), referenceNumber: run.runNumber, amountMinor }],
+    });
+  } catch (err) {
+    if ((err as { code?: number }).code === 11000) {
+      throw new AppError("CONFLICT", `${run.runNumber} is being paid by somebody else just now — refresh and look again before paying.`);
+    }
+    throw err;
+  }
+  // Every line's running balance and the account's balance worked out again from the opening balance, as every other
+  // way money moves does — so a payment dated in the past puts the lines after it right too (audit F25).
+  await recalculateBankBalances(orgId, account._id as Types.ObjectId);
 
   // Somebody paid in parts is finished by the payment that pays the last of it: HRMS hears of them then, and their
   // commission is settled then — not while some of their pay is still owed.
@@ -528,27 +544,32 @@ export async function reversePayment(
 
   let reversalTxId: Types.ObjectId | null = null;
   if (account) {
-    const tx = await BankTransaction.create({
-      organizationId: oid(orgId),
-      accountId: account._id,
-      accountName: account.accountName,
-      currency: account.currency,
-      date: new Date(),
-      description: `Reversal of payroll ${run.runNumber} payment ${paymentId}`,
-      reference: payment.reference || paymentId,
-      amountMinor: payment.amountMinor,
-      type: "credit",
-      runningBalanceMinor: (account.currentBalanceMinor ?? 0) + payment.amountMinor,
-      source: "manual",
-      status: "matched",
-      matches: [{ type: "payroll", referenceId: String(run._id), referenceNumber: run.runNumber, amountMinor: payment.amountMinor }],
-      notes: reason.slice(0, 500),
-    });
+    // One reversal line per payment, ever: keyed like the payment's own line (audit F25).
+    let tx;
+    try {
+      tx = await BankTransaction.create({
+        organizationId: oid(orgId),
+        accountId: account._id,
+        accountName: account.accountName,
+        currency: account.currency,
+        date: new Date(),
+        description: `Reversal of payroll ${run.runNumber} payment ${paymentId}`,
+        reference: payment.reference || paymentId,
+        externalId: `payroll-reversal:${run._id}:${paymentId}`,
+        amountMinor: payment.amountMinor,
+        type: "credit",
+        runningBalanceMinor: (account.currentBalanceMinor ?? 0) + payment.amountMinor,
+        source: "manual",
+        status: "matched",
+        matches: [{ type: "payroll", referenceId: String(run._id), referenceNumber: run.runNumber, amountMinor: payment.amountMinor }],
+        notes: reason.slice(0, 500),
+      });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) throw new AppError("CONFLICT", `Payment ${paymentId} is already reversed in the bank.`);
+      throw err;
+    }
     reversalTxId = tx._id;
-    await BankAccount.updateOne(
-      { _id: account._id },
-      { $set: { currentBalanceMinor: (account.currentBalanceMinor ?? 0) + payment.amountMinor } },
-    );
+    await recalculateBankBalances(orgId, account._id as Types.ObjectId);
   }
 
   for (const alloc of payment.allocations) {

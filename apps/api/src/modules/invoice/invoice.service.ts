@@ -1,3 +1,4 @@
+import { creditApplied } from "../credit-note/credit-note.service";
 import { declaredSide } from "../integrations/declared-side";
 import { Types, type PipelineStage } from "mongoose";
 import {
@@ -2113,13 +2114,15 @@ export async function updatePayment(
     throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
   }
 
-  // Total paid with this payment's amount swapped in — must not exceed the invoice total.
+  // Total settled with this payment's amount swapped in — payments and the credit applied to it (audit F05) — must not
+  // exceed the invoice total.
   const others = (doc.payments as unknown as { amountMinor: number; _id: { toString(): string } }[])
     .filter((p) => p._id.toString() !== paymentId)
     .reduce((s, p) => s + (p.amountMinor ?? 0), 0);
-  const newPaid = others + input.amountMinor;
+  const credit = await creditApplied(doc._id);
+  const newPaid = others + input.amountMinor + credit;
   if (newPaid > (doc.totalMinor ?? 0)) {
-    throw new AppError("CONFLICT", `Total payments would exceed the invoice total of ${doc.totalMinor ?? 0}`);
+    throw new AppError("CONFLICT", `Total payments${credit ? " and credit" : ""} would exceed the invoice total of ${doc.totalMinor ?? 0}`);
   }
 
   const p = pm as Record<string, unknown>;
@@ -2248,8 +2251,10 @@ export async function deletePayment(
   noteCancelledTaxInvoice(doc, pm);
   pm.deleteOne();
 
+  // What is left settled: the payments still on it and the credit applied to it — the credit is not a payment, and
+  // deleting a payment no longer wipes it out (audit F05).
   const remaining = (doc.payments as unknown as { amountMinor?: number }[])
-    .reduce((sum, p) => sum + (p.amountMinor ?? 0), 0);
+    .reduce((sum, p) => sum + (p.amountMinor ?? 0), 0) + await creditApplied(doc._id);
 
   doc.amountPaidMinor = remaining;
   doc.balanceMinor = (doc.totalMinor ?? 0) - remaining;
@@ -2268,6 +2273,22 @@ export async function deletePayment(
   await doc.populate("tagIds", "name color");
   feeUpdate(doc._id, "payment deleted");
   return toDTO(doc);
+}
+
+/**
+ * An invoice settled again from what is really against it — its payments and the credit still valid on it (2026-11-27,
+ * audit F05): after a credit note is voided. A void or draft invoice is left as it is.
+ */
+export async function resettleInvoice(orgId: string, invoiceId: string, why: string): Promise<void> {
+  const doc = await Invoice.findOne({ _id: invoiceId, organizationId: orgId });
+  if (!doc || doc.status === "void" || doc.status === "draft") return;
+  const paid = (doc.payments as unknown as { amountMinor?: number }[]).reduce((n, p) => n + (p.amountMinor ?? 0), 0);
+  const settled = paid + await creditApplied(doc._id);
+  doc.amountPaidMinor = settled;
+  doc.balanceMinor = (doc.totalMinor ?? 0) - settled;
+  doc.status = doc.balanceMinor <= 0 ? "paid" : settled > 0 ? "partial" : "sent";
+  await doc.save();
+  feeUpdate(doc._id, why);
 }
 
 async function _restoreInventory(orgId: string, doc: InvoiceDoc) {

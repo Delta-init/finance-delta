@@ -15,6 +15,12 @@ const commissionRecordSchema = new Schema(
     calculatedAt: { type: Date, default: Date.now },
     paidAt: { type: Date },
     paidExpenseId: { type: String, default: "" },
+    /**
+     * The payroll run that holds it (2026-11-27, audit F22): set when a run pulls it, before it reaches any payslip, so
+     * no other run can pull it and it cannot be marked paid another way. A record from before has none.
+     */
+    payrollRunId: { type: Schema.Types.ObjectId, ref: "PayrollRun", default: null },
+    payrollRunNumber: { type: String, default: "" },
     notes: { type: String, default: "" },
   },
   { timestamps: true },

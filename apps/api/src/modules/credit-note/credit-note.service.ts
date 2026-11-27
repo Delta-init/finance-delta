@@ -120,6 +120,35 @@ export async function issueCreditNote(orgId: string, id: string): Promise<DTO> {
   return toDTO(doc as unknown as CreditNoteDoc);
 }
 
+/*
+ * Credit applied to an invoice is kept apart from its payments (2026-11-27, audit F05). An invoice's payments[] holds
+ * money received only; what credit notes took off it is worked out from the notes themselves. amountPaidMinor stays
+ * what it always meant — settled, payments and credit together — so paid/part-paid status, the LMS and commission
+ * eligibility read as before; but anything that recomputes it from the payments now adds the credit back, so editing
+ * or deleting a payment no longer wipes a credit out.
+ */
+
+type NoteLike = { invoiceId?: unknown; amountAppliedMinor?: number | null; applications?: { invoiceId: unknown; amountMinor: number }[] | null };
+
+/** What one credit note has taken off one invoice. A note applied before applications were kept: all on its own. */
+export function creditOnInvoice(note: NoteLike, invoiceId: string): number {
+  const apps = note.applications ?? [];
+  const listed = apps.reduce((n, a) => n + (Number(a.amountMinor) || 0), 0);
+  const legacy = Math.max(0, (Number(note.amountAppliedMinor) || 0) - listed);
+  const here = apps.filter((a) => String(a.invoiceId) === invoiceId).reduce((n, a) => n + (Number(a.amountMinor) || 0), 0);
+  return here + (String(note.invoiceId) === invoiceId ? legacy : 0);
+}
+
+/** Every valid (issued or applied, not voided) credit note's credit on an invoice. */
+export async function creditApplied(invoiceId: unknown): Promise<number> {
+  const id = String(invoiceId);
+  const notes = await CreditNote.find({
+    status: { $in: ["issued", "applied"] },
+    $or: [{ invoiceId: new Types.ObjectId(id) }, { "applications.invoiceId": new Types.ObjectId(id) }],
+  }).select("invoiceId amountAppliedMinor applications").lean<NoteLike[]>();
+  return notes.reduce((n, note) => n + creditOnInvoice(note, id), 0);
+}
+
 export async function applyCreditNote(orgId: string, id: string, input: ApplyCreditNoteInput): Promise<DTO> {
   const cn = await CreditNote.findOne({ _id: id, organizationId: orgId });
   if (!cn) throw new AppError("NOT_FOUND", "Credit note not found");
@@ -132,30 +161,63 @@ export async function applyCreditNote(orgId: string, id: string, input: ApplyCre
   const invoice = await Invoice.findOne({ _id: targetId, organizationId: orgId });
   if (!invoice) throw new AppError("NOT_FOUND", "Target invoice not found");
   if (invoice.status === "void") throw new AppError("CONFLICT", "Cannot apply credit to a voided invoice");
+  // A credit in one currency never settles an invoice in another (audit F05).
+  if (String(invoice.currency ?? "AED").toUpperCase() !== String(cn.currency ?? "AED").toUpperCase()) {
+    throw new AppError("CONFLICT", `This credit note is in ${cn.currency ?? "AED"} and invoice ${invoice.invoiceNumber} is in ${invoice.currency ?? "AED"} — a credit can only be applied to an invoice in its own currency.`);
+  }
 
   const applyAmount = Math.min(remaining, invoice.balanceMinor ?? 0);
-  invoice.balanceMinor = (invoice.balanceMinor ?? 0) - applyAmount;
-  invoice.amountPaidMinor = (invoice.amountPaidMinor ?? 0) + applyAmount;
-  if (invoice.balanceMinor <= 0) invoice.status = "paid";
-  else if (invoice.amountPaidMinor > 0) invoice.status = "partial";
-  await invoice.save();
+  if (applyAmount <= 0) throw new AppError("CONFLICT", `Invoice ${invoice.invoiceNumber} has nothing left to settle`);
+
+  // The note first, and only if nobody applied it meanwhile: its applied amount must still be what was read.
+  const before = cn.amountAppliedMinor ?? 0;
+  const after = before + applyAmount;
+  const claim = await CreditNote.updateOne(
+    { _id: cn._id, status: "issued", amountAppliedMinor: before },
+    {
+      $set: { amountAppliedMinor: after, ...(after >= (cn.totalMinor ?? 0) ? { status: "applied" } : {}) },
+      $push: { applications: { invoiceId: invoice._id, amountMinor: applyAmount, appliedAt: new Date() } },
+    },
+  );
+  if (!claim.modifiedCount) throw new AppError("CONFLICT", "This credit note was applied by somebody else just now — refresh and look again.");
+
+  try {
+    invoice.balanceMinor = (invoice.balanceMinor ?? 0) - applyAmount;
+    invoice.amountPaidMinor = (invoice.amountPaidMinor ?? 0) + applyAmount;
+    if (invoice.balanceMinor <= 0) invoice.status = "paid";
+    else if (invoice.amountPaidMinor > 0) invoice.status = "partial";
+    await invoice.save();
+  } catch (err) {
+    // The invoice did not take it: the note gives the credit back, so the two never disagree.
+    await CreditNote.updateOne(
+      { _id: cn._id, amountAppliedMinor: after },
+      { $set: { amountAppliedMinor: before, status: "issued" }, $pull: { applications: { invoiceId: invoice._id, amountMinor: applyAmount } } },
+    );
+    throw err;
+  }
   // Credit that settles an enrolment opens the rest of its course in the LMS.
   void import("../invoice/invoice.service").then((m) => m.syncLmsAccess(invoice as never));
   // And CS Portal is told, where the student went there.
   void import("../integrations/commission-fee-update.service").then((m) => m.queueFeeUpdate(invoice._id, "credit note")).catch(() => undefined);
 
-  cn.amountAppliedMinor = (cn.amountAppliedMinor ?? 0) + applyAmount;
-  if (cn.amountAppliedMinor >= (cn.totalMinor ?? 0)) cn.status = "applied";
-  await cn.save();
-
-  return toDTO(cn as unknown as CreditNoteDoc);
+  const fresh = await CreditNote.findById(cn._id);
+  return toDTO(fresh as unknown as CreditNoteDoc);
 }
 
 export async function voidCreditNote(orgId: string, id: string): Promise<DTO> {
   const doc = await CreditNote.findOne({ _id: id, organizationId: orgId });
   if (!doc) throw new AppError("NOT_FOUND", "Credit note not found");
   if (doc.status === "applied") throw new AppError("CONFLICT", "Applied credit notes cannot be voided");
-  doc.status = "voided";
-  await doc.save();
-  return toDTO(doc as unknown as CreditNoteDoc);
+  if (doc.status === "voided") return toDTO(doc as unknown as CreditNoteDoc);
+  // The invoices it took credit off: each listed one, and its own invoice for credit applied before lists were kept.
+  const touched = new Set<string>((doc.applications ?? []).map((a) => String(a.invoiceId)));
+  if (creditOnInvoice(doc as unknown as NoteLike, String(doc.invoiceId)) > 0) touched.add(String(doc.invoiceId));
+  const r = await CreditNote.updateOne({ _id: doc._id, status: doc.status }, { $set: { status: "voided" } });
+  if (!r.modifiedCount) throw new AppError("CONFLICT", "This credit note changed just now — refresh and look again.");
+  // Voiding gives the credit back: each invoice is settled again from its payments and the credit still valid on it
+  // (audit F05). It used to leave the invoices reduced by a note that no longer counted.
+  const { resettleInvoice } = await import("../invoice/invoice.service");
+  for (const invoiceId of touched) await resettleInvoice(orgId, invoiceId, "credit note voided");
+  const fresh = await CreditNote.findById(doc._id);
+  return toDTO(fresh as unknown as CreditNoteDoc);
 }

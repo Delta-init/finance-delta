@@ -28,6 +28,14 @@ const creditNoteSchema = new Schema(
     discountTotalMinor: { type: Number, default: 0 },
     totalMinor: { type: Number, default: 0 },
     amountAppliedMinor: { type: Number, default: 0 },
+    /**
+     * Where each part of the credit went (2026-11-27, audit F05): the invoice and the amount, one entry per apply. A
+     * note applied before this has none — its whole amountAppliedMinor is on its own invoice (creditApplied below).
+     */
+    applications: {
+      type: [new Schema({ invoiceId: { type: Schema.Types.ObjectId, ref: "Invoice", required: true }, amountMinor: { type: Number, required: true }, appliedAt: { type: Date, default: Date.now } }, { _id: false })],
+      default: undefined,
+    },
     currency: { type: String, default: "AED" },
     issuedAt: { type: Date },
   },

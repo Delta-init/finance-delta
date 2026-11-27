@@ -268,16 +268,28 @@ export async function pullCommissions(orgId: string, runId: string, actor: { use
     return { pulled: 0, message: notes.join(" ") || "No unpaid commission is outstanding for anybody on this run.", outcomes: [] };
   }
 
-  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged);
+  // Finance's commission records and the CRM commission are claimed for this run BEFORE they go on any payslip, each
+  // only while still unpaid and on no run — so one paid another way meanwhile, or pulled by another run, is never added
+  // twice (audit F22). Nothing is marked paid until the run pays the line (see settleCommissions).
+  await claimRecords(records.recordIds, run);
+  try {
+    await claimPayouts(CrmCommissionPayout, crm.payoutIds, run);
+  } catch (err) {
+    await releaseRecords(records.recordIds, run);
+    throw err;
+  }
+  let result;
+  try {
+    result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged);
+  } catch (err) {
+    await releaseRecords(records.recordIds, run);
+    await releasePayouts(CrmCommissionPayout, crm.payoutIds, run);
+    throw err;
+  }
 
   absorbOutcomes(run, result.outcomes);
   recalculate(run as unknown as RecalcRun);
   await run.save();
-  // The CRM commission is claimed for this run once HRMS has it on the payslips; nothing is marked paid until the run
-  // pays the line (see settleCommissions).
-  if (crm.payoutIds.length) {
-    await CrmCommissionPayout.updateMany({ _id: { $in: crm.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
-  }
 
   // The commission records themselves are NOT marked paid here. They are paid
   // when the payroll is, and marking them now would report money as paid that
@@ -312,13 +324,20 @@ export async function pullCsCommission(orgId: string, runId: string, actor: { us
 
   const touched = run.lines.filter((l) => staged.some((x) => x.employeeId === l.hrmsEmployeeId));
   const settle = touched.map((l) => settleFor(run, l)).filter((x): x is HrmsSettle => !!x);
-  const result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged, settle);
+  // Claimed for this run before it goes on any payslip, state-checked, every one or none (audit F22); paid when the
+  // run pays the line (settleCommissions).
+  await claimPayouts(CsCommissionPayout, cs.payoutIds, run);
+  let result;
+  try {
+    result = await hrmsClient.applyAdjustments(run.hrmsOrgId, run.period, staged, settle);
+  } catch (err) {
+    await releasePayouts(CsCommissionPayout, cs.payoutIds, run);
+    throw err;
+  }
   absorbOutcomes(run, result.outcomes);
   recalculate(run as unknown as RecalcRun);
   await afterPayChange(orgId, run, touched.map((l) => String(l._id)));
   await run.save();
-  // Claimed for this run once HRMS has it on the payslips; paid when the run pays the line (settleCommissions).
-  await CsCommissionPayout.updateMany({ _id: { $in: cs.payoutIds }, payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
   const total = staged.reduce((a, x) => a + toMinor(x.amount), 0);
   return {
     pulled: staged.length,
@@ -329,8 +348,56 @@ export async function pullCsCommission(orgId: string, runId: string, actor: { us
 
 type Staged = Array<{ externalId: string; employeeId: string; kind: "payment"; label: string; amount: number }>;
 
+/**
+ * Claim commission payouts for a run (audit F22): each one only while it is still approved and on no run, and every
+ * one or none. A payout paid directly meanwhile, deleted, or claimed by another run makes the whole pull stop with
+ * nothing claimed and nothing sent to HRMS, so the payslip can never carry commission that was paid another way.
+ */
+type PayoutModel = typeof CrmCommissionPayout | typeof CsCommissionPayout;
+async function claimPayouts(Model: PayoutModel, ids: Types.ObjectId[], run: PayrollRunDoc): Promise<void> {
+  const claimed: Types.ObjectId[] = [];
+  for (const id of ids) {
+    const r = await (Model as typeof CrmCommissionPayout).updateOne(
+      { _id: id, state: "approved", payrollRunId: null },
+      { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } },
+    );
+    if (r.modifiedCount !== 1) {
+      await releasePayouts(Model, claimed, run);
+      throw new AppError("CONFLICT", "Some of this commission was paid, changed or taken by another payroll run just now — nothing was added. Pull again.");
+    }
+    claimed.push(id);
+  }
+}
+
+/** Finance's own commission records claimed for a run, like the payouts: still earned and on no run, all or none. */
+async function claimRecords(ids: Types.ObjectId[], run: PayrollRunDoc): Promise<void> {
+  const claimed: Types.ObjectId[] = [];
+  for (const id of ids) {
+    const r = await CommissionRecord.updateOne({ _id: id, status: "earned", payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
+    if (r.modifiedCount !== 1) {
+      await releaseRecords(claimed, run);
+      throw new AppError("CONFLICT", "Some of this commission was paid, cancelled or taken by another payroll run just now — nothing was added. Pull again.");
+    }
+    claimed.push(id);
+  }
+}
+
+async function releaseRecords(ids: Types.ObjectId[], run: PayrollRunDoc): Promise<void> {
+  if (!ids.length) return;
+  await CommissionRecord.updateMany({ _id: { $in: ids }, payrollRunId: run._id, status: "earned" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });
+}
+
+/** Give claimed payouts back — only those this run holds and still unpaid. */
+async function releasePayouts(Model: PayoutModel, ids: Types.ObjectId[], run: PayrollRunDoc): Promise<void> {
+  if (!ids.length) return;
+  await (Model as typeof CrmCommissionPayout).updateMany(
+    { _id: { $in: ids }, payrollRunId: run._id, state: "approved" },
+    { $set: { payrollRunId: null, payrollRunNumber: "" } },
+  );
+}
+
 /** Finance's own commission records for this run's people, one addition per person. */
-async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string }> {
+async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string; recordIds: Types.ObjectId[] }> {
   // Only people this run can actually reach: a commission owed to somebody not
   // on this payroll is not this run's to pay.
   const employees = await Employee.find({
@@ -339,19 +406,22 @@ async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: 
     hrmsEmployeeId: { $in: run.lines.map((l) => l.hrmsEmployeeId) },
     userId: { $ne: null },
   }).lean();
-  if (!employees.length) return { note: "" };
+  if (!employees.length) return { note: "", recordIds: [] };
 
   const userToEmployee = new Map(employees.map((e) => [String(e.userId), e]));
   const alreadyPulled = new Set(
     run.adjustments.filter((a) => a.source === "commission").flatMap((a) => a.commissionRecordIds.map(String)),
   );
+  // Only records no run holds (audit F22): one pulled by another run is that run's to pay.
   const records = await CommissionRecord.find({
     organizationId: oid(orgId),
     salespersonId: { $in: employees.map((e) => e.userId) },
     status: "earned",
+    payrollRunId: null,
   }).lean();
   const fresh = records.filter((r) => !alreadyPulled.has(String(r._id)));
-  if (!fresh.length) return { note: "" };
+  if (!fresh.length) return { note: "", recordIds: [] };
+  const recordIds: Types.ObjectId[] = [];
 
   // One addition per person, not per invoice. A payslip listing forty
   // commission lines is unreadable, and the individual records stay linked on
@@ -373,12 +443,12 @@ async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: 
     const label = `Sales commission (${rows.length} invoice${rows.length === 1 ? "" : "s"})`;
     run.adjustments.push({
       externalId, hrmsEmployeeId: line.hrmsEmployeeId, lineId: line._id, kind: "addition", source: "commission", label, amountMinor,
-      notes: rows.map((r) => r.invoiceNumber).join(", ").slice(0, 500), commissionRecordIds: rows.map((r) => r._id),
+      notes: rows.map((r) => r.invoiceNumber).join(", ").slice(0, 500), commissionRecordIds: (recordIds.push(...rows.map((r) => r._id as Types.ObjectId)), rows.map((r) => r._id)),
       recoveredMinor: amountMinor, outstandingMinor: 0, syncedAt: null, createdById: oid(actor.userId), createdByName: actorName,
     } as never);
     staged.push({ externalId, employeeId: line.hrmsEmployeeId, kind: "payment", label, amount: amountMinor / 100 });
   }
-  return { note: "" };
+  return { note: "", recordIds };
 }
 
 const monthName = (m: string) =>
@@ -610,6 +680,9 @@ export async function removeAdjustment(orgId: string, runId: string, externalId:
   // longer knows about.
   await hrmsClient.removeAdjustment(run.hrmsOrgId, run.period, externalId, (line && settleFor(run, line)) || undefined);
 
+  // Finance's commission records taken off the run are free to be pulled or paid again (audit F22).
+  const recordIds = (run.adjustments[index]!.commissionRecordIds ?? []) as unknown as Types.ObjectId[];
+  if (recordIds.length) await releaseRecords(recordIds, run);
   // CRM commission taken off the run is the CRM commission page's to pay again.
   const crmPayouts = run.adjustments[index]!.crmPayoutIds ?? [];
   if (crmPayouts.length) await CrmCommissionPayout.updateMany({ _id: { $in: crmPayouts }, state: "approved" }, { $set: { payrollRunId: null, payrollRunNumber: "" } });

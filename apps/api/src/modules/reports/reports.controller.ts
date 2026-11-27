@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import * as svc from "./reports.service";
 import * as mp from "./management-profit.service";
+import * as fp from "./financial-position.service";
 import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
@@ -142,6 +143,32 @@ export const managementProfitLines = asyncHandler(async (req, res) => {
   const line = String(req.query.line ?? "");
   if (!(mp.MP_LINES as readonly string[]).includes(line)) throw new AppError("VALIDATION_ERROR", `line is one of ${mp.MP_LINES.join(", ")}`);
   ok(res, await mp.managementLines(org(req), from, to, view as mp.MPView, line as mp.MPLine));
+});
+
+/**
+ * Cash flow and financial position (Phase 4, 2026-11-27): ?report=cashflow | cash | receivables | obligations |
+ * advances | position, from..to (as-of reports are as of `to`, at most today, with each month-end in the range).
+ */
+export const financialReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(fp.FP_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${fp.FP_REPORTS.join(", ")}`);
+  const { rows: _rows, ...out } = await fp.financialReport(org(req), report as fp.FPReport, from, to);
+  ok(res, out);
+});
+
+/** …the records behind one of its figures: ?line=<section>:<line> | <section> | all. */
+export const financialReportLines = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(fp.FP_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${fp.FP_REPORTS.join(", ")}`);
+  const r = await fp.financialReport(org(req), report as fp.FPReport, from, to);
+  const rows = fp.linesOf(r.rows, String(req.query.line ?? "all"));
+  ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
 });
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

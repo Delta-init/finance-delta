@@ -22,6 +22,8 @@ router.get("/payables/aged", c.agedPayables);
 router.get("/profit-loss/lines", c.profitLossLines);
 router.get("/management-profit/lines", c.managementProfitLines);
 router.get("/management-profit", c.managementProfit);
+router.get("/financial/lines", c.financialReportLines);
+router.get("/financial", c.financialReport);
 router.get("/profit-loss", c.profitLoss);
 
 // 8.4 Balance Sheet

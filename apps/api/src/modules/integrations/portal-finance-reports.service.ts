@@ -5,6 +5,7 @@ import { BankAccount } from "../banking/bank-account.model";
 import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
 import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossLines, profitLossPeriod } from "../reports/reports.service";
 import { getManagementProfit, managementRows, MP_LINES, type MPView } from "../reports/management-profit.service";
+import { financialReport, FP_REPORTS, linesOf, type FPReport } from "../reports/financial-position.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -862,5 +863,43 @@ export async function managementLinesForPortal(q: Record<string, unknown>) {
     ...ledger(kept as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, income
       ? { filters: ["category", "crm", "method", "month"], sums: ["amountMinor", "vatMinor", "grossMinor"], groups: ["month", "category", "crm", "method"], groupBy: str(q.groupBy) || "month", sort: ["title", "category", "crm", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail}` }
       : { filters: ["category", "status", "month"], sums: ["amountMinor", "paidMinor", "unpaidMinor"], groups: ["category", "status", "month"], groupBy: str(q.groupBy) || "category", sort: ["title", "category", "status", "month", "paidMinor", "unpaidMinor"], text: (r) => `${r.number} ${r.title} ${r.detail}` }),
+  };
+}
+
+/**
+ * Cash flow and financial position for Root (Phase 4, 2026-11-27): ?report=cashflow | cash | receivables |
+ * obligations | advances | position — figures per currency, month by month, notes and data warnings. As-of reports are
+ * as of `to` (at most today). The same calculation as finance's /reports/financial. Read-only.
+ */
+export async function financialForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(FP_REPORTS as string[]).includes(report)) return `report is one of ${FP_REPORTS.join(", ")}`;
+  const { rows: _rows, ...out } = await financialReport(org.id, report as FPReport, period.from, period.to);
+  return { generatedAt: new Date().toISOString(), org, period, ...out };
+}
+
+/** The records behind one of its figures (?line=<section>:<line> | <section> | all), as a list with filters, groups and pages. */
+export async function financialLinesForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(FP_REPORTS as string[]).includes(report)) return `report is one of ${FP_REPORTS.join(", ")}`;
+  const line = str(q.line) || "all";
+  const r = await financialReport(org.id, report as FPReport, period.from, period.to);
+  // Receivables and obligations list each record twice (by kind and by age): "all" means each record once.
+  const picked = line === "all" && (report === "receivables" || report === "obligations") ? linesOf(r.rows, report === "receivables" ? "kind" : "obl") : linesOf(r.rows, line);
+  const filters = report === "receivables" ? ["kind", "band", "crm", "month"] : report === "obligations" ? ["category", "band", "status", "month"] : ["category", "account", "status", "month"];
+  return {
+    generatedAt: new Date().toISOString(), org, period, report, line, asOf: r.asOf,
+    ...ledger(picked as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, {
+      filters, sums: report === "receivables" || report === "obligations" ? ["amountMinor", "originalMinor", "settledMinor", "creditMinor"] : ["amountMinor"],
+      groups: filters, groupBy: str(q.groupBy) || filters[0]!, sort: ["title", ...filters, "overdueDays"], text: (x) => `${x.number} ${x.title} ${x.detail}`,
+    }),
   };
 }

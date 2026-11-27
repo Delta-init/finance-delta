@@ -4,6 +4,7 @@ import * as svc from "./reports.service";
 import * as mp from "./management-profit.service";
 import * as fp from "./financial-position.service";
 import * as rc from "./reconciliation.service";
+import * as fc from "./controls.service";
 import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
@@ -195,6 +196,32 @@ export const reconciliationReportLines = asyncHandler(async (req, res) => {
   if (!(rc.RC_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${rc.RC_REPORTS.join(", ")}`);
   const r = await rc.reconciliationReport(org(req), report as rc.RCReport, from, to);
   const rows = rc.rcLinesOf(r.rows, String(req.query.line ?? "all"));
+  ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
+});
+
+/**
+ * Financial controls (Phase 6, 2026-11-28): ?report=overview | approvals | risks | liquidity | expenses | payroll | vat
+ * | closing | audit, from..to.
+ */
+export const controlsReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(fc.FC_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${fc.FC_REPORTS.join(", ")}`);
+  const { rows: _rows, ...out } = await fc.controlsReport(org(req), report as fc.FCReport, from, to);
+  ok(res, out);
+});
+
+/** …the records behind one of its figures: ?line=<section>:<line> | <section> | all. */
+export const controlsReportLines = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const report = String(req.query.report ?? "");
+  if (!(fc.FC_REPORTS as string[]).includes(report)) throw new AppError("VALIDATION_ERROR", `report is one of ${fc.FC_REPORTS.join(", ")}`);
+  const r = await fc.controlsReport(org(req), report as fc.FCReport, from, to);
+  const rows = fc.fcLinesOf(r.rows, String(req.query.line ?? "all"));
   ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
 });
 

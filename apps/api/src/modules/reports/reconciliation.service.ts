@@ -544,7 +544,7 @@ const RC_NOTES: Record<RCReport, string[]> = {
 };
 
 /** One report (or all of them, for the exception list and the summary). */
-export async function reconciliationReport(orgId: string, report: RCReport, from: string, to: string) {
+export async function reconciliationReport(orgId: string, report: RCReport, from: string, to: string, opts: { withParts?: boolean } = {}) {
   const base = (await baseCurrencyOf(orgId)).toUpperCase();
   const today = new Date().toISOString().slice(0, 10);
   const asOf = to > today ? today : to;
@@ -614,7 +614,7 @@ export async function reconciliationReport(orgId: string, report: RCReport, from
     add("open", "Open financial exceptions", ex.length, "count", "exceptions");
     add("critical_high", "Critical and high-priority", ex.filter((r) => r.severity === "critical" || r.severity === "high").length, "count", "exceptions");
   }
-  return { report, currency: base, from, to, asOf, cutover: CUTOVER, sides: [] as FPSide[], months: [], notes: RC_NOTES.summary, warnings, recordCount: exceptions.length, rows: exceptions, indicators };
+  return { report, currency: base, from, to, asOf, cutover: CUTOVER, sides: [] as FPSide[], months: [], notes: RC_NOTES.summary, warnings, recordCount: exceptions.length, rows: exceptions, indicators, ...(opts.withParts ? { parts } : {}) };
 }
 export type Indicator = { currency: string; key: string; label: string; value: number; as: "money" | "count"; report: string; line: string };
 

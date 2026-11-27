@@ -7,6 +7,7 @@ import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profi
 import { getManagementProfit, managementRows, MP_LINES, type MPView } from "../reports/management-profit.service";
 import { financialReport, FP_REPORTS, linesOf, type FPReport } from "../reports/financial-position.service";
 import { reconciliationReport, RC_REPORTS, rcLinesOf, type RCReport } from "../reports/reconciliation.service";
+import { controlsReport, FC_REPORTS, fcLinesOf, type FCReport } from "../reports/controls.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -936,6 +937,41 @@ export async function reconciliationLinesForPortal(q: Record<string, unknown>) {
     ...ledger(picked as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, {
       filters, sums: ["amountMinor"], groups: filters, groupBy: str(q.groupBy) || (report === "exceptions" ? "severityName" : "category"),
       sort: ["title", "category", "severityName", "status", "ageDays"], text: (x) => `${x.number} ${x.title} ${x.detail} ${(x as any).exception ?? ""}`,
+    }),
+  };
+}
+
+/**
+ * Financial controls for Root (Phase 6, 2026-11-28): ?report=overview | approvals | risks | liquidity | expenses |
+ * payroll | vat | closing | audit — the same calculation as finance's /reports/controls. Read-only.
+ */
+export async function controlsForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(FC_REPORTS as string[]).includes(report)) return `report is one of ${FC_REPORTS.join(", ")}`;
+  const { rows: _rows, ...out } = await controlsReport(org.id, report as FCReport, period.from, period.to);
+  return { generatedAt: new Date().toISOString(), org, period, ...out };
+}
+
+/** The records behind one of its figures (?line=<section>:<line> | <section> | all), with status, severity and module filters. */
+export async function controlsLinesForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const report = str(q.report);
+  if (!(FC_REPORTS as string[]).includes(report)) return `report is one of ${FC_REPORTS.join(", ")}`;
+  const r = await controlsReport(org.id, report as FCReport, period.from, period.to);
+  const picked = fcLinesOf(r.rows, str(q.line) || "all").map((x) => ({ ...x, severityName: x.severity ? x.severity[0]!.toUpperCase() + x.severity.slice(1) : "—", stage: x.kind ?? "—" }));
+  const filters = ["category", "status", "severityName", "module", "account", "stage", "month"];
+  return {
+    generatedAt: new Date().toISOString(), org, period, report, asOf: r.asOf,
+    ...ledger(picked as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, {
+      filters, sums: ["amountMinor"], groups: filters, groupBy: str(q.groupBy) || "category",
+      sort: ["title", "category", "status", "severityName", "ageDays"], text: (x) => `${x.number} ${x.title} ${x.detail}`,
     }),
   };
 }

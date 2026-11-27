@@ -186,10 +186,15 @@ export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promi
   const [currency, nameMap, depts, banks, pnl] = await Promise.all([
     orgCurrency(orgId), categoryNameMap(orgId), departmentNames(orgId), bankNames(orgId), q.pnlOnly ? pnlExpenseFilter(orgId) : Promise.resolve({}),
   ]);
+  const range = { ...(q.from ? { $gte: startOf(q.from) } : { $ne: null }), ...(q.to ? { $lte: endOf(q.to) } : {}) };
   const expenses = await Expense.find({
     organizationId: oid(orgId),
     status: { $in: ["approved", "submitted"] },
-    [dateField]: { ...(q.from ? { $gte: startOf(q.from) } : { $ne: null }), ...(q.to ? { $lte: endOf(q.to) } : {}) },
+    // By paid date, payroll still counts in the month the pay is for (2026-11-27): its expense date is that month's
+    // last day, and it is paid — so it is in the paid view once paid, in its own month.
+    ...(q.basis === "paid"
+      ? { $or: [{ paidOn: range, "source.kind": { $ne: "payroll" } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] }
+      : { [dateField]: range }),
     ...pnl,
   })
     .select("expenseNumber category categoryName subcategory subcategoryName description expenseDate paidOn totalMinor currency submittedById submittedByName salespersonId salespersonName departmentId paymentMethod bankAccountId paymentAccount source status")

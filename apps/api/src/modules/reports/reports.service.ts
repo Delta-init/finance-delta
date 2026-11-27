@@ -812,10 +812,12 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
       .lean(),
     pnlExpenseFilter(orgId).then((pnl) => Expense.find({
       organizationId: oid(orgId),
-      paidOn: range,
       status: { $in: ["approved", "submitted"] },
-      "source.kind": { $ne: "bill" },
-      ...pnl,
+      // Paid in the period — payroll by the month the pay is for (its expense date), once paid (2026-11-27).
+      $and: [
+        { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] },
+        pnl,
+      ],
     }).select("category totalMinor currency").lean()),
   ]);
   const nameMap = await categoryNameMap(orgId);

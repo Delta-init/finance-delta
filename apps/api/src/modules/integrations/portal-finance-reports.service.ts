@@ -327,6 +327,30 @@ export async function revenueReportForPortal(q: Record<string, unknown>) {
 
   const report = await getRevenueAnalysis(org.id, query(period, basis, byDay ? "month" : wanted, analysisFilters(q, REVENUE_DIMENSION_KEYS), str(q.q).slice(0, 100)));
   nameCrms(report);
+
+  // ?paidIn=INR (2026-11-27: "Collections in INR is not clickable"): only the payments made in that currency — the ones
+  // the Collected report keeps apart from its own and only totals — as paid, with their own totals, groups and days.
+  const paidIn = basis === "collected" ? str(q.paidIn).toUpperCase() : "";
+  if (paidIn) {
+    const line = report.foreign?.lines.find((l) => l.currency === paidIn);
+    const away = (report.foreign?.records ?? []).filter((r) => String(r.currency).toUpperCase() === paidIn);
+    const rows = rowsOf(report, REVENUE_ROW_DIMENSIONS).filter((r) => String(r.currency ?? "").toUpperCase() === paidIn);
+    const by = new Map<string, Day>();
+    for (const r of away) { const d = by.get(r.date) ?? by.set(r.date, { day: r.date, amountMinor: 0, count: 0 }).get(r.date)!; d.amountMinor += r.amountMinor; d.count++; }
+    const { customer: _c, ...opts } = report.options;
+    return {
+      generatedAt: new Date().toISOString(), org, period, basis, groupBy: wanted, currency: paidIn, paidIn,
+      totals: { amountMinor: line?.amountMinor ?? 0, count: line?.count ?? 0, collectedMinor: line?.amountMinor ?? 0, recordedMinor: line?.recordedMinor ?? 0 },
+      groups: byDay ? [] : report.groups.flatMap((g) => { const f = g.foreign?.find((x) => x.currency === paidIn); return f ? [{ key: g.key, name: g.name, count: f.count, amountMinor: f.amountMinor }] : []; }),
+      months: [],
+      days: report.capped || away.length < (line?.count ?? 0) ? null : [...by.values()].sort((a, b) => a.day.localeCompare(b.day)),
+      options: opts,
+      ...pageOf(rows, q, REVENUE_ROW_DIMENSIONS),
+      recordCount: line?.count ?? 0,
+      capped: report.capped,
+      foreign: null,
+    };
+  }
   const page = pageOf(rowsOf(report, REVENUE_ROW_DIMENSIONS), q, REVENUE_ROW_DIMENSIONS);
   // Every customer of the period is too long a list to send for a filter nobody picks from.
   const { customer: _customers, ...options } = report.options;

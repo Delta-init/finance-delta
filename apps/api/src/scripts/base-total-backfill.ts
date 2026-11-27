@@ -24,6 +24,8 @@ import { formatMoney, toBaseMinor } from "@delta/shared";
 export interface BaseTotalRow {
   id: string; invoice: string; organization: string; currency: string; baseCurrency: string;
   totalMinor: number; rate: number; storedMinor: number; shouldBeMinor: number;
+  /** Nothing stored at all (the field missing or null) — listed as 0, but never equal to 0 in a query. */
+  storedMissing: boolean;
 }
 
 const EJSON = () => mongoose.mongo.BSON.EJSON;
@@ -41,13 +43,14 @@ export async function findStaleBaseTotals(): Promise<BaseTotalRow[]> {
     const rate = Number(d.exchangeRate) || 1;
     const total = Number(d.totalMinor) || 0;
     const shouldBe = toBaseMinor(total, rate);
+    const storedMissing = d.baseTotalMinor === undefined || d.baseTotalMinor === null;
     const stored = Number(d.baseTotalMinor) || 0;
-    if (stored === shouldBe) continue;
+    if (!storedMissing && stored === shouldBe) continue;
     const org = orgs.get(String(d.organizationId));
     rows.push({
       id: String(d._id), invoice: String(d.invoiceNumber), organization: String(org?.name ?? d.organizationId),
       currency: String(d.currency ?? "AED"), baseCurrency: String(org?.baseCurrency ?? org?.currency ?? d.currency ?? "AED"),
-      totalMinor: total, rate, storedMinor: stored, shouldBeMinor: shouldBe,
+      totalMinor: total, rate, storedMinor: stored, shouldBeMinor: shouldBe, storedMissing,
     });
   }
   return rows;
@@ -55,7 +58,7 @@ export async function findStaleBaseTotals(): Promise<BaseTotalRow[]> {
 
 /** A short code for exactly these changes, so --write changes what was looked at and nothing else. */
 const codeOf = (rows: BaseTotalRow[]) =>
-  createHash("sha256").update(rows.map((r) => `${r.id}:${r.storedMinor}>${r.shouldBeMinor}`).join("|")).digest("hex").slice(0, 8);
+  createHash("sha256").update(rows.map((r) => `${r.id}:${r.storedMissing ? "none" : r.storedMinor}>${r.shouldBeMinor}`).join("|")).digest("hex").slice(0, 8);
 
 export async function backfillBaseTotals(o: { write: boolean; expect?: string; undoFile?: string }): Promise<{ rows: BaseTotalRow[]; code: string; written: number; undoFile?: string }> {
   const rows = await findStaleBaseTotals();
@@ -65,17 +68,19 @@ export async function backfillBaseTotals(o: { write: boolean; expect?: string; u
 
   const { Invoice } = await import("../modules/invoice/invoice.model");
   const undoFile = o.undoFile ?? `base-total-backfill-undo-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-  const done: Array<{ id: string; invoice: string; before: number; after: number }> = [];
+  const done: Array<{ id: string; invoice: string; before: number; after: number; missing?: boolean }> = [];
   const save = () => writeFileSync(undoFile, EJSON().stringify({ invoices: done }, undefined, 2, { relaxed: false }));
   save();
   for (const r of rows) {
-    // Only if the invoice is still as it was looked at: same total, same rate, same stored figure.
+    // Only if the invoice is still as it was looked at: same total, same stored figure — or still none stored
+    // ({ $in: [null] } matches a field that is missing as well as one that is null; it found 2026-11-27 that a plain
+    // 0 matches neither, and stopped the first run at the first invoice with nothing stored).
     const res = await Invoice.collection.updateOne(
-      { _id: new mongoose.Types.ObjectId(r.id), totalMinor: r.totalMinor, baseTotalMinor: r.storedMinor },
+      { _id: new mongoose.Types.ObjectId(r.id), totalMinor: r.totalMinor, baseTotalMinor: r.storedMissing ? { $in: [null] } : r.storedMinor },
       { $set: { baseTotalMinor: r.shouldBeMinor } },
     );
     if (!res.matchedCount) throw new Error(`Invoice ${r.invoice} changed while this ran — nothing more was written; ${done.length} done so far are in ${undoFile}`);
-    done.push({ id: r.id, invoice: r.invoice, before: r.storedMinor, after: r.shouldBeMinor });
+    done.push({ id: r.id, invoice: r.invoice, before: r.storedMinor, after: r.shouldBeMinor, ...(r.storedMissing ? { missing: true } : {}) });
     save();
   }
   return { rows, code, written: done.length, undoFile };
@@ -84,11 +89,12 @@ export async function backfillBaseTotals(o: { write: boolean; expect?: string; u
 /** Puts back what a --write changed, from its undo file — each invoice only if it still has the figure written. */
 export async function undoBaseTotals(file: string): Promise<{ restored: number; skipped: string[] }> {
   const { Invoice } = await import("../modules/invoice/invoice.model");
-  const { invoices } = EJSON().parse(readFileSync(file, "utf8"), { relaxed: false }) as { invoices: Array<{ id: string; invoice: string; before: number; after: number }> };
+  const { invoices } = EJSON().parse(readFileSync(file, "utf8"), { relaxed: false }) as { invoices: Array<{ id: string; invoice: string; before: number; after: number; missing?: boolean }> };
   let restored = 0;
   const skipped: string[] = [];
   for (const r of [...invoices].reverse()) {
-    const res = await Invoice.collection.updateOne({ _id: new mongoose.Types.ObjectId(r.id), baseTotalMinor: r.after }, { $set: { baseTotalMinor: r.before } });
+    // One that had nothing stored goes back to nothing stored.
+    const res = await Invoice.collection.updateOne({ _id: new mongoose.Types.ObjectId(r.id), baseTotalMinor: r.after }, r.missing ? { $unset: { baseTotalMinor: "" } } : { $set: { baseTotalMinor: r.before } });
     if (res.matchedCount) restored++; else skipped.push(r.invoice);
   }
   return { restored, skipped };
@@ -109,7 +115,7 @@ if (import.meta.main) {
       const { rows, code, written, undoFile } = await backfillBaseTotals({ write, expect: arg("--expect") });
       for (const r of rows) {
         const rate = r.rate !== 1 ? `  (total ${formatMoney(r.totalMinor, r.currency)} at rate ${r.rate})` : "";
-        console.log(`${r.invoice.padEnd(12)} ${r.organization.padEnd(32)} ${formatMoney(r.storedMinor, r.baseCurrency)} → ${formatMoney(r.shouldBeMinor, r.baseCurrency)}${rate}`);
+        console.log(`${r.invoice.padEnd(12)} ${r.organization.padEnd(32)} ${r.storedMissing ? "nothing stored" : formatMoney(r.storedMinor, r.baseCurrency)} → ${formatMoney(r.shouldBeMinor, r.baseCurrency)}${rate}`);
       }
       console.log(`\n${rows.length} invoice(s) with a stored total out of step: ${write ? `${written} changed` : "would change"}. Only that figure; nothing else is touched and nobody is emailed.`);
       if (!write && rows.length) console.log(`To write:  bun src/scripts/base-total-backfill.ts --write --expect ${code}`);

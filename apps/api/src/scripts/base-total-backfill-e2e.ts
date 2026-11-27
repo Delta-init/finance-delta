@@ -44,12 +44,17 @@ try {
     make("IN-4", 100_000, 0),                                        // never stored
     make("IN-5", 1_000_000, 1_000_000, { currency: "USD", exchangeRate: 0.2722 }), // another currency, out of step
     make("IN-6", 999_900, 1, { status: "void" }),                     // void: left alone
+    make("IN-7", 120_000, 0),                                        // nothing stored at all (field removed below)
+    make("IN-8", 63_800, 0),                                         // stored as null
   ]);
+  await Invoice.collection.updateOne({ invoiceNumber: "IN-7" }, { $unset: { baseTotalMinor: "" } });
+  await Invoice.collection.updateOne({ invoiceNumber: "IN-8" }, { $set: { baseTotalMinor: null } });
 
   console.log("\n\x1b[1mThe look\x1b[0m");
   let look = await backfillBaseTotals({ write: false });
   const byNo = Object.fromEntries(look.rows.map((r) => [r.invoice, r]));
-  check("finds exactly the four out of step, not the one in step or the void one", JSON.stringify(look.rows.map((r) => r.invoice).sort()) === JSON.stringify(["IN-1", "IN-2", "IN-4", "IN-5"]), JSON.stringify(look.rows.map((r) => r.invoice)));
+  check("finds exactly the six out of step, not the one in step or the void one", JSON.stringify(look.rows.map((r) => r.invoice).sort()) === JSON.stringify(["IN-1", "IN-2", "IN-4", "IN-5", "IN-7", "IN-8"]), JSON.stringify(look.rows.map((r) => r.invoice)));
+  check("nothing stored (missing or null) is said so", byNo["IN-7"]?.storedMissing === true && byNo["IN-8"]?.storedMissing === true && byNo["IN-4"]?.storedMissing === false, JSON.stringify([byNo["IN-7"], byNo["IN-8"]]));
   check("IN-1: 2,250 → 5,500", byNo["IN-1"]?.storedMinor === 225_000 && byNo["IN-1"]?.shouldBeMinor === 550_000, JSON.stringify(byNo["IN-1"]));
   check("IN-2: 15,000 → 1,500", byNo["IN-2"]?.shouldBeMinor === 150_000);
   check("IN-5: worked out as when an invoice is made (total ÷ rate)", byNo["IN-5"]?.shouldBeMinor === Math.round(1_000_000 / 0.2722), JSON.stringify(byNo["IN-5"]));
@@ -75,9 +80,9 @@ try {
   const res = await backfillBaseTotals({ write: true, expect: look.code });
   if (res.undoFile) undoFiles.push(res.undoFile);
   const after = Object.fromEntries((await Invoice.collection.find({}).toArray()).map((d: any) => [d.invoiceNumber, d]));
-  check("four written, an undo file kept", res.written === 4 && !!res.undoFile && existsSync(res.undoFile), JSON.stringify({ w: res.written, f: res.undoFile }));
+  check("six written — the ones with nothing stored too — an undo file kept", res.written === 6 && !!res.undoFile && existsSync(res.undoFile), JSON.stringify({ w: res.written, f: res.undoFile }));
   check("each stored total is now its total", after["IN-1"].baseTotalMinor === 550_000 && after["IN-2"].baseTotalMinor === 150_000 && after["IN-4"].baseTotalMinor === 100_000
-    && after["IN-5"].baseTotalMinor === Math.round(1_000_000 / 0.2722), JSON.stringify(Object.values(after).map((d: any) => [d.invoiceNumber, d.baseTotalMinor])));
+    && after["IN-5"].baseTotalMinor === Math.round(1_000_000 / 0.2722) && after["IN-7"].baseTotalMinor === 120_000 && after["IN-8"].baseTotalMinor === 63_800, JSON.stringify(Object.values(after).map((d: any) => [d.invoiceNumber, d.baseTotalMinor])));
   check("nothing else touched: total, paid, balance, tax, status, payments", ["totalMinor", "amountPaidMinor", "balanceMinor", "taxTotalMinor", "status", "currency", "exchangeRate"]
     .every((k) => JSON.stringify((after["IN-1"] as any)[k]) === JSON.stringify((before as any)[k])), JSON.stringify(after["IN-1"]));
   check("the in-step and void invoices are as they were", after["IN-3"].baseTotalMinor === 225_000 && after["IN-6"].baseTotalMinor === 1);
@@ -87,8 +92,9 @@ try {
   await Invoice.collection.updateOne({ invoiceNumber: "IN-2" }, { $set: { baseTotalMinor: 160_000, totalMinor: 160_000 } }); // edited since
   const undone = await undoBaseTotals(res.undoFile!);
   const back = Object.fromEntries((await Invoice.collection.find({}).toArray()).map((d: any) => [d.invoiceNumber, d]));
-  check("undo puts back the three still as written", undone.restored === 3 && back["IN-1"].baseTotalMinor === 225_000 && back["IN-4"].baseTotalMinor === 0 && back["IN-5"].baseTotalMinor === 1_000_000,
+  check("undo puts back the five still as written", undone.restored === 5 && back["IN-1"].baseTotalMinor === 225_000 && back["IN-4"].baseTotalMinor === 0 && back["IN-5"].baseTotalMinor === 1_000_000,
     JSON.stringify(undone));
+  check("…the ones with nothing stored back to nothing stored", !("baseTotalMinor" in back["IN-7"]) && !("baseTotalMinor" in back["IN-8"]), JSON.stringify([back["IN-7"].baseTotalMinor, back["IN-8"].baseTotalMinor]));
   check("…and leaves alone the one edited since", JSON.stringify(undone.skipped) === JSON.stringify(["IN-2"]) && back["IN-2"].baseTotalMinor === 160_000, JSON.stringify(undone));
 
   // A run that stops part-way: an invoice changed under it.

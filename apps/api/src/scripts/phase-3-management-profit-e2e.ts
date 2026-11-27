@@ -206,6 +206,15 @@ try {
   check("Root's payroll records: AED total 412,000, paid 300,000, unpaid 112,000; rupees apart", typeof rl === "object" && rl.totals?.amountMinor === 412_000_00 && rl.totals?.paidMinor === 300_000_00 && rl.totals?.unpaidMinor === 112_000_00 && (rl.otherCurrencies ?? []).some((c: any) => c.currency === "INR"), j(rl?.totals));
   check("a wrong view is refused", typeof (await portal.managementProfitForPortal({ org, from: OCT[0], to: OCT[1], view: "nope" })) === "string");
 
+  step("Disclosures (deployment safeguards)");
+  const notes = (v: "invoice" | "collection" | "cash") => mp.VIEW_NOTES[v].join(" ");
+  for (const v of ["invoice", "collection"] as const) {
+    check(`${v}: says payroll is the payable, paid/unpaid is as now, categories follow the P&L settings, typed commission may overlap, refunds and VAT`,
+      /payable/.test(notes(v)) && /stands now/.test(notes(v)) && /category settings/.test(notes(v)) && /may overlap/.test(notes(v)) && /no refunds/.test(notes(v)) && /VAT/.test(notes(v)));
+  }
+  check("cash: says unmatched and duplicate lines are included, and refunds/VAT", /not matched/.test(notes("cash")) && /duplicate/.test(notes("cash")) && /no refunds/.test(notes("cash")));
+  check("the notes reach Root", Array.isArray(root.notes) && root.notes.length === mp.VIEW_NOTES.invoice.length);
+
   step("Nothing written");
   check("payroll run, payouts and expenses unchanged by the reports", (await PayrollRun.collection.findOne({ _id: runOct }))!.amountPaidMinor === 350_000_00 && (await Expense.countDocuments({ organizationId: O })) === 8 /* 7 typed + the bill's mirror */, String(await Expense.countDocuments({ organizationId: O })));
 } catch (e) {

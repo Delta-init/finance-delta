@@ -320,19 +320,27 @@ export function monthsOf(from: string, to: string): string[] {
   return out;
 }
 
+/** What each view says about itself (Phase 3 deployment safeguards, 2026-11-27) — shown under every report. */
+const PAYROLL_NOTE = "Payroll cost is each person's payable (gross − deductions + additions) in the payroll month. Advance and loan recoveries are shown, not added; employer costs (contributions, benefits) are not recorded in finance.";
+const SETTLED_NOTE = "Paid and unpaid show where each cost stands now, not at the end of the period: a cost paid after the period shows as paid.";
+const CATEGORY_NOTE = "Expenses follow finance's existing P&L category settings. Some categories set to count — such as Employee Advances Receivable, VAT Control Account and Payroll Payable / Clearing — may not be operating costs; they are counted while their settings say so.";
+const COMMISSION_NOTE = "Expenses typed by hand under Sales Commission are counted as commission. Finance cannot tell whether any of them pays commission also recorded through a CRM or CS payout or a payroll run, so they may overlap.";
 export const VIEW_NOTES: Record<MPView, string[]> = {
   invoice: [
     "Invoice-based management profitability: invoices issued before VAT, less credit notes, less the costs incurred in the period. A management view, not statutory accrual profit.",
-    "Payroll is each person's payable in the payroll month, paid or not. Employer costs (contributions, benefits) are not recorded in finance.",
+    PAYROLL_NOTE, SETTLED_NOTE, CATEGORY_NOTE, COMMISSION_NOTE,
+    "Refunds and VAT: finance records no refunds, so none are taken off. Income is before VAT; supplier bills are before VAT; other expenses are counted as recorded, including any VAT on them.",
   ],
   collection: [
     "Collection-based management profitability: payments received in the period without their VAT, less the costs incurred in the period. Not accounting profit.",
     "Collections can be for invoices issued in earlier periods, so income and costs may not belong to the same sales.",
-    "Payroll is each person's payable in the payroll month, paid or not. Employer costs are not recorded in finance.",
+    PAYROLL_NOTE, SETTLED_NOTE, CATEGORY_NOTE, COMMISSION_NOTE,
+    "Refunds and VAT: finance records no refunds, so none are taken off. VAT comes off each payment by its tax invoice, or by its share of the invoice's VAT; payments in another currency or by a VAT-free method carry none. Other expenses are counted as recorded, including any VAT on them. The existing collected Profit & Loss, with VAT, is unchanged.",
   ],
   cash: [
     "Cash movement: money in less money out on the bank lines of the period, by account currency. Transfers between the organization's own accounts are left out; nothing unpaid or uncollected is in it.",
-    "Lines not matched to a record are shown as such. A line marked duplicate still counts, as it does in the account balance.",
+    "Bank lines not matched to any record, and lines marked duplicate, are still included — as they are in the account balances.",
+    "Refunds and VAT: finance records no refunds; money sent back to a customer appears only as a bank line. Amounts are as they moved, VAT included.",
   ],
 };
 

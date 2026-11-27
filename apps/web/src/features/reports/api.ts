@@ -99,10 +99,10 @@ export function useAgedPayables() {
 
 // ── 8.3 P&L ──────────────────────────────────────────────────────────────────
 
-export function useProfitLoss(from: string, to: string) {
+export function useProfitLoss(from: string, to: string, basis: "invoiced" | "collected" = "invoiced") {
   return useQuery({
-    queryKey: [...KEY, "profit-loss", from, to],
-    queryFn: () => api.get<PLReport>(`reports/profit-loss?from=${from}&to=${to}`),
+    queryKey: [...KEY, "profit-loss", from, to, basis],
+    queryFn: () => api.get<PLReport>(`reports/profit-loss?from=${from}&to=${to}&basis=${basis}`),
     enabled: !!from && !!to,
   });
 }

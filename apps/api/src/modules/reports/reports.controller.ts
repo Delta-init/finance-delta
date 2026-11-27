@@ -103,7 +103,8 @@ export const profitLoss = asyncHandler(async (req, res) => {
   const now = new Date();
   const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
   const to = dateParam(req, "to", todayStr());
-  ok(res, await svc.getProfitLoss(org(req), from, to));
+  const basis = req.query.basis === "collected" ? "collected" : "invoiced";
+  ok(res, await svc.getProfitLoss(org(req), from, to, undefined, basis));
 });
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

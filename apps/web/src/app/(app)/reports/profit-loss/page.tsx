@@ -27,12 +27,22 @@ function PLRow({ label, amountMinor, indent = false, bold = false }: {
   );
 }
 
+type Basis = "invoiced" | "collected";
+
+/*
+ * Income counted by invoices issued or by money received (the user, 2026-11-27: "show total collected instead of total
+ * invoiced"). Collected is a cash view: payments received with VAT taken out, and expenses paid in the period.
+ */
+const BASES: { key: Basis; label: string }[] = [{ key: "invoiced", label: "Invoiced" }, { key: "collected", label: "Collected" }];
+
 export default function ProfitLossPage() {
   const router = useRouter();
   const [from, setFrom] = useState(yearStart());
   const [to, setTo] = useState(today());
+  const [basis, setBasis] = useState<Basis>("invoiced");
 
-  const { data, isLoading } = useProfitLoss(from, to);
+  const { data, isLoading } = useProfitLoss(from, to, basis);
+  const collected = basis === "collected";
 
   const netProfit = data?.netProfitMinor ?? 0;
   const priorNet = data?.prior?.netProfitMinor ?? 0;
@@ -57,14 +67,36 @@ export default function ProfitLossPage() {
         <DatePicker value={from} onChange={setFrom} placeholder="From" />
         <span className="text-foreground-subtle">→</span>
         <DatePicker value={to} onChange={setTo} placeholder="To" />
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-sm text-foreground-muted">Count income by</span>
+          <div role="radiogroup" aria-label="Count income by" className="inline-flex overflow-hidden rounded-md border border-border">
+            {BASES.map((b) => (
+              <button
+                key={b.key} type="button" role="radio" aria-checked={basis === b.key} onClick={() => setBasis(b.key)}
+                className={`px-3 py-1.5 text-sm transition-colors ${basis === b.key ? "bg-primary text-primary-foreground font-medium" : "text-foreground-muted hover:bg-surface-muted"}`}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* Both bases side by side, whichever is shown — and what is still owed on the period's invoices. */}
+      {data?.bases && (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
+          <span>Invoiced, before VAT: <MoneyDisplay minor={data.bases.invoicedMinor} className="font-medium text-foreground" /></span>
+          <span>Collected, before VAT: <MoneyDisplay minor={data.bases.collectedMinor} className="font-medium text-foreground" /></span>
+          <span>Still owed on this period&apos;s invoices: <MoneyDisplay minor={data.bases.owedMinor} className="font-medium text-foreground" /></span>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: "Total Income", value: data?.income.total ?? 0, color: "text-success" },
-          { label: "Total Expenses", value: data?.expenses.total ?? 0, color: "text-danger" },
-          { label: "Net Profit", value: netProfit, color: netProfit >= 0 ? "text-success" : "text-danger" },
+          { label: collected ? "Total Income (collected)" : "Total Income", note: collected ? "Payments received, before VAT" : "Invoices issued, before VAT", value: data?.income.total ?? 0, color: "text-success" },
+          { label: "Total Expenses", note: collected ? "Paid in the period" : "Dated in the period", value: data?.expenses.total ?? 0, color: "text-danger" },
+          { label: collected ? "Net Profit (cash)" : "Net Profit", note: "Income less expenses", value: netProfit, color: netProfit >= 0 ? "text-success" : "text-danger" },
         ].map((card) => (
           <div key={card.label} className="rounded-xl border border-border bg-surface p-5">
             <p className="text-sm text-foreground-muted">{card.label}</p>
@@ -73,6 +105,7 @@ export default function ProfitLossPage() {
             ) : (
               <MoneyDisplay minor={card.value} className={`mt-1 text-2xl font-bold ${card.color}`} />
             )}
+            <p className="mt-1 text-xs text-foreground-subtle">{card.note}</p>
           </div>
         ))}
       </div>
@@ -146,7 +179,7 @@ export default function ProfitLossPage() {
       {!isLoading && data && (
         <div className={`rounded-xl border p-5 ${netProfit >= 0 ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"}`}>
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-foreground">Net Profit / (Loss)</span>
+            <span className="font-semibold text-foreground">{collected ? "Net Profit / (Loss), cash" : "Net Profit / (Loss)"}</span>
             <MoneyDisplay minor={netProfit} className={`text-xl font-bold ${netProfit >= 0 ? "text-success" : "text-danger"}`} />
           </div>
           <p className="mt-1 text-xs text-foreground-muted">{from} → {to}</p>

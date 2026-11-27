@@ -361,9 +361,16 @@ export type PLPeriod = {
   netProfitMinor: number;
 };
 
+/** What the income is counted by: invoices issued (before VAT), or payments received (VAT taken out) — 2026-11-27. */
+export type PLBasis = "invoiced" | "collected";
+
 export type PLReport = PLPeriod & {
   currency: string;
+  /** Absent from an older server: invoiced. With collected, expenses are the ones paid in the period. */
+  basis?: PLBasis;
   prior: PLPeriod | null;
+  /** Both bases' income for the period, and what is still owed on its invoices (with VAT) — whichever is shown. */
+  bases?: { invoicedMinor: number; collectedMinor: number; owedMinor: number };
 };
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

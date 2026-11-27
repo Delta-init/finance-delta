@@ -14,6 +14,7 @@ import type {
   MadePaymentsReport,
   AgedPayablesReport,
   PLReport,
+  PLBasis,
   PLPeriod,
   PLCategory,
   BalanceSheetReport,
@@ -24,7 +25,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, VAT_FREE_METHODS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
 import type { OtherCurrencyLine } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
@@ -771,22 +772,151 @@ async function computePL(orgId: string, from: string, to: string, base: string):
   };
 }
 
+/**
+ * The Profit & Loss counted by money that actually moved (the user, 2026-11-27: "show total collected instead of total
+ * invoiced", expenses by the day paid) — a cash view beside the invoiced one.
+ *
+ * Income: every payment received in the period, VAT taken out so it compares with invoiced income (which is before
+ * VAT): a payment with its own tax invoice (a pro-forma's) less that tax invoice's VAT; a payment on an ordinary invoice
+ * less the invoice's share of VAT (amount × subtotal ÷ total); a VAT-free method (Tabby DGO) as paid. A payment made in
+ * another currency than the organization's (rupees on an AED invoice) is apart, as paid, never added in — or, its amount
+ * in that currency never recorded, counted as recorded, as the Collected report does.
+ *
+ * Expenses: supplier-bill payments made in the period (their share before VAT, as the invoiced view counts a bill's
+ * subtotal), and profit-and-loss expenses paid in the period. Unpaid ones are not here. Other currencies apart.
+ */
+async function computeCashPL(orgId: string, from: string, to: string, base: string): Promise<PLPeriod> {
+  const range = { $gte: startOf(from), $lte: endOf(to) };
+  const lo = range.$gte.getTime(), hi = range.$lte.getTime();
+  const within = (d: unknown) => { const t = new Date(d as Date).getTime(); return t >= lo && t <= hi; };
+  const [invoices, bills, expenses] = await Promise.all([
+    Invoice.find({ organizationId: oid(orgId), status: { $nin: ["draft", "void"] }, payments: { $elemMatch: { paidOn: range } } })
+      .select("currency subtotalMinor totalMinor payments.paidOn payments.amountMinor payments.method payments.original payments.bankCurrency payments.bankAmountMinor payments.taxInvoice")
+      .lean(),
+    Bill.find({ organizationId: oid(orgId), status: { $nin: ["draft", "voided"] }, payments: { $elemMatch: { paidOn: range } } })
+      .select("currency subtotalMinor totalMinor payments.paidOn payments.amountMinor")
+      .lean(),
+    pnlExpenseFilter(orgId).then((pnl) => Expense.find({
+      organizationId: oid(orgId),
+      paidOn: range,
+      status: { $in: ["approved", "submitted"] },
+      "source.kind": { $ne: "bill" },
+      ...pnl,
+    }).select("category totalMinor currency").lean()),
+  ]);
+  const nameMap = await categoryNameMap(orgId);
+
+  const otherIncome = apart(base);
+  let received = 0, vatOut = 0;
+  for (const doc of invoices) {
+    const inv = doc as unknown as { currency?: string; subtotalMinor?: number; totalMinor?: number; payments?: any[] };
+    const invCurrency = String(inv.currency || base).toUpperCase();
+    const total = Number(inv.totalMinor) || 0, subtotal = Number(inv.subtotalMinor) || 0;
+    for (const p of inv.payments ?? []) {
+      if (!within(p.paidOn)) continue;
+      const amount = Number(p.amountMinor) || 0;
+      const paidIn = paidCurrency(p, invCurrency);
+      const paid = paidIn ? paidAmountMinor(p, invCurrency) : 0;
+      if (paidIn && paid > 0) { otherIncome.own(paidIn, paid, "Payments received"); continue; }
+      if (!otherIncome.own(invCurrency, amount, "Payments received")) continue;
+      const vat = p.taxInvoice?.number ? Number(p.taxInvoice.taxMinor) || 0
+        : VAT_FREE_METHODS.includes(String(p.method)) || total <= 0 ? 0
+        : amount - Math.round((amount * subtotal) / total);
+      received += amount;
+      vatOut += vat;
+    }
+  }
+  const incomeTotal = received - vatOut;
+
+  type Costs = { bills: number; byCategory: Map<string, number>; count: number };
+  const costs = new Map<string, Costs>();
+  const costsIn = (currency: unknown): Costs => {
+    const key = String(currency || base).toUpperCase();
+    const c = costs.get(key) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+    costs.set(key, c);
+    return c;
+  };
+  for (const doc of bills) {
+    const bill = doc as unknown as { currency?: string; subtotalMinor?: number; totalMinor?: number; payments?: any[] };
+    const total = Number(bill.totalMinor) || 0, subtotal = Number(bill.subtotalMinor) || 0;
+    for (const p of bill.payments ?? []) {
+      if (!within(p.paidOn)) continue;
+      const amount = Number(p.amountMinor) || 0;
+      const c = costsIn(bill.currency);
+      c.bills += total > 0 ? Math.round((amount * subtotal) / total) : amount;
+      c.count++;
+    }
+  }
+  for (const exp of expenses) {
+    const d = exp as unknown as Record<string, unknown>;
+    const c = costsIn(d.currency);
+    const cat = (d.category as string) ?? "other";
+    c.byCategory.set(cat, (c.byCategory.get(cat) ?? 0) + ((d.totalMinor as number) ?? 0));
+    c.count++;
+  }
+  const breakdownOf = (c: Costs): PLCategory[] => [
+    { label: "Supplier bills paid", amountMinor: c.bills },
+    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
+  ].filter((line) => line.amountMinor > 0);
+  const totalOf = (c: Costs) => c.bills + [...c.byCategory.values()].reduce((sum, n) => sum + n, 0);
+  const own = costs.get(base) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
+  const totalExpenses = totalOf(own);
+  const otherCurrencies = [...costs.entries()]
+    .filter(([currency]) => currency !== base)
+    .map(([currency, c]) => ({ currency, amountMinor: totalOf(c), count: c.count, breakdown: breakdownOf(c) }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
+
+  return {
+    from,
+    to,
+    income: {
+      total: incomeTotal,
+      breakdown: [
+        { label: "Payments received", amountMinor: received },
+        { label: "Less VAT on them", amountMinor: -vatOut },
+      ],
+      ...otherIncome.lines(),
+    },
+    expenses: { total: totalExpenses, breakdown: breakdownOf(own), ...(otherCurrencies.length ? { otherCurrencies } : {}) },
+    netProfitMinor: incomeTotal - totalExpenses,
+  };
+}
+
+/** What is still owed on the invoices issued in the period, in the organization's currency — beside the two bases. */
+async function owedOnPeriodInvoices(orgId: string, from: string, to: string, base: string): Promise<number> {
+  const rows = await Invoice.find({ organizationId: oid(orgId), issueDate: { $gte: startOf(from), $lte: endOf(to) }, status: { $nin: ["draft", "void"] }, balanceMinor: { $gt: 0 } })
+    .select("currency balanceMinor").lean();
+  return rows.reduce((sum, r) => (String((r as any).currency || base).toUpperCase() === base ? sum + ((r as any).balanceMinor ?? 0) : sum), 0);
+}
+
 export async function getProfitLoss(
   orgId: string,
   from: string,
   to: string,
   currency = "AED",
+  basis: PLBasis = "invoiced",
 ): Promise<PLReport> {
   const base = await baseCurrencyOf(orgId);
-  const current = await computePL(orgId, from, to, base);
+  const compute = basis === "collected" ? computeCashPL : computePL;
 
   // Prior period: same duration shifted back
   const duration = endOf(to).getTime() - startOf(from).getTime();
   const priorTo = new Date(startOf(from).getTime() - 86_400_000);
   const priorFrom = new Date(priorTo.getTime() - duration);
-  const prior = await computePL(orgId, dateOnly(priorFrom), dateOnly(priorTo), base);
+  // Both bases' income for the strip above the page, whichever is shown.
+  const [current, other, prior, owed] = await Promise.all([
+    compute(orgId, from, to, base),
+    (basis === "collected" ? computePL : computeCashPL)(orgId, from, to, base),
+    compute(orgId, dateOnly(priorFrom), dateOnly(priorTo), base),
+    owedOnPeriodInvoices(orgId, from, to, base),
+  ]);
+  const invoiced = basis === "collected" ? other : current;
+  const collected = basis === "collected" ? current : other;
 
-  return { ...current, currency, prior };
+  return {
+    ...current, currency, basis, prior,
+    bases: { invoicedMinor: invoiced.income.total, collectedMinor: collected.income.total, owedMinor: owed },
+  };
 }
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

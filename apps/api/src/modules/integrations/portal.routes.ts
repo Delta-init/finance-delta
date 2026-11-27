@@ -15,7 +15,7 @@ import { financeWatchForPortal } from "./portal-watch.service";
 import { financeReportForPortal } from "./portal-report.service";
 import { oldBooksPaymentsSince } from "./old-books-payments.service";
 import { paymentNumbersFor } from "./payment-numbers.service";
-import { agingReportForPortal, commissionReportForPortal, vatReportForPortal, plReportForPortal, expensesReportForPortal, payrollReportForPortal, financeOverviewForPortal, organizationsForPortal, revenueReportForPortal } from "./portal-finance-reports.service";
+import { agingReportForPortal, commissionReportForPortal, vatReportForPortal, plReportForPortal, plLinesForPortal, expensesReportForPortal, payrollReportForPortal, financeOverviewForPortal, organizationsForPortal, revenueReportForPortal } from "./portal-finance-reports.service";
 
 const router = Router();
 
@@ -230,7 +230,7 @@ router.get(
 
 /** Commission finance approved and paid, and payroll runs — each person's pay or the payments made (2026-11-27). Read-only. */
 /** …and the rows behind the VAT position and the income in "Income less expenses" (2026-11-27). Read-only. */
-for (const [path, report] of [["commission", commissionReportForPortal], ["payroll", payrollReportForPortal], ["vat", vatReportForPortal], ["pl", plReportForPortal]] as const) {
+for (const [path, report] of [["commission", commissionReportForPortal], ["payroll", payrollReportForPortal], ["vat", vatReportForPortal], ["pl", plReportForPortal], ["pl-lines", plLinesForPortal]] as const) {
   router.get(
     `/reports/${path}`,
     asyncHandler(async (req: Request, res: Response) => {

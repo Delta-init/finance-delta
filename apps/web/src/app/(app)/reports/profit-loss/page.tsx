@@ -8,21 +8,31 @@ import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MoneyDisplay } from "@/components/ui/money";
 import { useProfitLoss } from "@/features/reports/api";
+import { PLLineDialog, type PLLinePick } from "@/features/reports/PLLineDialog";
+import { formatMoney } from "@delta/shared";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function yearStart() { return `${new Date().getFullYear()}-01-01`; }
 
-function PLRow({ label, amountMinor, indent = false, bold = false }: {
+function PLRow({ label, amountMinor, indent = false, bold = false, onOpen }: {
   label: string;
   amountMinor: number;
   indent?: boolean;
   bold?: boolean;
+  /** Opens the records behind the line (2026-11-27). */
+  onOpen?: () => void;
 }) {
-  return (
-    <div className={`flex items-center justify-between py-2 ${indent ? "pl-4" : ""} ${bold ? "border-t border-border mt-1 pt-3" : ""}`}>
-      <span className={`text-sm ${bold ? "font-semibold" : "text-foreground-muted"}`}>{label}</span>
+  const cls = `flex w-full items-center justify-between py-2 text-left ${indent ? "pl-4" : ""} ${bold ? "border-t border-border mt-1 pt-3" : ""}`;
+  const body = (
+    <>
+      <span className={`text-sm ${bold ? "font-semibold" : "text-foreground-muted"} ${onOpen ? "group-hover:text-primary group-hover:underline" : ""}`}>{label}</span>
       <MoneyDisplay minor={amountMinor} className={`text-sm ${bold ? "font-semibold" : ""}`} />
-    </div>
+    </>
+  );
+  return onOpen ? (
+    <button type="button" onClick={onOpen} title="See the records behind this line" className={`group rounded-md hover:bg-surface-muted/60 ${cls}`}>{body}</button>
+  ) : (
+    <div className={cls}>{body}</div>
   );
 }
 
@@ -42,6 +52,9 @@ export default function ProfitLossPage() {
 
   const { data, isLoading } = useProfitLoss(from, to, basis);
   const collected = basis === "collected";
+  const [linePick, setLinePick] = useState<PLLinePick | null>(null);
+  const openLine = (line: string | undefined, label: string) => (line ? () => setLinePick({ line, label, from, to, basis }) : undefined);
+  const cur = data?.currency ?? "AED";
 
   const netProfit = data?.netProfitMinor ?? 0;
   const priorNet = data?.prior?.netProfitMinor ?? 0;
@@ -182,18 +195,18 @@ export default function ProfitLossPage() {
           <div className="rounded-xl border border-border bg-surface p-5">
             <h3 className="font-semibold mb-3">Income</h3>
             {data.income.breakdown.map((item) => (
-              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent />
+              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent onOpen={openLine(item.key, collected ? "Income collected" : "Invoice revenue")} />
             ))}
-            <PLRow label="Total Income" amountMinor={data.income.total} bold />
+            <PLRow label="Total Income" amountMinor={data.income.total} bold onOpen={openLine("income", "Total income")} />
           </div>
 
           {/* Expenses */}
           <div className="rounded-xl border border-border bg-surface p-5">
             <h3 className="font-semibold mb-3">Expenses</h3>
             {data.expenses.breakdown.map((item) => (
-              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent />
+              <PLRow key={item.label} label={item.label} amountMinor={item.amountMinor} indent onOpen={openLine(item.key, item.label)} />
             ))}
-            <PLRow label="Total Expenses" amountMinor={data.expenses.total} bold />
+            <PLRow label="Total Expenses" amountMinor={data.expenses.total} bold onOpen={openLine("expenses", "Total expenses")} />
           </div>
         </div>
       )}
@@ -208,6 +221,8 @@ export default function ProfitLossPage() {
           <p className="mt-1 text-xs text-foreground-muted">{from} → {to}</p>
         </div>
       )}
+
+      <PLLineDialog pick={linePick} onClose={() => setLinePick(null)} money={(m) => formatMoney(m, cur)} />
     </div>
   );
 }

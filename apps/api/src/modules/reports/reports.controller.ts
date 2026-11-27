@@ -107,6 +107,17 @@ export const profitLoss = asyncHandler(async (req, res) => {
   ok(res, await svc.getProfitLoss(org(req), from, to, undefined, basis));
 });
 
+/** The records behind one Profit & Loss line (2026-11-27): ?line=income | bills | expenses | cat:<category>. */
+export const profitLossLines = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const basis = req.query.basis === "collected" ? "collected" : "invoiced";
+  const line = typeof req.query.line === "string" && /^(income|bills|expenses|cat:[\w-]{1,80})$/.test(req.query.line) ? req.query.line : "";
+  if (!line) throw new AppError("VALIDATION_ERROR", "line is income, bills, expenses or cat:<category>");
+  ok(res, await svc.profitLossLines(org(req), from, to, basis, line));
+});
+
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────
 
 export const balanceSheet = asyncHandler(async (req, res) => {

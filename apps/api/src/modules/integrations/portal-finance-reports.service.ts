@@ -3,7 +3,7 @@ import type { AnalysisForeign, AnalysisReport } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 import { BankAccount } from "../banking/bank-account.model";
 import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
-import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossPeriod } from "../reports/reports.service";
+import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossLines, profitLossPeriod } from "../reports/reports.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -790,5 +790,27 @@ export async function plReportForPortal(q: Record<string, unknown>) {
     totals: { incomeMinor: sum("incomeMinor"), expensesMinor: sum("expensesMinor"), netMinor: sum("netMinor") },
     incomeOther: apartTotals("incomeOther"), expensesOther: apartTotals("expensesOther"),
     capped: months.length === 24 && iso(new Date(Date.UTC(Number(months[23]!.month.slice(0, 4)), Number(months[23]!.month.slice(5)), 1))) <= period.to,
+  };
+}
+
+/**
+ * The records behind one Profit & Loss line, for Root (2026-11-27): ?line=income | bills | expenses | cat:<category>,
+ * ?basis=invoiced | collected — the same rows finance's own page opens, as a list with filters, groups and pages.
+ */
+export async function plLinesForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const basis = str(q.basis) === "collected" ? "collected" : "invoiced";
+  const line = str(q.line);
+  if (!/^(income|bills|expenses|cat:[\w-]{1,80})$/.test(line)) return "line is income, bills, expenses or cat:<category>";
+  const { rows } = await profitLossLines(org.id, period.from, period.to, basis, line);
+  const income = line === "income";
+  return {
+    generatedAt: new Date().toISOString(), org, period, basis, line,
+    ...ledger(rows as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, income
+      ? { filters: ["crm", "salesperson", "method", "month"], sums: ["amountMinor", "vatMinor", "grossMinor"], groups: ["month", "crm", "salesperson", "method"], groupBy: str(q.groupBy) || "month", sort: ["title", "crm", "salesperson", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail}` }
+      : { filters: ["category", "subcategory", "department", "method", "month"], sums: ["amountMinor"], groups: ["category", "subcategory", "department", "method", "month"], groupBy: str(q.groupBy) || "category", sort: ["title", "category", "subcategory", "department", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail} ${r.employee ?? ""}` }),
   };
 }

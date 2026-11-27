@@ -757,8 +757,8 @@ async function computePL(orgId: string, from: string, to: string, base: string):
     c.count++;
   }
   const breakdownOf = (c: Costs): PLCategory[] => [
-    { label: "Supplier bills", amountMinor: c.bills },
-    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
+    { key: "bills", label: "Supplier bills", amountMinor: c.bills },
+    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ key: `cat:${slug}`, label: nameMap.get(slug) ?? slug, amountMinor })),
   ].filter((line) => line.amountMinor > 0);
   const totalOf = (c: Costs) => c.bills + [...c.byCategory.values()].reduce((s, n) => s + n, 0);
 
@@ -774,7 +774,7 @@ async function computePL(orgId: string, from: string, to: string, base: string):
     to,
     income: {
       total: incomeTotal,
-      breakdown: [{ label: "Invoice revenue", amountMinor: incomeTotal }],
+      breakdown: [{ key: "income", label: "Invoice revenue", amountMinor: incomeTotal }],
       ...otherIncome.lines(),
     },
     expenses: {
@@ -871,8 +871,8 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
     c.count++;
   }
   const breakdownOf = (c: Costs): PLCategory[] => [
-    { label: "Supplier bills paid", amountMinor: c.bills },
-    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ label: nameMap.get(slug) ?? slug, amountMinor })),
+    { key: "bills", label: "Supplier bills paid", amountMinor: c.bills },
+    ...[...c.byCategory.entries()].map(([slug, amountMinor]) => ({ key: `cat:${slug}`, label: nameMap.get(slug) ?? slug, amountMinor })),
   ].filter((line) => line.amountMinor > 0);
   const totalOf = (c: Costs) => c.bills + [...c.byCategory.values()].reduce((sum, n) => sum + n, 0);
   const own = costs.get(base) ?? { bills: 0, byCategory: new Map<string, number>(), count: 0 };
@@ -888,8 +888,8 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
     income: {
       total: incomeTotal,
       breakdown: [
-        { label: "Payments received", amountMinor: received },
-        { label: "Less VAT on them", amountMinor: -vatOut },
+        { key: "income", label: "Payments received", amountMinor: received },
+        { key: "income", label: "Less VAT on them", amountMinor: -vatOut },
       ],
       ...otherIncome.lines(),
     },
@@ -898,6 +898,126 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
   };
 }
 
+/**
+ * The records behind one Profit & Loss line (the user, 2026-11-27: "each line will be break down also popup"), counted
+ * by exactly the rules of computePL / computeCashPL, so they add up to the line: `line` is a breakdown item's key —
+ * "income", "bills", "cat:<category>" — or "expenses" for every expense row. In the organization's own currency only:
+ * what is in another is apart on the P&L itself.
+ */
+export type PLLineRow = {
+  id: string; date: string; number: string; title: string; detail: string; amountMinor: number; currency: string; href: string;
+  kind: "invoice" | "payment" | "bill" | "bill payment" | "expense";
+  grossMinor?: number; vatMinor?: number;
+  crm?: string; salesperson?: string; category?: string; subcategory?: string; department?: string; method?: string; employee?: string; month: string;
+};
+
+export async function profitLossLines(orgId: string, from: string, to: string, basis: PLBasis, line: string): Promise<{ currency: string; rows: PLLineRow[]; totalMinor: number }> {
+  const base = await baseCurrencyOf(orgId);
+  const range = { $gte: startOf(from), $lte: endOf(to) };
+  const lo = range.$gte.getTime(), hi = range.$lte.getTime();
+  const within = (d: unknown) => { const t = new Date(d as Date).getTime(); return t >= lo && t <= hi; };
+  const day = (d: unknown) => dateOnly(new Date(d as Date));
+  const own = (c: unknown) => String(c || base).toUpperCase() === base;
+  const rows: PLLineRow[] = [];
+  const wantIncome = line === "income";
+  const wantBills = line === "bills" || line === "expenses";
+  const wantCat = line === "expenses" ? null : line.startsWith("cat:") ? line.slice(4) : undefined;
+
+  if (wantIncome) {
+    const SELECT = "invoiceNumber customerName salespersonName issueDate status currency subtotalMinor totalMinor enrolment.crm external.source payments._id payments.paidOn payments.amountMinor payments.method payments.original payments.bankCurrency payments.bankAmountMinor payments.taxInvoice payments.receiptNumber";
+    if (basis === "invoiced") {
+      const invoices = await Invoice.find({ organizationId: oid(orgId), issueDate: range, status: { $nin: ["draft", "void"] } }).select(SELECT).lean<any[]>();
+      for (const inv of invoices) {
+        if (!own(inv.currency)) continue;
+        const invCurrency = String(inv.currency || base).toUpperCase();
+        let away = 0;
+        for (const p of inv.payments ?? []) {
+          const paidIn = paidCurrency(p, invCurrency);
+          if (paidIn && paidAmountMinor(p, invCurrency) > 0) away += Number(p.amountMinor) || 0;
+        }
+        const date = day(inv.issueDate);
+        rows.push({
+          id: String(inv._id), date, month: date.slice(0, 7), number: inv.invoiceNumber, title: inv.customerName ?? "", kind: "invoice",
+          detail: away ? `Less ${formatMoney(away, invCurrency)} paid in another currency, shown apart` : "",
+          amountMinor: Math.max(0, (inv.subtotalMinor ?? 0) - away), grossMinor: inv.totalMinor ?? 0, vatMinor: (inv.totalMinor ?? 0) - (inv.subtotalMinor ?? 0),
+          currency: base, href: `/invoices/${inv._id}`, crm: crmOf(inv), salesperson: inv.salespersonName || "No salesperson",
+        });
+      }
+    } else {
+      const invoices = await Invoice.find({ organizationId: oid(orgId), status: { $nin: ["draft", "void"] }, payments: { $elemMatch: { paidOn: range } } }).select(SELECT).lean<any[]>();
+      for (const inv of invoices) {
+        const invCurrency = String(inv.currency || base).toUpperCase();
+        if (!own(invCurrency)) continue;
+        const total = Number(inv.totalMinor) || 0, subtotal = Number(inv.subtotalMinor) || 0;
+        for (const p of inv.payments ?? []) {
+          if (!within(p.paidOn)) continue;
+          const paidIn = paidCurrency(p, invCurrency);
+          if (paidIn && paidAmountMinor(p, invCurrency) > 0) continue;
+          const amount = Number(p.amountMinor) || 0;
+          const vat = p.taxInvoice?.number ? Number(p.taxInvoice.taxMinor) || 0
+            : VAT_FREE_METHODS.includes(String(p.method)) || total <= 0 ? 0
+            : amount - Math.round((amount * subtotal) / total);
+          const date = day(p.paidOn);
+          rows.push({
+            id: `${inv._id}:${p._id}`, date, month: date.slice(0, 7), number: p.taxInvoice?.number || p.receiptNumber || inv.invoiceNumber, title: inv.customerName ?? "", kind: "payment",
+            detail: `Towards ${inv.invoiceNumber}`, amountMinor: amount - vat, grossMinor: amount, vatMinor: vat, currency: base, href: `/invoices/${inv._id}`,
+            crm: crmOf(inv), salesperson: inv.salespersonName || "No salesperson", method: PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? ""),
+          });
+        }
+      }
+    }
+  }
+
+  if (wantBills) {
+    const bills = await Bill.find(basis === "invoiced"
+      ? { organizationId: oid(orgId), billDate: range, status: { $nin: ["draft", "voided"] } }
+      : { organizationId: oid(orgId), status: { $nin: ["draft", "voided"] }, payments: { $elemMatch: { paidOn: range } } })
+      .select("billNumber vendorName billDate currency subtotalMinor totalMinor payments._id payments.paidOn payments.amountMinor payments.method").lean<any[]>();
+    for (const b of bills) {
+      if (!own(b.currency)) continue;
+      const total = Number(b.totalMinor) || 0, subtotal = Number(b.subtotalMinor) || 0;
+      if (basis === "invoiced") {
+        const date = day(b.billDate);
+        rows.push({ id: String(b._id), date, month: date.slice(0, 7), number: b.billNumber, title: b.vendorName ?? "", detail: "Supplier bill", kind: "bill", amountMinor: subtotal, grossMinor: total, vatMinor: total - subtotal, currency: base, href: `/bills/${b._id}`, category: "Supplier bills" });
+        continue;
+      }
+      for (const p of b.payments ?? []) {
+        if (!within(p.paidOn)) continue;
+        const amount = Number(p.amountMinor) || 0;
+        const share = total > 0 ? Math.round((amount * subtotal) / total) : amount;
+        const date = day(p.paidOn);
+        rows.push({ id: `${b._id}:${p._id}`, date, month: date.slice(0, 7), number: b.billNumber, title: b.vendorName ?? "", detail: "Supplier bill payment", kind: "bill payment", amountMinor: share, grossMinor: amount, vatMinor: amount - share, currency: base, href: `/bills/${b._id}`, category: "Supplier bills", method: PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? "") });
+      }
+    }
+  }
+
+  if (wantCat !== undefined) {
+    const pnl = await pnlExpenseFilter(orgId);
+    const when = basis === "invoiced"
+      ? { expenseDate: range, "source.kind": { $ne: "bill" } }
+      : { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] };
+    const [expenses, nameMap, depts] = await Promise.all([
+      Expense.find({ organizationId: oid(orgId), status: { $in: ["approved", "submitted"] }, ...(wantCat ? { category: wantCat } : {}), $and: [when, pnl] })
+        .select("expenseNumber category subcategoryName description expenseDate paidOn totalMinor currency departmentId paymentMethod submittedByName source.kind").lean<any[]>(),
+      categoryNameMap(orgId),
+      Department.find({ organizationId: oid(orgId) }).select("name").lean<any[]>(),
+    ]);
+    const deptName = new Map(depts.map((x) => [String(x._id), x.name]));
+    for (const e of expenses) {
+      if (!own(e.currency)) continue;
+      // Payroll by the month the pay is for; everything else by expense date, or by paid date when collected.
+      const date = day(basis === "collected" && e.source?.kind !== "payroll" ? e.paidOn : e.expenseDate);
+      rows.push({
+        id: String(e._id), date, month: date.slice(0, 7), number: e.expenseNumber ?? "", title: e.description || (nameMap.get(e.category) ?? e.category), kind: "expense",
+        detail: e.source?.kind === "payroll" ? `Payroll, paid ${e.paidOn ? day(e.paidOn) : "—"}` : "", amountMinor: e.totalMinor ?? 0, currency: base, href: `/expenses/${e._id}`,
+        category: nameMap.get(e.category) ?? e.category, subcategory: e.subcategoryName || "—", department: (e.departmentId && deptName.get(String(e.departmentId))) || "No department",
+        method: e.paymentMethod ? (PAYMENT_METHOD_LABELS[e.paymentMethod as PaymentMethod] ?? String(e.paymentMethod)) : "", employee: e.submittedByName || "",
+      });
+    }
+  }
+  rows.sort((a, b) => b.date.localeCompare(a.date) || b.amountMinor - a.amountMinor);
+  return { currency: base, rows, totalMinor: rows.reduce((n, r) => n + r.amountMinor, 0) };
+}
 /** What is still owed on the invoices issued in the period, in the organization's currency — beside the two bases. */
 async function owedOnPeriodInvoices(orgId: string, from: string, to: string, base: string): Promise<number> {
   const rows = await Invoice.find({ organizationId: oid(orgId), issueDate: { $gte: startOf(from), $lte: endOf(to) }, status: { $nin: ["draft", "void"] }, balanceMinor: { $gt: 0 } })

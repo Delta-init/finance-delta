@@ -342,7 +342,8 @@ export type AgedPayablesReport = {
 
 // ── 8.3 Profit & Loss ─────────────────────────────────────────────────────────
 
-export type PLCategory = { label: string; amountMinor: number };
+/** `key`: which records are behind the line — "income", "bills", "cat:<category>" (2026-11-27). */
+export type PLCategory = { label: string; amountMinor: number; key?: string };
 
 /**
  * Expenses and supplier bills in a currency other than the organization's (2026-11-26): INR 20,000 of rent was added

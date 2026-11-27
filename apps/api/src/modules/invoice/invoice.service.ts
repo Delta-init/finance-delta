@@ -964,6 +964,9 @@ export async function updateInvoice(
       roundOffMinor: totals.roundOffMinor,
       totalMinor: totals.totalMinor,
       balanceMinor: totals.totalMinor - paid,
+      // The stored total in the organization's currency follows the total, as when the invoice was made (2026-11-27:
+      // left behind, an edited invoice — a course change — kept its old figure in the Revenue report).
+      baseTotalMinor: toBaseMinor(totals.totalMinor, Number((doc as unknown as { exchangeRate?: number }).exchangeRate) || 1),
     });
 
     // The status describes what is outstanding, so changing the total changes

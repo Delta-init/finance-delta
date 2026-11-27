@@ -225,6 +225,9 @@ async function main() {
   check("the balance and status follow; the approval and the payment stay", d.amountPaidMinor === 200_000 && d.balanceMinor === 600_000 && d.status === "partial"
     && d.approval?.state === "approved" && d.payments.length === before.payments.length && d.invoiceNumber === before.invoiceNumber,
     JSON.stringify({ p: d.amountPaidMinor, b: d.balanceMinor, s: d.status, a: d.approval?.state }));
+  // 2026-11-27: the stored total in the organization's currency (what the Revenue report reads) follows the new fee.
+  check("the stored total in AED follows: 8,000, not the 5,500 it was made at", before.baseTotalMinor === 550_000 && d.baseTotalMinor === 800_000,
+    JSON.stringify({ before: before.baseTotalMinor, after: d.baseTotalMinor }));
   check("the enrolment says the new course and both its LMS courses", d.enrolment.course === BUNDLE
     && JSON.stringify(d.enrolment.courses) === JSON.stringify([{ name: BUNDLE, lmsCourseSlugs: [MBT, DWT] }]) && d.enrolment.lmsCourseSlug === MBT
     && d.enrolment.modeOfStudy === "online", JSON.stringify(d.enrolment));
@@ -251,6 +254,7 @@ async function main() {
   lp = await LmsProvision.findOne({ invoiceId: b.id }).lean();
   check("a cheaper course down to what is paid: a plain line at 3,000, paid in full", r.status === 200 && d.lineItems[0].description === "Alt Course" && !d.lineItems[0].itemId
     && d.totalMinor === 300_000 && d.balanceMinor === 0 && d.status === "paid", JSON.stringify({ r: show(r), l: d.lineItems[0], s: d.status }));
+  check("…its stored total in AED down to 3,000 as well", d.baseTotalMinor === 300_000, String(d.baseTotalMinor));
   check("…the enrolment on the CRM's LMS course, that course queued, the LMS told it is paid", d.enrolment.course === "Alt Course"
     && JSON.stringify(d.enrolment.courses) === JSON.stringify([{ name: "Alt Course", lmsCourseSlugs: [ALT] }]) && d.enrolment.lmsCourseSlug === ALT
     && lp?.extraCourses?.length === 1 && lp.extraCourses[0].slug === ALT && lp?.access?.pending === "paid", JSON.stringify({ e: d.enrolment.courses, lp: { x: lp?.extraCourses, a: lp?.access } }));

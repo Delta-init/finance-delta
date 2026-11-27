@@ -358,10 +358,10 @@ async function claimPayouts(Model: PayoutModel, ids: Types.ObjectId[], run: Payr
   const claimed: Types.ObjectId[] = [];
   for (const id of ids) {
     const r = await (Model as typeof CrmCommissionPayout).updateOne(
-      { _id: id, state: "approved", payrollRunId: null },
+      { _id: id, state: "approved", payrollRunId: { $in: [null, run._id] } },
       { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } },
     );
-    if (r.modifiedCount !== 1) {
+    if (r.matchedCount !== 1) {
       await releasePayouts(Model, claimed, run);
       throw new AppError("CONFLICT", "Some of this commission was paid, changed or taken by another payroll run just now — nothing was added. Pull again.");
     }
@@ -373,8 +373,9 @@ async function claimPayouts(Model: PayoutModel, ids: Types.ObjectId[], run: Payr
 async function claimRecords(ids: Types.ObjectId[], run: PayrollRunDoc): Promise<void> {
   const claimed: Types.ObjectId[] = [];
   for (const id of ids) {
-    const r = await CommissionRecord.updateOne({ _id: id, status: "earned", payrollRunId: null }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
-    if (r.modifiedCount !== 1) {
+    // Free, or already this run's from a pull whose save failed (matchedCount: re-claiming changes nothing).
+    const r = await CommissionRecord.updateOne({ _id: id, status: "earned", payrollRunId: { $in: [null, run._id] } }, { $set: { payrollRunId: run._id, payrollRunNumber: run.runNumber } });
+    if (r.matchedCount !== 1) {
       await releaseRecords(claimed, run);
       throw new AppError("CONFLICT", "Some of this commission was paid, cancelled or taken by another payroll run just now — nothing was added. Pull again.");
     }
@@ -412,14 +413,22 @@ async function stageCommissionRecords(orgId: string, run: PayrollRunDoc, actor: 
   const alreadyPulled = new Set(
     run.adjustments.filter((a) => a.source === "commission").flatMap((a) => a.commissionRecordIds.map(String)),
   );
-  // Only records no run holds (audit F22): one pulled by another run is that run's to pay.
+  // Only records no other run holds (audit F22): by the claim marker, and — for runs from before the marker existed —
+  // by being listed on another run's commission adjustment (validation, 2026-11-27). A record this run claimed whose
+  // adjustment never got saved (HRMS took it, the run's save failed) is this run's to pull again: HRMS upserts on the
+  // same adjustment id, so the payslip still gets it once.
   const records = await CommissionRecord.find({
     organizationId: oid(orgId),
     salespersonId: { $in: employees.map((e) => e.userId) },
     status: "earned",
-    payrollRunId: null,
+    payrollRunId: { $in: [null, run._id] },
   }).lean();
-  const fresh = records.filter((r) => !alreadyPulled.has(String(r._id)));
+  const onOtherRuns = new Set(
+    (await PayrollRun.find({ organizationId: oid(orgId), _id: { $ne: run._id }, "adjustments.commissionRecordIds": { $in: records.map((r) => r._id) } })
+      .select("adjustments.commissionRecordIds").lean<{ adjustments: { commissionRecordIds?: Types.ObjectId[] }[] }[]>())
+      .flatMap((r) => r.adjustments.flatMap((a) => (a.commissionRecordIds ?? []).map(String))),
+  );
+  const fresh = records.filter((r) => !alreadyPulled.has(String(r._id)) && !onOtherRuns.has(String(r._id)));
   if (!fresh.length) return { note: "", recordIds: [] };
   const recordIds: Types.ObjectId[] = [];
 
@@ -461,7 +470,10 @@ const monthName = (m: string) =>
  * approved figure.
  */
 async function stageCrmCommission(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string; payoutIds: Types.ObjectId[] }> {
-  const payouts = await CrmCommissionPayout.find({ state: "approved", payrollRunId: null, month: { $lte: run.period } }).sort({ month: 1 }).lean<any[]>();
+  // Free, or this run's from a pull whose save failed — but never one already on this run (validation, 2026-11-27).
+  const onRun = new Set(run.adjustments.flatMap((a) => (a.crmPayoutIds ?? []).map(String)));
+  const payouts = (await CrmCommissionPayout.find({ state: "approved", payrollRunId: { $in: [null, run._id] }, month: { $lte: run.period } }).sort({ month: 1 }).lean<any[]>())
+    .filter((p) => !onRun.has(String(p._id)));
   if (!payouts.length) return { note: "", payoutIds: [] };
   // Each person's CRM email, from Root, a month at a time.
   const emailOf = new Map<string, string>();
@@ -628,7 +640,9 @@ export async function pullSlabSalaries(orgId: string, runId: string, actor: { us
  * Portal email (an employee's email here), in the line's currency. One addition per period, at the approved figure.
  */
 async function stageCsCommission(orgId: string, run: PayrollRunDoc, actor: { userId: string }, actorName: string, staged: Staged): Promise<{ note: string; payoutIds: Types.ObjectId[] }> {
-  const payouts = await CsCommissionPayout.find({ state: "approved", payrollRunId: null, lastMonth: { $lte: run.period } }).sort({ lastMonth: 1 }).lean<any[]>();
+  const onRun = new Set(run.adjustments.flatMap((a) => (a.csPayoutIds ?? []).map(String)));
+  const payouts = (await CsCommissionPayout.find({ state: "approved", payrollRunId: { $in: [null, run._id] }, lastMonth: { $lte: run.period } }).sort({ lastMonth: 1 }).lean<any[]>())
+    .filter((p) => !onRun.has(String(p._id)));
   if (!payouts.length) return { note: "", payoutIds: [] };
   const emails = [...new Set(payouts.map((p) => String(p.email ?? "").toLowerCase()).filter(Boolean))];
   const employees = emails.length ? await Employee.find({

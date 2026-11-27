@@ -122,32 +122,26 @@ export async function issueCreditNote(orgId: string, id: string): Promise<DTO> {
 
 /*
  * Credit applied to an invoice is kept apart from its payments (2026-11-27, audit F05). An invoice's payments[] holds
- * money received only; what credit notes took off it is worked out from the notes themselves. amountPaidMinor stays
- * what it always meant — settled, payments and credit together — so paid/part-paid status, the LMS and commission
- * eligibility read as before; but anything that recomputes it from the payments now adds the credit back, so editing
- * or deleting a payment no longer wipes a credit out.
+ * money received only. amountPaidMinor stays what it always meant — settled, payments and credit together — so
+ * paid/part-paid status, the LMS and commission eligibility read as before. Whatever of it is not payments (the credit,
+ * however and whenever it was applied) is carried across a payment edit or delete instead of being recomputed from the
+ * payments alone (invoice.service: settledBesidePayments). Nothing assumes where an older note's credit went
+ * (validation, 2026-11-27): a note applied before its applications were recorded is never counted on any invoice by
+ * guesswork, and voiding one is refused for a person to look at.
  */
 
-type NoteLike = { invoiceId?: unknown; amountAppliedMinor?: number | null; applications?: { invoiceId: unknown; amountMinor: number }[] | null };
+type NoteLike = { amountAppliedMinor?: number | null; applications?: { invoiceId: unknown; amountMinor: number }[] | null };
 
-/** What one credit note has taken off one invoice. A note applied before applications were kept: all on its own. */
-export function creditOnInvoice(note: NoteLike, invoiceId: string): number {
-  const apps = note.applications ?? [];
-  const listed = apps.reduce((n, a) => n + (Number(a.amountMinor) || 0), 0);
-  const legacy = Math.max(0, (Number(note.amountAppliedMinor) || 0) - listed);
-  const here = apps.filter((a) => String(a.invoiceId) === invoiceId).reduce((n, a) => n + (Number(a.amountMinor) || 0), 0);
-  return here + (String(note.invoiceId) === invoiceId ? legacy : 0);
+/** What of a note's applied credit has no recorded destination (applied before applications were kept). */
+export function unrecordedCredit(note: NoteLike): number {
+  const listed = (note.applications ?? []).reduce((n, a) => n + (Number(a.amountMinor) || 0), 0);
+  return Math.max(0, (Number(note.amountAppliedMinor) || 0) - listed);
 }
 
-/** Every valid (issued or applied, not voided) credit note's credit on an invoice. */
-export async function creditApplied(invoiceId: unknown): Promise<number> {
-  const id = String(invoiceId);
-  const notes = await CreditNote.find({
-    status: { $in: ["issued", "applied"] },
-    $or: [{ invoiceId: new Types.ObjectId(id) }, { "applications.invoiceId": new Types.ObjectId(id) }],
-  }).select("invoiceId amountAppliedMinor applications").lean<NoteLike[]>();
-  return notes.reduce((n, note) => n + creditOnInvoice(note, id), 0);
-}
+const versionOf = (doc: unknown): number | undefined => {
+  const v = (doc as { __v?: unknown }).__v;
+  return typeof v === "number" ? v : undefined;
+};
 
 export async function applyCreditNote(orgId: string, id: string, input: ApplyCreditNoteInput): Promise<DTO> {
   const cn = await CreditNote.findOne({ _id: id, organizationId: orgId });
@@ -181,20 +175,25 @@ export async function applyCreditNote(orgId: string, id: string, input: ApplyCre
   );
   if (!claim.modifiedCount) throw new AppError("CONFLICT", "This credit note was applied by somebody else just now — refresh and look again.");
 
-  try {
-    invoice.balanceMinor = (invoice.balanceMinor ?? 0) - applyAmount;
-    invoice.amountPaidMinor = (invoice.amountPaidMinor ?? 0) + applyAmount;
-    if (invoice.balanceMinor <= 0) invoice.status = "paid";
-    else if (invoice.amountPaidMinor > 0) invoice.status = "partial";
-    await invoice.save();
-  } catch (err) {
+  // Then the invoice, in one atomic step and only if nobody changed it since it was read (its version): a payment
+  // recorded, edited or deleted, or another credit applied, at the same moment is never overwritten (validation).
+  const balanceAfter = (invoice.balanceMinor ?? 0) - applyAmount;
+  const settledAfter = (invoice.amountPaidMinor ?? 0) + applyAmount;
+  const took = await Invoice.updateOne(
+    // An invoice written without a version (older imports) is matched by having none.
+    { _id: invoice._id, organizationId: invoice.organizationId, __v: versionOf(invoice) ?? { $exists: false }, status: { $ne: "void" }, balanceMinor: invoice.balanceMinor ?? 0 },
+    { $set: { balanceMinor: balanceAfter, amountPaidMinor: settledAfter, status: balanceAfter <= 0 ? "paid" : "partial" }, $inc: { __v: 1 } },
+  );
+  if (!took.modifiedCount) {
     // The invoice did not take it: the note gives the credit back, so the two never disagree.
     await CreditNote.updateOne(
       { _id: cn._id, amountAppliedMinor: after },
       { $set: { amountAppliedMinor: before, status: "issued" }, $pull: { applications: { invoiceId: invoice._id, amountMinor: applyAmount } } },
     );
-    throw err;
+    throw new AppError("CONFLICT", `Invoice ${invoice.invoiceNumber} changed just now — refresh and apply the credit again.`);
   }
+  invoice.balanceMinor = balanceAfter;
+  invoice.amountPaidMinor = settledAfter;
   // Credit that settles an enrolment opens the rest of its course in the LMS.
   void import("../invoice/invoice.service").then((m) => m.syncLmsAccess(invoice as never));
   // And CS Portal is told, where the student went there.
@@ -209,15 +208,21 @@ export async function voidCreditNote(orgId: string, id: string): Promise<DTO> {
   if (!doc) throw new AppError("NOT_FOUND", "Credit note not found");
   if (doc.status === "applied") throw new AppError("CONFLICT", "Applied credit notes cannot be voided");
   if (doc.status === "voided") return toDTO(doc as unknown as CreditNoteDoc);
-  // The invoices it took credit off: each listed one, and its own invoice for credit applied before lists were kept.
-  const touched = new Set<string>((doc.applications ?? []).map((a) => String(a.invoiceId)));
-  if (creditOnInvoice(doc as unknown as NoteLike, String(doc.invoiceId)) > 0) touched.add(String(doc.invoiceId));
-  const r = await CreditNote.updateOne({ _id: doc._id, status: doc.status }, { $set: { status: "voided" } });
+  // Credit applied before destinations were recorded: which invoice it went to is not known, so it is not guessed —
+  // voiding is refused for a person to look at (validation, 2026-11-27).
+  const unknown = unrecordedCredit(doc as unknown as NoteLike);
+  if (unknown > 0) {
+    throw new AppError("CONFLICT", `This credit note was applied before finance recorded which invoice each credit went to, so the credit it took off cannot be given back safely. Ask accounts to review it before voiding.`);
+  }
+  // What it took off each invoice, from its own record.
+  const back = new Map<string, number>();
+  for (const a of doc.applications ?? []) back.set(String(a.invoiceId), (back.get(String(a.invoiceId)) ?? 0) + (Number(a.amountMinor) || 0));
+  const r = await CreditNote.updateOne({ _id: doc._id, status: doc.status, amountAppliedMinor: doc.amountAppliedMinor ?? 0 }, { $set: { status: "voided" } });
   if (!r.modifiedCount) throw new AppError("CONFLICT", "This credit note changed just now — refresh and look again.");
-  // Voiding gives the credit back: each invoice is settled again from its payments and the credit still valid on it
-  // (audit F05). It used to leave the invoices reduced by a note that no longer counted.
-  const { resettleInvoice } = await import("../invoice/invoice.service");
-  for (const invoiceId of touched) await resettleInvoice(orgId, invoiceId, "credit note voided");
+  // Voiding gives the credit back to each invoice it took it off (audit F05). It used to leave the invoices reduced by a
+  // note that no longer counted.
+  const { giveCreditBack } = await import("../invoice/invoice.service");
+  for (const [invoiceId, amount] of back) if (amount > 0) await giveCreditBack(orgId, invoiceId, amount, "credit note voided");
   const fresh = await CreditNote.findById(doc._id);
   return toDTO(fresh as unknown as CreditNoteDoc);
 }

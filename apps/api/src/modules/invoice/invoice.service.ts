@@ -1,4 +1,3 @@
-import { creditApplied } from "../credit-note/credit-note.service";
 import { declaredSide } from "../integrations/declared-side";
 import { Types, type PipelineStage } from "mongoose";
 import {
@@ -2114,12 +2113,12 @@ export async function updatePayment(
     throw new AppError("VALIDATION_ERROR", "EMI tenure is required for Easebuzz EMI payments");
   }
 
-  // Total settled with this payment's amount swapped in — payments and the credit applied to it (audit F05) — must not
-  // exceed the invoice total.
+  // Total settled with this payment's amount swapped in — payments and whatever else settled it (credit applied), which
+  // is carried as it was (audit F05) — must not exceed the invoice total.
   const others = (doc.payments as unknown as { amountMinor: number; _id: { toString(): string } }[])
     .filter((p) => p._id.toString() !== paymentId)
     .reduce((s, p) => s + (p.amountMinor ?? 0), 0);
-  const credit = await creditApplied(doc._id);
+  const credit = settledBesidePayments(doc);
   const newPaid = others + input.amountMinor + credit;
   if (newPaid > (doc.totalMinor ?? 0)) {
     throw new AppError("CONFLICT", `Total payments${credit ? " and credit" : ""} would exceed the invoice total of ${doc.totalMinor ?? 0}`);
@@ -2190,6 +2189,8 @@ export async function updatePayment(
   doc.amountPaidMinor = newPaid;
   doc.balanceMinor = (doc.totalMinor ?? 0) - newPaid;
   doc.status = doc.balanceMinor <= 0 ? "paid" : "partial";
+  // Saved only if nobody changed the invoice since it was read (a credit applied at the same moment) — validation.
+  doc.increment();
   // A payment's date moved: the next instalment is due 29 days after the latest.
   applyInstalmentDue(doc as never);
   // On a pro-forma, its tax invoice follows the new amount (its number kept).
@@ -2247,14 +2248,16 @@ export async function deletePayment(
   // Its line in the bank account goes with it — not once a bank statement was reconciled against it.
   const gone = { ...(pm as unknown as { toObject?: () => Record<string, unknown> }).toObject?.() } as never;
   await assertLineMovable(orgId, gone);
+  // Whatever settled it besides payments (credit applied), before this payment goes.
+  const credit = settledBesidePayments(doc);
   // Its tax invoice, on a pro-forma, kept as cancelled.
   noteCancelledTaxInvoice(doc, pm);
   pm.deleteOne();
 
-  // What is left settled: the payments still on it and the credit applied to it — the credit is not a payment, and
-  // deleting a payment no longer wipes it out (audit F05).
+  // What is left settled: the payments still on it and the credit — the credit is not a payment, and deleting a
+  // payment no longer wipes it out (audit F05).
   const remaining = (doc.payments as unknown as { amountMinor?: number }[])
-    .reduce((sum, p) => sum + (p.amountMinor ?? 0), 0) + await creditApplied(doc._id);
+    .reduce((sum, p) => sum + (p.amountMinor ?? 0), 0) + credit;
 
   doc.amountPaidMinor = remaining;
   doc.balanceMinor = (doc.totalMinor ?? 0) - remaining;
@@ -2262,6 +2265,7 @@ export async function deletePayment(
   // is not partially paid, it is simply outstanding. effectiveStatus still
   // decides whether that reads as overdue.
   doc.status = doc.balanceMinor <= 0 ? "paid" : remaining > 0 ? "partial" : "sent";
+  doc.increment();
   // From the latest payment left, where one is.
   applyInstalmentDue(doc as never);
   // The payment now clearing a pro-forma, if any, takes the VAT left.
@@ -2276,17 +2280,28 @@ export async function deletePayment(
 }
 
 /**
- * An invoice settled again from what is really against it — its payments and the credit still valid on it (2026-11-27,
- * audit F05): after a credit note is voided. A void or draft invoice is left as it is.
+ * What settled an invoice besides its payments: credit applied (2026-11-27, audit F05). Read from the invoice itself —
+ * settled less payments — so it holds whatever credit was applied, however and whenever, without assuming where an
+ * older credit note's credit went. Carried across a payment edit or delete.
  */
-export async function resettleInvoice(orgId: string, invoiceId: string, why: string): Promise<void> {
+export function settledBesidePayments(doc: { amountPaidMinor?: number | null; payments?: unknown }): number {
+  const paid = ((doc.payments as { amountMinor?: number }[] | undefined) ?? []).reduce((n, p) => n + (p.amountMinor ?? 0), 0);
+  return Math.max(0, (doc.amountPaidMinor ?? 0) - paid);
+}
+
+/**
+ * A voided credit note's credit given back to an invoice it was applied to (2026-11-27, audit F05): settled less that
+ * amount, never below the payments. A void or draft invoice is left as it is.
+ */
+export async function giveCreditBack(orgId: string, invoiceId: string, amountMinor: number, why: string): Promise<void> {
   const doc = await Invoice.findOne({ _id: invoiceId, organizationId: orgId });
   if (!doc || doc.status === "void" || doc.status === "draft") return;
   const paid = (doc.payments as unknown as { amountMinor?: number }[]).reduce((n, p) => n + (p.amountMinor ?? 0), 0);
-  const settled = paid + await creditApplied(doc._id);
+  const settled = Math.max(paid, (doc.amountPaidMinor ?? 0) - amountMinor);
   doc.amountPaidMinor = settled;
   doc.balanceMinor = (doc.totalMinor ?? 0) - settled;
   doc.status = doc.balanceMinor <= 0 ? "paid" : settled > 0 ? "partial" : "sent";
+  doc.increment();
   await doc.save();
   feeUpdate(doc._id, why);
 }
@@ -2452,6 +2467,9 @@ export async function recordPayment(
   doc.amountPaidMinor = newPaid;
   doc.balanceMinor = newBalance;
   doc.status = newBalance <= 0 ? "paid" : "partial";
+  // Saved only if nobody changed the invoice since it was read — a credit applied at the same moment is never
+  // overwritten (audit F05 validation).
+  doc.increment();
   // Still part paid: the next instalment is due 29 days after this money was paid.
   applyInstalmentDue(doc as never);
   // On a pro-forma: this payment's tax invoice.

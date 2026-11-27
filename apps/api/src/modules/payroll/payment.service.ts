@@ -168,6 +168,9 @@ export interface PayInput {
  * settle money.
  */
 export async function payRun(orgId: string, runId: string, input: PayInput, actor: { userId: string }) {
+  // A run stored without a version (written outside Mongoose) gets one first, so the save below can tell if somebody
+  // else paid it meanwhile (validation, 2026-11-27).
+  await PayrollRun.updateOne({ _id: oid(runId), organizationId: oid(orgId), __v: { $exists: false } }, { $set: { __v: 0 } });
   const run = await loadRun(orgId, runId);
   if (run.status !== "approved" && run.status !== "partially_paid") {
     throw new AppError(
@@ -252,7 +255,12 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
     });
   } catch (err) {
     if ((err as { code?: number }).code === 11000) {
-      throw new AppError("CONFLICT", `${run.runNumber} is being paid by somebody else just now — refresh and look again before paying.`);
+      // Either somebody is paying this run right now, or an earlier attempt stopped half way and left its bank line.
+      throw new AppError(
+        "CONFLICT",
+        `${run.runNumber} is being paid by somebody else just now, or an earlier attempt left bank line "${paymentId}" behind in ${account.accountName}. ` +
+          `Refresh the run; if payment ${paymentId} is not on it, delete that bank line in Banking and pay again.`,
+      );
     }
     throw err;
   }
@@ -260,9 +268,14 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   // way money moves does — so a payment dated in the past puts the lines after it right too (audit F25).
   await recalculateBankBalances(orgId, account._id as Types.ObjectId);
 
+  // Until the payment is saved on the run, a failure takes its bank line back out, so nothing is left behind to block
+  // the retry (validation, 2026-11-27). And the run is saved only if nobody saved it since it was read: two payments at
+  // once — from the same account or from different ones — can never both settle the same people.
+  const finished: Types.ObjectId[] = [];
+  let held = 0;
+  try {
   // Somebody paid in parts is finished by the payment that pays the last of it: HRMS hears of them then, and their
   // commission is settled then — not while some of their pay is still owed.
-  const finished: Types.ObjectId[] = [];
   for (const alloc of allocations) {
     const line = run.lines.find((l) => String(l._id) === String(alloc.lineId))!;
     line.amountPaidMinor += alloc.amountMinor;
@@ -293,10 +306,19 @@ export async function payRun(orgId: string, runId: string, input: PayInput, acto
   // Somebody owed nothing counts as settled, or a person whose salary was
   // entirely consumed by a recovery keeps the run open indefinitely.
   const anyOutstanding = run.lines.some((l) => !isSettled(l as unknown as PayableLine));
-  const held = run.lines.filter((l) => l.status === "on_hold").length;
+  held = run.lines.filter((l) => l.status === "on_hold").length;
   run.status = anyOutstanding || held > 0 ? "partially_paid" : "paid";
   if (run.status === "paid") run.paidAt = new Date();
+  run.increment();
   await run.save();
+  } catch (err) {
+    await BankTransaction.deleteOne({ _id: transaction._id, organizationId: oid(orgId) });
+    await recalculateBankBalances(orgId, account._id as Types.ObjectId);
+    if ((err as { name?: string }).name === "VersionError") {
+      throw new AppError("CONFLICT", `${run.runNumber} was paid or changed by somebody else just now — nothing was paid. Refresh and look again.`);
+    }
+    throw err;
+  }
 
   // ── Then everything that follows from it ─────────────────────────────────
   const sync = await syncPaymentToHrms(run, paymentId);

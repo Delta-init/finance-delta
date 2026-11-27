@@ -10,6 +10,8 @@
  *
  * HRMS is stood in for (never called). Run through scripts/phase-2a-integrity-e2e.sh. Scratch database only.
  */
+export {};
+
 const uri = process.env.MONGODB_URI ?? "";
 if (!/^mongodb:\/\/127\.0\.0\.1:\d+\//.test(uri) || !/e2e/i.test(uri) || /:27017\//.test(uri)) {
   console.error(`Refusing to run: MONGODB_URI must be a scratch e2e database on 127.0.0.1 (not 27017), got "${uri}"`);
@@ -188,10 +190,10 @@ try {
   const runC = String(await runOf("PR-C", "2027-01"));
   const payout = (await CsCommissionPayout.collection.insertOne({ key: "cs-1", organizationId: O, kind: "bonus", period: "2026-11", lastMonth: "2026-11", recipientId: "r1", personName: "CS", email: "cs@example.test", currency: "AED", amountMinor: 7000, amountUsd: 19, state: "approved", approvedById: U, approvedByName: "Manager", approvedAt: now, payrollRunId: null, createdAt: now, updatedAt: now })).insertedId;
   // Paid directly just after the pull reads it: the direct payment's own atomic claim wins.
-  const realFind = CsCommissionPayout.find.bind(CsCommissionPayout);
+  const realFind: any = CsCommissionPayout.find.bind(CsCommissionPayout);
   (CsCommissionPayout as any).find = (...args: any[]) => {
-    const q = realFind(...args);
-    const realLean = q.lean.bind(q);
+    const q: any = realFind(...args);
+    const realLean: any = q.lean.bind(q);
     q.lean = (...la: any[]) => realLean(...la).then(async (rows: any) => {
       await CsCommissionPayout.collection.updateOne({ _id: payout, state: "approved", payrollRunId: null }, { $set: { state: "paid", paidOn: now } });
       return rows;
@@ -249,6 +251,116 @@ try {
   const reversals = await BankTransaction.collection.countDocuments({ accountId: acc, description: { $regex: "^Reversal" } });
   const accAgain: any = await BankAccount.collection.findOne({ _id: acc });
   check("reversing it again changes nothing: 'already reversed', one reversal line, balance still 9,000", again?.alreadyReversed === true && reversals === 1 && accAgain.currentBalanceMinor === 900000, JSON.stringify({ again, reversals }));
+  // ── Validation (2026-11-27) ─────────────────────────────────────────────────
+  step("Validation — older notes: no guessing where their credit went");
+  const own = await invoice("INV-OWN", 100000, [40000]);           // the note's own invoice: never got the credit
+  const dest = await invoice("INV-DEST", 100000, [30000]);         // where an older note's 100 really went
+  await Invoice.collection.updateOne({ _id: new Types.ObjectId(dest.id) }, { $set: { amountPaidMinor: 40000, balanceMinor: 60000 } });
+  const legacy = (await CreditNote.collection.insertOne({ organizationId: O, creditNoteNumber: "CN-LEG", invoiceId: new Types.ObjectId(own.id), invoiceNumber: "INV-OWN", customerId, customerName: "Client", reason: "Old", status: "issued", lineItems: [], subtotalMinor: 20000, taxTotalMinor: 0, totalMinor: 20000, amountAppliedMinor: 10000, currency: "AED", createdAt: now, updatedAt: now })).insertedId;
+  await invoices.deletePayment(org, own.id, String(own.payments[0]!._id));
+  x = await inv(own.id);
+  check("its own invoice is NOT given credit it never got (payment deleted → nothing settled)", x.amountPaidMinor === 0 && x.balanceMinor === 100000 && x.status === "sent", JSON.stringify([x.amountPaidMinor, x.balanceMinor, x.status]));
+  await invoices.deletePayment(org, dest.id, String(dest.payments[0]!._id));
+  x = await inv(dest.id);
+  check("the invoice that really got it keeps the 100 (settled 100, part paid)", x.amountPaidMinor === 10000 && x.balanceMinor === 90000 && x.status === "partial", JSON.stringify([x.amountPaidMinor, x.balanceMinor]));
+  check("voiding a partly applied older note is refused for review (destination unknown)", (await refused(() => credit.voidCreditNote(org, String(legacy)), /review/)) === "");
+
+  step("Validation — concurrent credit and payments on one invoice");
+  const h = await invoice("INV-H", 100000, [20000]);
+  const n1 = await note(h.id, 10000), n2 = await note(h.id, 15000);
+  const two = await Promise.allSettled([credit.applyCreditNote(org, n1, {} as never), credit.applyCreditNote(org, n2, {} as never)]);
+  const notesOnH: any[] = await CreditNote.collection.find({ _id: { $in: [new Types.ObjectId(n1), new Types.ObjectId(n2)] } }).toArray();
+  const credited = notesOnH.reduce((n, c) => n + (c.amountAppliedMinor ?? 0), 0);
+  x = await inv(h.id);
+  check("two different notes at once: the invoice always equals payments + the credit that really applied", x.amountPaidMinor === 20000 + credited && x.balanceMinor === 100000 - 20000 - credited && two.some((r) => r.status === "fulfilled"),
+    JSON.stringify({ settled: x.amountPaidMinor, credited, results: two.map((r) => r.status) }));
+  const k = await invoice("INV-K", 100000, [30000]);
+  const n3 = await note(k.id, 20000);
+  const mixed = await Promise.allSettled([
+    credit.applyCreditNote(org, n3, {} as never),
+    invoices.updatePayment(org, k.id, String(k.payments[0]!._id), { method: "cash", amountMinor: 35000, paidOn: "2026-11-01", reference: "" } as never),
+  ]);
+  x = await inv(k.id);
+  const n3Doc: any = await CreditNote.collection.findOne({ _id: new Types.ObjectId(n3) });
+  const paidK = x.payments.reduce((n: number, p: any) => n + p.amountMinor, 0);
+  check("credit apply and payment edit at once: nothing lost — settled = payments + applied credit",
+    x.amountPaidMinor === paidK + (n3Doc.amountAppliedMinor ?? 0) && x.balanceMinor === 100000 - x.amountPaidMinor,
+    JSON.stringify({ settled: x.amountPaidMinor, payments: paidK, credit: n3Doc.amountAppliedMinor, results: mixed.map((r) => r.status === "rejected" ? (r.reason as Error).message : "ok") }));
+
+  step("Validation — commission on runs from before the marker");
+  const runE = String(await runOf("PR-E", "2027-03"));
+  const runF = String(await runOf("PR-F", "2027-04"));
+  const old = (await CommissionRecord.collection.insertOne({ organizationId: O, structureId: new Types.ObjectId(), salespersonId: sales, salespersonName: "Sales", invoiceId: new Types.ObjectId(), invoiceNumber: "INV-OLDCOM", invoiceTotalMinor: 100000, commissionMinor: 4000, basis: "payment_received", status: "earned", createdAt: now, updatedAt: now })).insertedId;
+  await PayrollRun.collection.updateOne({ _id: new Types.ObjectId(runE) }, { $push: { adjustments: { externalId: "OLD-1", hrmsEmployeeId: "E1", lineId: new Types.ObjectId(), kind: "addition", source: "commission", label: "Sales commission", amountMinor: 4000, commissionRecordIds: [old], crmPayoutIds: [], csPayoutIds: [], recoveredMinor: 4000, outstandingMinor: 0 } } as never });
+  const pullF: any = await adjustments.pullCommissions(org, runF, { userId: String(U) });
+  check("a record listed on an older run (no marker) is not pulled again by another run", pullF.pulled === 0 && ((await CommissionRecord.collection.findOne({ _id: old })) as any).payrollRunId == null, JSON.stringify(pullF));
+
+  step("Validation — HRMS accepts, then finance's save fails");
+  const runG = String(await runOf("PR-G", "2027-05"));
+  const fresh = (await CommissionRecord.collection.insertOne({ organizationId: O, structureId: new Types.ObjectId(), salespersonId: sales, salespersonName: "Sales", invoiceId: new Types.ObjectId(), invoiceNumber: "INV-NEWCOM", invoiceTotalMinor: 100000, commissionMinor: 6000, basis: "payment_received", status: "earned", createdAt: now, updatedAt: now })).insertedId;
+  const seenIds: string[] = [];
+  const realApply = hrmsClient.applyAdjustments;
+  (hrmsClient as any).applyAdjustments = async (o: string, pp: string, staged: any[], ...rest: any[]) => { seenIds.push(...staged.map((z: any) => z.externalId)); return (realApply as any)(o, pp, staged, ...rest); };
+  const realSave = (PayrollRun as any).prototype.save;
+  let failOnce = true;
+  (PayrollRun as any).prototype.save = function (this: any, ...args: any[]) { if (failOnce && String(this._id) === runG) { failOnce = false; return Promise.reject(new Error("database hiccup")); } return realSave.apply(this, args); };
+  const hiccup = await refused(() => adjustments.pullCommissions(org, runG, { userId: String(U) }), /database hiccup/);
+  check("the save fails after HRMS took it: the record stays held by that run", hiccup === "" && String(((await CommissionRecord.collection.findOne({ _id: fresh })) as any).payrollRunId) === runG);
+  const retry: any = await adjustments.pullCommissions(org, runG, { userId: String(U) });
+  (PayrollRun as any).prototype.save = realSave;
+  (hrmsClient as any).applyAdjustments = realApply;
+  const runGDoc: any = await PayrollRun.collection.findOne({ _id: new Types.ObjectId(runG) });
+  check("pulling again on the same run picks it up once, with the same HRMS adjustment id (HRMS upserts on it)",
+    retry.pulled === 1 && runGDoc.adjustments.filter((z: any) => z.source === "commission").length === 1 && seenIds.length === 2 && seenIds[0] === seenIds[1],
+    JSON.stringify({ pulled: retry.pulled, adjustments: runGDoc.adjustments.length, ids: seenIds }));
+
+  step("Validation — payroll payment recovery and other accounts");
+  const acc2 = (await BankAccount.collection.insertOne({ organizationId: O, accountName: "Second", accountType: "current", currency: "AED", openingBalanceMinor: 500000, openingDate: d("2026-10-01"), currentBalanceMinor: 500000, isActive: true, createdAt: now, updatedAt: now })).insertedId;
+  const runOfManual = async (number: string, period: string) => (await PayrollRun.collection.insertOne({
+    organizationId: O, source: "manual", hrmsOrgId: `manual-${number}`, runNumber: number, period, currency: "AED", status: "approved",
+    lines: [{ _id: new Types.ObjectId(), hrmsPayslipId: `${number}-1`, hrmsEmployeeId: `${number}-1`, employeeCode: "", name: "Staff", currency: "AED", grossMinor: 100000, deductionsMinor: 0, netFromHrmsMinor: 100000, adjustmentsMinor: 0, payableMinor: 100000, amountPaidMinor: 0, status: "pending", earnings: [], deductions: [], bank: {} }],
+    adjustments: [], payments: [], amountPaidMinor: 0, createdAt: now, updatedAt: now, __v: 0,
+  })).insertedId;
+  const runR = String(await runOfManual("PR-R", "2026-09"));
+  failOnce = true;
+  (PayrollRun as any).prototype.save = function (this: any, ...args: any[]) { if (failOnce && String(this._id) === runR) { failOnce = false; return Promise.reject(new Error("database hiccup")); } return realSave.apply(this, args); };
+  const payR = () => payments.payRun(org, runR, { bankAccountId: String(acc2), method: "bank_transfer", paidOn: "2026-10-30" }, { userId: String(U) });
+  const firstTry = await refused(payR, /database hiccup/);
+  (PayrollRun as any).prototype.save = realSave;
+  const leftover = await BankTransaction.collection.countDocuments({ accountId: acc2 });
+  check("a payment whose save fails takes its bank line back out (nothing left to block the retry), balance unchanged",
+    firstTry === "" && leftover === 0 && ((await BankAccount.collection.findOne({ _id: acc2 })) as any).currentBalanceMinor === 500000, JSON.stringify({ firstTry, leftover }));
+  await payR();
+  check("…and paying again works: one line, one payment", (await BankTransaction.collection.countDocuments({ accountId: acc2 })) === 1 && ((await PayrollRun.collection.findOne({ _id: new Types.ObjectId(runR) })) as any).payments.length === 1);
+  const runX = String(await runOfManual("PR-X", "2026-08"));
+  const cross = await Promise.allSettled([
+    payments.payRun(org, runX, { bankAccountId: String(acc), method: "bank_transfer", paidOn: "2026-10-30" }, { userId: String(U) }),
+    payments.payRun(org, runX, { bankAccountId: String(acc2), method: "bank_transfer", paidOn: "2026-10-30" }, { userId: String(U) }),
+  ]);
+  const runXDoc: any = await PayrollRun.collection.findOne({ _id: new Types.ObjectId(runX) });
+  const xLines = await BankTransaction.collection.countDocuments({ "matches.referenceId": runX });
+  check("two payments of one run from different accounts at once: the people are paid once, one bank line, the other refused",
+    runXDoc.payments.length === 1 && runXDoc.lines[0].amountPaidMinor === 100000 && xLines === 1 && cross.filter((c) => c.status === "fulfilled").length === 1,
+    JSON.stringify({ payments: runXDoc.payments.length, paid: runXDoc.lines[0].amountPaidMinor, bankLines: xLines, results: cross.map((c) => c.status === "rejected" ? (c.reason as Error).message : "ok") }));
+
+  const runV = (await PayrollRun.collection.insertOne({
+    organizationId: O, source: "manual", hrmsOrgId: "manual-PR-V", runNumber: "PR-V", period: "2026-07", currency: "AED", status: "approved",
+    lines: [{ _id: new Types.ObjectId(), hrmsPayslipId: "V1", hrmsEmployeeId: "V1", employeeCode: "", name: "Staff", currency: "AED", grossMinor: 100000, deductionsMinor: 0, netFromHrmsMinor: 100000, adjustmentsMinor: 0, payableMinor: 100000, amountPaidMinor: 0, status: "pending", earnings: [], deductions: [], bank: {} }],
+    adjustments: [], payments: [], amountPaidMinor: 0, createdAt: now, updatedAt: now,
+  })).insertedId;  // no version, as a run written outside Mongoose would be
+  const crossV = await Promise.allSettled([
+    payments.payRun(org, String(runV), { bankAccountId: String(acc), method: "bank_transfer", paidOn: "2026-10-30" }, { userId: String(U) }),
+    payments.payRun(org, String(runV), { bankAccountId: String(acc2), method: "bank_transfer", paidOn: "2026-10-30" }, { userId: String(U) }),
+  ]);
+  const runVDoc: any = await PayrollRun.collection.findOne({ _id: runV });
+  check("…the same for a run stored without a version: paid once, one bank line",
+    runVDoc.payments.length === 1 && (await BankTransaction.collection.countDocuments({ "matches.referenceId": String(runV) })) === 1,
+    JSON.stringify({ payments: runVDoc.payments.length, results: crossV.map((c) => c.status === "rejected" ? (c.reason as Error).message : "ok") }));
+
+  step("Validation — the unique index the duplicate guard needs");
+  const idx: any[] = await BankTransaction.collection.indexes();
+  const extIdx = idx.find((i) => i.key?.externalId === 1);
+  check("banktransactions has the unique (organizationId, accountId, externalId) index for string ids", !!extIdx && extIdx.unique === true && extIdx.key.accountId === 1 && extIdx.partialFilterExpression?.externalId?.$type === "string", JSON.stringify(extIdx));
 } finally {
   await mongoose.connection.dropDatabase().catch(() => undefined);
   await mongoose.disconnect();

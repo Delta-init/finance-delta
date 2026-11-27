@@ -20,6 +20,8 @@ router.get("/payables/aged", c.agedPayables);
 
 // 8.3 P&L
 router.get("/profit-loss/lines", c.profitLossLines);
+router.get("/management-profit/lines", c.managementProfitLines);
+router.get("/management-profit", c.managementProfit);
 router.get("/profit-loss", c.profitLoss);
 
 // 8.4 Balance Sheet

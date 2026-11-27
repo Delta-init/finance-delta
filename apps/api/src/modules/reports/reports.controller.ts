@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { asyncHandler, ok, AppError } from "../../lib/http";
 import * as svc from "./reports.service";
+import * as mp from "./management-profit.service";
 import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
@@ -116,6 +117,31 @@ export const profitLossLines = asyncHandler(async (req, res) => {
   const line = typeof req.query.line === "string" && /^(income|invoices|credit-notes|bills|vendor-credits|expenses|cat:[\w-]{1,80})$/.test(req.query.line) ? req.query.line : "";
   if (!line) throw new AppError("VALIDATION_ERROR", "line is income, invoices, credit-notes, bills, vendor-credits, expenses or cat:<category>");
   ok(res, await svc.profitLossLines(org(req), from, to, basis, line));
+});
+
+/**
+ * Management profitability (Phase 3, 2026-11-27): ?view=invoice | collection | cash, from..to — income, payroll,
+ * commission, supplier and other costs (paid and unpaid), net and margin, per currency and month by month.
+ */
+export const managementProfit = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const view = String(req.query.view ?? "invoice");
+  if (!["invoice", "collection", "cash"].includes(view)) throw new AppError("VALIDATION_ERROR", "view is invoice, collection or cash");
+  ok(res, await mp.getManagementProfit(org(req), from, to, view as mp.MPView));
+});
+
+/** …the records behind one of its figures: ?line=income | payroll | commission | supplier | other | expenses. */
+export const managementProfitLines = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const view = String(req.query.view ?? "invoice");
+  if (!["invoice", "collection", "cash"].includes(view)) throw new AppError("VALIDATION_ERROR", "view is invoice, collection or cash");
+  const line = String(req.query.line ?? "");
+  if (!(mp.MP_LINES as readonly string[]).includes(line)) throw new AppError("VALIDATION_ERROR", `line is one of ${mp.MP_LINES.join(", ")}`);
+  ok(res, await mp.managementLines(org(req), from, to, view as mp.MPView, line as mp.MPLine));
 });
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { Organization } from "../organization/organization.model";
 import { BankAccount } from "../banking/bank-account.model";
 import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
 import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossLines, profitLossPeriod } from "../reports/reports.service";
+import { getManagementProfit, managementRows, MP_LINES, type MPView } from "../reports/management-profit.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -824,5 +825,42 @@ export async function plLinesForPortal(q: Record<string, unknown>) {
     ...ledger(rows as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, income
       ? { filters: ["crm", "salesperson", "method", "month"], sums: ["amountMinor", "vatMinor", "grossMinor"], groups: ["month", "crm", "salesperson", "method"], groupBy: str(q.groupBy) || "month", sort: ["title", "crm", "salesperson", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail}` }
       : { filters: ["category", "subcategory", "department", "method", "month"], sums: ["amountMinor"], groups: ["category", "subcategory", "department", "method", "month"], groupBy: str(q.groupBy) || "category", sort: ["title", "category", "subcategory", "department", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail} ${r.employee ?? ""}` }),
+  };
+}
+
+/**
+ * Management profitability for Root (Phase 3, 2026-11-27): ?view=invoice | collection | cash — the view's figures per
+ * currency (the organization's first, every other apart), month by month, with the payroll and commission detail.
+ * The same calculation as finance's /reports/management-profit. Read-only.
+ */
+export async function managementProfitForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const view = str(q.view) || "invoice";
+  if (!["invoice", "collection", "cash"].includes(view)) return "view is invoice, collection or cash";
+  const report = await getManagementProfit(org.id, period.from, period.to, view as MPView);
+  return { generatedAt: new Date().toISOString(), org, period, ...report };
+}
+
+/** The records behind one of its figures (?line=income | payroll | commission | supplier | other | expenses), as a list with filters, groups and pages. */
+export async function managementLinesForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const view = str(q.view) || "invoice";
+  if (!["invoice", "collection", "cash"].includes(view)) return "view is invoice, collection or cash";
+  const line = str(q.line);
+  if (!(MP_LINES as readonly string[]).includes(line)) return `line is one of ${MP_LINES.join(", ")}`;
+  const { rows } = await managementRows(org.id, period.from, period.to, view as MPView);
+  const kept = rows.filter((r) => (line === "expenses" ? r.group !== "income" : r.group === line));
+  const income = line === "income";
+  return {
+    generatedAt: new Date().toISOString(), org, period, view, line,
+    ...ledger(kept as unknown as Row[], { sort: "date", dir: "desc", ...q }, org, income
+      ? { filters: ["category", "crm", "method", "month"], sums: ["amountMinor", "vatMinor", "grossMinor"], groups: ["month", "category", "crm", "method"], groupBy: str(q.groupBy) || "month", sort: ["title", "category", "crm", "method", "month"], text: (r) => `${r.number} ${r.title} ${r.detail}` }
+      : { filters: ["category", "status", "month"], sums: ["amountMinor", "paidMinor", "unpaidMinor"], groups: ["category", "status", "month"], groupBy: str(q.groupBy) || "category", sort: ["title", "category", "status", "month", "paidMinor", "unpaidMinor"], text: (r) => `${r.number} ${r.title} ${r.detail}` }),
   };
 }

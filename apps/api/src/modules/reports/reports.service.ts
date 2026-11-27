@@ -679,7 +679,7 @@ export async function getAgedPayables(
  * nothing here looks at where it was applied. Before VAT, as the P&L counts income. Not money paid back: the
  * collected view, which counts only payments, never sees it.
  */
-async function periodCreditNotes(orgId: string, from: string, to: string) {
+export async function periodCreditNotes(orgId: string, from: string, to: string) {
   const notes = await CreditNote.find({ organizationId: oid(orgId), status: { $in: ["issued", "applied"] }, issuedAt: { $gte: startOf(from), $lte: endOf(to) } })
     .select("creditNoteNumber invoiceId invoiceNumber customerName reason status currency subtotalMinor taxTotalMinor totalMinor issuedAt").lean<any[]>();
   if (!notes.length) return [];
@@ -693,7 +693,7 @@ async function periodCreditNotes(orgId: string, from: string, to: string) {
  * comes off input VAT. Counted once, at issue — applying one to a bill only settles that bill — and never in the
  * collected view: no money moved.
  */
-async function periodVendorCredits(orgId: string, from: string, to: string) {
+export async function periodVendorCredits(orgId: string, from: string, to: string) {
   return VendorCredit.find({ organizationId: oid(orgId), status: { $in: ["issued", "applied"] }, issueDate: { $gte: startOf(from), $lte: endOf(to) } })
     .select("creditNumber vendorName sourceBillNumber reason status currency subtotalMinor taxTotalMinor totalMinor issueDate").lean<any[]>();
 }

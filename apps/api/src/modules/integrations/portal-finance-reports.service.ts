@@ -242,6 +242,24 @@ export async function financeOverviewForPortal(q: Record<string, unknown>) {
   // Expenses in the organization's own currency, and any other currency's apart — see ownExpenses.
   const mine = ownExpenses(spent, org.currency), mineBefore = ownExpenses(spentBefore, org.currency);
 
+  // Kept to the CRMs picked (2026-11-27): what is still owed on their invoices, and the VAT on their sales — both are
+  // invoices, and an invoice says which CRM it came through. Input VAT is from supplier bills, which say no CRM, so it
+  // stays the organization's whole; and so do expenses, payables and the bank.
+  const crms = filters.crm ? filters.crm.split("\u001f") : [];
+  let owed = { asOf: receivables.asOf, ...receivables.totals };
+  let outputVat = vat.outputTaxMinor;
+  if (crms.length) {
+    const [aged, sales] = await Promise.all([
+      agingReportForPortal({ org: org.id, kind: "receivables", crm: crms, limit: "0" }),
+      vatReportForPortal({ org: org.id, from: period.from, to: period.to, kind: "output", crm: crms, limit: "0" }),
+    ]);
+    if (typeof aged !== "string") {
+      const band = (k: string) => aged.groups.find((g: any) => g.key === k)?.amountMinor ?? 0;
+      owed = { ...owed, current: band("current"), band1to30: band("band1to30"), band31to60: band("band31to60"), band61to90: band("band61to90"), band90plus: band("band90plus"), grand: aged.totals.amountMinor };
+    }
+    if (typeof sales !== "string") outputVat = Number((sales.totals as Record<string, number>).amountMinor) || 0;
+  }
+
   const pair = (minor: number | undefined, priorMinor: number | undefined) => ({ minor: minor ?? 0, priorMinor: priorMinor ?? 0 });
   // The two bases day by day, for the trend — left out when either had more records than a call lists.
   const invoicedDays = daysOf(invoiced), collectedDays = daysOf(collected);
@@ -271,9 +289,9 @@ export async function financeOverviewForPortal(q: Record<string, unknown>) {
       expenses: { ...pair(mine.minor, mineBefore.minor), count: mine.count },
       netProfit: pair(pl.income.total - mine.minor, plBefore.income.total - mineBefore.minor),
     },
-    receivables: { asOf: receivables.asOf, ...receivables.totals },
+    receivables: owed,
     payables: { asOf: payables.asOf, ...payables.totals },
-    vat: { outputMinor: vat.outputTaxMinor, inputMinor: vat.inputTaxMinor, netPayableMinor: vat.netPayableMinor },
+    vat: { outputMinor: outputVat, inputMinor: vat.inputTaxMinor, netPayableMinor: outputVat - vat.inputTaxMinor, ...(crms.length ? { outputByCrm: true } : {}) },
     // A method taken in another currency only (INR Transfer) has nothing in `amountMinor`: its money is in `foreign`.
     methods: collected.groups.map((g) => ({ key: g.key, name: g.name, amountMinor: g.amountMinor, count: g.count, ...(g.foreign?.length ? { foreign: g.foreign } : {}) })),
     // Collected in another currency than the invoices' — a line per currency, as paid; not in `collections` above,
@@ -417,7 +435,7 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
   if (kind === "receivables" && every.length) {
     const orgId = new Types.ObjectId(org.id);
     const [invoices, people, depts] = await Promise.all([
-      Invoice.find({ _id: { $in: every.map((r) => new Types.ObjectId(String(r.id))) } }).select("salespersonId salespersonName").lean<{ _id: Types.ObjectId; salespersonId?: Types.ObjectId; salespersonName?: string }[]>(),
+      Invoice.find({ _id: { $in: every.map((r) => new Types.ObjectId(String(r.id))) } }).select("salespersonId salespersonName enrolment.crm external.source").lean<any[]>(),
       User.find({ "memberships.organizationId": orgId }).select("memberships").lean<{ _id: Types.ObjectId; memberships?: { organizationId: Types.ObjectId; departmentId?: Types.ObjectId }[] }[]>(),
       Department.find({ organizationId: orgId }).select("name").lean<{ _id: Types.ObjectId; name: string }[]>(),
     ]);
@@ -428,17 +446,24 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
       const i = byId.get(String(r.id));
       r.salesperson = i?.salespersonName || "No salesperson";
       r.department = (i?.salespersonId && deptOf.get(String(i.salespersonId))) || "No department";
+      // Which CRM the invoice came through (2026-11-27: "why … receivables … still same when crm is switched"): its
+      // key is what is filtered on — the same keys the Revenue report's CRM filter takes — and its name is shown.
+      const c = crmOf(i ?? {});
+      r.crmKey = c.key;
+      r.crm = CRM_NAMES[c.key] ?? c.name;
     }
   }
 
   // What each filter can be set to, counted before any of them is applied, so a list always offers what there is.
-  const FILTERS = kind === "receivables" ? (["party", "band", "salesperson", "department"] as const) : (["party", "band"] as const);
-  const field = (f: string) => (f === "party" ? "title" : f);
+  const FILTERS = kind === "receivables" ? (["crm", "party", "band", "salesperson", "department"] as const) : (["party", "band"] as const);
+  // The CRM is filtered by its key and shown by its name; everything else is its own name.
+  const field = (f: string) => (f === "party" ? "title" : f === "crm" ? "crmKey" : f);
+  const label = (f: string, r: Row) => String((f === "crm" ? r.crm : r[field(f)]) ?? "");
   const options: Record<string, { key: string; name: string; count: number }[]> = {};
   for (const f of FILTERS) {
-    const counts = new Map<string, number>();
-    for (const r of every) counts.set(String(r[field(f)] ?? ""), (counts.get(String(r[field(f)] ?? "")) ?? 0) + 1);
-    options[f] = [...counts.entries()].map(([name, n]) => ({ key: name, name: name || "—", count: n }))
+    const counts = new Map<string, { name: string; n: number }>();
+    for (const r of every) { const k = String(r[field(f)] ?? ""); counts.set(k, { name: label(f, r), n: (counts.get(k)?.n ?? 0) + 1 }); }
+    options[f] = [...counts.entries()].map(([key, { name, n }]) => ({ key, name: name || "—", count: n }))
       .sort((a, b) => (f === "band" ? BANDS.findIndex((x) => x.name === a.key) - BANDS.findIndex((x) => x.name === b.key) : a.name.localeCompare(b.name)));
   }
   const asked = (f: string): string[] => (Array.isArray(q[f]) ? (q[f] as unknown[]) : [q[f]]).filter((x): x is string => typeof x === "string" && x !== "").slice(0, 50);
@@ -469,7 +494,7 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
     totals: { amountMinor: sum(rows, "amountMinor"), count: rows.length, totalMinor: sum(rows, "totalMinor"), overdueMinor: sum(overdue, "amountMinor"), overdueCount: overdue.length },
     groups,
     options,
-    ...pageOf(rows, { sort: "dueDate", dir: "asc", ...q }, ["dueDate", "daysOverdue", "totalMinor", "salesperson", "department"]),
+    ...pageOf(rows, { sort: "dueDate", dir: "asc", ...q }, ["dueDate", "daysOverdue", "totalMinor", "salesperson", "department", "crm"]),
     recordCount: rows.length,
     capped: false,
     otherCurrencies: report.otherCurrencies ?? [],
@@ -486,12 +511,14 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
  */
 type Sums = Record<string, number>;
 
-function ledger(all: Row[], q: Record<string, unknown>, org: Org, cfg: { filters: readonly string[]; sums: readonly string[]; groups: readonly string[]; groupBy: string; sort: readonly string[]; text: (r: Row) => string }) {
+function ledger(all: Row[], q: Record<string, unknown>, org: Org, cfg: { filters: readonly string[]; sums: readonly string[]; groups: readonly string[]; groupBy: string; sort: readonly string[]; text: (r: Row) => string; named?: Record<string, string> }) {
+  // A field filtered by its key and shown by another (the CRM: "draw" shown as "Draw").
+  const nameOf = (f: string, r: Row) => String((cfg.named?.[f] ? r[cfg.named[f]!] : r[f]) ?? "");
   const options: Record<string, { key: string; name: string; count: number }[]> = {};
   for (const f of cfg.filters) {
-    const counts = new Map<string, number>();
-    for (const r of all) counts.set(String(r[f] ?? ""), (counts.get(String(r[f] ?? "")) ?? 0) + 1);
-    options[f] = [...counts.entries()].map(([name, n]) => ({ key: name, name: name || "—", count: n })).sort((a, b) => (f === "month" ? b.key.localeCompare(a.key) : a.name.localeCompare(b.name)));
+    const counts = new Map<string, { name: string; n: number }>();
+    for (const r of all) { const k = String(r[f] ?? ""); counts.set(k, { name: nameOf(f, r), n: (counts.get(k)?.n ?? 0) + 1 }); }
+    options[f] = [...counts.entries()].map(([key, { name, n }]) => ({ key, name: name || "—", count: n })).sort((a, b) => (f === "month" ? b.key.localeCompare(a.key) : a.name.localeCompare(b.name)));
   }
   const asked = (f: string): string[] => (Array.isArray(q[f]) ? (q[f] as unknown[]) : [q[f]]).filter((x): x is string => typeof x === "string" && x !== "").slice(0, 50);
   const needle = str(q.q).slice(0, 100).toLowerCase();
@@ -501,7 +528,7 @@ function ledger(all: Row[], q: Record<string, unknown>, org: Org, cfg: { filters
   const groupBy = cfg.groups.includes(cfg.groupBy) ? cfg.groupBy : cfg.groups[0]!;
   const by = new Map<string, Row[]>();
   for (const r of own) { const k = String(r[groupBy] ?? "") || "—"; by.set(k, [...(by.get(k) ?? []), r]); }
-  const groups = [...by.entries()].map(([name, list]) => ({ key: name, name, count: list.length, ...total(list) }))
+  const groups = [...by.entries()].map(([key, list]) => ({ key, name: nameOf(groupBy, list[0]!) || key, count: list.length, ...total(list) }))
     .sort((a, b) => (groupBy === "month" ? b.key.localeCompare(a.key) : (Number((b as unknown as Sums).amountMinor) || 0) - (Number((a as unknown as Sums).amountMinor) || 0) || a.name.localeCompare(b.name)));
   const otherCurrencies = [...new Set(kept.map((r) => String(r.currency)).filter((c) => c !== org.currency))].sort().map((currency) => {
     const list = kept.filter((r) => r.currency === currency);
@@ -639,7 +666,7 @@ export async function vatReportForPortal(q: Record<string, unknown>) {
   const crmName = (inv: any) => { const c = crmOf(inv); return CRM_NAMES[c.key] ?? c.name; };
   const done = (rows: Row[], filters: string[], sums: string[], groups: string[], sort: string[]) => ({
     generatedAt: new Date().toISOString(), org, period, kind,
-    ...ledger(rows, { sort: "date", dir: "desc", ...q }, org, { filters, sums, groups, groupBy: str(q.groupBy) || groups[0]!, sort, text: (r) => `${r.number} ${r.title} ${r.detail}` }),
+    ...ledger(rows, { sort: "date", dir: "desc", ...q }, org, { filters, sums, groups, groupBy: str(q.groupBy) || groups[0]!, sort, text: (r) => `${r.number} ${r.title} ${r.detail}`, named: { crm: "crmName" } }),
   });
 
   if (kind === "input") {
@@ -656,7 +683,7 @@ export async function vatReportForPortal(q: Record<string, unknown>) {
   const SELECT = "invoiceNumber customerName salespersonName issueDate status currency subtotalMinor taxTotalMinor totalMinor enrolment.crm external.source proforma taxBreakdown payments._id payments.paidOn payments.amountMinor payments.taxInvoice";
   const invoiceRow = (inv: any, amount: number): Row => ({
     id: String(inv._id), date: iso(new Date(inv.issueDate)), number: inv.invoiceNumber, title: inv.customerName || "—", detail: inv.salespersonName || "",
-    salesperson: inv.salespersonName || "No salesperson", crm: crmName(inv), month: iso(new Date(inv.issueDate)).slice(0, 7), status: INVOICE_STATE[inv.status] ?? titled(inv.status),
+    salesperson: inv.salespersonName || "No salesperson", crm: crmOf(inv).key, crmName: crmName(inv), month: iso(new Date(inv.issueDate)).slice(0, 7), status: INVOICE_STATE[inv.status] ?? titled(inv.status),
     currency: cur(inv.currency), amountMinor: amount, netMinor: inv.subtotalMinor ?? 0, vatMinor: inv.taxTotalMinor ?? 0, totalMinor: inv.totalMinor ?? 0, href: `/invoices/${inv._id}`,
   });
 

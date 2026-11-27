@@ -31,6 +31,7 @@ import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
 import { Expense } from "../expense/expense.model";
 import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
+import { payrollInPeriod } from "../payroll/payroll-month";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
 
@@ -697,13 +698,15 @@ async function computePL(orgId: string, from: string, to: string, base: string):
       .lean(),
 
     // Only what counts in the P&L: advances, payroll clearing, VAT, loan principal are recorded but not expenses.
-    pnlExpenseFilter(orgId).then((pnl) => Expense.find({
+    // Payroll by the month the pay is for, through its run (payroll-month.ts), not by its date (2026-11-27).
+    Promise.all([pnlExpenseFilter(orgId), payrollInPeriod(orgId, from, to)]).then(([pnl, payroll]) => Expense.find({
       organizationId: oid(orgId),
-      expenseDate: { $gte: startOf(from), $lte: endOf(to) },
       status: { $in: ["approved", "submitted"] },
-      // A bill's own expense (2026-10-23): "Supplier bills" counts the bill.
-      "source.kind": { $ne: "bill" },
-      ...pnl,
+      $and: [
+        // A bill's own expense (2026-10-23): "Supplier bills" counts the bill.
+        { $or: [{ expenseDate: { $gte: startOf(from), $lte: endOf(to) }, "source.kind": { $nin: ["bill", "payroll"] } }, payroll.clause] },
+        pnl,
+      ],
     })
       .select("category totalMinor currency")
       .lean()),
@@ -810,12 +813,12 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
     Bill.find({ organizationId: oid(orgId), status: { $nin: ["draft", "voided"] }, payments: { $elemMatch: { paidOn: range } } })
       .select("currency subtotalMinor totalMinor payments.paidOn payments.amountMinor")
       .lean(),
-    pnlExpenseFilter(orgId).then((pnl) => Expense.find({
+    Promise.all([pnlExpenseFilter(orgId), payrollInPeriod(orgId, from, to)]).then(([pnl, payroll]) => Expense.find({
       organizationId: oid(orgId),
       status: { $in: ["approved", "submitted"] },
-      // Paid in the period — payroll by the month the pay is for (its expense date), once paid (2026-11-27).
+      // Paid in the period — payroll by the month the pay is for, through its run, once paid (2026-11-27).
       $and: [
-        { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] },
+        { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { ...payroll.clause, paidOn: { $ne: null } }] },
         pnl,
       ],
     }).select("category totalMinor currency").lean()),
@@ -992,24 +995,26 @@ export async function profitLossLines(orgId: string, from: string, to: string, b
   }
 
   if (wantCat !== undefined) {
-    const pnl = await pnlExpenseFilter(orgId);
+    const [pnl, payroll] = await Promise.all([pnlExpenseFilter(orgId), payrollInPeriod(orgId, from, to)]);
     const when = basis === "invoiced"
-      ? { expenseDate: range, "source.kind": { $ne: "bill" } }
-      : { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] };
+      ? { $or: [{ expenseDate: range, "source.kind": { $nin: ["bill", "payroll"] } }, payroll.clause] }
+      : { $or: [{ paidOn: range, "source.kind": { $nin: ["bill", "payroll"] } }, { ...payroll.clause, paidOn: { $ne: null } }] };
     const [expenses, nameMap, depts] = await Promise.all([
       Expense.find({ organizationId: oid(orgId), status: { $in: ["approved", "submitted"] }, ...(wantCat ? { category: wantCat } : {}), $and: [when, pnl] })
-        .select("expenseNumber category subcategoryName description expenseDate paidOn totalMinor currency departmentId paymentMethod submittedByName source.kind").lean<any[]>(),
+        .select("expenseNumber category subcategoryName description expenseDate paidOn totalMinor currency departmentId paymentMethod submittedByName source.kind source.key").lean<any[]>(),
       categoryNameMap(orgId),
       Department.find({ organizationId: oid(orgId) }).select("name").lean<any[]>(),
     ]);
     const deptName = new Map(depts.map((x) => [String(x._id), x.name]));
     for (const e of expenses) {
       if (!own(e.currency)) continue;
-      // Payroll by the month the pay is for; everything else by expense date, or by paid date when collected.
-      const date = day(basis === "collected" && e.source?.kind !== "payroll" ? e.paidOn : e.expenseDate);
+      // Shown on its own date (paid date when collected); payroll is in the month the pay is for, and says so.
+      const isPayroll = e.source?.kind === "payroll";
+      const date = day(basis === "collected" || isPayroll ? (e.paidOn ?? e.expenseDate) : e.expenseDate);
+      const payMonth = isPayroll ? payroll.month(e.source?.key) : "";
       rows.push({
-        id: String(e._id), date, month: date.slice(0, 7), number: e.expenseNumber ?? "", title: e.description || (nameMap.get(e.category) ?? e.category), kind: "expense",
-        detail: e.source?.kind === "payroll" ? `Payroll, paid ${e.paidOn ? day(e.paidOn) : "—"}` : "", amountMinor: e.totalMinor ?? 0, currency: base, href: `/expenses/${e._id}`,
+        id: String(e._id), date, month: payMonth || date.slice(0, 7), number: e.expenseNumber ?? "", title: e.description || (nameMap.get(e.category) ?? e.category), kind: "expense",
+        detail: isPayroll ? `Payroll for ${payMonth || "—"}, paid ${e.paidOn ? day(e.paidOn) : "—"}` : "", amountMinor: e.totalMinor ?? 0, currency: base, href: `/expenses/${e._id}`,
         category: nameMap.get(e.category) ?? e.category, subcategory: e.subcategoryName || "—", department: (e.departmentId && deptName.get(String(e.departmentId))) || "No department",
         method: e.paymentMethod ? (PAYMENT_METHOD_LABELS[e.paymentMethod as PaymentMethod] ?? String(e.paymentMethod)) : "", employee: e.submittedByName || "",
       });

@@ -26,6 +26,7 @@ import { Department } from "../department/department.model";
 import { User } from "../user/user.model";
 import { Organization } from "../organization/organization.model";
 import { categoryNameMap, pnlExpenseFilter } from "../expense-category/expense-category.service";
+import { payrollInPeriod, payrollMonthEnd } from "../payroll/payroll-month";
 
 /*
  * The Expense and Revenue reports (the user, 2026-10-24: "a report on expenses and revenue — all expenses, by
@@ -187,14 +188,13 @@ export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promi
     orgCurrency(orgId), categoryNameMap(orgId), departmentNames(orgId), bankNames(orgId), q.pnlOnly ? pnlExpenseFilter(orgId) : Promise.resolve({}),
   ]);
   const range = { ...(q.from ? { $gte: startOf(q.from) } : { $ne: null }), ...(q.to ? { $lte: endOf(q.to) } : {}) };
+  // Payroll counts in the month the pay is for, through its run, whichever date the report goes by (2026-11-27) —
+  // by paid date once it is paid. Its own dates are not changed.
+  const payroll = await payrollInPeriod(orgId, q.from, q.to);
   const expenses = await Expense.find({
     organizationId: oid(orgId),
     status: { $in: ["approved", "submitted"] },
-    // By paid date, payroll still counts in the month the pay is for (2026-11-27): its expense date is that month's
-    // last day, and it is paid — so it is in the paid view once paid, in its own month.
-    ...(q.basis === "paid"
-      ? { $or: [{ paidOn: range, "source.kind": { $ne: "payroll" } }, { expenseDate: range, "source.kind": "payroll", paidOn: { $ne: null } }] }
-      : { [dateField]: range }),
+    $or: [{ [dateField]: range, "source.kind": { $ne: "payroll" } }, { ...payroll.clause, ...(q.basis === "paid" ? { paidOn: { $ne: null } } : {}) }],
     ...pnl,
   })
     .select("expenseNumber category categoryName subcategory subcategoryName description expenseDate paidOn totalMinor currency submittedById submittedByName salespersonId salespersonName departmentId paymentMethod bankAccountId paymentAccount source status")
@@ -202,7 +202,9 @@ export async function getExpenseAnalysis(orgId: string, q: AnalysisQuery): Promi
 
   const names = new Names();
   const records: AnalysisRecord[] = (expenses as any[]).map((e) => {
-    const date = dayOf(e[dateField] ?? e.expenseDate);
+    // A payroll payment counts on the last day of its payroll month.
+    const payMonth = e.source?.kind === "payroll" ? payroll.month(e.source?.key) : "";
+    const date = payMonth ? dayOf(payrollMonthEnd(payMonth)) : dayOf(e[dateField] ?? e.expenseDate);
     const cat = String(e.category ?? NONE);
     const catName = nameMap.get(cat) ?? e.categoryName ?? cat;
     const sub = e.subcategory ? `${cat}/${e.subcategory}` : `${cat}/${NONE}`;

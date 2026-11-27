@@ -57,9 +57,8 @@ export async function postPayrollExpense(
       subcategory: cat.subcategory,
       subcategoryName: cat.subcategoryName,
       description: `Payroll ${run.runNumber} · ${run.period} · ${payment.allocations.length} people`,
-      // The month the pay is for, not the day it was paid (the user, 2026-11-27: October's salaries paid on 3 November are
-      // October's expense): the last day of the payroll month. The day paid stays in paidOn and in the bank.
-      expenseDate: payrollMonthEnd(run.period),
+      // The day it was paid. Reports count it in its payroll month by a rule (payroll-month.ts), not by this date.
+      expenseDate: payment.paidOn,
       amountMinor: payment.amountMinor,
       // Payroll carries no input tax to reclaim, so gross equals net here.
       taxPct: 0,
@@ -101,12 +100,6 @@ export async function postPayrollExpense(
  * Voided rather than deleted, so the P&L for a closed period does not silently
  * change shape and somebody comparing two printouts can see what happened.
  */
-/** The last day of a payroll month ("2026-10" → 31 October 2026, noon UTC so it is that day in Dubai too). */
-export function payrollMonthEnd(period: string): Date {
-  const [y, m] = period.split("-").map(Number);
-  return new Date(Date.UTC(y!, m!, 0, 12));
-}
-
 export async function voidPayrollExpense(orgId: string, expenseId: string, reason: string): Promise<void> {
   await Expense.updateOne(
     { _id: oid(expenseId), organizationId: oid(orgId) },

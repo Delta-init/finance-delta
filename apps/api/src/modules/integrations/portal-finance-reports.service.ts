@@ -8,6 +8,8 @@ import { getManagementProfit, managementRows, MP_LINES, type MPView } from "../r
 import { financialReport, FP_REPORTS, linesOf, type FPReport } from "../reports/financial-position.service";
 import { reconciliationReport, RC_REPORTS, rcLinesOf, type RCReport } from "../reports/reconciliation.service";
 import { controlsReport, FC_REPORTS, fcLinesOf, type FCReport } from "../reports/controls.service";
+import { executiveReport } from "../reports/executive.service";
+import { cached } from "../reports/report-cache";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -880,7 +882,7 @@ export async function financialForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const report = str(q.report);
   if (!(FP_REPORTS as string[]).includes(report)) return `report is one of ${FP_REPORTS.join(", ")}`;
-  const { rows: _rows, ...out } = await financialReport(org.id, report as FPReport, period.from, period.to);
+  const { rows: _rows, ...out } = await cached(`fp:${org.id}:${report}:${period.from}:${period.to}`, () => financialReport(org.id, report as FPReport, period.from, period.to), q.fresh !== undefined);
   return { generatedAt: new Date().toISOString(), org, period, ...out };
 }
 
@@ -893,7 +895,7 @@ export async function financialLinesForPortal(q: Record<string, unknown>) {
   const report = str(q.report);
   if (!(FP_REPORTS as string[]).includes(report)) return `report is one of ${FP_REPORTS.join(", ")}`;
   const line = str(q.line) || "all";
-  const r = await financialReport(org.id, report as FPReport, period.from, period.to);
+  const r = await cached(`fp:${org.id}:${report}:${period.from}:${period.to}`, () => financialReport(org.id, report as FPReport, period.from, period.to), q.fresh !== undefined);
   // Receivables and obligations list each record twice (by kind and by age): "all" means each record once.
   const picked = line === "all" && (report === "receivables" || report === "obligations") ? linesOf(r.rows, report === "receivables" ? "kind" : "obl") : linesOf(r.rows, line);
   const filters = report === "receivables" ? ["kind", "band", "crm", "month"] : report === "obligations" ? ["category", "band", "status", "month"] : ["category", "account", "status", "month"];
@@ -917,7 +919,7 @@ export async function reconciliationForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const report = str(q.report);
   if (!(RC_REPORTS as string[]).includes(report)) return `report is one of ${RC_REPORTS.join(", ")}`;
-  const { rows: _rows, ...out } = await reconciliationReport(org.id, report as RCReport, period.from, period.to);
+  const { rows: _rows, ...out } = await cached(`rc:${org.id}:${report}:${period.from}:${period.to}`, () => reconciliationReport(org.id, report as RCReport, period.from, period.to), q.fresh !== undefined);
   return { generatedAt: new Date().toISOString(), org, period, ...out };
 }
 
@@ -929,7 +931,7 @@ export async function reconciliationLinesForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const report = str(q.report);
   if (!(RC_REPORTS as string[]).includes(report)) return `report is one of ${RC_REPORTS.join(", ")}`;
-  const r = await reconciliationReport(org.id, report as RCReport, period.from, period.to);
+  const r = await cached(`rc:${org.id}:${report}:${period.from}:${period.to}`, () => reconciliationReport(org.id, report as RCReport, period.from, period.to), q.fresh !== undefined);
   const picked = rcLinesOf(r.rows, str(q.line) || "all").map((x) => ({ ...x, severityName: x.severity ? x.severity[0]!.toUpperCase() + x.severity.slice(1) : "—" }));
   const filters = ["category", "severityName", "status", "module", "account", "month"];
   return {
@@ -952,7 +954,7 @@ export async function controlsForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const report = str(q.report);
   if (!(FC_REPORTS as string[]).includes(report)) return `report is one of ${FC_REPORTS.join(", ")}`;
-  const { rows: _rows, ...out } = await controlsReport(org.id, report as FCReport, period.from, period.to);
+  const { rows: _rows, ...out } = await cached(`fc:${org.id}:${report}:${period.from}:${period.to}`, () => controlsReport(org.id, report as FCReport, period.from, period.to), q.fresh !== undefined);
   return { generatedAt: new Date().toISOString(), org, period, ...out };
 }
 
@@ -964,7 +966,7 @@ export async function controlsLinesForPortal(q: Record<string, unknown>) {
   if (typeof period === "string") return period;
   const report = str(q.report);
   if (!(FC_REPORTS as string[]).includes(report)) return `report is one of ${FC_REPORTS.join(", ")}`;
-  const r = await controlsReport(org.id, report as FCReport, period.from, period.to);
+  const r = await cached(`fc:${org.id}:${report}:${period.from}:${period.to}`, () => controlsReport(org.id, report as FCReport, period.from, period.to), q.fresh !== undefined);
   const picked = fcLinesOf(r.rows, str(q.line) || "all").map((x) => ({ ...x, severityName: x.severity ? x.severity[0]!.toUpperCase() + x.severity.slice(1) : "—", stage: x.kind ?? "—" }));
   const filters = ["category", "status", "severityName", "module", "account", "stage", "month"];
   return {
@@ -974,4 +976,24 @@ export async function controlsLinesForPortal(q: Record<string, unknown>) {
       sort: ["title", "category", "status", "severityName", "ageDays"], text: (x) => `${x.number} ${x.title} ${x.detail}`,
     }),
   };
+}
+
+/**
+ * The Executive Dashboard for Root (Phase 7, 2026-11-28): from..to and, for a comparison, cfrom..cto — figures from
+ * Phases 3–6 put together in finance (executive.service). Cached for 60 seconds; ?fresh works it out again.
+ */
+export async function executiveForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  let compare: { from: string; to: string } | null = null;
+  if (str(q.cfrom) || str(q.cto)) {
+    const c = periodOf({ from: q.cfrom, to: q.cto });
+    if (typeof c === "string") return `comparison: ${c}`;
+    compare = c;
+  }
+  const fresh = q.fresh !== undefined;
+  const out = await cached(`ex:${org.id}:${period.from}:${period.to}:${compare?.from ?? ""}:${compare?.to ?? ""}`, () => executiveReport(org.id, period.from, period.to, compare, fresh), fresh);
+  return { generatedAt: new Date().toISOString(), org, period, ...out };
 }

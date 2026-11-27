@@ -144,13 +144,15 @@ function risksReport(exceptions: RCRow[], base: string) {
     { key: "conf_confirmed", title: "Confirmed discrepancies, by module (amounts counted once — the money at risk)", lines: modules },
     { key: "conf_suspected", title: "Suspected, by module (amounts as recorded — not losses, not added in)", lines: modules, showTotal: false },
     { key: "conf_missing", title: "Missing information, by module (amounts as recorded — not added in)", lines: modules, showTotal: false },
+    { key: "conf_open", title: "Open reconciliation differences, by module (unverified statement figures — not losses, not added in)", lines: modules, showTotal: false },
     { key: "long", title: `Outstanding more than ${LONG_DAYS} days, by severity`, lines: ["critical", "high", "medium", "low"].map((k) => ({ key: k, label: k[0]!.toUpperCase() + k.slice(1) })), showTotal: false },
   ], (_sum, currency) => {
     const mine = exceptions.filter((e) => e.currency === currency);
     const n = (f: (e: RCRow) => boolean) => mine.filter(f).length;
     return [
-      { key: "exposure", label: "Money at risk — confirmed discrepancies only, each counted once", amountMinor: mine.filter((e) => e.confidence === "confirmed").reduce((t, e) => t + Math.abs(e.amountMinor), 0), strong: true },
-      { key: "counts", label: `Exceptions: ${mine.length} — critical ${n((e) => e.severity === "critical")}, high ${n((e) => e.severity === "high")}, medium ${n((e) => e.severity === "medium")}, low ${n((e) => e.severity === "low")}; confirmed ${n((e) => e.confidence === "confirmed")}, suspected ${n((e) => e.confidence === "suspected")}, missing information ${n((e) => e.confidence === "missing")}; over ${LONG_DAYS} days ${n((e) => (e.ageDays ?? 0) > LONG_DAYS)}`, amountMinor: 0, noAmount: true } as FPTotal & { noAmount: boolean },
+      { key: "exposure", label: "Confirmed integrity discrepancies — counted once (open reconciliation differences excluded)", amountMinor: mine.filter((e) => e.confidence === "confirmed").reduce((t, e) => t + Math.abs(e.amountMinor), 0), strong: true },
+      { key: "open_differences", label: "Open reconciliation differences — unverified statement figures, not losses", amountMinor: mine.filter((e) => e.confidence === "open").reduce((t, e) => t + Math.abs(e.amountMinor), 0) },
+      { key: "counts", label: `Exceptions: ${mine.length} — critical ${n((e) => e.severity === "critical")}, high ${n((e) => e.severity === "high")}, medium ${n((e) => e.severity === "medium")}, low ${n((e) => e.severity === "low")}; confirmed ${n((e) => e.confidence === "confirmed")}, suspected ${n((e) => e.confidence === "suspected")}, missing information ${n((e) => e.confidence === "missing")}, open differences ${n((e) => e.confidence === "open")}; over ${LONG_DAYS} days ${n((e) => (e.ageDays ?? 0) > LONG_DAYS)}`, amountMinor: 0, noAmount: true } as FPTotal & { noAmount: boolean },
     ];
   });
   return { rows, sides };
@@ -449,7 +451,7 @@ const NOTES: Record<FCReport, string[]> = {
     `Overdue = waiting more than ${OVERDUE_DAYS} days since it was sent. The approver shown is the permission that decides each kind; finance does not name a person. Department is shown where the record has one (expenses); otherwise "Not recorded". Commission is approved on finance's commission pages and is pending in the CRMs before that, so it is not in this list.`,
   ],
   risks: [
-    "Phase 5's exceptions (RC-08), each once. Money at risk adds only confirmed discrepancies, each counted once; suspected items and missing information are listed with their recorded amounts but never added in or treated as losses.",
+    "Phase 5's exceptions (RC-08), each once. Confirmed integrity discrepancies add only confirmed items, each counted once. Open reconciliation differences (statement figures not yet verified), suspected items and missing information are listed with their recorded amounts but never added in or treated as losses.",
     `Long-outstanding = older than ${LONG_DAYS} days.`,
   ],
   liquidity: [

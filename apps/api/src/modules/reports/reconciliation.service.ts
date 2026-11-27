@@ -42,7 +42,8 @@ import { accountsAt, advancesOf, bankData, sidesOf, type FPRow, type FPSide, typ
 export type RCReport = "bank" | "psp" | "invoices" | "expenses" | "payroll" | "advances" | "historical" | "exceptions" | "summary";
 export const RC_REPORTS: RCReport[] = ["bank", "psp", "invoices", "expenses", "payroll", "advances", "historical", "exceptions", "summary"];
 export type Severity = "critical" | "high" | "medium" | "low";
-export type Confidence = "confirmed" | "suspected" | "missing";
+/** "open": a statement figure not yet verified — an open reconciliation difference, never a confirmed loss (Phase 7). */
+export type Confidence = "confirmed" | "suspected" | "missing" | "open";
 /** A record behind a figure — and, when it needs action, the exception it is. */
 export type RCRow = FPRow & { severity?: Severity; confidence?: Confidence; exception?: string; module?: string; action?: string; ageDays?: number; key?: string };
 
@@ -50,7 +51,7 @@ export type RCRow = FPRow & { severity?: Severity; confidence?: Confidence; exce
 export const CUTOVER = "2026-11-01";
 const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 const SEVERITY_LABEL: Record<Severity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
-const CONFIDENCE_LABEL: Record<Confidence, string> = { confirmed: "Confirmed discrepancy", suspected: "Suspected", missing: "Missing information" };
+const CONFIDENCE_LABEL: Record<Confidence, string> = { confirmed: "Confirmed discrepancy", suspected: "Suspected", missing: "Missing information", open: "Open reconciliation difference" };
 const oid = (id: string) => new Types.ObjectId(id);
 const day = (d: unknown) => (d ? new Date(d as Date).toISOString().slice(0, 10) : "");
 const DAY = 86_400_000;
@@ -110,7 +111,7 @@ function bankOf(d: Data, base: string, asOf: string, today: string) {
         id: `sess:${latest._id}`, date: day(latest.statementDate), section: "differences", line: a.id, amountMinor: Number(latest.differenceMinor) || 0, title: a.name, account: a.name, category: latest.status === "completed" ? "Completed reconciliation" : "Open reconciliation",
         detail: `statement ${(Number(latest.statementBalanceMinor) / 100).toFixed(2)} on ${day(latest.statementDate)} against system ${(Number(latest.closingBookBalanceMinor) / 100).toFixed(2)}${latest.statementCheck?.summary ? ` · statement check: ${latest.statementCheck.summary.matched} matched, ${latest.statementCheck.summary.notInBooks} not in finance, ${latest.statementCheck.summary.notOnStatement} not on the statement` : ""}`,
         href: `/banking/${a.id}/reconcile`, status: latest.status === "completed" ? "Completed" : "Open",
-      }), "Reconciliation difference", Number(latest.differenceMinor) ? "high" : "low", Number(latest.differenceMinor) ? "confirmed" : "missing", "Banking", Number(latest.differenceMinor) ? "Check the statement balance typed in the session, then the lines it does not match." : "Complete the reconciliation in Banking.", today));
+      }), "Reconciliation difference", Number(latest.differenceMinor) ? "high" : "low", Number(latest.differenceMinor) ? "open" : "missing", "Banking", Number(latest.differenceMinor) ? "Check the statement balance typed in the session, then the lines it does not match." : "Complete the reconciliation in Banking.", today));
       // Outstanding up to the statement date: lines in finance not yet ticked as on the statement.
       const sCut = new Date(latest.statementDate).getTime();
       for (const l of d.bank.lines) {
@@ -120,10 +121,10 @@ function bankOf(d: Data, base: string, asOf: string, today: string) {
       const check = latest.statementCheck;
       for (const cl of check?.lines ?? []) {
         if (cl.status === "matched") continue;
-        rows.push(flag(row(a.currency, { id: `stmt:${latest._id}:${cl.index}`, date: cl.date, section: "not_in_books", line: cl.status, amountMinor: cl.status === "amount_differs" ? Number(cl.differenceMinor) || 0 : Number(cl.amountMinor) || 0, title: cl.description ?? "", number: cl.reference ?? "", account: a.name, category: cl.status === "amount_differs" ? "Amount differs from finance" : "On the statement, not in finance", href: `/banking/${a.id}/reconcile` }), "Bank statement line missing from finance", "high", "confirmed", "Banking", "Record it from the reconciliation screen (or find the matching record).", today));
+        rows.push(flag(row(a.currency, { id: `stmt:${latest._id}:${cl.index}`, date: cl.date, section: "not_in_books", line: cl.status, amountMinor: cl.status === "amount_differs" ? Number(cl.differenceMinor) || 0 : Number(cl.amountMinor) || 0, title: cl.description ?? "", number: cl.reference ?? "", account: a.name, category: cl.status === "amount_differs" ? "Amount differs from finance" : "On the statement, not in finance", href: `/banking/${a.id}/reconcile` }), "Bank statement line missing from finance", "high", "open", "Banking", "Record it from the reconciliation screen (or find the matching record).", today));
       }
       for (const b of check?.notOnStatement ?? []) {
-        rows.push(flag(row(a.currency, { id: `nos:${latest._id}:${b.id}`, date: b.date, section: "not_on_statement", line: b.amountMinor > 0 ? "in" : "out", amountMinor: b.amountMinor, title: b.description ?? "", number: b.reference ?? "", account: a.name, category: "In finance, not on the statement", href: `/banking/${a.id}/reconcile` }), "System transaction missing from the bank statement", "high", "suspected", "Banking", "Check whether it cleared later, was entered twice, or belongs to another account.", today));
+        rows.push(flag(row(a.currency, { id: `nos:${latest._id}:${b.id}`, date: b.date, section: "not_on_statement", line: b.amountMinor > 0 ? "in" : "out", amountMinor: b.amountMinor, title: b.description ?? "", number: b.reference ?? "", account: a.name, category: "In finance, not on the statement", href: `/banking/${a.id}/reconcile` }), "System transaction missing from the bank statement", "high", "open", "Banking", "Check whether it cleared later, was entered twice, or belongs to another account.", today));
       }
     } else if (a.lines) {
       rows.push(flag(row(a.currency, { id: `norec:${a.id}`, date: a.lastLine || asOf, section: "flags", line: "never_reconciled", amountMinor: 0, title: a.name, account: a.name, category: "Never reconciled", href: `/banking/${a.id}/reconcile` }), "Account never reconciled to a statement", "medium", "missing", "Banking", "Reconcile the account against its bank statement.", today));
@@ -157,7 +158,8 @@ function bankOf(d: Data, base: string, asOf: string, today: string) {
     const reconciled = mine.filter((a) => d.sessions.some((s) => String(s.accountId) === a.id && s.status === "completed")).length;
     return [
       { key: "system", label: `System-recorded total (${mine.length} accounts, ${reconciled} reconciled to a statement)`, amountMinor: sum("balances"), strong: true },
-      { key: "differences", label: "Reconciliation differences (latest sessions)", amountMinor: sum("differences") },
+      { key: "verified", label: `Independently verified (reconciled to a statement): ${reconciled} account(s)`, amountMinor: rows.filter((r) => r.currency === currency && r.section === "balances" && r.status === "Reconciled").reduce((n, r) => n + r.amountMinor, 0) },
+      { key: "differences", label: "Open reconciliation differences (latest sessions — unverified statement figures, not losses)", amountMinor: sum("differences") },
       { key: "unmatched_in", label: "Unmatched money in", amountMinor: sum("unmatched", "in") },
       { key: "unmatched_out", label: "Unmatched money out", amountMinor: sum("unmatched", "out") },
       { key: "duplicates", label: "Marked duplicate", amountMinor: sum("flags", "duplicate") },
@@ -537,7 +539,7 @@ const RC_NOTES: Record<RCReport, string[]> = {
     "A migrated record without a bank line is not an error — migrated data never had one. Verified amounts appear only where a completed reconciliation exists. No balancing entry, write-off or change is made.",
   ],
   exceptions: [
-    "Every item needing action, once each (the most serious if a record has several). Status is worked out each time from the records: confirmed discrepancy, suspected, or missing information — nothing is stored.",
+    "Every item needing action, once each (the most serious if a record has several). Status is worked out each time from the records: confirmed discrepancy, suspected, missing information, or open reconciliation difference (a statement figure not yet verified — never a confirmed loss). Nothing is stored.",
     "Critical: an integrity rule broken. High: a material discrepancy to investigate. Medium: missing information or incomplete reconciliation. Low: classification or documentation.",
   ],
   summary: ["Live figures from finance's reconciliation reports. No sample data."],
@@ -585,6 +587,7 @@ export async function reconciliationReport(orgId: string, report: RCReport, from
       { key: "open", label: `Open exceptions: ${mine.length} (critical ${n((r) => r.severity === "critical")}, high ${n((r) => r.severity === "high")}, medium ${n((r) => r.severity === "medium")}, low ${n((r) => r.severity === "low")})`, amountMinor: mine.reduce((t, r) => t + Math.abs(r.amountMinor), 0), strong: true },
       { key: "confirmed", label: `Confirmed discrepancies: ${n((r) => r.confidence === "confirmed")}`, amountMinor: mine.filter((r) => r.confidence === "confirmed").reduce((t, r) => t + Math.abs(r.amountMinor), 0) },
       { key: "suspected", label: `Suspected: ${n((r) => r.confidence === "suspected")}`, amountMinor: mine.filter((r) => r.confidence === "suspected").reduce((t, r) => t + Math.abs(r.amountMinor), 0) },
+      { key: "open_differences", label: `Open reconciliation differences: ${n((r) => r.confidence === "open")} (unverified statement figures — not losses)`, amountMinor: mine.filter((r) => r.confidence === "open").reduce((t, r) => t + Math.abs(r.amountMinor), 0) },
       { key: "missing", label: `Missing information: ${n((r) => r.confidence === "missing")}`, amountMinor: mine.filter((r) => r.confidence === "missing").reduce((t, r) => t + Math.abs(r.amountMinor), 0) },
     ];
   });

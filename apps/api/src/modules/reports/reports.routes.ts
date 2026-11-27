@@ -28,6 +28,7 @@ router.get("/reconciliation/lines", c.reconciliationReportLines);
 router.get("/reconciliation", c.reconciliationReport);
 router.get("/controls/lines", c.controlsReportLines);
 router.get("/controls", c.controlsReport);
+router.get("/executive", c.executiveReport);
 router.get("/profit-loss", c.profitLoss);
 
 // 8.4 Balance Sheet

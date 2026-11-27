@@ -5,6 +5,7 @@ import * as mp from "./management-profit.service";
 import * as fp from "./financial-position.service";
 import * as rc from "./reconciliation.service";
 import * as fc from "./controls.service";
+import * as ex from "./executive.service";
 import { analysisFilters, getExpenseAnalysis, getRevenueAnalysis, EXPENSE_DIMENSION_KEYS, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "./analysis.service";
 
 const org = (req: Request) => req.auth!.organizationId;
@@ -223,6 +224,16 @@ export const controlsReportLines = asyncHandler(async (req, res) => {
   const r = await fc.controlsReport(org(req), report as fc.FCReport, from, to);
   const rows = fc.fcLinesOf(r.rows, String(req.query.line ?? "all"));
   ok(res, { currency: r.currency, rows, totalMinor: rows.filter((x) => x.currency === r.currency).reduce((n, x) => n + x.amountMinor, 0) });
+});
+
+/** The Executive Dashboard (Phase 7, 2026-11-28): from..to, optional comparison cfrom..cto. */
+export const executiveReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const from = dateParam(req, "from", `${now.getFullYear()}-01-01`);
+  const to = dateParam(req, "to", todayStr());
+  const cfrom = req.query.cfrom ? dateParam(req, "cfrom", from) : "";
+  const cto = req.query.cto ? dateParam(req, "cto", to) : "";
+  ok(res, await ex.executiveReport(org(req), from, to, cfrom && cto ? { from: cfrom, to: cto } : null, req.query.fresh !== undefined));
 });
 
 // ── 8.4 Balance Sheet ─────────────────────────────────────────────────────────

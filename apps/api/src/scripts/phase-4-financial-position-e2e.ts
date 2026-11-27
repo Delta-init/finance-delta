@@ -236,6 +236,16 @@ try {
   check("net −345,900; with pro-forma −324,900; old books not in", tot(p, "net") === -345_900_00 && tot(p, "net_with_proforma") === -324_900_00, j(p.totals));
   check("available cash less obligations: −166,210 − 211,140 = −377,350 (no receivables)", tot(p, "available_less") === -377_350_00);
 
+  step("Disclosures");
+  const said = (r: { notes: string[] }) => r.notes.join(" ");
+  check("cash flow, cash, position: balances system-recorded, not reconciled; negative and incomplete openings", [cf, cash, pos].every((x) => /system-recorded/.test(said(x)) && /not been independently reconciled/.test(said(x)) && /below zero/.test(said(x)) && /zero opening balance/.test(said(x))));
+  check("cash flow: not identified and duplicate lines", /not identified/.test(said(cf)) && /duplicate/.test(said(cf)));
+  check("receivables: old books, conditional instalments, void-date limitation, not guaranteed collectible", /old-books/.test(said(rec)) && /conditional future student instalments/.test(said(rec)) && /no date for voiding/.test(said(rec)) && /not presented as legally enforceable/.test(said(rec)));
+  check("receivables: no figure is called enforceable", !JSON.stringify(rec.sides).toLowerCase().includes("enforceable (") && !said(rec).includes("Invoices are enforceable"));
+  check("obligations: undated vendor credits, HRMS now-only, indicative VAT excluded, not necessarily due now", /not dated/.test(said(obl)) && /HRMS data/.test(said(obl)) && /excluded from the obligations/.test(said(obl)) && /not necessarily due now/.test(said(obl)));
+  check("advances: balances that cannot be calculated", /cannot be calculated/.test(said(adv)));
+  check("position: not a statutory balance sheet", /not a statutory balance sheet/.test(said(pos)));
+
   step("Root's feed");
   const root = await portal.financialForPortal({ org, from: PERIOD[0], to: PERIOD[1], report: "position" }) as any;
   check("Root gets the same figures, without the records", typeof root === "object" && !("rows" in root) && root.sides[0].totals.find((t: any) => t.key === "net").amountMinor === -345_900_00);

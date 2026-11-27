@@ -12,7 +12,6 @@ import { BankAccount } from "../banking/bank-account.model";
 import { BankTransaction } from "../banking/bank-transaction.model";
 import { Loan } from "../loan/loan.model";
 import { LoanRepayment } from "../loan/loan-repayment.model";
-import { categoryNameMap } from "../expense-category/expense-category.service";
 import { baseCurrencyOf, crmOf, getVATReport } from "./reports.service";
 import { listHistory as advanceHistory } from "../advances/advances.service";
 import { listWaiting as reimbursementsWaiting } from "../reimbursements/reimbursements.service";
@@ -293,7 +292,7 @@ async function receivableData(orgId: string, upTo: string) {
 }
 type RecData = Awaited<ReturnType<typeof receivableData>>;
 
-const KIND_LABEL: Record<string, string> = { invoice: "Invoices (enforceable)", enrolment: "Enrolment balances — rolling 29-day instalment", proforma: "Pro-forma balances — conditional future instalments, not yet tax-invoiced", old_books: "Imported from old books (kept apart, out of the net position)" };
+const KIND_LABEL: Record<string, string> = { invoice: "Invoices issued (balance due)", enrolment: "Enrolment balances — rolling 29-day instalment", proforma: "Pro-forma balances — conditional future instalments, not yet tax-invoiced", old_books: "Imported from old books (kept apart, out of the net position)" };
 function kindOf(inv: InvDoc): string {
   if (inv.proforma?.at) return "proforma";
   const src = inv.external?.source ?? "";
@@ -338,7 +337,7 @@ function receivablesOf(data: RecData, base: string, asOf: string) {
       { key: "received", label: "Payments received on them (to the date)", amountMinor: s("settledMinor") },
       { key: "credited", label: "Credit notes applied (to the date)", amountMinor: s("creditMinor") },
       { key: "outstanding", label: "Outstanding, all kinds", amountMinor: s("amountMinor"), strong: true },
-      { key: "enforceable", label: "Enforceable (invoices + enrolment balances)", amountMinor: sum("kind", "invoice") + sum("kind", "enrolment"), strong: true },
+      { key: "enforceable", label: "Due on issued invoices and enrolment balances (not guaranteed collectible)", amountMinor: sum("kind", "invoice") + sum("kind", "enrolment"), strong: true },
       { key: "conditional", label: "Conditional (pro-forma balances)", amountMinor: sum("kind", "proforma") },
       { key: "old_books", label: "Old books (apart)", amountMinor: sum("kind", "old_books") },
       { key: "overdue", label: "Overdue", amountMinor: overdue },
@@ -557,34 +556,45 @@ async function advancesOf(orgId: string, base: string, asOf: string, warnings: s
 
 // ── The reports ──────────────────────────────────────────────────────────────
 
+const RECORDED = "Bank balances are system-recorded — opening balance plus the bank lines entered in finance — and have not been independently reconciled to bank statements unless shown as confirmed. Many accounts started at a zero opening balance, so a balance can be incomplete; an account below zero means money out was recorded without the money in.";
+const NOT_SECURED = "Receivables are what is still due on issued invoices and on enrolment balances. They are not presented as legally enforceable or certain to be collected: nothing is written off and no expected credit loss is worked out.";
+const HRMS_NOW = "HRMS data (reimbursements waiting, and which employee each advance was for) can only be read as it stands now; a past date or an earlier month-end leaves it out.";
 const NOTES: Record<FPReport, string[]> = {
   cashflow: [
-    "Cash Flow from finance's bank lines: each line classed by the record it is matched to, or its own category. Transfers between own accounts are out of money in and out but stay in each account's balance.",
+    "Cash Flow from finance's bank lines: each line classed by the record it is matched to, or its own category. Transfers between own accounts are out of money in and out but stay in each account's balance; a PSP settlement moves money by such a transfer, so a payment received through a gateway is counted once.",
     "Office Setup (furniture, computers, equipment, renovation) is investing; repairs, interest and staff advances are operating. Loan receipts and capital contributions have no record type in finance, so money in of that kind appears as not identified.",
-    "Lines matched to no record and lines marked duplicate are shown apart and still counted, as they are in the balances. No balancing entry is made: any difference in the check line is disclosed.",
+    "Lines matched to no record (not identified) and lines marked duplicate are shown apart and still counted, as they are in the balances. No balancing entry is made: any difference in the check line is disclosed.",
+    RECORDED,
   ],
   cash: [
-    "Balances are system-recorded: opening balance plus every bank line up to the date. None is confirmed by a reconciled statement unless it says so.",
-    "Estimated available cash = bank accounts + petty cash as recorded; an account below zero is flagged and still counted (its records are incomplete). PSP balances are money waiting to settle, kept apart. Restricted funds are not recorded in finance.",
+    RECORDED,
+    "Estimated available cash = bank accounts + petty cash as recorded; an account below zero is flagged and still counted. PSP balances are money waiting to settle, kept apart. Restricted funds are not recorded in finance.",
   ],
   receivables: [
     "As of the date: each invoice issued by then, less the payments made by then and the credit applied by then. Payments and credits after the date are not taken off.",
-    "Invoices are enforceable; enrolment balances follow a rolling 29-day instalment; pro-forma balances are conditional future instalments not yet tax-invoiced; old-books imports are kept apart. Nothing is written off and no expected credit loss is worked out — not every amount here will be collected.",
-    "A void invoice is left out entirely: finance records no date for voiding, so one voided after the date is not shown as owed at that date.",
+    NOT_SECURED,
+    "Invoices issued and enrolment balances (rolling 29-day instalment) are shown as due; pro-forma balances are conditional future student instalments not yet tax-invoiced; old-books imports (mostly over a year overdue) are kept apart and out of the net position.",
+    "Historical limitation: a void invoice is left out entirely — finance records no date for voiding, so one voided after the date is not shown as owed at that date.",
   ],
   obligations: [
-    "Recorded obligations only — not a complete statutory liability balance: no accruals, no employer costs, no interest accrued on loans.",
-    "Salaries are each person's payable in approved runs less what was paid by the date; commission is approved or earned and not in a payroll run (in a run it is in salaries); bills are less payments by the date and vendor credits applied (credits are not dated). Expenses are those not yet paid by the date.",
-    "VAT is shown as an indication for the month and not added: finance's VAT figures are a period's output less input, not a running liability balance.",
+    "Recorded obligations only — not a complete statutory liability balance: no accruals, no employer costs, no interest accrued on loans. An outstanding obligation is not necessarily due now: see its due date and the ageing.",
+    "Salaries are each person's payable in approved runs less what was paid by the date; commission is approved or earned and not in a payroll run (in a run it is in salaries, never twice); expenses are those not yet paid by the date.",
+    "Historical limitations: vendor credits applied to bills are not dated, so they are taken off at every date; payroll payments count from the day paid and reversals from the day reversed.",
+    HRMS_NOW,
+    "VAT is shown as an indication for the month and is excluded from the obligations: finance's VAT figures are a period's output less input, not a confirmed liability balance.",
   ],
   advances: [
     "Advances issued are expenses under Employee Advances Receivable; recoveries are payroll deductions labelled \"salary advance\" on finance's payroll runs (HRMS does not mark deduction types).",
-    "Outstanding can be worked out only for advances paid through finance from HRMS. Advances imported from old books or typed in finance were recovered, if at all, before payroll ran in finance, so their outstanding amount cannot be calculated. Proposed minimum enhancement (for approval): HRMS to report what it has recovered on each advance.",
+    "Outstanding can be worked out only for advances paid through finance from HRMS. Advances imported from old books or typed in finance were recovered, if at all, before payroll ran in finance, so their outstanding balance cannot be calculated and is not included. Proposed minimum enhancement (for approval): HRMS to report what it has recovered on each advance.",
+    HRMS_NOW,
   ],
   position: [
     "Management Financial Position — not a statutory balance sheet: no ledger, no fixed assets, no equity, no accruals.",
-    "Receivables count only the enforceable part; pro-forma balances are shown apart (the net is given with and without them) and old-books balances are left out. Uncollected receivables are never in available cash.",
+    RECORDED,
+    NOT_SECURED + " Pro-forma balances (conditional future instalments) are shown apart — the net is given with and without them — and old-books balances are left out. Uncollected receivables are never in available cash.",
+    "Obligations are recorded ones and are not all due now. Indicative VAT is not included. Employee advances count only the part that can be calculated.",
     "Available cash less obligations = estimated available cash (bank + petty cash) less every approved unpaid obligation recorded, whatever its due date.",
+    HRMS_NOW,
   ],
 };
 
@@ -667,7 +677,7 @@ function positionOf(base: string, cash: ReturnType<typeof cashOf>, rec: ReturnTy
   take(rec.rows, "apart", "old_books", (r) => r.section === "kind" && r.line === "old_books");
   for (const k of ["bills", "salaries", "commission", "expenses", "reimbursements", "loans"]) take(obl.rows, "owe", k, (r) => r.section === "obl" && r.line === k);
   const sides = sidesOf(rows, base, [
-    { key: "have", title: "What the organization has and is owed", lines: [{ key: "cash", label: "Cash and bank balances (estimated available)" }, { key: "psp", label: "Pending PSP settlements" }, { key: "receivables", label: "Customer receivables — enforceable" }, { key: "advances", label: "Employee advances outstanding (calculable part)" }] },
+    { key: "have", title: "What the organization has and is owed", lines: [{ key: "cash", label: "Cash and bank balances (estimated available)" }, { key: "psp", label: "Pending PSP settlements" }, { key: "receivables", label: "Customer receivables — issued invoices and enrolment balances" }, { key: "advances", label: "Employee advances outstanding (calculable part)" }] },
     { key: "owe", title: "What the organization owes (recorded)", lines: [{ key: "bills", label: "Supplier payables" }, { key: "salaries", label: "Unpaid salaries" }, { key: "commission", label: "Unpaid commission" }, { key: "expenses", label: "Unpaid approved expenses" }, { key: "reimbursements", label: "Reimbursements payable" }, { key: "loans", label: "Loans taken (principal)" }] },
     { key: "apart", title: "Shown apart, not in the net", lines: [{ key: "proforma", label: "Pro-forma balances (conditional future instalments)" }, { key: "old_books", label: "Old-books receivables" }] },
   ], (sum) => [

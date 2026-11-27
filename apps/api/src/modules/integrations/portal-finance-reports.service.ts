@@ -3,7 +3,7 @@ import type { AnalysisForeign, AnalysisReport } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 import { BankAccount } from "../banking/bank-account.model";
 import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
-import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport } from "../reports/reports.service";
+import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport, profitLossPeriod } from "../reports/reports.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
@@ -738,4 +738,57 @@ export async function vatReportForPortal(q: Record<string, unknown>) {
     }
   }
   return done(rows, ["crm", "salesperson", "month", "status"], ["amountMinor", "netMinor", "totalMinor"], ["month", "crm", "salesperson", "status"], ["title", "crm", "salesperson", "month", "status", "netMinor", "totalMinor"]);
+}
+
+/**
+ * Profit & Loss for Root's Report Org (the user, 2026-11-27: "finish profit and loss in the root report page"), from the
+ * same calculation finance's own Profit & Loss page makes, on either basis (?basis=invoiced | collected):
+ *
+ *   view=statement (default) — the period's income lines, expense categories and net profit, with the period before
+ *                              beside them, and both bases' income;
+ *   view=months              — a row per month of the period (at most 24): income, expenses, net profit.
+ *
+ * In the organization's own currency; other currencies apart, as finance's page gives them. Read-only.
+ */
+export async function plReportForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const basis = str(q.basis) === "collected" ? "collected" : "invoiced";
+  const view = str(q.view) || "statement";
+  if (view !== "statement" && view !== "months") return "view is statement or months";
+  if (view === "statement") {
+    const pl = await getProfitLoss(org.id, period.from, period.to, org.currency, basis);
+    return { generatedAt: new Date().toISOString(), org, period, view, ...pl, basis, currency: org.currency };
+  }
+  const months: { month: string; from: string; to: string }[] = [];
+  for (let d = utc(`${period.from.slice(0, 7)}-01`); iso(d) <= period.to && months.length < 24; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) {
+    const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+    months.push({ month: iso(d).slice(0, 7), from: iso(d) < period.from ? period.from : iso(d), to: iso(end) > period.to ? period.to : iso(end) });
+  }
+  const done = await Promise.all(months.map((m) => profitLossPeriod(org.id, m.from, m.to, basis)));
+  const rows = months.map((m, i) => ({
+    month: m.month, from: m.from, to: m.to,
+    incomeMinor: done[i]!.income.total, expensesMinor: done[i]!.expenses.total, netMinor: done[i]!.netProfitMinor,
+    incomeOther: done[i]!.income.otherCurrencies ?? [],
+    expensesOther: (done[i]!.expenses.otherCurrencies ?? []).map((c) => ({ currency: c.currency, amountMinor: c.amountMinor, count: c.count })),
+  }));
+  const sum = (k: "incomeMinor" | "expensesMinor" | "netMinor") => rows.reduce((n, r) => n + r[k], 0);
+  // Other currencies over the whole period, a line per currency and side, never added in.
+  const apartTotals = (side: "incomeOther" | "expensesOther") => {
+    const by = new Map<string, { currency: string; amountMinor: number; count: number }>();
+    for (const r of rows) for (const c of r[side] as { currency: string; amountMinor: number; count: number }[]) {
+      const t = by.get(c.currency) ?? { currency: c.currency, amountMinor: 0, count: 0 };
+      t.amountMinor += c.amountMinor; t.count += c.count; by.set(c.currency, t);
+    }
+    return [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  };
+  return {
+    generatedAt: new Date().toISOString(), org, period, basis, view, currency: org.currency,
+    months: rows.map(({ incomeOther: _i, expensesOther: _e, ...r }) => r),
+    totals: { incomeMinor: sum("incomeMinor"), expensesMinor: sum("expensesMinor"), netMinor: sum("netMinor") },
+    incomeOther: apartTotals("incomeOther"), expensesOther: apartTotals("expensesOther"),
+    capped: months.length === 24 && iso(new Date(Date.UTC(Number(months[23]!.month.slice(0, 4)), Number(months[23]!.month.slice(5)), 1))) <= period.to,
+  };
 }

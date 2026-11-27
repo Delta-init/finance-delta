@@ -889,6 +889,12 @@ async function owedOnPeriodInvoices(orgId: string, from: string, to: string, bas
   return rows.reduce((sum, r) => (String((r as any).currency || base).toUpperCase() === base ? sum + ((r as any).balanceMinor ?? 0) : sum), 0);
 }
 
+/** One period's Profit & Loss on either basis, nothing else worked out — for a month-by-month series (Root, 2026-11-27). */
+export async function profitLossPeriod(orgId: string, from: string, to: string, basis: PLBasis = "invoiced"): Promise<PLPeriod> {
+  const base = await baseCurrencyOf(orgId);
+  return (basis === "collected" ? computeCashPL : computePL)(orgId, from, to, base);
+}
+
 export async function getProfitLoss(
   orgId: string,
   from: string,

@@ -79,6 +79,8 @@ mkdir -p "$WORK/db" "$WORK/log"
 mongod --dbpath "$WORK/db" --port "$MONGO_PORT" --bind_ip 127.0.0.1 \
   --fork --logpath "$WORK/log/mongod.log" >/dev/null
 
+# Neither app reads a .env here (bun --no-env-file, 2026-11-27): the HRMS and finance folders hold .env files that
+# point at production, and anything this script does not set would otherwise be taken from them.
 HRMS_DB="mongodb://127.0.0.1:$MONGO_PORT/hrms-e2e"
 FIN_DB="mongodb://127.0.0.1:$MONGO_PORT/finance-e2e"
 
@@ -92,10 +94,10 @@ hrms_env() {
 
 echo "Seeding HRMS and submitting $MONTH"
 cd "$HRMS_REPO/hrms-backend"
-SEED="$(E2E_MONTH="$MONTH" hrms_env bun src/seeds/e2eSeed.ts | tail -1)"
+SEED="$(E2E_MONTH="$MONTH" hrms_env bun --no-env-file src/seeds/e2eSeed.ts | tail -1)"
 
 echo "Starting the HRMS API on :$HRMS_PORT"
-PORT="$HRMS_PORT" hrms_env bun src/index.ts > "$WORK/log/hrms.log" 2>&1 &
+PORT="$HRMS_PORT" hrms_env bun --no-env-file src/index.ts > "$WORK/log/hrms.log" 2>&1 &
 HRMS_PID=$!
 
 for _ in $(seq 1 40); do
@@ -115,4 +117,4 @@ HRMS_CLIENT_ID="delta-finance" HRMS_INTEGRATION_SECRET="$SECRET" \
 ROOT_ERP_API_URL="http://127.0.0.1:$ROOT_PORT" ROOT_ERP_SECRET="e2e-root-secret" E2E_ROOT_PORT="$ROOT_PORT" \
 INBOUND_CLIENT_ID="delta-hrms" INBOUND_INTEGRATION_SECRET="$SECRET" E2E_FIN_PORT="$FIN_PORT" \
 E2E_HRMS_SEED="$SEED" \
-  bun src/scripts/payroll-e2e.ts
+  bun --no-env-file src/scripts/payroll-e2e.ts

@@ -40,7 +40,7 @@ type Basis = "invoiced" | "collected";
 
 /*
  * Income counted by invoices issued or by money received (the user, 2026-11-27: "show total collected instead of total
- * invoiced"). Collected is a cash view: payments received with VAT taken out, and expenses paid in the period.
+ * invoiced"). Collected is a cash view: payments received as received, and expenses paid in the period.
  */
 const BASES: { key: Basis; label: string }[] = [{ key: "invoiced", label: "Invoiced" }, { key: "collected", label: "Collected" }];
 
@@ -98,7 +98,7 @@ export default function ProfitLossPage() {
       {data?.bases && (
         <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
           <span>Invoiced, before VAT: <MoneyDisplay minor={data.bases.invoicedMinor} className="font-medium text-foreground" /></span>
-          <span>Collected, before VAT: <MoneyDisplay minor={data.bases.collectedMinor} className="font-medium text-foreground" /></span>
+          <span>Collected: <MoneyDisplay minor={data.bases.collectedMinor} className="font-medium text-foreground" /></span>
           <span>Still owed on this period&apos;s invoices: <MoneyDisplay minor={data.bases.owedMinor} className="font-medium text-foreground" /></span>
         </div>
       )}
@@ -106,7 +106,7 @@ export default function ProfitLossPage() {
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: collected ? "Total Income (collected)" : "Total Income", note: collected ? "Payments received, before VAT" : "Invoices issued, before VAT", value: data?.income.total ?? 0, color: "text-success" },
+          { label: collected ? "Total Income (collected)" : "Total Income", note: collected ? "Payments received" : "Invoices issued, before VAT", value: data?.income.total ?? 0, color: "text-success" },
           { label: "Total Expenses", note: collected ? "Paid in the period" : "Dated in the period", value: data?.expenses.total ?? 0, color: "text-danger" },
           { label: collected ? "Net Profit (cash)" : "Net Profit", note: "Income less expenses", value: netProfit, color: netProfit >= 0 ? "text-success" : "text-danger" },
         ].map((card) => (

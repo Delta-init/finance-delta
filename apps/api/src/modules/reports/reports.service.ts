@@ -25,7 +25,7 @@ import type {
   CustomerStatementReport,
   CustomerStatementLine,
 } from "@delta/shared";
-import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, VAT_FREE_METHODS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
+import { ENROLMENT_CRM_LABELS, OLD_BOOKS_SOURCE, PAYMENT_METHOD_LABELS, categoryLabel, enrolmentCrm, formatMoney, paidAmountMinor, paidCurrency, type PaymentMethod } from "@delta/shared";
 import type { OtherCurrencyLine } from "@delta/shared";
 import { Invoice } from "../invoice/invoice.model";
 import { Bill } from "../bill/bill.model";
@@ -793,11 +793,10 @@ async function computePL(orgId: string, from: string, to: string, base: string):
  * The Profit & Loss counted by money that actually moved (the user, 2026-11-27: "show total collected instead of total
  * invoiced", expenses by the day paid) — a cash view beside the invoiced one.
  *
- * Income: every payment received in the period, VAT taken out so it compares with invoiced income (which is before
- * VAT): a payment with its own tax invoice (a pro-forma's) less that tax invoice's VAT; a payment on an ordinary invoice
- * less the invoice's share of VAT (amount × subtotal ÷ total); a VAT-free method (Tabby DGO) as paid. A payment made in
- * another currency than the organization's (rupees on an AED invoice) is apart, as paid, never added in — or, its amount
- * in that currency never recorded, counted as recorded, as the Collected report does.
+ * Income: every payment received in the period, as received — no VAT taken off (the user, 2026-11-27: "it didn't need
+ * to deduct the VAT"). A payment made in another currency than the organization's (rupees on an AED invoice) is apart,
+ * as paid, never added in — or, its amount in that currency never recorded, counted as recorded, as the Collected
+ * report does.
  *
  * Expenses: supplier-bill payments made in the period (their share before VAT, as the invoiced view counts a bill's
  * subtotal), and profit-and-loss expenses paid in the period. Unpaid ones are not here. Other currencies apart.
@@ -826,11 +825,10 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
   const nameMap = await categoryNameMap(orgId);
 
   const otherIncome = apart(base);
-  let received = 0, vatOut = 0;
+  let received = 0;
   for (const doc of invoices) {
-    const inv = doc as unknown as { currency?: string; subtotalMinor?: number; totalMinor?: number; payments?: any[] };
+    const inv = doc as unknown as { currency?: string; payments?: any[] };
     const invCurrency = String(inv.currency || base).toUpperCase();
-    const total = Number(inv.totalMinor) || 0, subtotal = Number(inv.subtotalMinor) || 0;
     for (const p of inv.payments ?? []) {
       if (!within(p.paidOn)) continue;
       const amount = Number(p.amountMinor) || 0;
@@ -838,14 +836,10 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
       const paid = paidIn ? paidAmountMinor(p, invCurrency) : 0;
       if (paidIn && paid > 0) { otherIncome.own(paidIn, paid, "Payments received"); continue; }
       if (!otherIncome.own(invCurrency, amount, "Payments received")) continue;
-      const vat = p.taxInvoice?.number ? Number(p.taxInvoice.taxMinor) || 0
-        : VAT_FREE_METHODS.includes(String(p.method)) || total <= 0 ? 0
-        : amount - Math.round((amount * subtotal) / total);
       received += amount;
-      vatOut += vat;
     }
   }
-  const incomeTotal = received - vatOut;
+  const incomeTotal = received;
 
   type Costs = { bills: number; byCategory: Map<string, number>; count: number };
   const costs = new Map<string, Costs>();
@@ -892,7 +886,6 @@ async function computeCashPL(orgId: string, from: string, to: string, base: stri
       total: incomeTotal,
       breakdown: [
         { key: "income", label: "Payments received", amountMinor: received },
-        { key: "income", label: "Less VAT on them", amountMinor: -vatOut },
       ],
       ...otherIncome.lines(),
     },
@@ -951,19 +944,15 @@ export async function profitLossLines(orgId: string, from: string, to: string, b
       for (const inv of invoices) {
         const invCurrency = String(inv.currency || base).toUpperCase();
         if (!own(invCurrency)) continue;
-        const total = Number(inv.totalMinor) || 0, subtotal = Number(inv.subtotalMinor) || 0;
         for (const p of inv.payments ?? []) {
           if (!within(p.paidOn)) continue;
           const paidIn = paidCurrency(p, invCurrency);
           if (paidIn && paidAmountMinor(p, invCurrency) > 0) continue;
           const amount = Number(p.amountMinor) || 0;
-          const vat = p.taxInvoice?.number ? Number(p.taxInvoice.taxMinor) || 0
-            : VAT_FREE_METHODS.includes(String(p.method)) || total <= 0 ? 0
-            : amount - Math.round((amount * subtotal) / total);
           const date = day(p.paidOn);
           rows.push({
             id: `${inv._id}:${p._id}`, date, month: date.slice(0, 7), number: p.taxInvoice?.number || p.receiptNumber || inv.invoiceNumber, title: inv.customerName ?? "", kind: "payment",
-            detail: `Towards ${inv.invoiceNumber}`, amountMinor: amount - vat, grossMinor: amount, vatMinor: vat, currency: base, href: `/invoices/${inv._id}`,
+            detail: `Towards ${inv.invoiceNumber}`, amountMinor: amount, currency: base, href: `/invoices/${inv._id}`,
             crm: crmOf(inv), salesperson: inv.salespersonName || "No salesperson", method: PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? String(p.method ?? ""),
           });
         }

@@ -15,7 +15,7 @@ import { financeWatchForPortal } from "./portal-watch.service";
 import { financeReportForPortal } from "./portal-report.service";
 import { oldBooksPaymentsSince } from "./old-books-payments.service";
 import { paymentNumbersFor } from "./payment-numbers.service";
-import { agingReportForPortal, expensesReportForPortal, financeOverviewForPortal, organizationsForPortal, revenueReportForPortal } from "./portal-finance-reports.service";
+import { agingReportForPortal, commissionReportForPortal, expensesReportForPortal, payrollReportForPortal, financeOverviewForPortal, organizationsForPortal, revenueReportForPortal } from "./portal-finance-reports.service";
 
 const router = Router();
 
@@ -227,5 +227,17 @@ router.get(
     res.json({ success: true, data });
   }),
 );
+
+/** Commission finance approved and paid, and payroll runs — each person's pay or the payments made (2026-11-27). Read-only. */
+for (const [path, report] of [["commission", commissionReportForPortal], ["payroll", payrollReportForPortal]] as const) {
+  router.get(
+    `/reports/${path}`,
+    asyncHandler(async (req: Request, res: Response) => {
+      const data = await report(req.query as Record<string, unknown>);
+      if (typeof data === "string") throw new AppError("VALIDATION_ERROR", data);
+      res.json({ success: true, data });
+    }),
+  );
+}
 
 export default router;

@@ -7,6 +7,9 @@ import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport } from
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
 import { Department } from "../department/department.model";
+import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
+import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
+import { PayrollRun } from "../payroll/payroll-run.model";
 
 /*
  * The Root portal's Report Org → Finance and revenue (the user, 2026-11-26: "first I need report finance and revenue").
@@ -16,6 +19,8 @@ import { Department } from "../department/department.model";
  *   GET /api/v1/service/reports/revenue?org&from&to…   the Revenue report — invoiced or collected, grouped and filtered
  *   GET /api/v1/service/reports/expenses?org&from&to…  the Expense report — by expense or paid date, grouped and filtered
  *   GET /api/v1/service/reports/aging?org&kind…        what is still owed, by invoice or by bill, as of now
+ *   GET /api/v1/service/reports/commission?org&from&to… commission finance approved and paid, CRM and CS
+ *   GET /api/v1/service/reports/payroll?org&from&to…   payroll runs: each person's pay, or the payments made
  *
  * Nothing is worked out twice: every figure comes from the functions finance's own pages use (the Revenue report, the
  * aged lists, the Profit & Loss, the VAT report), so a number in Root is the number on finance's screen. One
@@ -467,5 +472,141 @@ export async function agingReportForPortal(q: Record<string, unknown>) {
     recordCount: rows.length,
     capped: false,
     otherCurrencies: report.otherCurrencies ?? [],
+  };
+}
+
+/*
+ * Commission and payroll for Root (the user, 2026-11-27: "do next Commission and payroll").
+ *
+ * Both are lists of rows that finance already keeps — the commission payouts it approved and paid, and the lines and
+ * payments of its payroll runs — so both go through one helper: keep the rows the filters and the search keep, total
+ * and group the ones in the organization's own currency, and give the rest apart, a line per currency, never added
+ * in. Every filter takes several values; its choices are counted before any filter is applied.
+ */
+type Sums = Record<string, number>;
+
+function ledger(all: Row[], q: Record<string, unknown>, org: Org, cfg: { filters: readonly string[]; sums: readonly string[]; groups: readonly string[]; groupBy: string; sort: readonly string[]; text: (r: Row) => string }) {
+  const options: Record<string, { key: string; name: string; count: number }[]> = {};
+  for (const f of cfg.filters) {
+    const counts = new Map<string, number>();
+    for (const r of all) counts.set(String(r[f] ?? ""), (counts.get(String(r[f] ?? "")) ?? 0) + 1);
+    options[f] = [...counts.entries()].map(([name, n]) => ({ key: name, name: name || "—", count: n })).sort((a, b) => (f === "month" ? b.key.localeCompare(a.key) : a.name.localeCompare(b.name)));
+  }
+  const asked = (f: string): string[] => (Array.isArray(q[f]) ? (q[f] as unknown[]) : [q[f]]).filter((x): x is string => typeof x === "string" && x !== "").slice(0, 50);
+  const needle = str(q.q).slice(0, 100).toLowerCase();
+  const kept = all.filter((r) => cfg.filters.every((f) => { const want = asked(f); return !want.length || want.includes(String(r[f] ?? "")); }) && (!needle || cfg.text(r).toLowerCase().includes(needle)));
+  const total = (list: Row[]): Sums => Object.fromEntries(cfg.sums.map((k) => [k, list.reduce((n, r) => n + (Number(r[k]) || 0), 0)]));
+  const own = kept.filter((r) => r.currency === org.currency);
+  const groupBy = cfg.groups.includes(cfg.groupBy) ? cfg.groupBy : cfg.groups[0]!;
+  const by = new Map<string, Row[]>();
+  for (const r of own) { const k = String(r[groupBy] ?? "") || "—"; by.set(k, [...(by.get(k) ?? []), r]); }
+  const groups = [...by.entries()].map(([name, list]) => ({ key: name, name, count: list.length, ...total(list) }))
+    .sort((a, b) => (groupBy === "month" ? b.key.localeCompare(a.key) : (Number((b as unknown as Sums).amountMinor) || 0) - (Number((a as unknown as Sums).amountMinor) || 0) || a.name.localeCompare(b.name)));
+  const otherCurrencies = [...new Set(kept.map((r) => String(r.currency)).filter((c) => c !== org.currency))].sort().map((currency) => {
+    const list = kept.filter((r) => r.currency === currency);
+    return { currency, count: list.length, ...total(list) };
+  });
+  return { groupBy, currency: org.currency, totals: { count: own.length, ...total(own) }, groups, options, otherCurrencies, ...pageOf(kept, q, cfg.sort), recordCount: kept.length, capped: false };
+}
+
+/** "2026-11" of a day, and whether a month is within a period's months. */
+const monthOf = (day: string) => day.slice(0, 7);
+const titled = (v: unknown) => String(v ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+/**
+ * Commission finance has approved, and paid: the sales CRMs' monthly payouts and CS Portal's bonus and deposit
+ * payouts — one row per person per period, with who approved it and, once paid, when, how and under which expense.
+ *
+ * By the month the commission is for (default), or with ?when=paid by the day it was paid. What the CRMs worked out
+ * before approval — estimated, waiting for full payment — is not here: finance has no record of it.
+ */
+export async function commissionReportForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const paid = str(q.when) === "paid";
+  const orgId = new Types.ObjectId(org.id);
+  const months = { $gte: monthOf(period.from), $lte: monthOf(period.to) };
+  const days = { $gte: utc(period.from), $lte: new Date(`${period.to}T23:59:59.999Z`) };
+  const [crm, cs] = await Promise.all([
+    CrmCommissionPayout.find({ organizationId: orgId, ...(paid ? { state: "paid", paidOn: days } : { month: months }) }).lean<any[]>(),
+    CsCommissionPayout.find({ organizationId: orgId, ...(paid ? { state: "paid", paidOn: days } : { lastMonth: months }) }).lean<any[]>(),
+  ]);
+  const row = (p: any, source: string, kind: string, month: string, detail: string): Row => ({
+    id: String(p._id), date: iso(new Date(p.paidOn ?? p.approvedAt)), number: p.expenseNumber || "", title: p.personName || "—", detail,
+    person: p.personName || "—", source, kind, month, state: p.state === "paid" ? "Paid" : "Approved, not paid",
+    method: p.paymentMethod ? titled(p.paymentMethod) : "", reference: p.reference || "", approvedBy: p.approvedByName || "",
+    approvedOn: iso(new Date(p.approvedAt)), paidOn: p.paidOn ? iso(new Date(p.paidOn)) : "", payrollRun: p.payrollRunNumber || "",
+    currency: String(p.currency || org.currency).toUpperCase(), amountMinor: p.amountMinor ?? 0,
+    paidMinor: p.state === "paid" ? p.amountMinor ?? 0 : 0, unpaidMinor: p.state === "paid" ? 0 : p.amountMinor ?? 0,
+    href: p.expenseId ? `/expenses/${p.expenseId}` : "",
+  });
+  const rows = [
+    ...crm.map((p) => row(p, p.crmName || titled(p.crm), "CRM commission", p.month, [(p.roles ?? []).join(", "), p.level].filter(Boolean).join(" · "))),
+    ...cs.map((p) => row(p, "CS Portal", p.kind === "deposit" ? "CS deposit commission" : "CS bonus commission", p.lastMonth, `${p.period}${p.location === "bangalore" ? " · Bangalore" : ""}`)),
+  ];
+  return {
+    generatedAt: new Date().toISOString(), org, period, when: paid ? "paid" : "month",
+    ...ledger(rows, { sort: "date", dir: "desc", ...q }, org, {
+      filters: ["source", "person", "state", "kind", "method", "month"], sums: ["amountMinor", "paidMinor", "unpaidMinor"],
+      groups: ["person", "source", "month", "state", "kind"], groupBy: str(q.groupBy) || "person",
+      sort: ["person", "source", "month", "state", "method", "approvedOn", "paidOn"], text: (r) => `${r.title} ${r.number} ${r.reference} ${r.source}`,
+    }),
+  };
+}
+
+const LINE_STATUS: Record<string, string> = { pending: "Not paid", on_hold: "On hold", partially_paid: "Part paid", paid: "Paid" };
+/** Where the run itself stands: a run finance has not approved yet is still being put together, and says so. */
+const RUN_STATE: Record<string, string> = { imported: "Not approved yet", additions: "Not approved yet", approved: "Approved", partially_paid: "Part paid", paid: "Paid" };
+
+/**
+ * Payroll for Root: the runs of the period's months (voided and returned ones left out). ?kind=people (default) is a
+ * row per person per run — gross, deductions, net as the HRMS worked it out, finance's additions and deductions, what
+ * is payable, what has been paid and what is left; ?kind=payments is a row per payment made, reversed ones left out.
+ * ?due=1 keeps the people still owed something.
+ *
+ * Nobody's bank details are read, let alone sent: the lines are selected without them.
+ */
+export async function payrollReportForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const kind = str(q.kind) || "people";
+  if (kind !== "people" && kind !== "payments") return "kind is people or payments";
+  const runs = await PayrollRun.find({ organizationId: new Types.ObjectId(org.id), period: { $gte: monthOf(period.from), $lte: monthOf(period.to) }, status: { $nin: ["voided", "returned"] } })
+    .select("runNumber period currency status lines._id lines.name lines.designation lines.departmentName lines.currency lines.grossMinor lines.deductionsMinor lines.netFromHrmsMinor lines.adjustmentsMinor lines.payableMinor lines.amountPaidMinor lines.status payments._id payments.method payments.paidOn payments.reference payments.bankAccountName payments.currency payments.amountMinor payments.reversedAt payments.createdByName")
+    .lean<any[]>();
+  const cur = (v: unknown, run: any) => String(v || run.currency || org.currency).toUpperCase();
+  if (kind === "payments") {
+    const rows: Row[] = runs.flatMap((run) => (run.payments ?? []).filter((p: any) => !p.reversedAt).map((p: any): Row => ({
+      id: `${run._id}:${p._id}`, date: iso(new Date(p.paidOn)), number: run.runNumber, title: `Payroll ${run.period}`, detail: p.reference || "",
+      run: run.runNumber, month: run.period, method: titled(p.method), bank: p.bankAccountName || "No bank account", reference: p.reference || "", paidBy: p.createdByName || "",
+      currency: cur(p.currency, run), amountMinor: p.amountMinor ?? 0, href: `/payroll/${run._id}`,
+    })));
+    return {
+      generatedAt: new Date().toISOString(), org, period, kind,
+      ...ledger(rows, { sort: "date", dir: "desc", ...q }, org, {
+        filters: ["month", "method", "bank"], sums: ["amountMinor"], groups: ["month", "method", "bank"], groupBy: str(q.groupBy) || "month",
+        sort: ["run", "month", "method", "bank"], text: (r) => `${r.number} ${r.reference} ${r.bank}`,
+      }),
+    };
+  }
+  const due = ["1", "true"].includes(str(q.due));
+  const rows: Row[] = runs.flatMap((run) => (run.lines ?? []).map((l: any): Row => ({
+    id: `${run._id}:${l._id}`, date: `${run.period}-01`, number: run.runNumber, title: l.name || "—", detail: l.designation || "",
+    person: l.name || "—", department: l.departmentName || "No department", month: run.period, run: run.runNumber, status: LINE_STATUS[l.status] ?? titled(l.status), runState: RUN_STATE[run.status] ?? titled(run.status),
+    currency: cur(l.currency, run), grossMinor: l.grossMinor ?? 0, deductionsMinor: l.deductionsMinor ?? 0, netMinor: l.netFromHrmsMinor ?? 0,
+    adjustmentsMinor: l.adjustmentsMinor ?? 0, amountMinor: l.payableMinor ?? 0, paidMinor: l.amountPaidMinor ?? 0,
+    balanceMinor: Math.max(0, (l.payableMinor ?? 0) - (l.amountPaidMinor ?? 0)), href: `/payroll/${run._id}`,
+  }))).filter((r) => !due || Number(r.balanceMinor) > 0);
+  return {
+    generatedAt: new Date().toISOString(), org, period, kind, due,
+    ...ledger(rows, { sort: "title", dir: "asc", ...q }, org, {
+      filters: ["month", "department", "person", "status", "runState"], sums: ["grossMinor", "deductionsMinor", "netMinor", "adjustmentsMinor", "amountMinor", "paidMinor", "balanceMinor"],
+      groups: ["month", "department", "person", "status", "runState"], groupBy: str(q.groupBy) || "month",
+      sort: ["person", "department", "month", "run", "status", "runState", "grossMinor", "deductionsMinor", "netMinor", "adjustmentsMinor", "paidMinor", "balanceMinor"], text: (r) => `${r.title} ${r.detail} ${r.number}`,
+    }),
   };
 }

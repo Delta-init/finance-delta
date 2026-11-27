@@ -2,7 +2,7 @@ import { Types } from "mongoose";
 import type { AnalysisForeign, AnalysisReport } from "@delta/shared";
 import { Organization } from "../organization/organization.model";
 import { BankAccount } from "../banking/bank-account.model";
-import { analysisFilters, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
+import { analysisFilters, crmOf, EXPENSE_DIMENSION_KEYS, getExpenseAnalysis, getRevenueAnalysis, REVENUE_DIMENSION_KEYS, type AnalysisQuery } from "../reports/analysis.service";
 import { getAgedPayables, getAgedReceivables, getProfitLoss, getVATReport } from "../reports/reports.service";
 import { Invoice } from "../invoice/invoice.model";
 import { User } from "../user/user.model";
@@ -10,6 +10,7 @@ import { Department } from "../department/department.model";
 import { CrmCommissionPayout } from "../crm-commission/crm-commission-payout.model";
 import { CsCommissionPayout } from "../cs-commission/cs-commission-payout.model";
 import { PayrollRun } from "../payroll/payroll-run.model";
+import { Bill } from "../bill/bill.model";
 
 /*
  * The Root portal's Report Org → Finance and revenue (the user, 2026-11-26: "first I need report finance and revenue").
@@ -609,4 +610,81 @@ export async function payrollReportForPortal(q: Record<string, unknown>) {
       sort: ["person", "department", "month", "run", "status", "runState", "grossMinor", "deductionsMinor", "netMinor", "adjustmentsMinor", "paidMinor", "balanceMinor"], text: (r) => `${r.title} ${r.detail} ${r.number}`,
     }),
   };
+}
+
+const INVOICE_STATE: Record<string, string> = { sent: "Sent", viewed: "Sent", partial: "Part paid", paid: "Paid", overdue: "Overdue" };
+
+/**
+ * The rows behind two of the Report Org's headline cards (2026-11-27: "when click on the stats card we need to see
+ * break down"), counted exactly as the card counts them:
+ *
+ *   kind=output — VAT on sales, as finance's VAT report counts it: each invoice issued in the period with its VAT,
+ *                 and on a pro-forma each payment's tax invoice dated in the period, with that tax invoice's VAT.
+ *   kind=input  — VAT on purchases: each supplier bill dated in the period with its VAT.
+ *   kind=income — the income in "Income less expenses", as the Profit & Loss counts it: each invoice issued in the
+ *                 period, before VAT (a pro-forma whole, by its own date, as the P&L has it).
+ *
+ * Drafts and void invoices or bills are left out. Totals are of the organization's currency; any other is apart.
+ */
+export async function vatReportForPortal(q: Record<string, unknown>) {
+  const org = await organizationOf(q);
+  if (typeof org === "string") return org;
+  const period = periodOf(q);
+  if (typeof period === "string") return period;
+  const kind = str(q.kind) || "output";
+  if (!["output", "input", "income"].includes(kind)) return "kind is output, input or income";
+  const orgId = new Types.ObjectId(org.id);
+  const range = { $gte: utc(period.from), $lte: new Date(`${period.to}T23:59:59.999Z`) };
+  const cur = (v: unknown) => String(v || org.currency).toUpperCase();
+  const crmName = (inv: any) => { const c = crmOf(inv); return CRM_NAMES[c.key] ?? c.name; };
+  const done = (rows: Row[], filters: string[], sums: string[], groups: string[], sort: string[]) => ({
+    generatedAt: new Date().toISOString(), org, period, kind,
+    ...ledger(rows, { sort: "date", dir: "desc", ...q }, org, { filters, sums, groups, groupBy: str(q.groupBy) || groups[0]!, sort, text: (r) => `${r.number} ${r.title} ${r.detail}` }),
+  });
+
+  if (kind === "input") {
+    const bills = await Bill.find({ organizationId: orgId, billDate: range, status: { $nin: ["draft", "voided"] } })
+      .select("billNumber vendorName billDate status currency subtotalMinor taxTotalMinor totalMinor").lean<any[]>();
+    const rows: Row[] = bills.map((b) => ({
+      id: String(b._id), date: iso(new Date(b.billDate)), number: b.billNumber, title: b.vendorName || "—", detail: "",
+      vendor: b.vendorName || "—", month: iso(new Date(b.billDate)).slice(0, 7), status: titled(b.status),
+      currency: cur(b.currency), amountMinor: b.taxTotalMinor ?? 0, netMinor: b.subtotalMinor ?? 0, totalMinor: b.totalMinor ?? 0, href: `/bills/${b._id}`,
+    }));
+    return done(rows, ["vendor", "month", "status"], ["amountMinor", "netMinor", "totalMinor"], ["month", "vendor", "status"], ["vendor", "month", "status", "netMinor", "totalMinor"]);
+  }
+
+  const SELECT = "invoiceNumber customerName salespersonName issueDate status currency subtotalMinor taxTotalMinor totalMinor enrolment.crm external.source proforma taxBreakdown payments._id payments.paidOn payments.amountMinor payments.taxInvoice";
+  const invoiceRow = (inv: any, amount: number): Row => ({
+    id: String(inv._id), date: iso(new Date(inv.issueDate)), number: inv.invoiceNumber, title: inv.customerName || "—", detail: inv.salespersonName || "",
+    salesperson: inv.salespersonName || "No salesperson", crm: crmName(inv), month: iso(new Date(inv.issueDate)).slice(0, 7), status: INVOICE_STATE[inv.status] ?? titled(inv.status),
+    currency: cur(inv.currency), amountMinor: amount, netMinor: inv.subtotalMinor ?? 0, vatMinor: inv.taxTotalMinor ?? 0, totalMinor: inv.totalMinor ?? 0, href: `/invoices/${inv._id}`,
+  });
+
+  if (kind === "income") {
+    const invoices = await Invoice.find({ organizationId: orgId, issueDate: range, status: { $nin: ["draft", "void"] } }).select(SELECT).lean<any[]>();
+    const rows = invoices.map((inv) => invoiceRow(inv, inv.subtotalMinor ?? 0));
+    return done(rows, ["crm", "salesperson", "month", "status"], ["amountMinor", "vatMinor", "totalMinor"], ["month", "crm", "salesperson", "status"], ["title", "crm", "salesperson", "month", "status", "vatMinor", "totalMinor"]);
+  }
+
+  // Output VAT, as finance's VAT report: ordinary invoices by issue date; a pro-forma's tax invoices by the day paid.
+  const [invoices, proformas] = await Promise.all([
+    Invoice.find({ organizationId: orgId, issueDate: range, status: { $nin: ["draft", "void"] }, "proforma.at": { $exists: false } }).select(SELECT).lean<any[]>(),
+    Invoice.find({ organizationId: orgId, status: { $nin: ["draft", "void"] }, "proforma.at": { $exists: true }, payments: { $elemMatch: { paidOn: range, "taxInvoice.number": { $exists: true } } } }).select(SELECT).lean<any[]>(),
+  ]);
+  const rows: Row[] = invoices.map((inv) => invoiceRow(inv, inv.taxTotalMinor ?? 0));
+  const lo = range.$gte.getTime(), hi = range.$lte.getTime();
+  for (const inv of proformas) {
+    for (const p of inv.payments ?? []) {
+      const at = new Date(p.paidOn).getTime();
+      if (!p.taxInvoice?.number || at < lo || at > hi) continue;
+      const vat = p.taxInvoice.taxMinor ?? 0;
+      const day = iso(new Date(p.paidOn));
+      rows.push({
+        ...invoiceRow(inv, vat), id: `${inv._id}:${p._id}`, date: day, month: day.slice(0, 7), number: p.taxInvoice.number,
+        detail: [`Payment towards ${inv.invoiceNumber}`, inv.salespersonName].filter(Boolean).join(" · "),
+        netMinor: (p.amountMinor ?? 0) - vat, totalMinor: p.amountMinor ?? 0,
+      });
+    }
+  }
+  return done(rows, ["crm", "salesperson", "month", "status"], ["amountMinor", "netMinor", "totalMinor"], ["month", "crm", "salesperson", "status"], ["title", "crm", "salesperson", "month", "status", "netMinor", "totalMinor"]);
 }

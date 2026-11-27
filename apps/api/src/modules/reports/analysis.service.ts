@@ -238,7 +238,7 @@ const REVENUE_DIMENSION_KEYS: readonly RevenueDimension[] = ["salesperson", "dep
 const INVOICE_STATUS: Record<string, string> = { paid: "Paid", partial: "Part paid", sent: "Not paid", viewed: "Not paid", overdue: "Overdue" };
 
 /** Which CRM an invoice came from — or typed in finance. */
-function crmOf(inv: any): { key: string; name: string } {
+export function crmOf(inv: any): { key: string; name: string } {
   const crm = enrolmentCrm(inv.enrolment?.crm, inv.external?.source);
   if (crm) return { key: crm, name: ENROLMENT_CRM_LABELS[crm] };
   if (inv.external?.source === OLD_BOOKS_SOURCE) return { key: "old_books", name: "Old books" };
